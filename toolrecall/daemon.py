@@ -461,7 +461,7 @@ class DaemonServer:
         print(f"ToolRecall Daemon v0.3.0", file=sys.stderr)
         print(f"  Socket: {self.socket_path}", file=sys.stderr)
         print(f"  PID: {os.getpid()}", file=sys.stderr)
-        print(f"  Path whitelist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
+        print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
         print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}", file=sys.stderr)
         print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}", file=sys.stderr)
 
@@ -769,7 +769,7 @@ def daemon_status():
                 sock.close()
                 if resp.get("pong"):
                     print(f"  PID from socket: {resp.get('pid')}")
-                    print(f"  Path whitelist: {resp.get('allowed_paths', [])}")
+                    print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
                     print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
                     print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
                     servers = resp.get('multiplex_servers', [])

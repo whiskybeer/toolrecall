@@ -192,7 +192,7 @@ class Config:
 
     @property
     def mcp_multiplex_servers(self) -> list:
-        """Whitelist of server names to multiplex. Empty = all configured."""
+        """Allowlist of server names to multiplex. Empty = all configured."""
         return self.get("mcp_multiplex", "servers", default=[])
 
     @property

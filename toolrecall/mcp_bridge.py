@@ -215,7 +215,7 @@ class MCPBridge:
                     "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
                     "This bridge connects to the ToolRecall daemon. "
                     "5 tools always available, 2 opt-in via config.\n"
-                    f"  cached_read: path-whitelisted\n"
+                    f"  cached_read: path-allowlisted\n"
                     f"  cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
                     f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
                     "Start daemon: toolrecall daemon"
@@ -320,7 +320,7 @@ def main():
     term = ping.get("allow_terminal", False)
     inv = ping.get("allow_invalidate", False)
     paths = ping.get("allowed_paths", [])
-    print(f"  cached_read path whitelist: {', '.join(paths) if paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
+    print(f"  cached_read path allowlist: {', '.join(paths) if paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
     print(f"  cached_terminal: {'ENABLED' if term else 'DISABLED'}", file=sys.stderr)
     print(f"  cache_invalidate: {'ENABLED' if inv else 'DISABLED'}", file=sys.stderr)
     print(file=sys.stderr)

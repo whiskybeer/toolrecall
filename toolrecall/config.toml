@@ -60,7 +60,7 @@ allow_invalidate = false
 # MCP server. Hermes then needs only ONE MCP server in config.yaml (toolrecall).
 enabled = true
 
-# Whitelist of server names to multiplex. Empty = all configured.
+# Allowlist of server names to multiplex. Empty = all configured.
 # Example: ["github", "time", "fetch"]
 servers = []
 

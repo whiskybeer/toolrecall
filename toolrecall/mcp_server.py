@@ -11,15 +11,15 @@ any connected MCP client (Hermes, Claude Code, Cursor, etc.) access to:
     - cache_status                 → read-only statistics
 
   CONDITIONAL (config-gated):
-    - cached_read                  → path-whitelisted file reads
+    - cached_read                  → path-allowlisted file reads
     - cached_terminal              → shell execution (OFF by default!)
     - cache_invalidate             → destructive (OFF by default!)
 
 Why isn't cached_terminal enabled by default?
-  - MCP bypasses all local security guards (prompt confirmation, tool whitelist)
+  - MCP bypasses all local security guards (prompt confirmation, tool allowlist)
   - An agent connected to the MCP server can call cached_terminal("rm -rf /")
   - The first call ALWAYS executes the command (TTL cache only helps on repeat)
-  - Even with the tool whitelist (read-only cmds), confidential data could be exfiltrated
+  - Even with the tool allowlist (read-only cmds), confidential data could be exfiltrated
 
 RECOMMENDED SETUP
 =================
@@ -105,7 +105,7 @@ def create_fastmcp_server() -> FastMCP:
 
     active_tools = []
     if allowed_paths:
-        active_tools.append("   cached_read  →  path-whitelisted file reads")
+        active_tools.append("   cached_read  →  path-allowlisted file reads")
     else:
         active_tools.append("   cached_read  →  ⚠️ UNRESTRICTED file reads (all paths)")
     active_tools.append("   cached_skill →  Hermes skill content")
@@ -143,14 +143,14 @@ RECOMMENDATION:
 """
     )
 
-    # ─── cached_read (path-whitelisted) ──────────────────
+    # ─── cached_read (path-allowlisted) ──────────────────
     read_desc = "Read a file with hybrid In-Memory + SQLite cache."
     if allowed_paths:
         read_desc += f" Restricted to: {', '.join(allowed_paths)}."
 
     @mcp.tool(name="cached_read", description=read_desc)
     def tool_cached_read(path: str) -> str:
-        """Read a file via ToolRecall cache (path-whitelist enforced).
+        """Read a file via ToolRecall cache (path-allowlist enforced).
 
         Args:
             path: Absolute or relative path to the file
@@ -282,7 +282,7 @@ def _build_tool_list(cfg):
 
     tools = []
 
-    # cached_read (path-whitelisted)
+    # cached_read (path-allowlisted)
     read_desc = "Read a file with hybrid In-Memory + SQLite cache"
     if allowed_paths:
         read_desc += f" (restricted to {', '.join(allowed_paths)})"
@@ -397,7 +397,7 @@ def run_stdio_fallback():
 
     # Security status banner (same as FastMCP main())
     print(f"ToolRecall MCP Server (stdio fallback)", file=sys.stderr)
-    print(f"  cached_read path whitelist: "
+    print(f"  cached_read path allowlist: "
           f"{', '.join(allowed_paths) if allowed_paths else 'ALL PATHS (DANGEROUS)'}",
           file=sys.stderr)
     print(f"  cached_terminal: {'ENABLED' if allow_terminal else 'DISABLED (default)'}",
@@ -526,7 +526,7 @@ def main():
     inv = cfg.mcp_allow_invalidate
 
     print(f"ToolRecall MCP Server v0.2.0", file=sys.stderr)
-    print(f"  cached_read path whitelist: "
+    print(f"  cached_read path allowlist: "
           f"{', '.join(allowed) if allowed else 'ALL PATHS (DANGEROUS)'}",
           file=sys.stderr)
     print(f"  cached_terminal: {'ENABLED' if term else 'DISABLED (default)'}",
