@@ -2,43 +2,72 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)]()
-[![GitHub](https://img.shields.io/badge/github-Robin%2Ftoolrecall-181717?logo=github)]()
 
-**Universal Tool-Output Cache for LLM Agents**
+**Tool-Output Cache für LLM Agents — Zero-Dependency, SQLite-FTS5, Hybrid In-Memory**
 
-ToolRecall caches tool outputs (file reads, terminal commands, skills, scripts, code execution) in local SQLite FTS5. Drastically reduces input tokens and execution time for AI coding agents.
+ToolRecall cached Tool-Outputs (Datei-Reads, Terminal-Kommandos, Skripte, Code-Execution, MCP-Responses) mit automatischer Invalidierung. Spart Tokens und Ausführungszeit — ohne externe Dependencies (nur Python stdlib).
 
-Works with **any agent** that can import Python or call HTTP endpoints.
+---
 
-## How it Works
+## Was ist ToolRecall? (Und was nicht?)
 
-Every tool call an agent makes (reading a file, running a command, viewing a skill) has to be re-executed every single time — even when the inputs and environment haven't changed. At ~150 tokens per tool call for the agent to just *see* the output, these redundant calls add up fast.
+| ToolRecall ist... | ToolRecall ist KEIN... |
+|------------------|----------------------|
+| Eine Python-Bibliothek zum Cachen von Tool-Outputs | MCP-Client / MCP-Server |
+| Zero-Dependency (Python stdlib only) | HTTP-Proxy (proxy.py als optionales Add-on, kein Kernteil) |
+| SQLite-FTS5 + In-Memory-LRU (hybrid) | Distributed Cache (single-node only) |
+| Plug-and-Play für Hermes und andere Python-Agents | Plugin-System (gibts nicht) |
 
-ToolRecall intercepts tool calls and checks a local SQLite database first:
-- **Cache HIT** → output returned instantly (0.1ms), no tool executed, NO input tokens consumed. The agent only pays for its own reasoning.
-- **Cache MISS** → tool executes normally, but the result is saved for next time.
+> **MCP-Integration:** ToolRecall cached **Responses von MCP-Tool-Calls** (`cached_mcp_check`/`store`/`cached_mcp`). Es ist kein eigener MCP-Client — das macht z.B. Hermes mit seinem nativen MCP-Client (bei uns: `github`, `time`, `hermes-docs`, `fetch`, `sequential-thinking`).
 
-Each cache entry carries an automatic invalidation strategy so it never returns stale data:
+---
 
-| Type | Invalidates when |
-|------|-----------------|
-| **file reads** | File modification time (mtime) changes |
-| **terminal commands** | TTL expires (default: 30s, configurable) |
-| **skill views** | Skill file mtime changes |
-| **script runs** | Script file mtime + TTL |
-| **code execution** | Content hash + TTL |
+## Was wird gecached?
 
-## Impact
+| API | Cached? | Invalidierung | Backend |
+|-----|---------|---------------|---------|
+| `cached_read(path)` | ✅ Datei-Reads | **mtime**: nur bei Änderung neu lesen | In-Memory LRU (0.001ms) + SQLite (Cross-Session) |
+| `cached_skill(name)` | ✅ Skill-Inhalte | **mtime**: neuester File-Timestamp im Skill-Ordner | In-Memory + SQLite |
+| `cached_terminal(cmd)` | ✅ Bestimmte Terminal-Kommandos | **TTL** (Default: 30s, konfigurierbar) — **exact-match** auf Whitelist | SQLite |
+| `cached_run(script, args)` | ✅ Skript-Ausführung | **mtime + TTL**: nur wenn Script unverändert UND TTL frisch | SQLite |
+| `cached_exec(code)` | ✅ Python-Code-Execution | **Content-Hash + TTL**: gleicher Code → Cache-Treffer | SQLite |
+| `cached_mcp(server, tool, args, fetch_fn)` | ✅ MCP-Tool-Responses | **TTL** (Default: 60s) | SQLite |
+| `cached_mcp_check()` / `cached_mcp_store()` | ✅ Low-Level MCP Cache | **TTL** (Default: 60s) | SQLite |
+| `docs_search(query)` | 🔍 FTS5-Volltextsuche | Kein Cache (direkte Suche) | SQLite FTS5 (BM25, Porter Stemming) |
 
-| Metric | Agent without ToolRecall | Agent with ToolRecall |
-|--------|------------------------|----------------------|
-| Input tokens per session | ~250,000 | **~50,000 (−80%)** |
-| Tool wait time per answer | ~7s | **~0.1s (−99%)** |
-| Session length before compression | ~40 turns | **~120 turns (3×)** |
-| File read token cost | 10,000 tokens | **~0 tokens (stat only)** |
-| Terminal command token cost | 500 tokens + 30s | **0 tokens + 0.1ms** |
+### Terminal-Whitelist (Default)
 
-The agent isn't paying for tool output anymore — it's just paying for its own reasoning. That's where the real savings come from.
+Folgende Kommandos werden gecached — **exact match**:
+
+| Kommando | TTL | Kommando | TTL |
+|----------|-----|----------|-----|
+| `git status` | 30s | `hostname` | 3600s |
+| `git log --oneline -5` | 30s | `whoami` | 3600s |
+| `git branch` | 60s | `pwd` | 3600s |
+| `git diff --stat` | 30s | `uname -a` | 3600s |
+| `crontab -l` | 3600s | `uptime` | 300s |
+| | | `free -h` | 300s |
+| | | `df -h /` | 300s |
+| | | `ls -la` | 60s |
+
+Alle anderen Kommandos (z.B. `git push`, `rm`, `curl`, `apt install`) werden **immer** ausgeführt — kein Cache, kein Delay.
+
+---
+
+## Was wird NICHT gecached?
+
+| Operation | Warum nicht? |
+|-----------|-------------|
+| **State-changing Terminal-Kommandos** (`git push`, `rm -rf`, `apt install`, `curl POST`, `docker`) | Würden stale/gefährliche Ergebnisse liefern |
+| **Nicht-whitelistete Terminal-Kommandos** (Default: alles außer ~15 read-only-Befehle) | Sicherheit > Komfort — jeder Agent muss explizit sagen "das will ich cachen" |
+| **HTTP-Requests / API-Calls** (`curl`, `wget`, `requests.get()` ohne MCP-Wrapper) | Nur per `cached_mcp()` mit eigenem `fetch_fn` cachable |
+| **State-changing MCP-Tools** (z.B. GitHub Issues erstellen, Linear-Tickets anlegen) | `ttl=0` → bypass |
+| **Zufällige/volatile Outputs** (Timestamps, `date`, `curl https://api.weather.gov`) | Würden nie treffen |
+| **Große Dateien >10 MB** | LRU-only (kein SQLite-Persist) — spart Disk-I/O |
+| **Cross-Session ohne mtime-Änderung** | `cached_read` persistiert in SQLite → Wiederstart-tauglich |
+| **Web-Suche** | Kein eingebauter Web-Search — nutze `cached_mcp("fetch", ...)` |
+
+---
 
 ## Quick Install
 
@@ -46,125 +75,18 @@ The agent isn't paying for tool output anymore — it's just paying for its own 
 pip install toolrecall
 ```
 
-Zero external dependencies — Python stdlib only (http.server, sqlite3, tomllib, hashlib, subprocess, json).
+Zero external dependencies — Python stdlib only.
 
----
-
-## Architecture
-
-ToolRecall has **three modes** — the cache core is always the same, only the access pattern changes:
-
-```
-                    ToolRecall Architecture
-
-  ┌──────────────┐    ┌──────────────────┐    ┌──────────┐
-  │ Python Import │    │  HTTP Proxy      │    │  CLI     │
-  │ (direct)      │    │  (toolrecall     │    │ (CI/CD)  │
-  │               │    │   serve)         │    │          │
-  │ Hermes        │    │  ┌────────────┐  │    │ status   │
-  │ Claude Code*  │    │  │ Port 8511  │  │    │ stats    │
-  │ Codex*        │    │  │            │  │    │ index    │
-  │ Any Python    │    │  │ /cached_*  │  │    │ nginx    │
-  │ agent         │    │  │ /docs_*    │  │    └──────────┘
-  └──────┬───────┘    │  │ /health    │  │
-         │            │  └─────┬──────┘  │
-         ▼            │        │         │
-  ┌──────────────────────────────────────────┐
-  │  ToolRecall Cache Core (SQLite FTS5)     │
-  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌───────┐  │
-  │  │File  │ │Term  │ │Skill │ │Script/│  │
-  │  │Cache │ │Cache │ │Cache │ │Code   │  │
-  │  └──────┘ └──────┘ └──────┘ └───────┘  │
-  └──────────────────────────────────────────┘
-              │
-              ▼
-  ┌──────────────────┐    ┌────────────────┐
-  │ ~/.toolrecall/   │    │ Nginx (opt.)   │
-  │ cache.db         │    │ SSL terminator │
-  │ knowledge.db     │    │ Port 443       │
-  └──────────────────┘    └────────────────┘
-
-  * = via HTTP proxy only (no Python import possible)
-```
-
-**Port 8511:** The HTTP proxy listens on port 8511 by default (configurable via config.toml `[proxy].port`). This port was chosen because: (1) not in the system-reserved range (< 1024) — no root needed, (2) not conflicting with common services, (3) easy to remember.
-
-**Nginx** is recommended in front of the proxy for SSL termination + auth. The proxy itself does NOT handle SSL — it's intentionally kept dependency-free (Python stdlib only). Use `toolrecall nginx` to generate the config.
-
-### Module Map
-
-```
-toolrecall/
-├── __init__.py     # Public API exports
-├── cache.py        # Core caching logic (SQLite FTS5, 5 cache types, mtime/TTL)
-├── proxy.py        # HTTP proxy server (Python stdlib http.server)
-├── cli.py          # CLI entry point: status, stats, invalidate, index, serve, nginx
-├── config.py       # TOML config loader (search path: CWD → ~/.config → /etc → default)
-├── config.toml     # Default configuration (user can override)
-├── docs.py         # FTS5 full-text search engine (BM25, Porter stemming)
-└── hermes_init.py  # Hermes auto-cache init script (loads on every session start)
-```
-
----
-
-## Setup for your Agent
-
-### Agent that can import Python (recommended)
-
-```python
-from toolrecall import cached_read, cached_terminal, docs_search
-```
-
-Just import and use — ToolRecall works out of the box with default config.
-
-### Hermes Agent
+### Hermes Agent Setup
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/Robin/toolrecall/main/setup.sh)
+bash <(curl -s https://raw.githubusercontent.com/whiskybeer/toolrecall/main/setup.sh)
 ```
 
-Then restart Hermes or run `/reset`. Every session shows:
-```
-  ============================================
-  ToolRecall Auto-Cache active
-  5 cache types: file, terminal, skill, script, code
-  ============================================
-```
-
-**Without the setup script:**
+Oder manuell:
 ```bash
 pip install toolrecall
 hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]'
-```
-
-### Claude Code / Codex / Cursor / Any HTTP-capable Agent
-
-These agents can't import Python directly, but can call HTTP endpoints:
-
-```bash
-# Start the ToolRecall proxy
-toolrecall serve
-# HTTP proxy on http://localhost:8511
-```
-
-Then configure your agent to use ToolRecall's endpoints:
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /cached_read?path=/path/file` | Cache file reads |
-| `GET /cached_terminal?cmd=git+status&ttl=30` | Cache terminal commands |
-| `GET /cached_skill?name=skill-name` | Cache skill views |
-| `GET /docs_search?query=keyword` | Full-text search |
-| `GET /health` | Health check |
-
-Use with `nginx` for SSL + auth: `toolrecall nginx` generates the config.
-
-### Any Agent via HTTP
-
-```bash
-toolrecall serve
-curl "http://localhost:8511/cached_read?path=README.md"
-curl "http://localhost:8511/health"
 ```
 
 ---
@@ -172,57 +94,89 @@ curl "http://localhost:8511/health"
 ## Python Usage
 
 ```python
-from toolrecall import cached_read, cached_terminal
-from toolrecall import cached_run, cached_exec, docs_search
+from toolrecall import (
+    cached_read,           # Datei-Reads mit Cache
+    cached_skill,          # Skill-Inhalte mit Cache
+    cached_terminal,       # Terminal-Kommandos (Whitelist)
+    cached_run,            # Skript-Ausführung (mtime + TTL)
+    cached_exec,           # Python-Code (Content-Hash + TTL)
+    cached_mcp,            # MCP-Responses (check → fetch → store)
+    docs_search,           # FTS5-Volltextsuche
+)
 
-# Cache file reads (mtime-based — checks mtime, no re-read if unchanged)
+# Datei-Reads (mtime-basiert)
 content = cached_read('/path/to/file.md')
 
-# Cache terminal commands (TTL-based)
+# Terminal-Kommandos (exact-match Whitelist)
 result = cached_terminal('git status', ttl=30)
 
-# Cache script execution (mtime + TTL)
-result = cached_run('analyze.py', '--input data.json', ttl=120)
+# MCP-Responses (optional: eigener fetch_fn)
+data = cached_mcp("fetch", "fetch", {"url": "https://..."},
+                  fetch_fn=lambda: my_fetcher())
 
-# Cache Python code execution (content-hash + TTL)
-stats = cached_exec('import pandas; print(df.describe())', ttl=300)
-
-# Full-text search (BM25, no embedding needed)
+# Volltextsuche (BM25, keine Embeddings)
 info = docs_search('how does feature X work')
 ```
 
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `toolrecall status` | Cache status and stats |
-| `toolrecall stats` | Detailed stats (JSON) |
-| `toolrecall invalidate` | Clear all caches |
-| `toolrecall index` | Build/update knowledge database |
-| `toolrecall serve` | Start HTTP proxy on port 8511 |
-| `toolrecall nginx` | Generate nginx reverse proxy config |
+---
 
 ## Safety: When NOT to cache
 
-**`cached_run` and `cached_exec` return cached output — the script/code is NOT re-executed!**
+**Jede Cache-Funktion kann mit `ttl=0` umgangen werden:**
 
-| Operation | Safe to cache? | Use |
-|-----------|---------------|-----|
-| Read-only analysis | Yes | `ttl=300` |
-| Report generation | Yes | `ttl=600` |
-| State-changing operations | No | **`ttl=0`** (bypass cache) |
-| API calls, webhooks | No | **`ttl=0`** (bypass cache) |
+```python
+# State-changing → immer ausführen
+result = cached_terminal('git push origin main', ttl=0)
+result = cached_exec('db.delete_all()', ttl=0)
+```
 
-Rule: **If re-running would change something, set `ttl=0`.**
+**Faustregel:** Wenn Wiederholen das Ergebnis ändern würde → `ttl=0` setzen.
 
-## Token Savings (benchmark)
+---
 
-| Cache Type | Without ToolRecall | With ToolRecall | Savings |
-|-----------|-------------------|-----------------|---------|
-| file_read (10K file) | 10,000 tokens | ~0 tokens (stat only) | **~100%** |
-| terminal (30s cmd) | 500 tokens + 30s | 0 tokens + 0.1ms | **100% + 30s** |
-| script run | 1000 tokens + 5s | 0 tokens + 0.1ms | **100% + 5s** |
-| code exec | 200 tokens + 0.5s | 0 tokens + 0.1ms | **100% + 0.5s** |
+## Benchmark (Real-World)
+
+| Cache Type | Without ToolRecall | With ToolRecall |
+|-----------|-------------------|-----------------|
+| `cached_read` (10K file) | ~10.000 Tokens + 7ms SQLite | **~0 Tokens + 0.001ms** (In-Memory) |
+| `cached_terminal` (30s cmd) | ~500 Tokens + 30s | **~0 Tokens + 0.1ms** |
+| `cached_run` (5s script) | ~1000 Tokens + 5s | **~0 Tokens + 0.1ms** |
+| `cached_exec` (0,5s code) | ~200 Tokens + 0,5s | **~0 Tokens + 0.1ms** |
+| `cached_mcp` (API call) | ~500 Tokens + 2s | **~0 Tokens + 0.1ms** |
+
+**Wichtig:** Erster Read ist immer ein Miss (1x zahlen). Erst ab dem 2. Read spart man Tokens.
+
+Token-Schätzung: `len(content) // 3` (gewichteter Durchschnitt aus Code ~2 char/token + English ~4 char/token).
+
+---
+
+## CLI
+
+| Command | Description |
+|---------|-------------|
+| `toolrecall status` | Cache-Status und Stats |
+| `toolrecall stats` | Detaillierte Stats (JSON) |
+| `toolrecall invalidate` | Alle Caches leeren |
+| `toolrecall index` | Knowledge-Database bauen |
+| `toolrecall serve` | HTTP-Proxy starten (optional) |
+
+---
+
+## Module Map
+
+```
+toolrecall/
+├── __init__.py     # Public API exports (7 Cache-Funktionen + 1 Search)
+├── cache.py        # Core caching logic (hybrid LRU+SQLite)
+├── docs.py         # FTS5 full-text search engine (BM25, Porter stemming)
+├── cli.py          # CLI entry points
+├── config.py       # TOML config loader
+├── config.toml     # Default configuration
+├── hermes_init.py  # Hermes auto-cache init script
+└── proxy.py        # Optional HTTP proxy (Python stdlib http.server)
+```
+
+---
 
 ## License
 
