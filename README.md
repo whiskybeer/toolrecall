@@ -85,7 +85,7 @@ issues = mcp_call("github", "list_issues", {"owner": "user", "repo": "repo"})
 
 ToolRecall is designed to fail safe, but caching should be bypassed (`ttl=0` or `bypass_cache=True`) when:
 - Reading real-time data streams (sensor data, live market tickers).
-- Executing state-changing commands (`git push`, `rm -rf`, API POST requests).
+- Executing state-changing commands (e.g., `git push`, `npm install`, or `curl -X POST`).
 - Running tests where the underlying environment changed outside of the tracked files.
 
 ## Configuration
