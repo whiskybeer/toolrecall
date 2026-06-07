@@ -222,21 +222,37 @@ server {
     print("  sudo ln -s /etc/nginx/sites-available/toolrecall /etc/nginx/sites-enabled/")
     print("  sudo nginx -t && sudo systemctl reload nginx")
 
+def cmd_export_dataset():
+    """Export local cache to a JSONL dataset for AI Fine-Tuning."""
+    import sys
+    out_path = "toolrecall_dataset.jsonl"
+    if len(sys.argv) > 2:
+        out_path = sys.argv[2]
+        
+    try:
+        from toolrecall.dataset import export_trajectories
+        count, path = export_trajectories(out_path)
+        print(f"✅ Exported {count} tool trajectories to {path}")
+        print("Format: JSONL (Ready for HuggingFace / Supervised Fine-Tuning)")
+    except Exception as e:
+        print(f"Error exporting dataset: {e}")
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: toolrecall <command>")
         print()
         print("Commands:")
-        print("  init         Create default config.toml and .env")
-        print("  status       Cache status and stats")
-        print("  stats        Detailed stats (JSON)")
-        print("  invalidate   Clear all caches")
-        print("  index        Build/update knowledge database")
-        print("  serve        Start HTTP proxy")
-        print("  nginx        Generate nginx config")
-        print("  mcp          Start MCP Bridge (requires daemon)")
-        print("  mcp-legacy   Start standalone MCP Server (no daemon)")
-        print("  daemon       Start/stop/manage cache daemon")
+        print("  init            Create default config.toml and .env")
+        print("  status          Cache status and stats")
+        print("  stats           Detailed stats (JSON)")
+        print("  invalidate      Clear all caches")
+        print("  index           Build/update knowledge database")
+        print("  export-dataset  [PRIVATE] Export tool calls to JSONL for AI training")
+        print("  serve           Start HTTP proxy")
+        print("  nginx           Generate nginx config")
+        print("  mcp             Start MCP Bridge (requires daemon)")
+        print("  mcp-legacy      Start standalone MCP Server (no daemon)")
+        print("  daemon          Start/stop/manage cache daemon")
         return
 
     cmd = sys.argv[1]
@@ -246,6 +262,7 @@ def main():
         "stats": cmd_stats,
         "invalidate": cmd_invalidate,
         "index": cmd_index,
+        "export-dataset": cmd_export_dataset,
         "serve": cmd_serve,
         "nginx": cmd_nginx,
         "mcp": cmd_mcp,
