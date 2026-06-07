@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.1.0"
-description = "Universal Tool-Output Cache for LLM Agents — caches file reads, terminal commands, skills, scripts, and code execution in local SQLite FTS5"
+version = "0.2.0"
+description = "Universal Tool-Output Cache for LLM Agents — caches file reads, terminal commands, skills, scripts, and code execution in local SQLite FTS5. Now with MCP server support."
 readme = "README.md"
 authors = [
     {name = "Robin", email = "robka@web.de"},
@@ -25,6 +25,9 @@ classifiers = [
 keywords = ["tool-cache", "llm", "agent", "token-savings", "sqlite", "fts5"]
 requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/whiskybeer/toolrecall"

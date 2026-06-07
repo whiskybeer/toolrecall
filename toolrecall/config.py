@@ -26,6 +26,9 @@ ENV_MAP = {
     "TOOLRECALL_PROXY_BIND": ("proxy", "bind"),
     "TOOLRECALL_SCAN_DIRS": ("sources", "scan_dirs"),
     "TOOLRECALL_NGINX_DOMAIN": ("nginx", "domain"),
+    "TOOLRECALL_MCP_ALLOWED_PATHS": ("mcp", "allowed_paths"),
+    "TOOLRECALL_MCP_ALLOW_TERMINAL": ("mcp", "allow_terminal"),
+    "TOOLRECALL_MCP_ALLOW_INVALIDATE": ("mcp", "allow_invalidate"),
 }
 
 
@@ -156,6 +159,26 @@ class Config:
     @property
     def nginx_auto_site(self) -> bool:
         return self.get("proxy", "nginx_auto_site", default=False)
+
+    # ─── MCP Security Properties ──────────────────────
+
+    @property
+    def mcp_allowed_paths(self) -> list:
+        """Paths allowed for cached_read. Empty list = all paths (DANGEROUS)."""
+        raw = self.get("mcp", "allowed_paths", default=[])
+        if raw is None:
+            return []
+        return [os.path.expanduser(p) for p in raw]
+
+    @property
+    def mcp_allow_terminal(self) -> bool:
+        """Allow cached_terminal tool (default: False — security risk)."""
+        return self.get("mcp", "allow_terminal", default=False)
+
+    @property
+    def mcp_allow_invalidate(self) -> bool:
+        """Allow cache_invalidate tool (default: False)."""
+        return self.get("mcp", "allow_invalidate", default=False)
 
 
 _config = None

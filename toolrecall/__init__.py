@@ -17,12 +17,12 @@ Usage:
     info = docs_search('query')
 """
 
-from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, invalidate_all, cached_mcp_check, cached_mcp_store, cached_mcp
+from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, invalidate_all, cached_mcp_check, cached_mcp_store, cached_mcp, get_stats
 from toolrecall.docs import docs_search, docs_get_page
 from toolrecall.config import Config
 from toolrecall.cli import main as cli_main
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "cached_read",
     "cached_skill",
@@ -35,6 +35,7 @@ __all__ = [
     "docs_search",
     "docs_get_page",
     "invalidate_all",
+    "get_stats",
     "Config",
     "cli_main",
 ]

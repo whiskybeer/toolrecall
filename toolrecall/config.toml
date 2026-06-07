@@ -36,6 +36,23 @@ ssl = false
 ssl_cert = ""
 ssl_key = ""
 
+# ─── MCP Server Security ────────────────
+[mcp]
+# Paths allowed for cached_read (empty = all paths allowed — DANGEROUS!)
+# Default: restrict to skill dirs and scripts for Hermes
+allowed_paths = [
+    "~/.hermes/skills",
+    "~/.hermes/scripts",
+    "~/.toolrecall",
+]
+
+# Allow cached_terminal tool (OFF by default — security risk!)
+# Terminal execution over MCP bypasses local prompt guards
+allow_terminal = false
+
+# Allow cache_invalidate tool (OFF by default — destructive!)
+allow_invalidate = false
+
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]
 scan_dirs = [

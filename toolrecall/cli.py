@@ -55,6 +55,12 @@ def cmd_serve():
     run_server(bind=cfg.proxy_bind, port=cfg.proxy_port)
 
 
+def cmd_mcp():
+    """Start ToolRecall MCP server (exposes cache/search as MCP tools)."""
+    from toolrecall.mcp_server import main as mcp_main
+    mcp_main()
+
+
 def cmd_nginx():
     """Generate nginx config."""
     cfg_dir = os.path.expanduser("~/.toolrecall")
@@ -147,10 +153,11 @@ def main():
         "index": cmd_index,
         "serve": cmd_serve,
         "nginx": cmd_nginx,
+        "mcp": cmd_mcp,
     }
 
     if cmd in commands:
         commands[cmd]()
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: status, stats, invalidate, index, serve, nginx")
+        print("Available: status, stats, invalidate, index, serve, nginx, mcp")

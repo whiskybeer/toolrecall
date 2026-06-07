@@ -217,15 +217,73 @@ echo ""
 # Check what agents are available
 if command -v hermes &>/dev/null && [ -z "$NO_RC" ]; then
     echo "  ✓ Hermes Agent detected"
-    echo "    Registering auto-cache init script..."
-
-    # Download init script
+    echo ""
+    echo "  ToolRecall runs at 3 levels with Hermes. Recommend:"
+    echo ""
+    echo "   🥇 Level 1 — Python import (BEST)"
+    echo "      → Zero network, full API, 0ms overhead"
+    echo "      → Register auto-cache init script..."
     mkdir -p ~/.toolrecall
     curl -sL https://raw.githubusercontent.com/Robin/toolrecall/main/toolrecall/hermes_init.py \
         -o ~/.toolrecall/hermes_init.py 2>/dev/null || true
-
     hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]' 2>/dev/null || true
-    echo "    Restart Hermes or run /reset"
+    echo "      → Restart Hermes or run /reset"
+    echo ""
+
+    echo "   🥈 Level 2 — MCP server (via mcp_servers)"
+    echo "      → stdio-local, auto-injected tools"
+    echo "      → Safe tools: cached_read, cached_skill, docs_search, docs_get_page, cache_status"
+    echo ""
+    echo "  Add to ~/.hermes/config.yaml ?"
+    read -p "  [y/N] " ADD_MCP
+    if [ "$ADD_MCP" = "y" ] || [ "$ADD_MCP" = "Y" ]; then
+        # Check if mcp_servers section exists
+        if grep -q "mcp_servers:" ~/.hermes/config.yaml 2>/dev/null; then
+            # Insert before the first non-mcp_servers line after the block
+            # Simple: append toolrecall entry after existing mcp_servers
+            sed -i '/^mcp_servers:/a\  toolrecall:\n    command: uv\n    args:\n    - run\n    - python\n    - -m\n    - toolrecall.mcp_server\n    timeout: 30' ~/.hermes/config.yaml
+        else
+            cat >> ~/.hermes/config.yaml << 'YAML'
+
+mcp_servers:
+  toolrecall:
+    command: uv
+    args:
+    - run
+    - python
+    - -m
+    - toolrecall.mcp_server
+    timeout: 30
+YAML
+        fi
+        echo "  ✓ Added to mcp_servers. Restart Hermes to activate."
+    else
+        echo "  → Skipped. Add manually anytime:"
+        echo "    mcp_servers:"
+        echo "      toolrecall:"
+        echo '        command: "uv"'
+        echo '        args: ["run", "python", "-m", "toolrecall.mcp_server"]'
+        echo "        timeout: 30"
+    fi
+    echo ""
+
+    echo "   🥉 Level 3 — HTTP proxy (for non-Python agents)"
+    if [ "$PROXY_PORT" != "0" ]; then
+        echo "      → Already configured on port $PROXY_PORT"
+    else
+        echo "      → Not configured (--proxy 0)"
+    fi
+    echo ""
+
+    echo "  ────────────────────────────────────────────"
+    echo "  SECURITY: MCP server is locked down by default"
+    echo "    • cached_read → restricted to ~/.hermes/skills, ~/.hermes/scripts, ~/.toolrecall"
+    echo "    • cached_terminal → DISABLED (set mcp.allow_terminal=true to enable)"
+    echo "    • cache_invalidate → DISABLED (set mcp.allow_invalidate=true to enable)"
+    echo ""
+    echo "  To customize: edit ~/.toolrecall/toolrecall.toml [mcp] section"
+    echo "  ────────────────────────────────────────────"
+    echo ""
 fi
 
 if command -v claude &>/dev/null; then
@@ -248,8 +306,10 @@ echo "║                                              ║"
 echo "║  Config:   $CONFIG_FILE"
 echo "║  Database: $DB_PATH"
 echo "║  Proxy:    ${PROXY_PORT}:${BIND_ADDR:-disabled}"
+echo "║  MCP:      toolrecall mcp"
 echo "║                                              ║"
 echo "║  Start:    toolrecall serve                  ║"
+echo "║            toolrecall mcp                    ║"
 echo "║  Status:   toolrecall status                 ║"
 echo "║  Help:     toolrecall --help                 ║"
 echo "╚══════════════════════════════════════════════╝"
@@ -257,3 +317,4 @@ echo ""
 echo "Next:"
 echo "  • Python import: from toolrecall import cached_read"
 echo "  • HTTP proxy:    toolrecall serve &"
+echo "  • MCP server:    toolrecall mcp"
