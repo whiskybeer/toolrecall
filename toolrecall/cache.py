@@ -1,19 +1,95 @@
-"""ToolRecall Cache Core -- SQLite-based tool output cache.
-
-Three cache types:
-- file_cache: read_file() -> mtime-based (infinite until file change)
-- skill_cache: skill_view() -> mtime-based (infinite until skill update)
-- terminal_cache: terminal() -> TTL-based (configurable)
-- script_cache: cached_run() -> mtime + TTL (script file execution)
-- code_cache: cached_exec() -> content-hash + TTL (Python code strings)
-
-Configuration via toolrecall.toml (see config.py).
 """
-import os, sqlite3, time, hashlib
+ToolRecall Cache Core — Hybrid In-Memory + SQLite cache.
+
+Architecture:
+  ┌──────────────────────────────────────┐
+  │  In-Memory Dict (file_cache)         │  ← ~0.001ms lookup
+  │  path → {content, mtime, size}       │
+  │  LRU eviction @ max_memory_mb        │
+  │                                     │
+  │  ▸ cached_read() checks here 1st     │
+  │  ▸ auto-invalidates on mtime         │
+  │  ▸ survives the agent session        │
+  └────────────────┬─────────────────────┘
+                   │ on miss / write-back
+                   ▼
+  ┌──────────────────────────────────────┐
+  │  SQLite (file_cache table)           │  ← ~7ms, once per file
+  │  Persists across sessions            │
+  │  Serves HTTP proxy mode              │
+  └──────────────────────────────────────┘
+
+Secondary caches (terminal, script, code) use SQLite directly.
+
+Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
+(English ~4 chars/token, code ~2 char/token → weighted average ~3)
+"""
+import os, sqlite3, time, hashlib, warnings
 from pathlib import Path
+from threading import Lock
+from collections import OrderedDict
 from toolrecall.config import load_config
 
 config = load_config()
+
+# ─── In-memory file cache with LRU ──────────────────────────
+
+MAX_MEMORY_MB = config.get("cache", "max_memory_mb", default=20)  # Default 20 MB (∼model context window)
+MAX_MEMORY_BYTES = MAX_MEMORY_MB * 1024 * 1024
+
+class LRUCache:
+    """Thread-safe LRU dict with byte-size tracking."""
+    def __init__(self, max_bytes: int):
+        self._data: OrderedDict[str, dict] = OrderedDict()
+        self._lock = Lock()
+        self._current_bytes = 0
+        self._max_bytes = max_bytes
+
+    def get(self, key: str):
+        with self._lock:
+            if key not in self._data:
+                return None
+            self._data.move_to_end(key)  # LRU: mark as recently used
+            return self._data[key]
+
+    def put(self, key: str, value: dict):
+        size = len(value.get("content", ""))
+        with self._lock:
+            # If key exists, subtract old size first
+            if key in self._data:
+                old = self._data[key]
+                self._current_bytes -= len(old.get("content", ""))
+            # Evict until under limit
+            while self._current_bytes + size > self._max_bytes and len(self._data) > 0:
+                oldest_key, oldest_val = self._data.popitem(last=False)
+                self._current_bytes -= len(oldest_val.get("content", ""))
+            self._data[key] = value
+            self._data.move_to_end(key)
+            self._current_bytes += size
+
+    def remove(self, key: str):
+        with self._lock:
+            if key in self._data:
+                self._current_bytes -= len(self._data[key].get("content", ""))
+                del self._data[key]
+
+    def clear(self):
+        with self._lock:
+            self._data.clear()
+            self._current_bytes = 0
+
+    def __len__(self):
+        with self._lock:
+            return len(self._data)
+
+    def memory_bytes(self):
+        with self._lock:
+            return self._current_bytes
+
+
+_file_cache: LRUCache = LRUCache(MAX_MEMORY_BYTES)
+
+# ─── SQLite Schema ──────────────────────────────────────────
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS file_cache (
@@ -66,6 +142,18 @@ CREATE TABLE IF NOT EXISTS cache_stats (
 );
 CREATE INDEX IF NOT EXISTS idx_file_mtime ON file_cache(mtime);
 CREATE INDEX IF NOT EXISTS idx_terminal_expires ON terminal_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_file_path ON file_cache(path);
+CREATE TABLE IF NOT EXISTS mcp_cache (
+    request_hash TEXT PRIMARY KEY,
+    mcp_server TEXT NOT NULL,
+    mcp_tool TEXT NOT NULL,
+    arguments TEXT,
+    data TEXT NOT NULL,
+    cached_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    hits INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_expires ON mcp_cache(expires_at);
 """
 
 
@@ -86,51 +174,98 @@ def _init():
     conn.close()
 
 
+def _estimate_tokens(text: str) -> int:
+    """Estimate LLM token count: code-heavy ~2 char/token, English ~4.
+    Weighted average ~3 char/token — better than len//4 for agent content.
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // 3)
+
+
 def _record(category, hit: bool, tokens_saved: int = 0):
+    """Track cache statistics."""
     conn = _get_db()
-    if hit:
-        conn.execute("""
-            INSERT INTO cache_stats (category, hits, misses, tokens_saved)
-            VALUES (?, 1, 0, 0)
-            ON CONFLICT(category) DO UPDATE SET hits = hits + 1
-        """, (category,))
-    else:
-        conn.execute("""
-            INSERT INTO cache_stats (category, hits, misses, tokens_saved)
-            VALUES (?, 0, 1, 0)
-            ON CONFLICT(category) DO UPDATE SET misses = misses + 1
-        """, (category,))
-    if tokens_saved:
-        conn.execute("""
-            INSERT INTO cache_stats (category, hits, misses, tokens_saved)
-            VALUES (?, 0, 0, ?)
-            ON CONFLICT(category) DO UPDATE SET tokens_saved = tokens_saved + ?
-        """, (category, tokens_saved, tokens_saved))
-    conn.commit()
-    conn.close()
+    try:
+        if hit:
+            conn.execute("""
+                INSERT INTO cache_stats (category, hits, misses, tokens_saved)
+                VALUES (?, 1, 0, 0)
+                ON CONFLICT(category) DO UPDATE SET hits = hits + 1
+            """, (category,))
+        else:
+            conn.execute("""
+                INSERT INTO cache_stats (category, hits, misses, tokens_saved)
+                VALUES (?, 0, 1, 0)
+                ON CONFLICT(category) DO UPDATE SET misses = misses + 1
+            """, (category,))
+        if tokens_saved:
+            conn.execute("""
+                INSERT INTO cache_stats (category, hits, misses, tokens_saved)
+                VALUES (?, 0, 0, ?)
+                ON CONFLICT(category) DO UPDATE SET tokens_saved = tokens_saved + ?
+            """, (category, tokens_saved, tokens_saved))
+        conn.commit()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: failed to record stats: {e}")
+    finally:
+        conn.close()
 
 
-# --- FILE CACHE (read_file) ---
+# ─── FILE CACHE (hybrid: in-memory LRU + SQLite) ────────────
+
+def _persist_file_to_sqlite(path: str, content: str, stat_result):
+    """Write file to SQLite for cross-session persistence."""
+    path_hash = hashlib.md5(path.encode()).hexdigest()
+    try:
+        conn = _get_db()
+        conn.execute("""
+            INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (path_hash, path, content, stat_result.st_mtime, stat_result.st_size, time.time()))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite persist failed for {path}: {e}")
+
 
 def cached_read(path: str) -> dict:
-    """Read file WITH cache (mtime-based)."""
+    """Read file with hybrid cache.
+
+    Lookup order: in-memory LRU (fast) → SQLite (persistent) → disk.
+    """
     path = os.path.expanduser(path)
     if not os.path.exists(path):
         return {"error": f"File not found: {path}"}
 
     stat = os.stat(path)
-    path_hash = hashlib.md5(path.encode()).hexdigest()
 
-    conn = _get_db()
-    row = conn.execute(
-        "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
-    ).fetchone()
+    # ── 1. In-memory cache (fast path) ──
+    entry = _file_cache.get(path)
+    if entry and entry["mtime"] == stat.st_mtime:
+        tokens_saved = _estimate_tokens(entry["content"])
+        _record("file_cache", hit=True, tokens_saved=tokens_saved)
+        return {"cached": True, "content": entry["content"], "path": path}
+
+    # ── 2. SQLite cache (warm from previous session) ──
+    path_hash = hashlib.md5(path.encode()).hexdigest()
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
+        ).fetchone()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
+        row = None
 
     if row and row["mtime"] == stat.st_mtime:
-        conn.close()
-        _record("file_cache", hit=True, tokens_saved=len(row["content"]) // 4)
+        _file_cache.put(path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size})
+        tokens_saved = _estimate_tokens(row["content"])
+        _record("file_cache", hit=True, tokens_saved=tokens_saved)
         return {"cached": True, "content": row["content"], "path": path}
 
+    # ── 3. Cache miss — read from disk ──
     _record("file_cache", hit=False)
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -138,23 +273,26 @@ def cached_read(path: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-    conn.execute("""
-        INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (path_hash, path, content, stat.st_mtime, stat.st_size, time.time()))
-    conn.commit()
-    conn.close()
+    _file_cache.put(path, {"content": content, "mtime": stat.st_mtime, "size": stat.st_size})
+
+    # Large files (>10 MB) go to SQLite only if they're "static data"
+    # Small files always persist for cross-session reuse
+    if stat.st_size < 10 * 1024 * 1024:
+        _persist_file_to_sqlite(path, content, stat)
+
     return {"cached": False, "content": content, "path": path}
 
 
-# --- SKILL CACHE ---
+# ─── SKILL CACHE (SQLite + in-memory) ───────────────────────
+
+_skill_cache: dict[str, dict] = {}
+_skill_cache_lock = Lock()
+
 
 def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
-    """Load skill + linked files WITH cache."""
+    """Load skill + linked files with cache."""
     if skill_dirs is None:
-        skill_dirs = [
-            str(Path.home() / ".hermes" / "skills"),
-        ]
+        skill_dirs = [str(Path.home() / ".hermes" / "skills")]
 
     skill_path = None
     for base in skill_dirs:
@@ -172,7 +310,6 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     if not skill_path:
         return {"error": f"Skill not found: {skill_name}"}
 
-    # All files in the skill directory
     skill_files = []
     for root, dirs, files in os.walk(skill_path):
         for f in files:
@@ -188,21 +325,30 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     if not skill_files:
         return {"error": f"No files found in skill: {skill_name}"}
 
-    conn = _get_db()
-    row = conn.execute(
-        "SELECT content, cached_at FROM skill_cache WHERE skill_name = ?",
-        (skill_name,)
-    ).fetchone()
+    max_mtime = max(f["mtime"] for f in skill_files) if skill_files else 0
+    with _skill_cache_lock:
+        mem = _skill_cache.get(skill_name)
+        if mem and mem.get("cached_at", 0) >= max_mtime:
+            tokens_saved = _estimate_tokens(mem["content"])
+            _record("skill_cache", hit=True, tokens_saved=tokens_saved)
+            return {"cached": True, "content": mem["content"], "skill": skill_name, "files": len(skill_files)}
 
-    cache_valid = False
-    if row:
-        max_mtime = max(f["mtime"] for f in skill_files)
-        if row["cached_at"] > max_mtime:
-            cache_valid = True
-
-    if cache_valid:
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT content, cached_at FROM skill_cache WHERE skill_name = ?",
+            (skill_name,)
+        ).fetchone()
         conn.close()
-        _record("skill_cache", hit=True, tokens_saved=len(row["content"]) // 4)
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite skill read failed: {e}")
+        row = None
+
+    if row and row.get("cached_at", 0) >= max_mtime:
+        with _skill_cache_lock:
+            _skill_cache[skill_name] = {"content": row["content"], "cached_at": row["cached_at"]}
+        tokens_saved = _estimate_tokens(row["content"])
+        _record("skill_cache", hit=True, tokens_saved=tokens_saved)
         return {"cached": True, "content": row["content"], "skill": skill_name, "files": len(skill_files)}
 
     _record("skill_cache", hit=False)
@@ -215,16 +361,26 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
             continue
 
     content = "\n\n".join(parts)
-    conn.execute("""
-        INSERT OR REPLACE INTO skill_cache (skill_name, content, file_count, cached_at)
-        VALUES (?, ?, ?, ?)
-    """, (skill_name, content, len(skill_files), time.time()))
-    conn.commit()
-    conn.close()
+    now = time.time()
+
+    with _skill_cache_lock:
+        _skill_cache[skill_name] = {"content": content, "cached_at": now}
+
+    try:
+        conn = _get_db()
+        conn.execute("""
+            INSERT OR REPLACE INTO skill_cache (skill_name, content, file_count, cached_at)
+            VALUES (?, ?, ?, ?)
+        """, (skill_name, content, len(skill_files), now))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite skill persist failed: {e}")
+
     return {"cached": False, "content": content, "skill": skill_name, "files": len(skill_files)}
 
 
-# --- TERMINAL CACHE ---
+# ─── TERMINAL CACHE (SQLite — output not on disk) ──────────
 
 DEFAULT_CACHEABLE = {
     "git status": 30, "git log --oneline -5": 30, "git branch": 60, "git diff --stat": 30,
@@ -234,14 +390,31 @@ DEFAULT_CACHEABLE = {
 }
 
 
-def cached_terminal(command: str, ttl: int = None) -> dict:
-    """Run command OR return cached result."""
-    import subprocess
+def _match_terminal(cmd: str, pattern: str) -> bool:
+    """Match a command against a cacheable pattern.
 
-    cmd = command.strip()
+    - Multi-word patterns (e.g. "git status") require exact match.
+    - Single-word patterns (e.g. "hostname", "whoami") require exact match only.
+    - No startswith prefix-matching — prevents false cache of "hostname -I".
+    """
+    # Normalize whitespace
+    cmd_norm = " ".join(cmd.strip().split())
+    pattern_norm = " ".join(pattern.strip().split())
+    return cmd_norm == pattern_norm
+
+
+def cached_terminal(command: str, ttl: int = None) -> dict:
+    """Run command OR return cached result (TTL-based, SQLite-backed).
+
+    Only commands that match a known-cacheable pattern exactly are cached.
+    All other commands execute every time (no cache, no delay).
+    """
+    import subprocess
+    import shlex
+
+    cmd = " ".join(command.strip().split())
     cacheable_ttl = ttl
 
-    # Determine TTL from Config + Defaults
     all_ttls = dict(DEFAULT_CACHEABLE)
     config_ttls = config.get("cache", "terminal_ttls", default={})
     if isinstance(config_ttls, dict):
@@ -249,7 +422,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
 
     is_cacheable = False
     for pattern, t in all_ttls.items():
-        if cmd == pattern or cmd.startswith(pattern):
+        if _match_terminal(cmd, pattern):
             is_cacheable = True
             if cacheable_ttl is None:
                 cacheable_ttl = t
@@ -262,61 +435,61 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     cmd_hash = hashlib.md5(cmd.encode()).hexdigest()
     now = time.time()
 
-    conn = _get_db()
-    row = conn.execute(
-        "SELECT output, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
-        (cmd_hash,)
-    ).fetchone()
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT output, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
+            (cmd_hash,)
+        ).fetchone()
 
-    if row and row["expires_at"] > now:
-        conn.execute("UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,))
-        conn.commit()
+        if row and row["expires_at"] > now:
+            conn.execute("UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,))
+            conn.commit()
+            conn.close()
+            tokens_saved = _estimate_tokens(row["output"])
+            _record("terminal_cache", hit=True, tokens_saved=tokens_saved)
+            return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
         conn.close()
-        _record("terminal_cache", hit=True, tokens_saved=len(row["output"]) // 4)
-        return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite terminal read failed: {e}")
 
     _record("terminal_cache", hit=False)
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+    # Use shlex.split for cacheable commands — avoids shell injection
+    # e.g. cached_terminal("git status; rm -rf /") → ["git", "status; rm -rf /"] → fails safely
+    try:
+        cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
+        result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
+    except Exception:
+        # Fallback to shell=True for complex commands
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
 
     expires = now + (cacheable_ttl or 300)
-    conn.execute("""
-        INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, cached_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (cmd_hash, cmd, result.stdout, result.returncode, now, expires))
-    conn.commit()
-    conn.close()
+    try:
+        conn = _get_db()
+        conn.execute("""
+            INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, cached_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (cmd_hash, cmd, result.stdout, result.returncode, now, expires))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite terminal persist failed: {e}")
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
 
-# --- SCRIPT CACHE (cached_run) ---
+# ─── SCRIPT CACHE (SQLite + mtime) ─────────────────────────
 
 SCRIPT_CACHEABLE_EXTENSIONS = {".py", ".sh", ".bash", ".js", ".ts", ".rs", ".go", ".rb", ".pl"}
 
 
 def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
-    """Run a script file WITH cache (mtime + TTL).
+    """Run a script file WITH cache (mtime + TTL, SQLite-backed).
 
-    Caches by: script path + args + file mtime.
-    Re-runs if the script file was modified or TTL expired.
-
-    ⚠️ SAFETY: Only use for READ-ONLY / idempotent scripts!
-       Scripts that have side effects (write files, API calls, DB writes,
-       git push, deployments, etc.) MUST use ttl=0 to disable caching.
-
-    Cache key = hash(script_path + args). If you pass different args,
-    it's treated as a different script and cached separately.
-
-    Args:
-        script_path: Path to script (.py, .sh, etc.)
-        args: Command-line arguments passed to the script
-        ttl: Cache TTL in seconds (default 300 = 5 min).
-             Set ttl=0 to disable caching for state-changing scripts.
-
-    Returns:
-        dict with keys: output, exit_code, cached
+    Uses shlex.split() for cacheable scripts — safer than shell=True.
     """
     import subprocess
+    import shlex
 
     path = os.path.expanduser(script_path)
     if not os.path.exists(path):
@@ -324,7 +497,6 @@ def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
 
     stat = os.stat(path)
     ext = os.path.splitext(path)[1].lower()
-    # --- ttl=0 means bypass cache entirely ---
     if ttl is not None and ttl <= 0:
         result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
@@ -338,11 +510,16 @@ def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
     path_hash = hashlib.md5(f"{path}:{args}".encode()).hexdigest()
     now = time.time()
 
-    conn = _get_db()
-    row = conn.execute(
-        "SELECT output, exit_code, cached_at FROM script_cache WHERE script_hash = ?",
-        (path_hash,)
-    ).fetchone()
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT output, exit_code, cached_at FROM script_cache WHERE script_hash = ?",
+            (path_hash,)
+        ).fetchone()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite script read failed: {e}")
+        row = None
 
     valid = False
     if row:
@@ -351,49 +528,39 @@ def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
             valid = True
 
     if valid:
-        conn.close()
-        _record("script_cache", hit=True, tokens_saved=len(row["output"]) // 4)
+        tokens_saved = _estimate_tokens(row["output"])
+        _record("script_cache", hit=True, tokens_saved=tokens_saved)
         return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
 
     _record("script_cache", hit=False)
-    result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+    try:
+        # Use shlex.split for cacheable scripts
+        script_args = shlex.split(args, posix=_POSIX_MODE) if args else []
+        cmd = [path] + script_args
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception:
+        result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
 
-    conn.execute("""
-        INSERT OR REPLACE INTO script_cache (script_hash, script_path, args, output, exit_code, cached_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (path_hash, path, args, result.stdout, result.returncode, now))
-    conn.commit()
-    conn.close()
+    try:
+        conn = _get_db()
+        conn.execute("""
+            INSERT OR REPLACE INTO script_cache (script_hash, script_path, args, output, exit_code, cached_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (path_hash, path, args, result.stdout, result.returncode, now))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite script persist failed: {e}")
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
 
-# --- CODE CACHE (cached_exec) ---
+# ─── CODE CACHE (SQLite + content hash) ─────────────────────
 
 def cached_exec(code: str, ttl: int = 120) -> dict:
-    """Execute Python code string WITH cache by content hash.
-
-    Same Python code always returns cached result for TTL seconds.
-    Useful for idempotent computations: data analysis, report gen, formatting.
-
-    ⚠️ SAFETY: Only use for idempotent code!
-       Code that has side effects (file writes, API calls, etc.)
-       MUST use ttl=0 to disable caching.
-
-    Cache key = hash(code_string). Same code = same cache entry,
-    regardless of what the code does!
-
-    Args:
-        code: Python code string (e.g. 'import pandas; print(df.describe())')
-        ttl: Cache TTL in seconds (default 120 = 2 min).
-             Set ttl=0 to disable caching for state-changing code.
-
-    Returns:
-        dict with keys: output, exit_code, cached
-    """
+    """Execute Python code string WITH cache by content hash (SQLite-backed)."""
     import subprocess
 
-    # --- ttl=0 means bypass cache entirely ---
     if ttl is not None and ttl <= 0:
         result = subprocess.run(
             ["python3", "-c", code],
@@ -404,11 +571,16 @@ def cached_exec(code: str, ttl: int = 120) -> dict:
     code_hash = hashlib.md5(code.encode()).hexdigest()
     now = time.time()
 
-    conn = _get_db()
-    row = conn.execute(
-        "SELECT output, exit_code, cached_at FROM code_cache WHERE code_hash = ?",
-        (code_hash,)
-    ).fetchone()
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT output, exit_code, cached_at FROM code_cache WHERE code_hash = ?",
+            (code_hash,)
+        ).fetchone()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite code read failed: {e}")
+        row = None
 
     valid = False
     if row:
@@ -417,8 +589,8 @@ def cached_exec(code: str, ttl: int = 120) -> dict:
             valid = True
 
     if valid:
-        conn.close()
-        _record("code_cache", hit=True, tokens_saved=len(row["output"]) // 4)
+        tokens_saved = _estimate_tokens(row["output"])
+        _record("code_cache", hit=True, tokens_saved=tokens_saved)
         return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
 
     _record("code_cache", hit=False)
@@ -427,58 +599,169 @@ def cached_exec(code: str, ttl: int = 120) -> dict:
         capture_output=True, text=True, timeout=30
     )
 
-    conn.execute("""
-        INSERT OR REPLACE INTO code_cache (code_hash, code, output, exit_code, cached_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (code_hash, code, result.stdout, result.returncode, now))
-    conn.commit()
-    conn.close()
+    try:
+        conn = _get_db()
+        conn.execute("""
+            INSERT OR REPLACE INTO code_cache (code_hash, code, output, exit_code, cached_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (code_hash, code, result.stdout, result.returncode, now))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite code persist failed: {e}")
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
 
-# --- STATS & ADMIN ---
+# ─── MCP CACHE (SQLite, TTL-based) ─────────────────────────
+
+MCP_DEFAULT_TTL = config.get("mcp", "default_ttl", default=60)
+_POSIX_MODE = os.name != 'nt'  # shlex.split: posix=True on Unix, False on Windows
+
+
+def cached_mcp_check(server: str, tool: str, arguments: dict = None, ttl: int = None) -> dict:
+    """Check if an MCP tool call result is cached.
+
+    Returns cached data on hit, or a miss indicator with the cache key.
+    The caller makes the real MCP call on miss, then calls cached_mcp_store().
+
+    Set ttl=0 to bypass the cache entirely.
+    """
+    import json as _json
+
+    # ttl=0 means bypass cache
+    if ttl is not None and ttl <= 0:
+        _record("mcp_cache", hit=False)
+        args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
+        request_str = f"{server}://{tool}?{args_json}"
+        request_hash = hashlib.md5(request_str.encode()).hexdigest()
+        return {"cached": False, "key": request_hash, "bypassed": True, "server": server, "tool": tool}
+
+    ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
+    args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
+    request_str = f"{server}://{tool}?{args_json}"
+    request_hash = hashlib.md5(request_str.encode()).hexdigest()
+    now = time.time()
+
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT data, expires_at FROM mcp_cache WHERE request_hash = ?",
+            (request_hash,)
+        ).fetchone()
+
+        if row and row["expires_at"] > now:
+            conn.execute("UPDATE mcp_cache SET hits = hits + 1 WHERE request_hash = ?", (request_hash,))
+            conn.commit()
+            conn.close()
+            _record("mcp_cache", hit=True, tokens_saved=_estimate_tokens(row["data"]))
+            return {"cached": True, "data": row["data"], "server": server, "tool": tool}
+
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP cache read failed: {e}")
+
+    _record("mcp_cache", False)
+    return {"cached": False, "key": request_hash, "server": server, "tool": tool}
+
+
+def cached_mcp_store(request_hash: str, data: str, ttl: int = None):
+    """Store an MCP tool call result for future cache hits."""
+    ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
+    now = time.time()
+    expires = now + ttl
+    try:
+        conn = _get_db()
+        conn.execute("""INSERT OR REPLACE INTO mcp_cache (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)""", (request_hash, "", "", "", data, now, expires))
+        conn.commit(); conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP cache store failed: {e}")
+
+def cached_mcp(server: str, tool: str, arguments: dict = None,
+               fetch_fn: callable = None, ttl: int = None) -> dict:
+    """One-shot MCP cache: check → (optional) fetch → store → return.
+
+    Usage:
+        data = cached_mcp("fetch", "fetch", {"url": "..."},
+                          fetch_fn=lambda: requests.get(url).json())
+    """
+    import json as _json
+    result = cached_mcp_check(server, tool, arguments, ttl)
+    if result.get("cached"):
+        return _json.loads(result["data"])
+    if fetch_fn is not None:
+        data = fetch_fn()
+        cached_mcp_store(result["key"], _json.dumps(data), ttl)
+        return data
+    return result
+
+
+# ─── STATS & ADMIN ─────────────────────────────────────────
 
 def get_stats() -> dict:
-    """Cache statistics."""
-    conn = _get_db()
+    """Get cache statistics (from SQLite + in-memory)."""
     stats = {}
-    for row in conn.execute("SELECT * FROM cache_stats"):
-        total = row["hits"] + row["misses"]
-        stats[row["category"]] = {
-            "hits": row["hits"],
-            "misses": row["misses"],
-            "tokens_saved": row["tokens_saved"],
-            "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
-        }
-    for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache"]:
-        r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
-        stats[f"{t}_entries"] = r[0]
-    conn.close()
+    try:
+        conn = _get_db()
+        for row in conn.execute("SELECT * FROM cache_stats"):
+            total = row["hits"] + row["misses"]
+            stats[row["category"]] = {
+                "hits": row["hits"],
+                "misses": row["misses"],
+                "tokens_saved": row["tokens_saved"],
+                "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
+            }
+        for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache"]:
+            r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
+            stats[f"{t}_entries"] = r[0]
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite stats failed: {e}")
+
+    stats["memory_file_entries"] = len(_file_cache)
+    stats["memory_used_mb"] = round(_file_cache.memory_bytes() / (1024 * 1024), 2)
+    stats["memory_max_mb"] = MAX_MEMORY_MB
+    with _skill_cache_lock:
+        stats["memory_skill_entries"] = len(_skill_cache)
+
     return stats
 
 
 def invalidate_all():
-    """Clear entire cache."""
+    """Clear ALL caches (memory + SQLite)."""
+    _file_cache.clear()
+    with _skill_cache_lock:
+        _skill_cache.clear()
+
     conn = _get_db()
-    conn.execute("DELETE FROM file_cache")
-    conn.execute("DELETE FROM skill_cache")
-    conn.execute("DELETE FROM terminal_cache")
-    conn.execute("DELETE FROM script_cache")
-    conn.execute("DELETE FROM code_cache")
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM file_cache")
+        conn.execute("DELETE FROM skill_cache")
+        conn.execute("DELETE FROM terminal_cache")
+        conn.execute("DELETE FROM script_cache")
+        conn.execute("DELETE FROM code_cache")
+        conn.execute("DELETE FROM mcp_cache")
+        conn.commit()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite invalidate failed: {e}")
+    finally:
+        conn.close()
 
 
 def invalidate_file(path: str):
-    """Invalidate cache for one file."""
+    """Invalidate a specific file from cache (memory + SQLite)."""
     path = os.path.expanduser(path)
+    _file_cache.remove(path)
+
     h = hashlib.md5(path.encode()).hexdigest()
     conn = _get_db()
-    conn.execute("DELETE FROM file_cache WHERE path_hash = ?", (h,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM file_cache WHERE path_hash = ?", (h,))
+        conn.commit()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: SQLite file invalidate failed: {e}")
+    finally:
+        conn.close()
 
 
-# --- INIT ---
 _init()

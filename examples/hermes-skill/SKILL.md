@@ -7,7 +7,12 @@ tags: [cache, tokens, performance, hermes]
 
 # ToolRecall Auto-Cache
 
-This skill instructs the agent to use ToolRecall's cached variants of tools to save tokens and time.
+⚠️ **CRITICAL ARCHITECTURAL WARNING: CYBERNETIC & STATE RISK** ⚠️
+* **Broken Feedback Loop:** Caching sensing/reading tools breaks the **Read -> Act -> Verify** feedback loop of agents. This can lead to sensory hallucinations, infinite loops, and severe data consistency errors.
+* **DO NOT USE FOR:** Active development, testing, deployments, state-changing scripts, database migrations, or production tasks.
+* **WHEN IT IS USEFUL:** Only for minor, unimportant, or purely read-only tasks where saving token costs is critical and minor state inconsistencies are completely harmless (e.g., reading large static documentation, offline API specs, or parsing completely frozen data sets).
+
+This skill instructs the agent to use ToolRecall's cached variants of tools ONLY when appropriate.
 
 ## Automatic Caching Rules
 

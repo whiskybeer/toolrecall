@@ -30,18 +30,12 @@ ENV_MAP = {
 
 
 def _apply_env_overrides(config: dict) -> dict:
-    """Apply TOOLRECALL_* environment variables on top of config.
-
-    Custom key format: 'TOOLRECALL_KEY'. If the key exists in ENV_MAP,
-    it's placed at the right nested path. Comma-separated values become lists.
-    """
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
         if val is None:
             continue
         if section not in config:
             config[section] = {}
-        # Try int, then try comma-separated list, then keep as string
         try:
             config[section][key] = int(val)
             continue
@@ -66,7 +60,6 @@ class Config:
         self._expand_paths()
 
     def _load(self, path: str = None) -> dict:
-        # Package default
         pkg_default = Path(__file__).parent / "config.toml"
         try:
             with open(pkg_default, "rb") as f:
@@ -74,7 +67,6 @@ class Config:
         except Exception:
             config = {}
 
-        # User config (overrides defaults)
         if path:
             paths = [Path(path)]
         else:
@@ -89,9 +81,7 @@ class Config:
                 except Exception:
                     pass
 
-        # Environment variables (highest priority)
         config = _apply_env_overrides(config)
-
         return config
 
     def _deep_merge(self, base: dict, override: dict):
@@ -102,12 +92,10 @@ class Config:
                 base[key] = val
 
     def _expand_paths(self):
-        """Expand ~ and environment variables in all string values."""
         def expand(val):
             if isinstance(val, str):
                 return os.path.expandvars(os.path.expanduser(val))
             return val
-
         for section in self._data.values():
             if isinstance(section, dict):
                 for key, val in section.items():
@@ -155,7 +143,7 @@ class Config:
 
     @property
     def proxy_port(self) -> int:
-        return self.get("proxy", "port", default=8511)
+        return self.get("proxy", "port", default=8567)
 
     @property
     def proxy_bind(self) -> str:
@@ -174,7 +162,6 @@ _config = None
 
 
 def load_config(path: str = None) -> Config:
-    """Load once, then reuse (singleton)."""
     global _config
     if _config is None or path:
         _config = Config(path)

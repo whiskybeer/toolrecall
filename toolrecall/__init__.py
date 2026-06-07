@@ -17,7 +17,7 @@ Usage:
     info = docs_search('query')
 """
 
-from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, invalidate_all
+from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, invalidate_all, cached_mcp_check, cached_mcp_store, cached_mcp
 from toolrecall.docs import docs_search, docs_get_page
 from toolrecall.config import Config
 from toolrecall.cli import main as cli_main
@@ -29,6 +29,9 @@ __all__ = [
     "cached_terminal",
     "cached_run",
     "cached_exec",
+    "cached_mcp_check",
+    "cached_mcp_store",
+    "cached_mcp",
     "docs_search",
     "docs_get_page",
     "invalidate_all",

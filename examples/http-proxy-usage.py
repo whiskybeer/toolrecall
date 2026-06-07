@@ -3,13 +3,13 @@
 These agents use HTTP endpoints. Start the proxy:
     toolrecall serve
 
-Then configure the agent to use http://localhost:8511 as a tool proxy.
+Then configure the agent to use http://localhost:8567 as a tool proxy.
 """
 
 USAGE_HTTP = """
 # Start the ToolRecall proxy
 $ toolrecall serve
-ToolRecall HTTP proxy running on http://127.0.0.1:8511
+ToolRecall HTTP proxy running on http://127.0.0.1:8567
 
 # Available endpoints:
 # GET /cached_read?path=/path/to/file
@@ -19,9 +19,9 @@ ToolRecall HTTP proxy running on http://127.0.0.1:8511
 # GET /health
 
 # Example with curl:
-curl "http://localhost:8511/cached_read?path=README.md"
-curl "http://localhost:8511/cached_terminal?cmd=hostname"
-curl "http://localhost:8511/docs_search?query=deployment"
+curl "http://localhost:8567/cached_read?path=README.md"
+curl "http://localhost:8567/cached_terminal?cmd=hostname"
+curl "http://localhost:8567/docs_search?query=deployment"
 """
 
 if __name__ == "__main__":

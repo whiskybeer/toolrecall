@@ -2,54 +2,47 @@
 
 Architecture:
 ==============
-ToolRecall has THREE operational modes, each serving a different agent type:
 
-┌─────────────────────────────────────────────────────────────┐
-│                    ToolRecall Architecture                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐    ┌──────────────────┐    ┌──────────┐  │
-│  │ Python Import │    │  HTTP Proxy      │    │  CLI     │  │
-│  │ (direct)      │    │  (toolrecall     │    │ (CI/CD)  │  │
-│  │               │    │   serve)         │    │          │  │
-│  │ Hermes        │    │  ┌────────────┐  │    │ status   │  │
-│  │ Claude Code*  │    │  │ Port 8511  │  │    │ stats    │  │
-│  │ Codex*        │    │  │            │  │    │ index    │  │
-│  │ Any Python    │    │  │ /cached_*  │  │    │ nginx    │  │
-│  │ agent         │    │  │ /docs_*    │  │    └──────────┘  │
-│  └──────┬───────┘    │  │ /health    │  │                   │
-│         │            │  └─────┬──────┘  │                   │
-│         ▼            │        │         │                   │
-│  ┌──────────────────────────────────────────┐               │
-│  │  ToolRecall Cache Core (SQLite FTS5)     │               │
-│  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌───────┐  │               │
-│  │  │File  │ │Term  │ │Skill │ │Script/│  │               │
-│  │  │Cache │ │Cache │ │Cache │ │Code   │  │               │
-│  │  └──────┘ └──────┘ └──────┘ └───────┘  │               │
-│  └──────────────────────────────────────────┘               │
-│              │                                               │
-│              ▼                                               │
-│  ┌──────────────────┐    ┌────────────────┐                 │
-│  │ ~/.toolrecall/   │    │ Nginx (opt.)   │                 │
-│  │ cache.db         │    │ SSL terminator │                 │
-│  │ knowledge.db     │    │ Port 443       │                 │
-│  └──────────────────┘    └────────────────┘                 │
-│                                                              │
-│  * = via HTTP proxy only (no Python import possible)         │
-└─────────────────────────────────────────────────────────────┘
+                    ToolRecall Architecture
 
-Port 8511:
+  ┌──────────────┐    ┌──────────────────┐    ┌──────────┐
+  │ Python Import │    │  HTTP Proxy      │    │  CLI     │
+  │ (direct)      │    │  (toolrecall     │    │ (CI/CD)  │
+  │               │    │   serve)         │    │          │
+  │ Hermes        │    │  Claude Code     │    │ status   │
+  │ Any Python    │    │  Codex           │    │ stats    │
+  │ agent         │    │  Cursor          │    │ index    │
+  │               │    │  Any HTTP agent  │    │ nginx    │
+  └──────┬───────┘    └────────┬─────────┘    └──────────┘
+         │                    │
+         └────────┬───────────┘
+                  │
+  ┌──────────────────────────────────────────┐
+  │  ToolRecall Cache Core (SQLite FTS5)     │
+  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌───────┐  │
+  │  │File  │ │Term  │ │Skill │ │Script/│  │
+  │  │Cache │ │Cache │ │Cache │ │Code   │  │
+  │  └──────┘ └──────┘ └──────┘ └───────┘  │
+  └──────────────────────────────────────────┘
+              │
+              ▼
+  ┌──────────────────┐    ┌────────────────┐
+  │ ~/.toolrecall/   │    │ Nginx (opt.)   │
+  │ cache.db         │    │ SSL terminator │
+  │ knowledge.db     │    │ Port 443       │
+  └──────────────────┘    └────────────────┘
+
+Port 8567:
 ==========
-The HTTP proxy listens on port 8511 by default (configurable via [proxy].port).
-This port was chosen because:
-  1. Not in the system-reserved range (< 1024) — no root needed
-  2. Not conflicting with common services (22, 80, 443, 3000, 8080, etc.)
-  3. Easy to remember: "85" = TR (ToolRecall) in phone-keypad logic
-  4. The proxy is a PLAIN HTTP server (Python stdlib http.server) —
-     NO external dependencies needed
+Default HTTP proxy port (configurable via config.toml [proxy].port).
+Works on any system — not system-reserved (< 1024), no conflicts with
+common services (22, 80, 443, 3000, 8080, etc.). No root required.
+
+The proxy is a PLAIN HTTP server (Python stdlib http.server) —
+NO external dependencies needed.
 
 Nginx is recommended IN FRONT of the proxy for SSL termination + auth.
-The proxy itself does NOT handle SSL — it's intentionally kept dependency-free.
+The proxy itself does NOT handle SSL — intentionally kept dependency-free.
 
 Endpoint Reference:
 ====================
@@ -102,7 +95,8 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
                 if not c:
                     result = {"error": "Missing 'cmd' query parameter"}
                 else:
-                    ttl = int(q.get("ttl", "0")) or None
+                    ttl_str = q.get("ttl", "0")
+                    ttl = int(ttl_str) if ttl_str else None
                     result = cached_terminal(c, ttl)
 
             elif path == "/docs_search":
@@ -135,13 +129,22 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_server(bind: str = "[IP_ADDRESS]", port: int = 8511):
+def run_server(bind: str = "[IP_ADDRESS]", port: int = 8567):
     """Start the ToolRecall HTTP proxy server.
 
     Args:
-        bind: Host to bind to (default: [IP_ADDRESS] = all interfaces)
-        port: Port to listen on (default: 8511)
+        bind: Host to bind to (default: [IP_ADDRESS] = all interfaces, safe)
+        port: Port to listen on (default: 8567)
     """
+    import socket
+    try:
+        socket.getaddrinfo(bind, port)
+    except socket.gaierror:
+        print(f"Warning: '{bind}' does not resolve on this system.")
+        print("Falling back to '[IP_ADDRESS]' (all interfaces).")
+        print("Set TOOLRECALL_PROXY_BIND=[IP_ADDRESS] for localhost-only access.")
+        bind = "[IP_ADDRESS]"
+
     server = http.server.HTTPServer((bind, port), ToolRecallHandler)
     print(f"ToolRecall HTTP proxy running on http://{bind}:{port}")
     print(f"Endpoints:")
