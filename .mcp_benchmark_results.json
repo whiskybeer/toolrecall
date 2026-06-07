@@ -1,0 +1,44 @@
+{
+  "server": "time",
+  "tool": "get_current_time",
+  "arguments": {
+    "timezone": "Europe/Berlin"
+  },
+  "ttl": 60,
+  "response_size_chars": 98,
+  "response_size_tokens": 32,
+  "test_rounds": 10,
+  "miss_times_ms": [
+    163.1755,
+    162.544,
+    162.5146,
+    164.581,
+    164.8275,
+    163.3405,
+    163.6504,
+    164.3065,
+    164.4808,
+    163.6794
+  ],
+  "hit_times_ms": [
+    13.9976,
+    11.7006,
+    12.5873,
+    10.9308,
+    12.1799,
+    12.1537,
+    12.0593,
+    12.1109,
+    12.1724,
+    11.5641
+  ],
+  "miss_avg_ms": 163.71,
+  "hit_avg_ms": 12.1457,
+  "speedup": 13.5,
+  "notes": [],
+  "mcp_cache_hits": 10,
+  "mcp_cache_misses": 11,
+  "tokens_saved": 320,
+  "cached_mcp_miss_ms": 165.4594,
+  "cached_mcp_hit_ms": 14.7189
+}
