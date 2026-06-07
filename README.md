@@ -281,6 +281,7 @@ mcp_servers:
 |---------|---------|---------------------|
 | Voraussetzung | `pip install toolrecall[mcp]` | Keine extra Deps |
 | Protokoll | MCP 2024-11-05 (JSON-RPC) | MCP 2024-11-05 (JSON-RPC) |
+| Security-Infos | ✅ Instructions im serverInfo | ✅ Im `serverInfo.security` Feld |
 | Beschreibungen | ✅ Detaillierte Tool-Docs | ✅ Gleichwertig |
 | Lifecycle | ✅ Auto-Inject in Hermes Toolset | ✅ Gleichwertig |
 | Zusatzfeatures | Progress, Logging, Sampling | Nur tools/list + tools/call |

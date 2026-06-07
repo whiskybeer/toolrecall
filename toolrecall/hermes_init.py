@@ -1,87 +1,84 @@
-# ToolRecall Hermes Init — automatically loaded on every session start.
+# ToolRecall Hermes Init — registriert cached_* Tools via Daemon-Client.
 #
-# This script makes cached_read/cached_terminal/cached_skill/cached_run/cached_exec
-# available in every Hermes session AND registers cached_read/cached_terminal
-# as explicit, separate tools in the Hermes registry (No Monkey-patching!).
+# Dieser Init-Script registriert cached_read und cached_terminal als
+# explizite, separate Tools im Hermes Tool-Registry. Die Tools leiten
+# Anfragen an den ToolRecall Daemon weiter (UDS) — oder nutzen direktes
+# SQLite als Fallback.
 #
-# Installation (one-time):
-#   bash <(curl -s https://raw.githubusercontent.com/Robin/toolrecall/main/setup.sh)
+# Installation:
+#   bash <(curl -s https://raw.githubusercontent.com/whiskybeer/toolrecall/main/setup.sh)
 #
-# Or manually:
+# Oder manuell:
 #   pip install toolrecall
 #   hermes config set agent.init_scripts ["~/.toolrecall/hermes_init.py"]
 #
-# Then restart Hermes or run /reset.
+# Dann restart Hermes oder /reset.
 
 import os
 import sys
 
-# ─── 1. Import ToolRecall ──────────────────────────────────────────
+# ─── 1. Import ToolRecall Client ─────────────────────────────
 try:
-    from toolrecall import cached_read, cached_terminal, cached_skill
-    from toolrecall import cached_run, cached_exec, docs_search
-    from toolrecall.cache import get_stats
+    from toolrecall.client import (
+        cached_read, cached_terminal, cached_skill,
+        docs_search, cache_status, daemon_running,
+    )
     TOOLRECALL_AVAILABLE = True
 except ImportError:
     TOOLRECALL_AVAILABLE = False
     cached_read = None
     cached_terminal = None
     cached_skill = None
-    cached_run = None
-    cached_exec = None
     docs_search = None
-    get_stats = None
+    cache_status = None
+    daemon_running = None
 
 
-# ─── 2. Register separate, explicit cached tools ────────────────────
+# ─── 2. Register separate, explicit cached tools ─────────────
 
 def _register_tools():
-    """Register explicit cached tools to the Hermes tool registry."""
+    """Register cached_read + cached_terminal as Hermes tools."""
     if not TOOLRECALL_AVAILABLE or cached_read is None or cached_terminal is None:
         return
-        
+
     try:
         from tools.registry import registry
-        
-        CACHED_READ_SCHEMA = {
-            "name": "cached_read",
-            "description": "Read a text file with caching (mtime-based). Use this when loading large static documents or configurations that do not change during the session to save tokens.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the file to read (absolute, relative, or ~/path)"}
-                },
-                "required": ["path"]
-            }
-        }
-        
-        CACHED_TERMINAL_SCHEMA = {
-            "name": "cached_terminal",
-            "description": "Run a terminal/shell command with caching based on the command and a TTL. Use this for static commands like uname, hostname, or pwd to save tokens and time.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "The command to execute"},
-                    "ttl": {"type": "integer", "description": "Optional TTL in seconds. Overrides the default TTL for this command."}
-                },
-                "required": ["command"]
-            }
-        }
-        
-        # Register cached_read as a separate, explicit tool
+
         registry.register(
             name="cached_read",
             toolset="file",
-            schema=CACHED_READ_SCHEMA,
+            schema={
+                "name": "cached_read",
+                "description": "Read a text file with caching (mtime-based). "
+                               "Use via Daemon (UDS) or direct SQLite fallback.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to the file"}
+                    },
+                    "required": ["path"]
+                }
+            },
             handler=lambda args, **kw: cached_read(args.get("path", "")),
             emoji="⚡"
         )
-        
-        # Register cached_terminal as a separate, explicit tool
+
         registry.register(
             name="cached_terminal",
             toolset="terminal",
-            schema=CACHED_TERMINAL_SCHEMA,
+            schema={
+                "name": "cached_terminal",
+                "description": "Run a terminal command with TTL caching. "
+                               "Use via Daemon (UDS) or direct SQLite fallback.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "description": "Command"},
+                        "ttl": {"type": "integer", "description": "TTL in seconds"}
+                    },
+                    "required": ["command"]
+                }
+            },
             handler=lambda args, **kw: cached_terminal(args.get("command", ""), ttl=args.get("ttl")),
             emoji="⚡"
         )
@@ -89,22 +86,20 @@ def _register_tools():
         pass
 
 
-# ─── 3. Run on load ─────────────────────────────────────────────────
+# ─── 3. Run on load ──────────────────────────────────────────
+
 if TOOLRECALL_AVAILABLE:
     _register_tools()
 
-    # Show status
-    if get_stats is not None:
-        stats = get_stats()
-        total_saved = sum(s["tokens_saved"] for s in stats.values() if isinstance(s, dict))
-    else:
-        total_saved = 0
-        
+    daemon_active = daemon_running() if daemon_running else False
+
     print(f"  {'='*44}")
-    print(f"  ToolRecall Caching Registered (Safe-by-Default)")
-    print(f"  Separate tools: cached_read, cached_terminal")
-    if total_saved > 0:
-        print(f"  Total tokens saved: {total_saved:,}")
+    print(f"  ToolRecall Caching Registered")
+    print(f"  Tools: cached_read, cached_terminal")
+    if daemon_active:
+        print(f"  Mode:  Daemon (UDS) — shared cache")
+    else:
+        print(f"  Mode:  Direct SQLite — no daemon")
     print(f"  {'='*44}")
     print()
 else:

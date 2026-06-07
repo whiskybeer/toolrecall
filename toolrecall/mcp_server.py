@@ -395,6 +395,17 @@ def run_stdio_fallback():
     allow_terminal = cfg.mcp_allow_terminal
     allow_invalidate = cfg.mcp_allow_invalidate
 
+    # Security status banner (same as FastMCP main())
+    print(f"ToolRecall MCP Server (stdio fallback)", file=sys.stderr)
+    print(f"  cached_read path whitelist: "
+          f"{', '.join(allowed_paths) if allowed_paths else 'ALL PATHS (DANGEROUS)'}",
+          file=sys.stderr)
+    print(f"  cached_terminal: {'ENABLED' if allow_terminal else 'DISABLED (default)'}",
+          file=sys.stderr)
+    print(f"  cache_invalidate: {'ENABLED' if allow_invalidate else 'DISABLED (default)'}",
+          file=sys.stderr)
+    print(file=sys.stderr)
+
     TOOLS = _build_tool_list(cfg)
 
     def handle_safe_tool(tool_name: str, arguments: dict):

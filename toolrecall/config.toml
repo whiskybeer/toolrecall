@@ -53,6 +53,27 @@ allow_terminal = false
 # Allow cache_invalidate tool (OFF by default — destructive!)
 allow_invalidate = false
 
+# ─── MCP Multiplexer ─────────────────────
+[mcp_multiplex]
+# Enable multiplexing of external MCP servers through the daemon.
+# When enabled, the daemon starts persistent subprocesses for each configured
+# MCP server. Hermes then needs only ONE MCP server in config.yaml (toolrecall).
+enabled = true
+
+# Whitelist of server names to multiplex. Empty = all configured.
+# Example: ["github", "time", "fetch"]
+servers = []
+
+# Path to Hermes config.yaml for auto-discovery of MCP servers.
+# Empty = auto-detect (~/.hermes/config.yaml)
+# hermes_config = ""
+
+# Explicit server configs (same format as Hermes mcp_servers).
+# If empty, the multiplexer reads from Hermes config.yaml.
+# [mcp_multiplex.servers_config]
+# github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
+# time = { command = "uvx", args = ["mcp-server-time"] }
+
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]
 scan_dirs = [

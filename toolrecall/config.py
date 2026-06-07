@@ -29,6 +29,9 @@ ENV_MAP = {
     "TOOLRECALL_MCP_ALLOWED_PATHS": ("mcp", "allowed_paths"),
     "TOOLRECALL_MCP_ALLOW_TERMINAL": ("mcp", "allow_terminal"),
     "TOOLRECALL_MCP_ALLOW_INVALIDATE": ("mcp", "allow_invalidate"),
+    "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
+    "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
+    "TOOLRECALL_MCP_MULTIPLEX_HERMES_CONFIG": ("mcp_multiplex", "hermes_config"),
 }
 
 
@@ -179,6 +182,145 @@ class Config:
     def mcp_allow_invalidate(self) -> bool:
         """Allow cache_invalidate tool (default: False)."""
         return self.get("mcp", "allow_invalidate", default=False)
+
+    # ─── MCP Multiplex Properties ─────────────────────
+
+    @property
+    def mcp_multiplex_enabled(self) -> bool:
+        """Enable MCP Multiplexer (default: True)."""
+        return self.get("mcp_multiplex", "enabled", default=True)
+
+    @property
+    def mcp_multiplex_servers(self) -> list:
+        """Whitelist of server names to multiplex. Empty = all configured."""
+        return self.get("mcp_multiplex", "servers", default=[])
+
+    @property
+    def mcp_multiplex_hermes_config(self) -> str:
+        """Path to Hermes config.yaml for discovering MCP servers.
+        Empty = auto-detect (looks at ~/.hermes/config.yaml)."""
+        return self.get("mcp_multiplex", "hermes_config", default="")
+
+    @property
+    def mcp_multiplex_servers_config(self) -> dict:
+        """Parse Hermes-style mcp_servers config from toolrecall config or Hermes config.yaml.
+
+        The [mcp_multiplex.servers_config] section follows the same format as
+        Hermes' mcp_servers, but if empty, we auto-detect from Hermes config.
+        """
+        # First try toolrecall's own config section
+        raw = self.get("mcp_multiplex", "servers_config", default=None)
+        if raw and isinstance(raw, dict):
+            return raw
+
+        # Fall back to Hermes config
+        hermes_cfg_path = self.mcp_multiplex_hermes_config
+        if not hermes_cfg_path:
+            hermes_cfg_path = os.path.expanduser("~/.hermes/config.yaml")
+
+        if os.path.exists(hermes_cfg_path):
+            try:
+                # Simple YAML-free parser for mcp_servers section
+                return self._parse_hermes_mcp_servers(hermes_cfg_path)
+            except Exception:
+                pass
+
+        return {}
+
+    def _parse_hermes_mcp_servers(self, path: str) -> dict:
+        """Minimal YAML parser to extract mcp_servers from Hermes config.yaml.
+        
+        Handles the known structure:
+          mcp_servers:
+            github:
+              command: npx
+              args: ["-y", "@modelcontextprotocol/server-github"]
+              env: {KEY: value}
+        """
+        servers = {}
+        with open(path, "r") as f:
+            lines = f.readlines()
+
+        in_mcp_servers = False
+        current_server = None
+        current_config = {}
+        indent_level = 0
+
+        for line in lines:
+            stripped = line.rstrip()
+            if not stripped or stripped.strip().startswith("#"):
+                continue
+
+            # Detect mcp_servers block
+            if stripped.strip() == "mcp_servers:" and not stripped.startswith(" "):
+                in_mcp_servers = True
+                indent_level = 0
+                continue
+
+            if not in_mcp_servers:
+                continue
+
+            # Check if we've left the mcp_servers block
+            cur_indent = len(line) - len(line.lstrip())
+            if cur_indent == 0 and line.strip() and ":" in line:
+                in_mcp_servers = False
+                break
+
+            # Server name (e.g., "  github:")
+            if cur_indent == 2 and stripped.strip().endswith(":"):
+                if current_server and current_config:
+                    servers[current_server] = current_config
+                current_server = stripped.strip().rstrip(":")
+                current_config = {"command": "", "args": [], "env": {}}
+                indent_level = 2
+                continue
+
+            # Properties like command, args
+            if current_server:
+                key_val = stripped.strip()
+                if ": " in key_val:
+                    key, val = key_val.split(": ", 1)
+                    key = key.strip()
+                    if key == "command":
+                        current_config["command"] = val.strip().strip('"').strip("'")
+                        # Handle multi-word commands like "uv run"
+                        cmd_parts = current_config["command"].split()
+                        if len(cmd_parts) > 1:
+                            current_config["command"] = cmd_parts[0]
+                            extra_args = cmd_parts[1:]
+                            current_config.setdefault("args", [])
+                            current_config["args"] = extra_args + current_config["args"]
+                    elif key == "args":
+                        # Parse inline list like "[-y, @modelcontextprotocol/...]"
+                        # or it might be on next lines with "- item"
+                        val = val.strip()
+                        if val.startswith("["):
+                            args = []
+                            for item in val.strip("[]").split(","):
+                                item = item.strip().strip('"').strip("'")
+                                if item:
+                                    args.append(item)
+                            current_config["args"] = args
+                        else:
+                            current_config["args"] = []
+                    elif key == "timeout":
+                        try:
+                            current_config["timeout"] = int(val)
+                        except ValueError:
+                            pass
+                elif stripped.strip().startswith("- "):
+                    # Array items on separate lines
+                    item = stripped.strip()[2:].strip().strip('"').strip("'")
+                    if key_val.count('"') <= 2:  # simple string item
+                        current_config.setdefault("args", []).append(item)
+
+        # Don't forget the last server
+        if current_server and current_config:
+            servers[current_server] = current_config
+
+        # Filter out toolrecall itself to avoid circular startup
+        servers.pop("toolrecall", None)
+        return servers
 
 
 _config = None

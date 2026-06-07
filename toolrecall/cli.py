@@ -1,65 +1,95 @@
-"""ToolRecall CLI -- toolrecall status, stats, invalidate, index, serve, nginx.
+"""ToolRecall CLI -- toolrecall status, stats, invalidate, index, serve, nginx, mcp, daemon.
 
 Usage:
     toolrecall status          # Show cache status
-    toolrecall stats           # Detailed statistics
+    toolrecall stats           # Detailed statistics (JSON)
     toolrecall invalidate      # Clear cache
     toolrecall index           # Index knowledge base
-    toolrecall serve           # Start HTTP proxy (fallback, nginx recommended)
+    toolrecall serve           # Start HTTP proxy (via Daemon)
     toolrecall nginx           # Generate nginx config
+    toolrecall mcp             # Start MCP Bridge (stdio → Daemon)
+    toolrecall mcp-legacy      # Start standalone MCP Server (no Daemon needed)
+    toolrecall daemon          # Start Cache Daemon (background)
+    toolrecall daemon --stop   # Stop Daemon
+    toolrecall daemon --status # Show Daemon status
+    toolrecall daemon --foreground  # Start in foreground
 """
 import os, sys, json
-def cmd_status():
-    """Show cache status."""
-    from toolrecall.cache import get_stats
-    stats = get_stats()
-    print("=" * 50)
-    print("  ToolRecall Status")
-    print("=" * 50)
-    for k, v in stats.items():
-        if isinstance(v, dict):
-            print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
-                  f"hit_rate={v['hit_rate']}, tokens_saved={v['tokens_saved']:,}")
-        else:
-            print(f"  {k}: {v}")
 
+def cmd_status():
+    """Show cache status via Daemon oder direkt."""
+    try:
+        from toolrecall.client import cache_status
+        print(cache_status())
+    except Exception:
+        from toolrecall.cache import get_stats
+        stats = get_stats()
+        print("=" * 50)
+        print("  ToolRecall Status (direct)")
+        print("=" * 50)
+        for k, v in stats.items():
+            if isinstance(v, dict):
+                print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
+                      f"hit_rate={v['hit_rate']}, tokens_saved={v['tokens_saved']:,}")
+            else:
+                print(f"  {k}: {v}")
 
 def cmd_stats():
     """Detailed statistics as JSON."""
-    from toolrecall.cache import get_stats
-    print(json.dumps(get_stats(), indent=2))
-
+    try:
+        from toolrecall.client import cache_status
+        import re
+        print(cache_status())  # String output für CLI
+    except Exception:
+        from toolrecall.cache import get_stats
+        print(json.dumps(get_stats(), indent=2))
 
 def cmd_invalidate():
-    """Clear cache."""
-    from toolrecall.cache import invalidate_all
-    invalidate_all()
-    print("ToolRecall cache cleared.")
-
+    """Clear cache via Daemon oder direkt."""
+    try:
+        from toolrecall.client import cache_invalidate
+        print(cache_invalidate())
+    except Exception:
+        from toolrecall.cache import invalidate_all
+        invalidate_all()
+        print("ToolRecall cache cleared (direct).")
 
 def cmd_index():
     """Index knowledge base."""
-    from toolrecall.docs import index_all, DB_PATH
+    from toolrecall.docs import index_all
     print("Indexing knowledge database...")
     total = index_all()
     print(f"Done. {total} pages indexed.")
-    print(f"Database: {DB_PATH}")
-
 
 def cmd_serve():
-    """Start HTTP proxy (delegates to toolrecall.proxy)."""
+    """Start HTTP proxy (via Daemon)."""
     from toolrecall.proxy import run_server
     from toolrecall.config import load_config
-
     cfg = load_config()
     run_server(bind=cfg.proxy_bind, port=cfg.proxy_port)
 
-
 def cmd_mcp():
-    """Start ToolRecall MCP server (exposes cache/search as MCP tools)."""
-    from toolrecall.mcp_server import main as mcp_main
-    mcp_main()
+    """Start MCP Bridge (stdio → Daemon)."""
+    from toolrecall.mcp_bridge import main as bridge_main
+    bridge_main()
 
+def cmd_mcp_legacy():
+    """Start standalone MCP Server (no Daemon needed, legacy)."""
+    from toolrecall.mcp_server import main as legacy_main
+    legacy_main()
+
+def cmd_daemon():
+    """Manage the ToolRecall Cache Daemon."""
+    from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
+
+    if "--stop" in sys.argv:
+        stop_daemon()
+    elif "--status" in sys.argv:
+        daemon_status()
+    elif "--foreground" in sys.argv:
+        run_daemon(foreground=True)
+    else:
+        run_daemon(foreground=False)
 
 def cmd_nginx():
     """Generate nginx config."""
@@ -77,20 +107,15 @@ server {
     listen 80;
     server_name localhost;
 
-    # === IMPORTANT: Nginx itself does NOT cache ===
-    # ToolRecall manages its own cache (SQLite)
-    # Nginx is ONLY SSL terminator + router
     proxy_cache off;
     proxy_no_cache 1;
     proxy_cache_bypass 1;
 
     location /toolrecall/ {
-        proxy_pass http://127.0.0.1:8567/;
+        proxy_pass http://[IP_ADDRESS]:8567/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-        # Timeouts (ToolRecall is fast, but LLM can be slow)
         proxy_connect_timeout 5s;
         proxy_read_timeout 30s;
         proxy_send_timeout 30s;
@@ -108,10 +133,8 @@ server {
 # server {
 #     listen 443 ssl;
 #     server_name toolrecall.dev;
-#
 #     ssl_certificate /etc/letsencrypt/live/toolrecall.dev/fullchain.pem;
 #     ssl_certificate_key /etc/letsencrypt/live/toolrecall.dev/privkey.pem;
-#
 #     location /toolrecall/ {
 #         proxy_pass http://[IP_ADDRESS]:8567/;
 #     }
@@ -125,12 +148,6 @@ server {
     print(f"  sudo cp {out_path} /etc/nginx/sites-available/toolrecall")
     print("  sudo ln -s /etc/nginx/sites-available/toolrecall /etc/nginx/sites-enabled/")
     print("  sudo nginx -t && sudo systemctl reload nginx")
-    print()
-    print("To add password protection:")
-    print("  sudo apt install apache2-utils")
-    print("  sudo htpasswd -c /etc/nginx/.htpasswd_toolrecall yourpassword")
-    print("  # Then uncomment the auth_basic lines in the config above")
-
 
 def main():
     if len(sys.argv) < 2:
@@ -141,8 +158,11 @@ def main():
         print("  stats        Detailed stats (JSON)")
         print("  invalidate   Clear all caches")
         print("  index        Build/update knowledge database")
-        print("  serve        Start HTTP proxy (fallback, nginx recommended)")
+        print("  serve        Start HTTP proxy")
         print("  nginx        Generate nginx config")
+        print("  mcp          Start MCP Bridge (requires daemon)")
+        print("  mcp-legacy   Start standalone MCP Server (no daemon)")
+        print("  daemon       Start/stop/manage cache daemon")
         return
 
     cmd = sys.argv[1]
@@ -154,10 +174,12 @@ def main():
         "serve": cmd_serve,
         "nginx": cmd_nginx,
         "mcp": cmd_mcp,
+        "mcp-legacy": cmd_mcp_legacy,
+        "daemon": cmd_daemon,
     }
 
     if cmd in commands:
         commands[cmd]()
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: status, stats, invalidate, index, serve, nginx, mcp")
+        print("Available: status, stats, invalidate, index, serve, nginx, mcp, mcp-legacy, daemon")
