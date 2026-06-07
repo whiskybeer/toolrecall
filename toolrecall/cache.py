@@ -158,7 +158,11 @@ CREATE INDEX IF NOT EXISTS idx_mcp_expires ON mcp_cache(expires_at);
 
 
 def _get_db():
-    db_path = os.path.expanduser(load_config().cache_db)
+    cfg = load_config()
+    if cfg.storage_backend != "sqlite":
+        warnings.warn(f"ToolRecall: Backend '{cfg.storage_backend}' not yet implemented. Falling back to 'sqlite'.")
+
+    db_path = os.path.expanduser(cfg.cache_db)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")

@@ -32,6 +32,7 @@ ENV_MAP = {
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
     "TOOLRECALL_MCP_MULTIPLEX_HERMES_CONFIG": ("mcp_multiplex", "hermes_config"),
+    "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
 }
 
 
@@ -130,6 +131,14 @@ class Config:
     @property
     def knowledge_db(self) -> str:
         return self.get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db")
+
+    # ─── Storage Configuration ────────────────────────
+
+    @property
+    def storage_backend(self) -> str:
+        """Storage backend for caching. Default: 'sqlite'. Future: 'redis', 'postgres'."""
+        val = self.get("storage", "backend", default="sqlite")
+        return str(val).lower() if val else "sqlite"
 
     @property
     def file_ttl(self) -> int:

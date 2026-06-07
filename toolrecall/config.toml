@@ -9,6 +9,13 @@
 cache_db = "~/.toolrecall/cache.db"        # Tool output cache
 knowledge_db = "~/.toolrecall/knowledge.db" # FTS5 knowledge base
 
+# ─── Storage Backend ──────────────────────
+[storage]
+# Currently supported: "sqlite"
+# Future roadmap: "redis", "postgres", "memory_only"
+# Using an abstraction flag to prepare for future implementations.
+backend = "sqlite"
+
 # ─── Cache TTLs (seconds, -1 = infinite) ──
 [cache]
 file_ttl = -1          # read_file: until file modification (mtime)
