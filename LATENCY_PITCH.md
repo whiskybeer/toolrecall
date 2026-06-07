@@ -55,7 +55,13 @@ You cannot cache everything. If an agent is scraping live stock prices, tailing 
 *Solution:* The developer must explicitly set `ttl=0` (Time-To-Live) for dynamic commands, or disable caching for specific MCP endpoints.
 
 ### Catch 3: Memory Trade-off (RAM vs Tokens)
-While ToolRecall drastically reduces LLM API costs and execution time, it trades this for local RAM and Disk IO. The local host must run the ToolRecall Daemon, maintain the SQLite database, and hold the LRU cache in memory. (Though v0.3.0 mitigates this via Lazy Loading, dropping idle RAM to 11MB).
+While ToolRecall drastically reduces LLM API costs and execution time, it trades this for local RAM and Disk IO. The local host must run the ToolRecall Daemon, maintain the SQLite database, and hold the LRU cache in memory. 
+
+**For example (Data from our GCP e2-medium instance):**
+- **Daemon Base RAM:** ~11 MB (idle state).
+- **SQLite DB Size:** ~2.1 MB on disk (after 827 tool executions).
+- **Active MCP Server Footprint:** Spiking to ~130 MB when a Node-based MCP server (like GitHub) is lazy-loaded, then returning to 11 MB after the 15-minute idle timeout.
+- **The Trade-off:** You are spending ~11-130 MB of local RAM to avoid paying $280 in cloud API token fees.
 
 ## Conclusion
 ToolRecall is not magic; it is **Middleware Proxy Caching** applied to AI. It sacrifices a small amount of local RAM and requires strict cache invalidation rules. In return, it yields a 1000x speedup in local tool execution and saves hours of API latency.
