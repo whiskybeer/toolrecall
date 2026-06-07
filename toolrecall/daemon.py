@@ -139,9 +139,23 @@ class MCPClientSession:
         return self._proc is not None and self._proc.poll() is None
 
     def _start(self):
-        """Start the subprocess."""
+        """Start the subprocess with env vars from ~/.toolrecall/.env."""
         full_env = os.environ.copy()
         full_env.update(self.env)
+        # Load env vars from ~/.toolrecall/.env for persistent secrets
+        env_file = os.path.expanduser("~/.toolrecall/.env")
+        if os.path.exists(env_file):
+            try:
+                with open(env_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, val = line.split("=", 1)
+                            key, val = key.strip(), val.strip().strip('"').strip("'")
+                            if key and val:
+                                full_env[key] = val
+            except Exception:
+                pass
         self._proc = subprocess.Popen(
             [self.command, *self.args],
             stdin=subprocess.PIPE,

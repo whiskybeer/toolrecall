@@ -69,10 +69,14 @@ servers = []
 # hermes_config = ""
 
 # Explicit server configs (same format as Hermes mcp_servers).
-# If empty, the multiplexer reads from Hermes config.yaml.
-# [mcp_multiplex.servers_config]
-# github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
-# time = { command = "uvx", args = ["mcp-server-time"] }
+# These are used when mcp_multiplex.hermes_config is empty or the servers
+# are only defined here. Can supplement or override the Hermes config.
+[mcp_multiplex.servers_config]
+github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
+time = { command = "uvx", args = ["mcp-server-time"] }
+fetch = { command = "uvx", args = ["mcp-server-fetch"] }
+"hermes-docs" = { command = "uv", args = ["run", "/home/hermes/.hermes/scripts/docs_mcp/server.py"] }
+"sequential-thinking" = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]

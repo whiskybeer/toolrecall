@@ -1,0 +1,22 @@
+[Unit]
+Description=ToolRecall Daemon — Tool-Output Cache + MCP Multiplexer
+After=network.target
+
+[Service]
+Type=simple
+User=hermes
+ExecStart=/home/hermes/toolrecall/.venv/bin/toolrecall daemon --foreground
+WorkingDirectory=/home/hermes/toolrecall
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=soft
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
