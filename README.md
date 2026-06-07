@@ -1,13 +1,14 @@
-# ToolRecall: The L1 Cache for LLM Agents
+# ToolRecall: The L1 Cache & MCP Multiplexer for LLM Agents
 
-**An $O(N^2)$ Context Mitigation & MCP Multiplexer Middleware**
+**An $O(N^2)$ Context Mitigation & AI-Gateway Middleware**
 
-ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous AI agents like Claude Code, Cursor, Aider, and Hermes. It sits between the agent and the operating system, caching tool executions and managing external MCP servers via Unix Domain Sockets (IPC).
+ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous AI agents like Claude Code, Cursor, Aider, and Hermes. It sits between the agent and the operating system, caching tool executions and managing external MCP (Model Context Protocol) servers via Unix Domain Sockets (IPC).
 
 The core value proposition: **It breaks the $O(N^2)$ context snowball effect.** 
-In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** in a single 13-hour session by serving tool results from a local SQLite FTS5 database in 1.5ms.
+In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** in a single 13-hour session by serving tool results from a local SQLite database in 1.5ms.
 
 👉 **[Read the 141M Token Benchmark Case Study](BENCHMARK.md)**
+👉 **[Read the 85-Minute Latency Mitigation Pitch](LATENCY_PITCH.md)**
 
 ---
 
@@ -41,11 +42,11 @@ ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** for LLM agent
 - **File Cache:** Invalidates instantly based on file modifications (`mtime`) and internal invalidation locks.
 - **Terminal Cache:** Caches read-only shell commands based on TTLs (e.g., `git status` for 30s).
 
-### 2. The MCP Multiplexer
-Running 5 different MCP Servers (GitHub, Time, Fetch, etc.) per session wastes RAM (~600MB) and startup time.
-- ToolRecall acts as a persistent host for your MCP servers.
+### 2. The Universal MCP Multiplexer (AI Gateway)
+Running 5 different MCP Servers (GitHub, Postgres, Brave Search, etc.) per session wastes RAM (~600MB) and startup time.
+- ToolRecall acts as a persistent host (Gateway) for **all** your MCP servers.
 - **Lazy Loading:** Servers boot in 0.01s only when a tool is requested.
-- **Idle Timeout:** Servers are killed after 15 minutes of inactivity to recover RAM (dropping daemon footprint from 490MB to 11MB).
+- **Idle Timeout:** Servers are killed after 15 minutes of inactivity to recover RAM (dropping daemon footprint from 130MB to 11MB).
 - Agents only connect to **ONE** server: `toolrecall mcp`.
 
 ---
@@ -101,6 +102,14 @@ brave-search = { command = "npx", args = ["-y", "@modelcontextprotocol/server-br
 # Set ttl = 0 to entirely bypass caching for dynamic endpoints (like CI logs or real-time data)
 ```
 
+## Data Engine (RLHF / SFT Trajectories)
+As a byproduct of OS-level interception, ToolRecall's SQLite database naturally records pristine pairs of (Action $\rightarrow$ State Observation), including failed executions and subsequent corrections. 
+
+You can extract this data to train open-weight AI models to become better autonomous agents.
+```bash
+toolrecall export-dataset ~/trajectories.jsonl
+```
+This generates a clean JSONL dataset ready for Supervised Fine-Tuning (SFT) or Direct Preference Optimization (DPO).
 ## Cross-Platform Support
 ToolRecall uses **Unix Domain Sockets (IPC)** for daemon communication, making it highly secure.
 - **Linux:** Uses `XDG_RUNTIME_DIR` (e.g., `/run/user/1000/toolrecall.sock`).
