@@ -1,0 +1,54 @@
+# ToolRecall — Konfiguration
+#
+# Läuft via toolrecall.toml im aktuellen Verzeichnis oder ~/.config/toolrecall.
+# Alle Pfade, TTLs und Ports sind hier konfigurierbar.
+
+# ─── Kern-Pfade ────────────────────────────────────────────────────
+[paths]
+cache_db = "~/.toolrecall/cache.db"        # Tool-Output-Cache
+knowledge_db = "~/.toolrecall/knowledge.db" # FTS5-Wissensdatenbank
+
+# ─── Cache-TTLs (in Sekunden, -1 = unendlich) ──────────────────────
+[cache]
+file_ttl = -1          # read_file: bis Datei-Änderung (mtime)
+skill_ttl = -1         # skill_view: bis Skill-Update
+terminal_default_ttl = 300  # 5 Minuten für unbekannte Kommandos
+
+[cache.terminal_ttls]
+"git status" = 30
+"git log --oneline -5" = 30
+"git branch" = 60
+"git diff --stat" = 30
+"hostname" = 3600
+"whoami" = 3600
+"pwd" = 3600
+"uname -a" = 3600
+"uptime" = 300
+"free -h" = 300
+"df -h /" = 300
+"ls -la" = 60
+"crontab -l" = 3600
+
+# ─── Nginx-Proxy (empfohlen, wenn verfügbar) ───────────────────────
+[proxy]
+port = 8511
+bind = "127.0.0.1"
+nginx_recommended = true    # In Docs anzeigen: "nginx empfohlen"
+nginx_auto_site = false     # true: /etc/nginx/sites-available automatisch
+
+[nginx]
+site_name = "toolrecall"
+domain = "localhost"
+ssl = false
+ssl_cert = ""
+ssl_key = ""
+
+# ─── Datenquellen für Knowledge Cache (FTS5) ───────────────────────
+[sources]
+scan_dirs = [
+    "~/.hermes/skills",
+    "~",
+]
+scan_extensions = [".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]
+scan_ignore = [".git", "node_modules", ".venv", "dist", "build", "__pycache__"]
+max_file_kb = 100
