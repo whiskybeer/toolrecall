@@ -663,7 +663,11 @@ class DaemonServer:
             return {"error": "Missing 'tool'"}
 
         # Check cache first
-        cached = _cache_mcp_check(server, tool, arguments)
+        # Pass TTL if configured for this server (defaulting to None falls back to MCP_DEFAULT_TTL)
+        server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
+        ttl = server_cfg.get("ttl", None)
+        
+        cached = _cache_mcp_check(server, tool, arguments, ttl=ttl)
         if cached.get("cached"):
             return {"result": cached["data"], "cached": True}
 

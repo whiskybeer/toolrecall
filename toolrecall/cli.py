@@ -13,8 +13,81 @@ Usage:
     toolrecall daemon --stop   # Stop Daemon
     toolrecall daemon --status # Show Daemon status
     toolrecall daemon --foreground  # Start in foreground
+    toolrecall init            # Create default config.toml and .env
 """
 import os, sys, json
+
+def cmd_init():
+    """Create boilerplate config and .env for users."""
+    import os
+    cfg_dir = os.path.expanduser("~/.toolrecall")
+    os.makedirs(cfg_dir, exist_ok=True)
+    
+    cfg_path = os.path.join(cfg_dir, "config.toml")
+    env_path = os.path.join(cfg_dir, ".env")
+    
+    cfg_content = """# ToolRecall Configuration
+# Created by `toolrecall init`
+
+[storage]
+backend = "sqlite"
+
+[mcp]
+# Security: Only these directories can be read by the LLM via ToolRecall File-MCP.
+# Adjust this to match your project paths to prevent prompt injections!
+allowed_paths = [
+    "~/projects",
+    "~/.hermes/skills"
+]
+allow_terminal = false # Set to true ONLY if you understand the security risks
+allow_invalidate = false
+default_ttl = 60 # Default cache time for MCP tools in seconds
+
+[mcp_multiplex]
+enabled = true
+idle_minutes = 15 # Shut down MCP servers after 15 minutes of inactivity
+
+[mcp_multiplex.servers_config]
+# Add your MCP servers here instead of your agent's config
+# Example: GitHub MCP
+github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"], ttl = 60 }
+"""
+    
+    env_content = """# ToolRecall Secrets
+# Loaded safely by the Daemon. Do NOT commit this file.
+# Example for GitHub MCP:
+GITHUB_PERSONAL_ACCESS_TOKEN=""
+"""
+
+    created_cfg = False
+    if not os.path.exists(cfg_path):
+        with open(cfg_path, "w") as f:
+            f.write(cfg_content)
+        created_cfg = True
+    
+    created_env = False
+    if not os.path.exists(env_path):
+        with open(env_path, "w") as f:
+            f.write(env_content)
+        # Protect .env
+        os.chmod(env_path, 0o600)
+        created_env = True
+        
+    print(f"ToolRecall directory: {cfg_dir}")
+    if created_cfg:
+        print("✅ Created default config.toml")
+    else:
+        print("ℹ️ config.toml already exists")
+        
+    if created_env:
+        print("✅ Created default .env")
+    else:
+        print("ℹ️ .env already exists")
+        
+    print("\nNext steps:")
+    print("1. Edit ~/.toolrecall/config.toml to add your project paths.")
+    print("2. Edit ~/.toolrecall/.env to add your API keys.")
+    print("3. Start the daemon: toolrecall daemon")
 
 def cmd_status():
     """Show cache status via Daemon oder direkt."""
@@ -154,6 +227,7 @@ def main():
         print("Usage: toolrecall <command>")
         print()
         print("Commands:")
+        print("  init         Create default config.toml and .env")
         print("  status       Cache status and stats")
         print("  stats        Detailed stats (JSON)")
         print("  invalidate   Clear all caches")
@@ -167,6 +241,7 @@ def main():
 
     cmd = sys.argv[1]
     commands = {
+        "init": cmd_init,
         "status": cmd_status,
         "stats": cmd_stats,
         "invalidate": cmd_invalidate,

@@ -58,7 +58,10 @@ Running 5 different MCP Servers (GitHub, Time, Fetch, etc.) per session wastes R
 # 1. Install via pip
 pip install toolrecall[mcp]
 
-# 2. Start the Daemon in the background (or as systemd service)
+# 2. Initialize default config and .env (Creates ~/.toolrecall/)
+toolrecall init
+
+# 3. Start the Daemon in the background
 toolrecall daemon &
 ```
 
@@ -76,14 +79,21 @@ Secrets (like `GITHUB_PERSONAL_ACCESS_TOKEN`) should be placed in `~/.toolrecall
 [mcp]
 allowed_paths = ["~/projects", "~/.hermes/skills"]
 allow_terminal = false # Security: Prevents Prompt Injection executions
+default_ttl = 60 # Default TTL for MCP requests in seconds
 
 [mcp_multiplex]
 enabled = true
 idle_minutes = 15
 
 [mcp_multiplex.servers_config]
-github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
+github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"], ttl = 60 }
+# Set ttl = 0 to entirely bypass caching for dynamic endpoints (like CI logs or real-time data)
 ```
+
+## Cross-Platform Support
+ToolRecall uses **Unix Domain Sockets (IPC)** for daemon communication, making it highly secure.
+- **Linux:** Uses `XDG_RUNTIME_DIR` (e.g., `/run/user/1000/toolrecall.sock`).
+- **macOS / Windows 10+:** Falls back automatically to `~/.toolrecall/toolrecall.sock`. Windows Named Pipes/AF_UNIX are supported.
 
 ## Status
 **Experimental.** ToolRecall is currently used in heavy autonomous agent workflows. Before deploying it in production CI/CD environments, ensure your allowlist is strictly scoped.
