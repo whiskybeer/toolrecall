@@ -1,12 +1,12 @@
-"""ToolRecall Daemon — Zentraler Cache-Prozess mit UDS-Interface + MCP Multiplexer.
+"""ToolRecall Daemon — Central cache process with UDS interface + MCP Multiplexer.
 
-Der Daemon hält In-Memory LRU + SQLite und akzeptiert Requests
-über Unix Domain Socket. Alle Zugänge (Python-Import, MCP, HTTP)
-sprechen mit dem Daemon — ein Cache, immer warm.
+The daemon holds the In-Memory LRU + SQLite and accepts requests
+via Unix Domain Socket. All access paths (Python import, MCP, HTTP)
+communicate with the daemon — one cache, always warm.
 
-Der MCP Multiplexer managt persistente Subprozesse für externe MCP
-Server (github, time, fetch, ...). Hermes braucht dann nur noch
-einen MCP Server in der Config (toolrecall mcp) statt alle einzeln.
+The MCP Multiplexer manages persistent subprocesses for external MCP
+servers (github, time, fetch, ...). Hermes then only needs a single
+MCP server in its config (toolrecall mcp) instead of all individually.
 
 Usage:
     toolrecall daemon [--socket PATH] [--foreground]
@@ -69,12 +69,12 @@ def _default_socket_path():
 
 
 class SecurityGate:
-    """Prüft Requests gegen die konfigurierten Sicherheitsregeln.
-
-    - cached_read: nur in allowed_paths
-    - cached_terminal: nur wenn allow_terminal=true
-    - cache_invalidate: nur wenn allow_invalidate=true
-    - mcp_call: nur erlaubte Server
+    """Check requests against configured security rules.
+    
+    - cached_read: only within allowed_paths
+    - cached_terminal: only if allow_terminal=true
+    - cache_invalidate: only if allow_invalidate=true
+    - mcp_call: only allowed servers
     """
 
     def __init__(self, cfg):
@@ -85,9 +85,9 @@ class SecurityGate:
         self.allowed_servers = [s.lower() for s in cfg.mcp_multiplex_servers]
 
     def check_read_path(self, path: str) -> str:
-        """Prüft ob path gelesen werden darf. Gibt None oder Fehlermeldung."""
+        """Check if path is allowed to be read. Returns None or error message."""
         if not self.allowed_paths:
-            return None  # Alles erlaubt (DANGEROUS — aber konfiguriert)
+            return None  # All allowed (DANGEROUS — but configured)
         abs_path = os.path.abspath(os.path.expanduser(path))
         for allowed in self.allowed_paths:
             allowed_abs = os.path.abspath(os.path.expanduser(allowed))
@@ -236,9 +236,9 @@ class MCPClientSession:
 class MCPMultiplexer:
     """Manages multiple MCP subprocesses — lazy start, idle timeout, session handover.
 
-    Server startet erst beim ersten mcp_call(). Laufen persistent über
-    Sessions hinweg. Idle Server werden nach idle_timeout Minuten
-    automatisch gestoppt (sparen RAM). Beim nächsten Aufruf neu gestartet.
+    Servers start on the first mcp_call(). They run persistently across sessions.
+    Idle servers are automatically shut down after idle_timeout minutes (saving RAM).
+    They are restarted on the next call.
 
     Usage:
         mux = MCPMultiplexer(cfg)
@@ -259,7 +259,7 @@ class MCPMultiplexer:
     # ─── Discovery ────────────────────────────────────
 
     def _discover_configs(self):
-        """Lese Server-Konfigurationen (einmalig)."""
+        """Read server configurations (runs once)."""
         if self._configs:
             return
         servers = self.cfg.mcp_multiplex_servers_config
@@ -280,7 +280,7 @@ class MCPMultiplexer:
     # ─── Lazy Server Start ────────────────────────────
 
     def _ensure_server(self, name_lower: str) -> str | None:
-        """Start server wenn nötig. Gibt Fehler zurück oder None bei Erfolg."""
+        """Start server if needed. Returns error message or None on success."""
         with self._lock:
             if name_lower in self._sessions:
                 session = self._sessions[name_lower]

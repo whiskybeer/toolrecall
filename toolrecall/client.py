@@ -2,7 +2,7 @@
 
 Der Client versucht zuerst, mit dem ToolRecall Daemon über Unix Domain Socket
 zu kommunizieren. Falls kein Daemon läuft, wird direkt auf SQLite zugegriffen
-(herkömmliches Verhalten). Dadurch ist der Client immer nutzbar — mit oder
+(legacy behavior). This makes the client always usable — with or
 ohne Daemon.
 
 Usage:
@@ -100,7 +100,7 @@ def _get_client() -> UDSClient:
 
 
 def _check_daemon() -> bool:
-    """Prüft ob der Daemon läuft (schneller Health-Check ohne Payload)."""
+    """Check if Daemon is running (fast payload-less health check)."""
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(1.0)
@@ -161,18 +161,18 @@ def mcp_list_servers() -> dict:
 
 
 def cached_read(path: str) -> dict:
-    """Read file via Daemon (UDS) oder direktes SQLite."""
+    """Read file via Daemon (UDS) or direktes SQLite."""
     client = _get_client()
     resp = client._send({"cmd": "cached_read", "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
-        return resp  # Erfolg oder echter Fehler vom Daemon
+        return resp  # Success or real error from Daemon
 
     # Fallback: direktes SQLite
     return _direct_read(path)
 
 
 def cached_terminal(command: str, ttl: int = None) -> dict:
-    """Run command via Daemon oder direktem SQLite."""
+    """Run command via Daemon or direktem SQLite."""
     client = _get_client()
     payload = {"cmd": "cached_terminal", "command": command}
     if ttl is not None:
@@ -184,7 +184,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
 
 
 def cached_skill(name: str) -> dict:
-    """View skill via Daemon oder direktem SQLite."""
+    """View skill via Daemon or direktem SQLite."""
     client = _get_client()
     resp = client._send({"cmd": "cached_skill", "name": name})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
@@ -193,7 +193,7 @@ def cached_skill(name: str) -> dict:
 
 
 def docs_search(query: str, source: str = None) -> str:
-    """Search knowledge base via Daemon oder direktem SQLite."""
+    """Search knowledge base via Daemon or direktem SQLite."""
     client = _get_client()
     payload = {"cmd": "docs_search", "query": query}
     if source:
@@ -205,7 +205,7 @@ def docs_search(query: str, source: str = None) -> str:
 
 
 def docs_get_page(source: str, path: str) -> str:
-    """Get indexed page via Daemon oder direktem SQLite."""
+    """Get indexed page via Daemon or direktem SQLite."""
     client = _get_client()
     resp = client._send({"cmd": "docs_get_page", "source": source, "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
@@ -214,7 +214,7 @@ def docs_get_page(source: str, path: str) -> str:
 
 
 def cache_status() -> str:
-    """Get cache stats via Daemon oder direktem SQLite."""
+    """Get cache stats via Daemon or direktem SQLite."""
     client = _get_client()
     resp = client._send({"cmd": "cache_status"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
@@ -232,7 +232,7 @@ def cache_status() -> str:
 
 
 def cache_invalidate() -> str:
-    """Invalidate cache via Daemon oder direktem SQLite."""
+    """Invalidate cache via Daemon or direktem SQLite."""
     client = _get_client()
     resp = client._send({"cmd": "cache_invalidate"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":

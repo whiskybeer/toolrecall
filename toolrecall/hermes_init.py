@@ -1,18 +1,17 @@
-# ToolRecall Hermes Init — registriert cached_* Tools via Daemon-Client.
+# ToolRecall Hermes Init — registers cached_* tools via Daemon Client.
 #
-# Dieser Init-Script registriert cached_read und cached_terminal als
-# explizite, separate Tools im Hermes Tool-Registry. Die Tools leiten
-# Anfragen an den ToolRecall Daemon weiter (UDS) — oder nutzen direktes
-# SQLite als Fallback.
+# This init script registers cached_read and cached_terminal as
+# explicit, separate tools in the Hermes Tool Registry. The tools forward
+# requests to the ToolRecall Daemon (UDS) — or use direct SQLite as a fallback.
 #
 # Installation:
 #   bash <(curl -s https://raw.githubusercontent.com/whiskybeer/toolrecall/main/setup.sh)
 #
-# Oder manuell:
+# Or manually:
 #   pip install toolrecall
-#   hermes config set agent.init_scripts ["~/.toolrecall/hermes_init.py"]
+#   hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]'
 #
-# Dann restart Hermes oder /reset.
+# Then restart Hermes or /reset.
 
 import os
 import sys

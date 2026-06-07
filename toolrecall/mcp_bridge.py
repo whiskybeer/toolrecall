@@ -1,22 +1,22 @@
 """ToolRecall MCP Bridge — stdio ↔ UDS Protocol Adapter.
 
-Der MCP Bridge ist ein dünner Adapter: er liest MCP JSON-RPC von stdin,
-übersetzt die Requests in UDS-Calls an den ToolRecall Daemon und schreibt
-die Antworten zurück auf stdout.
+The MCP Bridge is a thin adapter: it reads MCP JSON-RPC from stdin,
+translates the requests into UDS calls to the ToolRecall Daemon and writes
+the responses back to stdout.
 
-Er hat KEINE eigene Cache-Logik, KEIN SQLite, KEINEN In-Memory LRU.
-Alles läuft über den Daemon. Das macht ihn:
-  - Schlank (~100 LOC statt 540)
-  - Schnell im Start (~5ms statt 200ms)
-  - Sicher (Security liegt im Daemon, nicht in der Bridge)
+It has NO caching logic of its own, NO SQLite, NO In-Memory LRU.
+Everything runs through the Daemon. This makes it:
+  - Slim (~100 LOC instead of 540)
+  - Fast to start (~5ms instead of 200ms)
+  - Secure (Security lies in the Daemon, not in the bridge)
 
 Usage:
-    toolrecall mcp              # Standard: Bridge → Daemon
-    toolrecall mcp --direct     # Legacy: eigenständiger MCP Server (ohne Daemon)
+    toolrecall mcp              # Start Bridge (requires Daemon)
+    toolrecall mcp-legacy       # Legacy: standalone MCP Server (no Daemon)
 
-Benötigt einen laufenden ToolRecall Daemon:
-    toolrecall daemon &         # Einmal starten
-    toolrecall mcp &            # Bridge starten
+Requires a running ToolRecall Daemon:
+    toolrecall daemon &         # Start once
+    toolrecall mcp              # Run bridge
 """
 
 import json

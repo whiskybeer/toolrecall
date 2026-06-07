@@ -1,8 +1,8 @@
-# ToolRecall Daemon-Architektur — Vorschlag
+# ToolRecall Daemon Architecture — Proposal
 
-## 1. Das Problem
+## 1. The Problem
 
-ToolRecall hat heute **drei unabhängige Zugangswege** — jeder mit eigenem Cache-Prozess:
+ToolRecall previously had **three independent access paths** — each with its own caching process:
 
 ```
 ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
@@ -16,19 +16,19 @@ ToolRecall hat heute **drei unabhängige Zugangswege** — jeder mit eigenem Cac
 │  cache.db    │   │  cache.db    │   │  cache.db    │
 └──────────────┘   └──────────────┘   └──────────────┘
         ▲                                    
-        │ gleiche DB-Datei, aber...
+        │ same DB file, but...
         │ 
-   Prozessgrenze ─────────────────────────────
+   Process Boundary ──────────────────────────
         │ 
-   ❌ Jeder startet kalt (leerer LRU)
-   ❌ Drei Prozesse = ~60MB RAM
-   ❌ ~200ms Startup für MCP/HTTP
-   ❌ Caches arbeiten gegeneinander
+   ❌ Everyone starts cold (empty LRU)
+   ❌ Three processes = ~60MB RAM
+   ❌ ~200ms Startup for MCP/HTTP
+   ❌ Caches compete against each other
 ```
 
-**Problem:** Die drei LRUs sind *nicht synchronisiert*. Hermes cached Datei A in seinen LRU. Der MCP Server hat eine leere LRU und liest Datei A aus SQLite (7ms) — dabei hätte er sie in 0.001ms aus dem Shared Memory haben können.
+**Problem:** The three LRUs are *not synchronized*. Hermes caches file A in its LRU. The MCP Server has an empty LRU and reads file A from SQLite (7ms) — even though it could have fetched it in 0.001ms from a shared memory layer.
 
-## 2. Die Lösung: Ein Daemon, drei Brücken
+## 2. The Solution: One Daemon, Three Bridges
 
 ```
                     ╔════════════════════════════╗
@@ -37,14 +37,14 @@ ToolRecall hat heute **drei unabhängige Zugangswege** — jeder mit eigenem Cac
                     ║                            ║
                     ║   ┌──────────────────┐     ║
                     ║   │  In-Memory LRU   │     ║
-                    ║   │  (20MB, warm)     │     ║
+                    ║   │  (20MB, warm)    │     ║
                     ║   └────────┬─────────┘     ║
-                    ║            │                ║
+                    ║            │               ║
                     ║   ┌────────▼─────────┐     ║
                     ║   │  SQLite (WAL)    │     ║
                     ║   │  cache.db        │     ║
                     ║   └────────┬─────────┘     ║
-                    ║            │                ║
+                    ║            │               ║
                     ║   ┌────────▼─────────┐     ║
                     ║   │  IPC Server      │     ║
                     ║   │  UDS Socket      │     ║
@@ -66,114 +66,106 @@ ToolRecall hat heute **drei unabhängige Zugangswege** — jeder mit eigenem Cac
 └──────────────┘    └──────────────┘    └──────────────┘
 ```
 
-### Was passiert genau
+### What exactly happens?
 
 **Daemon** (`toolrecall daemon`):
-- Ein Python-Prozess, startet beim System (systemd unit)
-- Hält LRU + SQLite + UDS-Server
-- Verarbeitet Requests: `{cmd: "read", path: "/x"} → {content: "...", cached: true}`
-- Läuft tagelang/woechentlich — Cache bleibt warm über Sessions hinweg
+- A Python process, started with the system (systemd user unit)
+- Holds LRU + SQLite + UDS Server
+- Processes requests: `{cmd: "read", path: "/x"} → {content: "...", cached: true}`
+- Runs for days/weeks — Cache remains warm across sessions
 
 **Hermes Client** (`from toolrecall.client import cached_read`):
-- Statt eigenem LRU + SQLite: leitet an den Daemon weiter
-- `cached_read(path)` → JSON über UDS → Daemon checkt LRU → antwortet
-- **Fallback:** Wenn kein Daemon läuft, nutzt direktes SQLite (wie heute)
-- hermes_init.py wird minimal (~20 LOC statt 112)
+- Instead of its own LRU + SQLite: forwards to the Daemon
+- `cached_read(path)` → JSON over UDS → Daemon checks LRU → replies
+- **Fallback:** If no Daemon is running, uses direct SQLite (legacy behavior)
+- `hermes_init.py` becomes minimal (~20 LOC instead of 112)
 
 **MCP Bridge** (`toolrecall mcp`):
-- Startet sofort (kein Python-Modul-Laden nötig — nur socket + json)
-- Liest stdin (JSON-RPC), übersetzt in UDS-Call, schreibt Antwort auf stdout
-- **Keine eigene Logik** — nur Protokoll-Übersetzung
+- Starts instantly (no Python module loading necessary — only socket + json)
+- Reads stdin (JSON-RPC), translates to UDS call, writes response to stdout
+- **No internal logic** — just protocol translation
 
 **HTTP Bridge** (`toolrecall serve`):
-- Selbes Prinzip: HTTP-Request → UDS-Call → HTTP-Response
-- Kein eigenes SQLite, kein LRU
+- Same principle: HTTP-Request → UDS call → HTTP-Response
+- No internal SQLite, no LRU
 
-## 3. Für wen ist das interessant?
+## 3. Who is this for?
 
-### Gruppe A: Hermes-Nutzer mit ToolRecall (aktuell: Robin)
-| Heute | Daemon-Architektur |
-|-------|-------------------|
-| hermes_init.py lädt cache.py (112 LOC) | Client (20 LOC) |
-| ToolRecall startet kalt pro Session | Cache ist immer warm (Daemon läuft seit Tagen) |
-| MCP Server braucht extra RAM | MCP Bridge ist <10MB |
-| Hermes Restart = Cache kalt | Daemon überlebt Hermes-Neustarts |
+### Group A: Hermes users with ToolRecall (currently: Robin)
+| Today | Daemon Architecture |
+|-------|---------------------|
+| hermes_init.py loads cache.py (112 LOC) | Client (20 LOC) |
+| ToolRecall starts cold per Session | Cache is always warm (Daemon runs for days) |
+| MCP Server needs extra RAM | MCP Bridge is <10MB |
+| Hermes Restart = Cache cold | Daemon survives Hermes restarts |
 
-**Wert:** spürbarer — vor allem auf e2-medium mit 4GB RAM. Einmal Daemon starten, nie wieder über Caches nachdenken.
+**Value:** noticeable — especially on e2-medium with 4GB RAM. Start Daemon once, never think about caches again.
 
-### Gruppe B: Entwickler die ToolRecall in eigene Tools einbauen
-| Heute | Daemon-Architektur |
-|-------|-------------------|
-| Müssen `from toolrecall import cached_read` | Können UDS von jeder Sprache nutzen (curl, nc, Go, Rust) |
-| Python-only | Jede Sprache → UDS |
+### Group B: Developers embedding ToolRecall in their own tools
+| Today | Daemon Architecture |
+|-------|---------------------|
+| Must `from toolrecall import cached_read` | Can use UDS from any language (curl, nc, Go, Rust) |
+| Python-only | Any language → UDS |
 
-**Wert:** ToolRecall wird sprachunabhängig. Ein Go-Service kann denselben Cache nutzen wie ein Python-Script.
+**Value:** ToolRecall becomes language-agnostic. A Go service can use the same cache as a Python script.
 
-### Gruppe C: Claude Code / Cursor / Codex User (Robins Zielgruppe)
-| Heute | Daemon-Architektur |
-|-------|-------------------|
-| MCP Server ist eigener Prozess (200ms Startup) | MCP Bridge startet in <10ms |
-| Jeder Claude Code Start = neuer kalter Cache | Daemon läuft, Cache warm |
-| Aktuell: "brauch ich nicht weil zu teuer" | "starte ich weil sofort da" |
+### Group C: Claude Code / Cursor / Codex Users
+| Today | Daemon Architecture |
+|-------|---------------------|
+| MCP Server is a distinct process (200ms Startup) | MCP Bridge starts in <10ms |
+| Every Claude Code run = new cold cache | Daemon runs, Cache warm |
+| "I don't need it, startup is too slow" | "I'll use it because it's instantly available" |
 
-**Wert:** niedrigere Einstiegshürde. Der Daemon macht ToolRecall auf einer Maschine zur "always-on"-Infrastruktur.
+**Value:** lowers barrier to entry. The Daemon turns ToolRecall into an "always-on" infrastructure on a machine.
 
-### Gruppe D: CI/CD
-| Heute | Daemon-Architektur |
-|-------|-------------------|
-| Jeder CI-Step startet eigenen Cache | Ein Daemon pro Build-Host |
-| Cache wird nie warm (Steps sind kurz) | Cache lebt über Step-Grenzen |
+### Group D: CI/CD
+| Today | Daemon Architecture |
+|-------|---------------------|
+| Every CI Step starts its own cache | One Daemon per Build Host |
+| Cache never gets warm (Steps are short) | Cache persists across Step boundaries |
 
-**Wert:** erst in größeren CI-Umgebungen. Für GitHub Actions eher Overkill.
+**Value:** Only relevant in larger CI environments. Likely overkill for GitHub Actions.
 
-## 4. Warum ist das hier anders?
+## 4. How is this different?
 
-### Anders als heute
+### Different from Today
 
-| Aspekt | Heute | Daemon | 
+| Aspect | Today | Daemon | 
 |--------|-------|--------|
-| **Architektur** | 3 gleichberechtigte Prozesse | 1 Zentrum + 3 Brücken |
-| **Cache-Sharing** | Nur SQLite (7ms) | LRU + SQLite (0.001ms + 7ms) |
+| **Architecture** | 3 equal processes | 1 Center + 3 Bridges |
+| **Cache-Sharing** | Only SQLite (7ms) | LRU + SQLite (0.001ms + 7ms) |
 | **RAM** | ~60MB (3 × LRU) | ~25MB (1 × LRU + Bridges) |
 | **MCP Startup** | ~200ms (uv run python -m ...) | ~5ms (Python stdio → socket) |
-| **Sprachbindung** | Nur Python | Jede Sprache via UDS |
-| **Fehlertoleranz** | Ein Prozess fällt aus → andere leben | Daemon fällt aus → alle tot (braucht systemd) |
-| **Komplexität** | 3 Module nebeneinander | 1 Kern + 3 dünne Bridges |
+| **Language Binding**| Python only | Any language via UDS |
+| **Fault Tolerance** | One process dies → others live | Daemon dies → all dead (requires systemd) |
+| **Complexity** | 3 Modules side-by-side | 1 Core + 3 thin Bridges |
 
-### Anders als ein HTTP-Proxy
+### Different from an HTTP Proxy
 
-`toolrecall serve` (HTTP Proxy) ist bereits eine Netzwerk-Brücke. Der Unterschied:
+`toolrecall serve` (HTTP Proxy) is already a network bridge. The difference:
 
-- **HTTP Proxy**: HTTP-REST-API, request/response, kein Persistent Connection State, jeder Request authentifiziert sich neu
-- **Daemon + UDS**: Unix Domain Socket, persistent connection, ~10× schneller, kein Netzwerk-Stack, nur lokale Kommunikation
-- **UDS vs HTTP**: UDS ist ~0.1ms pro Call, HTTP localhost ~0.5ms. UDS hat keine Port-Konflikte, kein Firewall, keine Auth nötig (nur Filesystem-Permissions)
+- **HTTP Proxy**: HTTP-REST-API, request/response, no Persistent Connection State, every request authenticates anew
+- **Daemon + UDS**: Unix Domain Socket, persistent connection, ~10× faster, no network stack, only local communication
+- **UDS vs HTTP**: UDS is ~0.1ms per call, HTTP localhost ~0.5ms. UDS has no port conflicts, no firewall, no auth needed (only Filesystem-Permissions)
 
-### Anders als direkter Python-Import
+### Different from direct Python Import
 
-Direkter Import (`from toolrecall import cached_read`) ist der schnellste Weg — 0.001ms plus 0ms Overhead. Aber: pro Prozess, kein Sharing.
+Direct import (`from toolrecall import cached_read`) is the fastest path — 0.001ms plus 0ms overhead. But: per process, no sharing.
 
-Die Daemon-Architektur opfert 0.1ms UDS-Overhead für Shared Cache. In der Praxis: 0.1ms ist nichts — LLM-API-Calls dauern 3-10s.
+The Daemon architecture sacrifices 0.1ms UDS overhead for a Shared Cache. In practice: 0.1ms is nothing — LLM-API calls take 3-10s.
 
-**Die Frage ist nicht "schneller oder langsamer". Die Frage ist: "Nutzt du ToolRecall in einem oder mehreren Prozessen?"**
+**The question is not "faster or slower". The question is: "Are you using ToolRecall in one or multiple processes?"**
 
-| Nutzungsszenario | Optimaler Weg |
-|-----------------|---------------|
-| Ein Prozess (nur Hermes) | Direkter Import — Daemon bringt nichts |
-| Mehrere Prozesse (Hermes + MCP + HTTP) | Daemon — sonst 3× RAM + 3× kalt |
-| CI/CD / Microservices | Daemon — sonst nie warmer Cache |
+| Scenario | Optimal Path |
+|----------|--------------|
+| Single Process (only Hermes) | Direct Import — Daemon adds nothing |
+| Multi Process (Hermes + MCP + HTTP) | Daemon — otherwise 3× RAM + 3× cold |
+| CI/CD / Microservices | Daemon — otherwise never a warm cache |
 
-## 5. Offene Fragen
+## 5. Open Questions (Resolved in v0.3.0)
 
-1. **systemd unit** — wer managed den Daemon? `toolrecall daemon --install`?
-2. **Fallback-Verhalten** — wenn Daemon stirbt, soll cached_read automatisch auf direktes SQLite fallen?
-3. **UDS Pfad** — `/tmp/toolrecall.sock` oder `~/.toolrecall/toolrecall.sock`?
-4. **Auth** — UDS hat nur Filesystem-Permissions (`chmod 700`). Reicht das?
-5. **Multiuser** — wenn zwei User auf der Maschine ToolRecall nutzen, brauchen sie getrennte Sockets?
-
-## 6. Nächste Schritte
-
-Falls interessant:
-1. Ich skizziere `daemon.py` (UDS-Server, ~150 LOC)
-2. Ich skizziere `client.py` (UDS-Client mit Fallback, ~80 LOC)
-3. Ich skizziere Bridge-Rewrites für MCP + HTTP
-4. Zeige Diff: 450 LOC weniger als heute
+1. **systemd unit** — who manages the Daemon? A: Managed via user systemd (`systemctl --user`).
+2. **Fallback behavior** — if Daemon dies, should cached_read fall back to direct SQLite? A: Yes, implemented in `client.py`.
+3. **UDS Path** — `/tmp/toolrecall.sock` or `~/.toolrecall/toolrecall.sock`? A: `XDG_RUNTIME_DIR` (e.g., `/run/user/1000/toolrecall.sock`).
+4. **Auth** — UDS has only Filesystem-Permissions (`chmod 700`). Is that enough? A: Yes, for single-user dev machines.
+5. **Multiuser** — if two users on the machine use ToolRecall, do they need separate sockets? A: Yes, `XDG_RUNTIME_DIR` inherently isolates users.
