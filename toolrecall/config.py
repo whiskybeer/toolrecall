@@ -1,10 +1,11 @@
 """ToolRecall — Configuration system.
 
-Loads toolrecall.toml from:
-1. Current working directory
-2. ~/.config/toolrecall/toolrecall.toml
-3. /etc/toolrecall/toolrecall.toml
-4. Package default (config.toml next to this file)
+Loads toolrecall.toml from (in order of priority):
+1. Environment variables (TOOLRECALL_*)
+2. Current working directory (toolrecall.toml)
+3. ~/.config/toolrecall/toolrecall.toml
+4. /etc/toolrecall/toolrecall.toml
+5. Package default (config.toml next to this file)
 """
 import os
 import tomllib
@@ -16,9 +17,49 @@ DEFAULT_PATHS = [
     Path("/etc/toolrecall/toolrecall.toml"),
 ]
 
+ENV_MAP = {
+    "TOOLRECALL_CACHE_DB": ("paths", "cache_db"),
+    "TOOLRECALL_KNOWLEDGE_DB": ("paths", "knowledge_db"),
+    "TOOLRECALL_FILE_TTL": ("cache", "file_ttl"),
+    "TOOLRECALL_TERMINAL_TTL": ("cache", "terminal_default_ttl"),
+    "TOOLRECALL_PROXY_PORT": ("proxy", "port"),
+    "TOOLRECALL_PROXY_BIND": ("proxy", "bind"),
+    "TOOLRECALL_SCAN_DIRS": ("sources", "scan_dirs"),
+    "TOOLRECALL_NGINX_DOMAIN": ("nginx", "domain"),
+}
+
+
+def _apply_env_overrides(config: dict) -> dict:
+    """Apply TOOLRECALL_* environment variables on top of config.
+
+    Custom key format: 'TOOLRECALL_KEY'. If the key exists in ENV_MAP,
+    it's placed at the right nested path. Comma-separated values become lists.
+    """
+    for env_key, (section, key) in ENV_MAP.items():
+        val = os.environ.get(env_key)
+        if val is None:
+            continue
+        if section not in config:
+            config[section] = {}
+        # Try int, then try comma-separated list, then keep as string
+        try:
+            config[section][key] = int(val)
+            continue
+        except (ValueError, TypeError):
+            pass
+        if "," in val:
+            config[section][key] = [v.strip() for v in val.split(",")]
+        else:
+            config[section][key] = val
+    return config
+
 
 class Config:
-    """ToolRecall configuration — load once, access via attributes."""
+    """ToolRecall configuration — load once, access via attributes.
+
+    Priority (higher wins):
+        env vars > CWD config > ~/.config > /etc > package default
+    """
 
     def __init__(self, path: str = None):
         self._data = self._load(path)
@@ -47,6 +88,9 @@ class Config:
                     self._deep_merge(config, user)
                 except Exception:
                     pass
+
+        # Environment variables (highest priority)
+        config = _apply_env_overrides(config)
 
         return config
 
@@ -115,7 +159,7 @@ class Config:
 
     @property
     def proxy_bind(self) -> str:
-        return self.get("proxy", "bind", default="127.0.0.1")
+        return self.get("proxy", "bind", default="[IP_ADDRESS]")
 
     @property
     def nginx_recommended(self) -> bool:

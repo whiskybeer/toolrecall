@@ -13,9 +13,7 @@ import os, sqlite3, time, hashlib
 from pathlib import Path
 from toolrecall.config import load_config
 
-# Initialize on first import
 config = load_config()
-DB_PATH = os.path.expanduser(config.cache_db)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS file_cache (
@@ -72,8 +70,9 @@ CREATE INDEX IF NOT EXISTS idx_terminal_expires ON terminal_cache(expires_at);
 
 
 def _get_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    db_path = os.path.expanduser(load_config().cache_db)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.row_factory = sqlite3.Row

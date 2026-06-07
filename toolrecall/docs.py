@@ -8,12 +8,16 @@ from pathlib import Path
 from toolrecall.config import load_config
 
 config = load_config()
-DB_PATH = os.path.expanduser(config.get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db"))
+
+
+def _get_db_path():
+    return os.path.expanduser(config.get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db"))
 
 
 def _get_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    db_path = _get_db_path()
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.row_factory = sqlite3.Row
@@ -53,10 +57,10 @@ def docs_search(query: str, source: str = None) -> str:
     """
     import re
 
-    if not os.path.exists(DB_PATH):
+    if not os.path.exists(_get_db_path()):
         return "No knowledge database found. Run 'toolrecall index' first."
 
-    # Query sanitzieren
+    # Query sanitize
     q = query[:100].strip()
     q = re.sub(r'["\'\(\)\*\-\?\:]', ' ', q)
     words = [w for w in q.split() if w]
@@ -115,8 +119,8 @@ def docs_search(query: str, source: str = None) -> str:
 
 
 def docs_get_page(path: str, source: str = "hermes") -> str:
-    """Einzelne Seite aus der Wissensdatenbank abrufen."""
-    if not os.path.exists(DB_PATH):
+    """Get a single page from the knowledge database."""
+    if not os.path.exists(_get_db_path()):
         return "No knowledge database found. Run 'toolrecall index' first."
 
     conn = _get_db()
@@ -128,7 +132,7 @@ def docs_get_page(path: str, source: str = "hermes") -> str:
 
         if row:
             conn.close()
-            return f"### {row['title']}\nURL: {row['url']}\n\n{row['content']}"
+            return f"### {row['title']}\\nURL: {row['url']}\\n\\n{row['content']}"
 
         # Fuzzy
         fuzzy = f"%{path}%"
