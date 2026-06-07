@@ -48,9 +48,27 @@ enabled = true
 idle_minutes = 15 # Shut down MCP servers after 15 minutes of inactivity
 
 [mcp_multiplex.servers_config]
-# Add your MCP servers here instead of your agent's config
-# Example: GitHub MCP
+# ToolRecall multiplexes all your MCP servers through a single connection.
+# Servers are lazy-loaded on the first call and killed after 15min idle to save RAM.
+
+# --- Useful Default Examples ---
+
+# 1. GitHub (Manage PRs, Issues, and Repositories)
 github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"], ttl = 60 }
+
+# 2. Sequential Thinking (Anthropic's official Chain-of-Thought Whiteboard)
+# sequential-thinking = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
+
+# 3. Brave Search (Live web search for AI agents to look up fresh documentation)
+# brave-search = { command = "npx", args = ["-y", "@modelcontextprotocol/server-brave-search"], ttl = 3600 }
+
+# 4. Fetch (Convert any URL into clean Markdown, aggressively cached by ToolRecall)
+# fetch = { command = "uvx", args = ["mcp-server-fetch"], ttl = 3600 }
+
+# 5. PostgreSQL (Allow your agent to query a local or remote database)
+# postgres = { command = "npx", args = ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"], ttl = 30 }
+
+# Note: For servers that POST data or stream live updates (like Slack), set `ttl = 0` to bypass caching!
 """
     
     env_content = """# ToolRecall Secrets

@@ -86,7 +86,18 @@ enabled = true
 idle_minutes = 15
 
 [mcp_multiplex.servers_config]
+# ToolRecall multiplexes all your MCP servers through a single connection.
+# Servers are lazy-loaded on the first call and killed after 15min idle to save RAM.
+
+# 1. GitHub (Manage PRs, Issues, and Repositories)
 github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"], ttl = 60 }
+
+# 2. Sequential Thinking (Anthropic's official Chain-of-Thought Whiteboard)
+sequential-thinking = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
+
+# 3. Brave Search (Live web search to look up fresh documentation)
+brave-search = { command = "npx", args = ["-y", "@modelcontextprotocol/server-brave-search"], ttl = 3600 }
+
 # Set ttl = 0 to entirely bypass caching for dynamic endpoints (like CI logs or real-time data)
 ```
 
