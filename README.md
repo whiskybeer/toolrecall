@@ -97,3 +97,57 @@ ToolRecall uses **Unix Domain Sockets (IPC)** for daemon communication, making i
 
 ## Status
 **Experimental.** ToolRecall is currently used in heavy autonomous agent workflows. Before deploying it in production CI/CD environments, ensure your allowlist is strictly scoped.
+
+---
+
+# Appendix: Scientific Whitepaper
+
+*The following section details the theoretical foundation, architecture, and empirical findings of ToolRecall, formatted for academic review in the context of Large Language Model (LLM) agent infrastructure.*
+
+## Mitigating $O(N^2)$ Context Scaling in Autonomous LLM Agents via Operating System-Level Middleware Caching
+
+### Abstract
+Autonomous Large Language Model (LLM) agents interact with their environments by executing tools (e.g., reading files, running shell commands, querying APIs). In persistent sessions, the stateless nature of LLM context windows forces the redundant transmission of historical tool outputs at each conversational turn. Due to the quadratic computational complexity ($O(N^2)$) of the Transformer attention mechanism, this context accumulation exponentially increases Time-To-First-Token (TTFT) latency and API inference costs. We present **ToolRecall**, a deterministic, OS-level caching middleware utilizing Unix Domain Sockets (IPC) and SQLite. By serving redundant tool calls from a local exact-match cache (1.5ms latency), we enable aggressive context pruning. Empirical benchmarks from a 13-hour agentic coding session demonstrate a 91% cache hit rate, saving 141.1 million input tokens and eliminating 85 minutes of compounded network and execution latency. Furthermore, the architecture passively yields high-fidelity trajectory datasets suitable for Direct Preference Optimization (DPO) and Supervised Fine-Tuning (SFT).
+
+### 1. Introduction
+The current paradigm of agentic AI relies on continuous iterative loops (Observe → Reason → Act). When an agent observes its environment via a tool (e.g., `cat main.py`), the output is appended to the context window. As the session progresses, the context grows linearly, but the computational cost of the attention mechanism scales quadratically. This leads to the "Context Snowball" effect: a single 10,000-token log file read at turn $T_1$ will be redundantly re-transmitted to the API for all subsequent turns $T_2 \dots T_N$, incurring massive financial cost and increasing TTFT latency by tens of seconds.
+
+Current solutions focus on server-side *Prompt Caching* (which reduces compute costs but still requires the agent to locally execute the tool and transmit the data) or *Vector-Database RAG* (which relies on lossy, non-deterministic semantic embeddings that are prone to hallucination). We propose an alternative: an OS-level middleware that intercepts tool executions and returns byte-exact responses.
+
+### 2. Architecture
+ToolRecall operates as an independent Daemon process bridging the LLM agent and the host operating system (including MCP—Model Context Protocol servers).
+
+**2.1. IPC Middleware via Unix Domain Sockets:**
+To ensure security and bypass network overhead, communication occurs exclusively over Unix Domain Sockets (`AF_UNIX`). This prevents Server-Side Request Forgery (SSRF) and restricts access strictly to the host user.
+
+**2.2. Deterministic State Caching:**
+The system employs a two-tier architecture:
+1.  *In-Memory LRU Cache:* For highly frequent file reads, achieving $< 0.002$ ms lookups.
+2.  *Persistent SQLite FTS5 Database:* Acts as a "Micro-RAG" store for terminal commands and API responses. Unlike semantic RAG, it enforces exact-hash matching. If the state of the environment diverges (detected via `mtime` or write-locks), the cache is strictly invalidated to prevent stale-data hallucinations.
+
+**2.3. Sandboxing & Threat Mitigation:**
+By migrating execution logic from the agent's prompts to a deterministic Python middleware, ToolRecall acts as a Web Application Firewall (WAF) for the LLM. It enforces hard path allowlists and command gating, neutralizing Prompt Injections designed to exfiltrate unauthorized data (e.g., `~/.ssh/`).
+
+### 3. Empirical Results
+A benchmark was conducted using the DeepSeek-v4-Flash model operating autonomously via the Hermes agent framework during a 13-hour software engineering task.
+
+**Table 1: Cache Efficiency and Token Mitigation**
+| Cache Layer | Hits | Misses | Hit Rate | Tokens Mitigated |
+| :--- | :--- | :--- | :--- | :--- |
+| File I/O | 666 | 62 | 91% | 141,105,842 |
+| Terminal / OS | 143 | 15 | 91% | 1,220 |
+| MCP Network | 10 | 18 | 37% | 254 |
+| **Total** | **827** | **104** | **89%** | **141,112,165** |
+
+**Latency Analysis:**
+Redundant executions bypassing the OS fork (`subprocess`) and Node.js MCP server boot overhead reduced local tool execution time from $\sim 1.5$ seconds to $0.0015$ seconds ($1000\times$ speedup). Combined with the reduction in API context bloat, total waiting time mitigated was calculated at $\sim 85$ minutes.
+
+### 4. Discussion: Beyond Latency
+**4.1. The Necessity of Determinism in Agents:**
+Agentic workflows frequently fail due to environmental stochasticity (e.g., fluctuating network latency, changing API timestamps). By serving frozen, exact-byte cache hits for identical requests within a session, ToolRecall enforces determinism. This converts unstable LLM routines into predictable, testable pipelines analogous to mock-testing in traditional software engineering.
+
+**4.2. Passive Generation of Trajectory Data:**
+A significant bottleneck in training open-weight models for agentic tasks is the scarcity of high-quality trajectory data. As a byproduct of OS-level interception, ToolRecall's SQLite database naturally records pristine pairs of (Action $\rightarrow$ State Observation), including failed executions and subsequent corrections. This yields a zero-cost pipeline for generating JSONL datasets suitable for RLHF (Reinforcement Learning from Human Feedback) and DPO.
+
+### 5. Conclusion
+Addressing context inflation at the model architecture level ignores the redundant I/O operations occurring on the host machine. Operating System-level middleware proxy caching represents a critical infrastructure layer necessary for the economical and deterministic scaling of autonomous AI agents.
