@@ -1,18 +1,19 @@
-"""
-ToolRecall Cache Core — SQLite-basierter Tool-Output-Cache.
+"""ToolRecall Cache Core -- SQLite-based tool output cache.
 
-Drei Cache-Typen:
-- file_cache: read_file() → mtime-basiert (∞ bis Datei-Änderung)
-- skill_cache: skill_view() → mtime-basiert (∞ bis Skill-Update)
-- terminal_cache: terminal() → TTL-basiert (konfigurierbar)
+Three cache types:
+- file_cache: read_file() -> mtime-based (infinite until file change)
+- skill_cache: skill_view() -> mtime-based (infinite until skill update)
+- terminal_cache: terminal() -> TTL-based (configurable)
+- script_cache: cached_run() -> mtime + TTL (script file execution)
+- code_cache: cached_exec() -> content-hash + TTL (Python code strings)
 
-Konfiguration via toolrecall.toml (siehe config.py).
+Configuration via toolrecall.toml (see config.py).
 """
 import os, sqlite3, time, hashlib
 from pathlib import Path
 from toolrecall.config import load_config
 
-# Initialisierung beim ersten Import
+# Initialize on first import
 config = load_config()
 DB_PATH = os.path.expanduser(config.cache_db)
 
@@ -40,6 +41,23 @@ CREATE TABLE IF NOT EXISTS terminal_cache (
     exit_code INTEGER NOT NULL,
     cached_at REAL NOT NULL,
     expires_at REAL NOT NULL,
+    hits INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS script_cache (
+    script_hash TEXT PRIMARY KEY,
+    script_path TEXT NOT NULL,
+    args TEXT,
+    output TEXT NOT NULL,
+    exit_code INTEGER NOT NULL,
+    cached_at REAL NOT NULL,
+    hits INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS code_cache (
+    code_hash TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    output TEXT NOT NULL,
+    exit_code INTEGER NOT NULL,
+    cached_at REAL NOT NULL,
     hits INTEGER DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS cache_stats (
@@ -93,10 +111,10 @@ def _record(category, hit: bool, tokens_saved: int = 0):
     conn.close()
 
 
-# ─── FILE CACHE (read_file) ────────────────────────────────────────
+# --- FILE CACHE (read_file) ---
 
 def cached_read(path: str) -> dict:
-    """Liest Datei MIT Cache (mtime-basiert)."""
+    """Read file WITH cache (mtime-based)."""
     path = os.path.expanduser(path)
     if not os.path.exists(path):
         return {"error": f"File not found: {path}"}
@@ -130,10 +148,10 @@ def cached_read(path: str) -> dict:
     return {"cached": False, "content": content, "path": path}
 
 
-# ─── SKILL CACHE ───────────────────────────────────────────────────
+# --- SKILL CACHE ---
 
 def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
-    """Lädt Skill + Referenzen MIT Cache."""
+    """Load skill + linked files WITH cache."""
     if skill_dirs is None:
         skill_dirs = [
             str(Path.home() / ".hermes" / "skills"),
@@ -155,7 +173,7 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     if not skill_path:
         return {"error": f"Skill not found: {skill_name}"}
 
-    # Alle Dateien im Skill-Ordner
+    # All files in the skill directory
     skill_files = []
     for root, dirs, files in os.walk(skill_path):
         for f in files:
@@ -207,7 +225,7 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     return {"cached": False, "content": content, "skill": skill_name, "files": len(skill_files)}
 
 
-# ─── TERMINAL CACHE ────────────────────────────────────────────────
+# --- TERMINAL CACHE ---
 
 DEFAULT_CACHEABLE = {
     "git status": 30, "git log --oneline -5": 30, "git branch": 60, "git diff --stat": 30,
@@ -218,13 +236,13 @@ DEFAULT_CACHEABLE = {
 
 
 def cached_terminal(command: str, ttl: int = None) -> dict:
-    """Führt Kommando aus ODER gibt Cache zurück."""
+    """Run command OR return cached result."""
     import subprocess
 
     cmd = command.strip()
     cacheable_ttl = ttl
 
-    # Aus Config + Defaults TTL bestimmen
+    # Determine TTL from Config + Defaults
     all_ttls = dict(DEFAULT_CACHEABLE)
     config_ttls = config.get("cache", "terminal_ttls", default={})
     if isinstance(config_ttls, dict):
@@ -272,10 +290,158 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
 
-# ─── STATS & VERWALTUNG ────────────────────────────────────────────
+# --- SCRIPT CACHE (cached_run) ---
+
+SCRIPT_CACHEABLE_EXTENSIONS = {".py", ".sh", ".bash", ".js", ".ts", ".rs", ".go", ".rb", ".pl"}
+
+
+def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
+    """Run a script file WITH cache (mtime + TTL).
+
+    Caches by: script path + args + file mtime.
+    Re-runs if the script file was modified or TTL expired.
+
+    ⚠️ SAFETY: Only use for READ-ONLY / idempotent scripts!
+       Scripts that have side effects (write files, API calls, DB writes,
+       git push, deployments, etc.) MUST use ttl=0 to disable caching.
+
+    Cache key = hash(script_path + args). If you pass different args,
+    it's treated as a different script and cached separately.
+
+    Args:
+        script_path: Path to script (.py, .sh, etc.)
+        args: Command-line arguments passed to the script
+        ttl: Cache TTL in seconds (default 300 = 5 min).
+             Set ttl=0 to disable caching for state-changing scripts.
+
+    Returns:
+        dict with keys: output, exit_code, cached
+    """
+    import subprocess
+
+    path = os.path.expanduser(script_path)
+    if not os.path.exists(path):
+        return {"error": f"Script not found: {path}"}
+
+    stat = os.stat(path)
+    ext = os.path.splitext(path)[1].lower()
+    # --- ttl=0 means bypass cache entirely ---
+    if ttl is not None and ttl <= 0:
+        result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+        return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+
+    is_cacheable = ext in SCRIPT_CACHEABLE_EXTENSIONS
+
+    if not is_cacheable:
+        result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+        return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+
+    path_hash = hashlib.md5(f"{path}:{args}".encode()).hexdigest()
+    now = time.time()
+
+    conn = _get_db()
+    row = conn.execute(
+        "SELECT output, exit_code, cached_at FROM script_cache WHERE script_hash = ?",
+        (path_hash,)
+    ).fetchone()
+
+    valid = False
+    if row:
+        age = now - row["cached_at"]
+        if age < ttl and stat.st_mtime < row["cached_at"]:
+            valid = True
+
+    if valid:
+        conn.close()
+        _record("script_cache", hit=True, tokens_saved=len(row["output"]) // 4)
+        return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
+
+    _record("script_cache", hit=False)
+    result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+
+    conn.execute("""
+        INSERT OR REPLACE INTO script_cache (script_hash, script_path, args, output, exit_code, cached_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (path_hash, path, args, result.stdout, result.returncode, now))
+    conn.commit()
+    conn.close()
+
+    return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+
+
+# --- CODE CACHE (cached_exec) ---
+
+def cached_exec(code: str, ttl: int = 120) -> dict:
+    """Execute Python code string WITH cache by content hash.
+
+    Same Python code always returns cached result for TTL seconds.
+    Useful for idempotent computations: data analysis, report gen, formatting.
+
+    ⚠️ SAFETY: Only use for idempotent code!
+       Code that has side effects (file writes, API calls, etc.)
+       MUST use ttl=0 to disable caching.
+
+    Cache key = hash(code_string). Same code = same cache entry,
+    regardless of what the code does!
+
+    Args:
+        code: Python code string (e.g. 'import pandas; print(df.describe())')
+        ttl: Cache TTL in seconds (default 120 = 2 min).
+             Set ttl=0 to disable caching for state-changing code.
+
+    Returns:
+        dict with keys: output, exit_code, cached
+    """
+    import subprocess
+
+    # --- ttl=0 means bypass cache entirely ---
+    if ttl is not None and ttl <= 0:
+        result = subprocess.run(
+            ["python3", "-c", code],
+            capture_output=True, text=True, timeout=30
+        )
+        return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+
+    code_hash = hashlib.md5(code.encode()).hexdigest()
+    now = time.time()
+
+    conn = _get_db()
+    row = conn.execute(
+        "SELECT output, exit_code, cached_at FROM code_cache WHERE code_hash = ?",
+        (code_hash,)
+    ).fetchone()
+
+    valid = False
+    if row:
+        age = now - row["cached_at"]
+        if age < ttl:
+            valid = True
+
+    if valid:
+        conn.close()
+        _record("code_cache", hit=True, tokens_saved=len(row["output"]) // 4)
+        return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
+
+    _record("code_cache", hit=False)
+    result = subprocess.run(
+        ["python3", "-c", code],
+        capture_output=True, text=True, timeout=30
+    )
+
+    conn.execute("""
+        INSERT OR REPLACE INTO code_cache (code_hash, code, output, exit_code, cached_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (code_hash, code, result.stdout, result.returncode, now))
+    conn.commit()
+    conn.close()
+
+    return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+
+
+# --- STATS & ADMIN ---
 
 def get_stats() -> dict:
-    """Cache-Statistiken."""
+    """Cache statistics."""
     conn = _get_db()
     stats = {}
     for row in conn.execute("SELECT * FROM cache_stats"):
@@ -286,7 +452,7 @@ def get_stats() -> dict:
             "tokens_saved": row["tokens_saved"],
             "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
         }
-    for t in ["file_cache", "skill_cache", "terminal_cache"]:
+    for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache"]:
         r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
         stats[f"{t}_entries"] = r[0]
     conn.close()
@@ -294,17 +460,19 @@ def get_stats() -> dict:
 
 
 def invalidate_all():
-    """Kompletten Cache leeren."""
+    """Clear entire cache."""
     conn = _get_db()
     conn.execute("DELETE FROM file_cache")
     conn.execute("DELETE FROM skill_cache")
     conn.execute("DELETE FROM terminal_cache")
+    conn.execute("DELETE FROM script_cache")
+    conn.execute("DELETE FROM code_cache")
     conn.commit()
     conn.close()
 
 
 def invalidate_file(path: str):
-    """Cache für eine Datei ungültig machen."""
+    """Invalidate cache for one file."""
     path = os.path.expanduser(path)
     h = hashlib.md5(path.encode()).hexdigest()
     conn = _get_db()
@@ -313,5 +481,5 @@ def invalidate_file(path: str):
     conn.close()
 
 
-# ─── INIT ──────────────────────────────────────────────────────────
+# --- INIT ---
 _init()

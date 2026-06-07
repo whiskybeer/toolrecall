@@ -1,8 +1,7 @@
-"""
-ToolRecall Docs — FTS5-Wissensdatenbank.
+"""ToolRecall Docs -- FTS5 knowledge base.
 
-Volltext-Suche über indizierte Dokumente (Skills, Projekte, etc.).
-Kein Embedding, kein GPU, kein API-Call — pure SQLite FTS5 + BM25.
+Full-text search over indexed documents (skills, projects, etc.).
+No embedding, no GPU, no API call -- pure SQLite FTS5 + BM25.
 """
 import os, time, sqlite3, hashlib, subprocess
 from pathlib import Path
@@ -45,12 +44,12 @@ def _ensure_tables(conn):
 
 def docs_search(query: str, source: str = None) -> str:
     """
-    Volltext-Suche über indizierte Dokumente.
-    Nutzt FTS5 MATCH + BM25 Ranking.
+    Full-text search across indexed documents.
+    Uses FTS5 MATCH + BM25 ranking.
 
     Args:
-        query: Suchbegriff(e) — Porter Stemming inkludiert
-        source: Optionaler Namespace (z.B. 'hermes', 'ki-game')
+        query: Search term(s) — Porter stemming included
+        source: Optional namespace (e.g. 'hermes', 'ki-game')
     """
     import re
 
@@ -150,8 +149,8 @@ def docs_get_page(path: str, source: str = "hermes") -> str:
 
 def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set = None, max_bytes: int = 100000):
     """
-    Alle Quelldateien indizieren.
-    Wird beim ersten `toolrecall index` oder `docs_search()` bei fehlender DB aufgerufen.
+    Index all source files.
+    Called on first `toolrecall index` or `docs_search()` when DB is missing.
     """
     if scan_dirs is None:
         scan_dirs = config.get("sources", "scan_dirs", default=[str(Path.home())])

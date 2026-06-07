@@ -1,18 +1,18 @@
-# ToolRecall — Konfiguration
+# ToolRecall — Configuration
 #
-# Läuft via toolrecall.toml im aktuellen Verzeichnis oder ~/.config/toolrecall.
-# Alle Pfade, TTLs und Ports sind hier konfigurierbar.
+# Loaded via toolrecall.toml in current directory or ~/.config/toolrecall.
+# All paths, TTLs, and ports are configurable.
 
-# ─── Kern-Pfade ────────────────────────────────────────────────────
+# ─── Core Paths ───────────────────────────
 [paths]
-cache_db = "~/.toolrecall/cache.db"        # Tool-Output-Cache
-knowledge_db = "~/.toolrecall/knowledge.db" # FTS5-Wissensdatenbank
+cache_db = "~/.toolrecall/cache.db"        # Tool output cache
+knowledge_db = "~/.toolrecall/knowledge.db" # FTS5 knowledge base
 
-# ─── Cache-TTLs (in Sekunden, -1 = unendlich) ──────────────────────
+# ─── Cache TTLs (seconds, -1 = infinite) ──
 [cache]
-file_ttl = -1          # read_file: bis Datei-Änderung (mtime)
-skill_ttl = -1         # skill_view: bis Skill-Update
-terminal_default_ttl = 300  # 5 Minuten für unbekannte Kommandos
+file_ttl = -1          # read_file: until file modification (mtime)
+skill_ttl = -1         # skill_view: until skill update
+terminal_default_ttl = 300  # 5 minutes for unknown commands
 
 [cache.terminal_ttls]
 "git status" = 30
@@ -29,12 +29,11 @@ terminal_default_ttl = 300  # 5 Minuten für unbekannte Kommandos
 "ls -la" = 60
 "crontab -l" = 3600
 
-# ─── Nginx-Proxy (empfohlen, wenn verfügbar) ───────────────────────
+# ─── Nginx Proxy (recommended when available) ──
 [proxy]
 port = 8511
 bind = "127.0.0.1"
-nginx_recommended = true    # In Docs anzeigen: "nginx empfohlen"
-nginx_auto_site = false     # true: /etc/nginx/sites-available automatisch
+nginx_recommended = true    # Show "nginx recommended" in docs
 
 [nginx]
 site_name = "toolrecall"
@@ -43,11 +42,11 @@ ssl = false
 ssl_cert = ""
 ssl_key = ""
 
-# ─── Datenquellen für Knowledge Cache (FTS5) ───────────────────────
+# ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]
 scan_dirs = [
     "~/.hermes/skills",
-    "~",
+    "~/.hermes/scripts",
 ]
 scan_extensions = [".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]
 scan_ignore = [".git", "node_modules", ".venv", "dist", "build", "__pycache__"]

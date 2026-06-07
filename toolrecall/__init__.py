@@ -1,23 +1,23 @@
 """
-ToolRecall — Universal Tool Cache for LLM Agents.
+ToolRecall — Universal Tool-Output Cache for LLM Agents.
 
-Nutzung:
+Usage:
     from toolrecall import cached_read, cached_skill, cached_terminal, docs_search
 
-    # Statt read_file():
-    result = cached_read('/pfad/datei.md')
+    # Instead of read_file():
+    result = cached_read('/path/to/file.md')
 
-    # Statt skill_view():
+    # Instead of skill_view():
     skill = cached_skill('skill-name')
 
-    # Statt terminal('git status'):
+    # Instead of terminal('git status'):
     result = cached_terminal('git status')
 
-    # Statt Web-Suche:
+    # Instead of web search:
     info = docs_search('query')
 """
 
-from toolrecall.cache import cached_read, cached_skill, cached_terminal, invalidate_all
+from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, invalidate_all
 from toolrecall.docs import docs_search, docs_get_page
 from toolrecall.config import Config
 from toolrecall.cli import main as cli_main
@@ -27,6 +27,8 @@ __all__ = [
     "cached_read",
     "cached_skill",
     "cached_terminal",
+    "cached_run",
+    "cached_exec",
     "docs_search",
     "docs_get_page",
     "invalidate_all",

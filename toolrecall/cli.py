@@ -1,19 +1,16 @@
-"""
-ToolRecall CLI — toolrecall status, stats, invalidate, index.
+"""ToolRecall CLI -- toolrecall status, stats, invalidate, index, serve, nginx.
 
-Nutzung:
-    toolrecall status          # Cache-Status anzeigen
-    toolrecall stats           # Detaillierte Statistiken
-    toolrecall invalidate      # Cache leeren
-    toolrecall index           # Wissensdatenbank indizieren
-    toolrecall serve           # HTTP-Proxy starten (Fallback, empfohlen: nginx)
-    toolrecall nginx           # Nginx-Config generieren/installieren
+Usage:
+    toolrecall status          # Show cache status
+    toolrecall stats           # Detailed statistics
+    toolrecall invalidate      # Clear cache
+    toolrecall index           # Index knowledge base
+    toolrecall serve           # Start HTTP proxy (fallback, nginx recommended)
+    toolrecall nginx           # Generate nginx config
 """
 import os, sys, json
-
-
 def cmd_status():
-    """Cache-Status anzeigen."""
+    """Show cache status."""
     from toolrecall.cache import get_stats
     stats = get_stats()
     print("=" * 50)
@@ -28,20 +25,20 @@ def cmd_status():
 
 
 def cmd_stats():
-    """Detaillierte Statistiken als JSON."""
+    """Detailed statistics as JSON."""
     from toolrecall.cache import get_stats
     print(json.dumps(get_stats(), indent=2))
 
 
 def cmd_invalidate():
-    """Cache leeren."""
+    """Clear cache."""
     from toolrecall.cache import invalidate_all
     invalidate_all()
     print("ToolRecall cache cleared.")
 
 
 def cmd_index():
-    """Wissensdatenbank indizieren."""
+    """Index knowledge base."""
     from toolrecall.docs import index_all, DB_PATH
     print("Indexing knowledge database...")
     total = index_all()
@@ -50,68 +47,16 @@ def cmd_index():
 
 
 def cmd_serve():
-    """HTTP-Proxy starten (Fallback, empfohlen: nginx davor)."""
-    from toolrecall.cache import cached_read, cached_skill, cached_terminal
-    from toolrecall.docs import docs_search, docs_get_page
+    """Start HTTP proxy (delegates to toolrecall.proxy)."""
+    from toolrecall.proxy import run_server
     from toolrecall.config import load_config
-    import http.server
-    import json
 
     cfg = load_config()
-    port = cfg.proxy_port
-    bind = cfg.proxy_bind
-
-    class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            path = self.path.split("?")[0]
-            q = {k: v for k, v in (p.split("=") for p in self.path.split("?")[1:] if "=" in p)}
-
-            if path == "/cached_read":
-                p = q.get("path", "")
-                result = cached_read(p)
-            elif path == "/cached_skill":
-                s = q.get("name", "")
-                result = cached_skill(s)
-            elif path == "/cached_terminal":
-                c = q.get("cmd", "")
-                ttl = int(q.get("ttl", "0")) or None
-                result = cached_terminal(c, ttl)
-            elif path == "/docs_search":
-                query = q.get("query", "")
-                src = q.get("source", None)
-                result = {"output": docs_search(query, src)}
-            elif path == "/health":
-                result = {"status": "ok", "version": "0.1.0"}
-            else:
-                result = {"error": f"Unknown endpoint: {path}"}
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
-
-        def log_message(self, fmt, *args):
-            pass  # Leise
-
-    server = http.server.HTTPServer((bind, port), ToolRecallHandler)
-    print(f"ToolRecall HTTP proxy running on http://{bind}:{port}")
-    print(f"Endpoints:")
-    print(f"  GET /cached_read?path=/pfad/datei")
-    print(f"  GET /cached_skill?name=skill-name")
-    print(f"  GET /cached_terminal?cmd=git status")
-    print(f"  GET /docs_search?query=suchbegriff")
-    print(f"  GET /health")
-    print()
-    print("Recommended: put nginx in front for SSL + auth.")
-    print("  toolrecall nginx  →  generates nginx config")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down.")
+    run_server(bind=cfg.proxy_bind, port=cfg.proxy_port)
 
 
 def cmd_nginx():
-    """Nginx-Config generieren."""
+    """Generate nginx config."""
     cfg_dir = os.path.expanduser("~/.toolrecall")
     os.makedirs(cfg_dir, exist_ok=True)
     out_path = os.path.join(cfg_dir, "nginx-toolrecall.conf")
@@ -126,26 +71,26 @@ server {
     listen 80;
     server_name localhost;
 
-    # === WICHTIG: Nginx selbst cached NICHT ===
-    # ToolRecall verwaltet seinen eigenen Cache (SQLite)
-    # Nginx ist NUR SSL-Terminator + Router
+    # === IMPORTANT: Nginx itself does NOT cache ===
+    # ToolRecall manages its own cache (SQLite)
+    # Nginx is ONLY SSL terminator + router
     proxy_cache off;
     proxy_no_cache 1;
     proxy_cache_bypass 1;
 
     location /toolrecall/ {
-        proxy_pass http://[IP_ADDRESS]:8511/;
+        proxy_pass http://127.0.0.1:8511/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 
-        # Timeouts (ToolRecall ist schnell, aber LLM kann langsam sein)
+        # Timeouts (ToolRecall is fast, but LLM can be slow)
         proxy_connect_timeout 5s;
         proxy_read_timeout 30s;
         proxy_send_timeout 30s;
     }
 
-    # Optional: Passwort-Schutz
+    # Optional: Password protection
     # location /toolrecall/ {
     #     auth_basic "ToolRecall";
     #     auth_basic_user_file /etc/nginx/.htpasswd_toolrecall;
@@ -153,7 +98,7 @@ server {
     # }
 }
 
-# SSL-Version (empfohlen)
+# SSL Version (recommended)
 # server {
 #     listen 443 ssl;
 #     server_name toolrecall.dev;

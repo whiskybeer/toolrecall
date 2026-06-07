@@ -1,11 +1,10 @@
-"""
-ToolRecall — Konfigurationssystem.
+"""ToolRecall — Configuration system.
 
-Lädt toolrecall.toml aus:
-1. Aktuelles Verzeichnis
+Loads toolrecall.toml from:
+1. Current working directory
 2. ~/.config/toolrecall/toolrecall.toml
 3. /etc/toolrecall/toolrecall.toml
-4. package-default (config.toml neben dieser Datei)
+4. Package default (config.toml next to this file)
 """
 import os
 import tomllib
@@ -19,14 +18,14 @@ DEFAULT_PATHS = [
 
 
 class Config:
-    """ToolRecall-Konfiguration — einmalig laden, dann über Attribute abrufen."""
+    """ToolRecall configuration — load once, access via attributes."""
 
     def __init__(self, path: str = None):
         self._data = self._load(path)
         self._expand_paths()
 
     def _load(self, path: str = None) -> dict:
-        # Package-Default
+        # Package default
         pkg_default = Path(__file__).parent / "config.toml"
         try:
             with open(pkg_default, "rb") as f:
@@ -34,7 +33,7 @@ class Config:
         except Exception:
             config = {}
 
-        # User-Config (überschreibt Defaults)
+        # User config (overrides defaults)
         if path:
             paths = [Path(path)]
         else:
@@ -59,7 +58,7 @@ class Config:
                 base[key] = val
 
     def _expand_paths(self):
-        """Ersetzt ~ und Umgebungsvariablen in allen String-Werten."""
+        """Expand ~ and environment variables in all string values."""
         def expand(val):
             if isinstance(val, str):
                 return os.path.expandvars(os.path.expanduser(val))
@@ -131,7 +130,7 @@ _config = None
 
 
 def load_config(path: str = None) -> Config:
-    """Einmalig laden, dann wiederverwenden (Singleton)."""
+    """Load once, then reuse (singleton)."""
     global _config
     if _config is None or path:
         _config = Config(path)

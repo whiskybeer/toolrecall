@@ -1,12 +1,38 @@
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.backends._legacy:_Backend"
+requires = ["setuptools>=68.0", "packaging", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
 version = "0.1.0"
-description = "Universal Tool Output Cache for LLM Agents"
+description = "Universal Tool-Output Cache for LLM Agents — caches file reads, terminal commands, skills, scripts, and code execution in local SQLite FTS5"
+readme = "README.md"
+authors = [
+    {name = "Robin", email = "robka@web.de"},
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["tool-cache", "llm", "agent", "token-savings", "sqlite", "fts5"]
 requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/whiskybeer/toolrecall"
+Repository = "https://github.com/whiskybeer/toolrecall"
+Documentation = "https://github.com/whiskybeer/toolrecall#readme"
 
 [project.scripts]
 toolrecall = "toolrecall.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["toolrecall*"]
