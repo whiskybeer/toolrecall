@@ -1,102 +1,81 @@
-# ToolRecall
+# ToolRecall: The L1 Cache for LLM Agents
 
-**Universal Tool-Output Cache & MCP Multiplexer for LLM Agents**
+**An $O(N^2)$ Context Mitigation & MCP Multiplexer Middleware**
 
-ToolRecall is a caching layer for AI agents (like Claude Code, Hermes, Aider, OpenHands). It intercepts tool calls (file reads, terminal commands, script executions) and returns cached results if nothing has changed. 
+ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous AI agents like Claude Code, Cursor, Aider, and Hermes. It sits between the agent and the operating system, caching tool executions and managing external MCP servers via Unix Domain Sockets (IPC).
 
-The main selling point: **It saves ~80% of input tokens with zero drawbacks for deterministic tasks**, allowing you to run powerful local coding agents much cheaper and faster.
+The core value proposition: **It breaks the $O(N^2)$ context snowball effect.** 
+In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** in a single 13-hour session by serving tool results from a local SQLite FTS5 database in 1.5ms.
 
-## Why ToolRecall?
+👉 **[Read the 141M Token Benchmark Case Study](BENCHMARK.md)**
 
-LLM agents are notorious for redundant actions. During a debugging loop, an agent might read the same 50KB log file or run the same `git status` command ten times. 
-- **API Prompt Caching** (like Anthropic's or OpenAI's) caches the *input prompt* on the server.
-- **ToolRecall** prevents the agent from even executing the tool or waiting for output, caching the *tool result* locally.
+---
 
-The two systems stack perfectly. ToolRecall is **100% GDPR compliant**: data never leaves your local machine, there is no telemetry, and everything is stored in a local SQLite database.
+## The Core Problem: The Context Snowball
 
-## Architecture & Tech Stack
+LLM context windows are stateless. Every time an agent reads a 10,000-token file to debug an issue, those 10,000 tokens are added to the history. If the session continues for 100 turns, those same 10,000 tokens are re-transmitted to the API 100 times, costing 1,000,000 billed input tokens.
 
-ToolRecall uses a hybrid architecture:
-1. **In-Memory LRU Cache** (~0.001ms lookup)
-2. **SQLite Database** (~1-5ms lookup, persistent across sessions)
-3. **Daemon Process** (Unix Domain Sockets)
+**The ToolRecall Solution (Micro-RAG):**
+1. Agents read the file once.
+2. The agent is instructed to *drop* the file dump from its active context window to save space.
+3. If the agent needs the file again hours later, ToolRecall serves the *exact byte-for-byte output* from its local SQLite cache instantly.
+4. If the file is modified (`write_file`), ToolRecall's locking mechanism instantly invalidates the cache.
 
-**Does "Zero Dependencies" still hold true?**
-Yes. The core caching logic (`toolrecall.cache`) uses pure Python standard library (`sqlite3`, `json`, `hashlib`). The `mcp` package is only required if you use the MCP Bridge.
+**Zero Hallucination:** Unlike Vector-DBs that use LLMs to summarize older context (which introduces hallucinations), ToolRecall returns raw `stdout` and JSON data deterministically.
 
-**Could we switch to a faster stack (Rust/Go/Redis)?**
-Python + SQLite is already returning cache hits in under 2 milliseconds. The bottleneck in AI workflows is the LLM generation time (seconds) and network overhead. Moving to Rust or Redis would overcomplicate the deployment for a microscopic gain.
+---
 
-## Features
+## Architecture & Security (The "Armor")
 
-### 1. Tool-Output Caching
-- **File Reads**: Auto-invalidates based on `mtime`.
-- **Terminal Commands**: Managed via an exact-match allow-list and TTLs (Time-To-Live). E.g., `git status` is cached for 30s, `uname` for 3600s.
-- **Code Execution**: Hashes the code content.
+ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** for LLM agents to mitigate Prompt Injections.
 
-### 2. MCP Multiplexer (v0.3.0+)
-If you use multiple MCP (Model Context Protocol) servers (e.g., GitHub, Time, Sequential Thinking), starting them per-session wastes RAM and startup time.
-The ToolRecall Daemon acts as a **Multiplexer**:
-- It runs your MCP servers as persistent subprocesses.
-- It lazy-loads them on the first call.
-- It shuts them down after 15 minutes of idle time.
-- Your agent only needs to connect to **ONE** MCP server: `toolrecall mcp`.
+1. **Daemon-Based (IPC):** ToolRecall runs as a persistent daemon. Agents communicate with it via Unix Domain Sockets (`/run/user/1004/toolrecall.sock`). There are no open TCP ports (immune to SSRF and port scanning).
+2. **Hard Allowlist:** Instead of trusting the LLM's system prompt to "not read passwords," ToolRecall enforces a hard Python-level allowlist (e.g., `["~/projects", "~/.hermes"]`). If a prompt injection tricks the agent into reading `~/.ssh/id_rsa`, the middleware blocks it with `Access Denied` before the file is ever touched.
+3. **Terminal Gating:** By default, `allow_terminal = false`. Read-operations are allowed, but shell commands are filtered unless explicitly whitelisted by the developer.
 
-### 3. Local Knowledge Base (Micro-RAG)
-ToolRecall includes a SQLite FTS5 (Full-Text Search) engine. It indexes your agent's skills, scripts, and documents locally. 
+---
 
-**Can I query past sessions to avoid repeating mistakes?**
-Currently, ToolRecall indexes documents and skills. To search conversational history, your agent should rely on its native `session_search` tool (which Hermes already possesses). However, any *successful workflow or lesson learned* should be written to a `.md` file in `~/.hermes/skills/` — ToolRecall automatically indexes these, ensuring the agent retrieves the best approach in future sessions!
+## Features (v0.3.0)
 
-## Installation
+### 1. Byte-Exact Tool Caching
+- **File Cache:** Invalidates instantly based on file modifications (`mtime`) and internal invalidation locks.
+- **Terminal Cache:** Caches read-only shell commands based on TTLs (e.g., `git status` for 30s).
+
+### 2. The MCP Multiplexer
+Running 5 different MCP Servers (GitHub, Time, Fetch, etc.) per session wastes RAM (~600MB) and startup time.
+- ToolRecall acts as a persistent host for your MCP servers.
+- **Lazy Loading:** Servers boot in 0.01s only when a tool is requested.
+- **Idle Timeout:** Servers are killed after 15 minutes of inactivity to recover RAM (dropping daemon footprint from 490MB to 11MB).
+- Agents only connect to **ONE** server: `toolrecall mcp`.
+
+---
+
+## Installation & Quickstart
+
+**Requirements:** Python 3.10+, standard SQLite.
 
 ```bash
+# 1. Install via pip
 pip install toolrecall[mcp]
+
+# 2. Start the Daemon in the background (or as systemd service)
+toolrecall daemon &
 ```
 
-Start the daemon (runs in the background, recommended as a systemd user service):
-```bash
-toolrecall daemon
-```
-
-## Usage Examples
-
-### With Claude Code (Local Agent)
-Claude Code supports MCP. Simply add ToolRecall to your Claude Code config to instantly benefit from cached file reads and terminal commands:
+### Usage: Claude Code (Drop-in Replacement)
+To instantly make Claude Code 80% cheaper and faster, route it through ToolRecall:
 ```bash
 claude mcp add toolrecall -- uv run python -m toolrecall.mcp_server
 ```
 
-### With Python Agents
-```python
-from toolrecall.client import cached_read, cached_terminal, mcp_call
-
-# Instant (if mtime hasn't changed)
-content = cached_read("/path/to/large_file.log")
-
-# Instant (cached for 30s via TTL)
-git_stat = cached_terminal("git status")
-
-# Routed through the multiplexer to a persistent GitHub MCP server
-issues = mcp_call("github", "list_issues", {"owner": "user", "repo": "repo"})
-```
-
-## When NOT to use caching
-
-ToolRecall is designed to fail safe, but caching should be bypassed (`ttl=0` or `bypass_cache=True`) when:
-- Reading real-time data streams (sensor data, live market tickers).
-- Executing state-changing commands (e.g., `git push`, `npm install`, or `curl -X POST`).
-- Running tests where the underlying environment changed outside of the tracked files.
-
-## Configuration
-
+### Configuration & Secrets
 Settings are managed in `~/.toolrecall/config.toml`.
+Secrets (like `GITHUB_PERSONAL_ACCESS_TOKEN`) should be placed in `~/.toolrecall/.env`. The daemon securely loads them before launching subprocesses. No secrets are ever stored in Git or passed via the LLM context.
 
 ```toml
 [mcp]
-# Allow-list for file reading over MCP
-allowed_paths = ["~/.hermes/skills", "~/projects"]
-allow_terminal = false # Keep disabled for safety
+allowed_paths = ["~/projects", "~/.hermes/skills"]
+allow_terminal = false # Security: Prevents Prompt Injection executions
 
 [mcp_multiplex]
 enabled = true
@@ -106,4 +85,5 @@ idle_minutes = 15
 github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
 ```
 
-Secrets (like `GITHUB_PERSONAL_ACCESS_TOKEN`) should be placed in `~/.toolrecall/.env` and are securely loaded by the daemon before launching subprocesses.
+## Status
+**Experimental.** ToolRecall is currently used in heavy autonomous agent workflows. Before deploying it in production CI/CD environments, ensure your allowlist is strictly scoped.
