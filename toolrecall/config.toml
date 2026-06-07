@@ -64,6 +64,10 @@ enabled = true
 # Example: ["github", "time", "fetch"]
 servers = []
 
+# Minutes of inactivity before an MCP server shuts down (saves RAM).
+# Default: 15 minutes. Set to 0 to keep servers alive forever.
+idle_minutes = 15
+
 # Path to Hermes config.yaml for auto-discovery of MCP servers.
 # Empty = auto-detect (~/.hermes/config.yaml)
 # hermes_config = ""

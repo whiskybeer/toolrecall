@@ -234,89 +234,197 @@ class MCPClientSession:
 
 
 class MCPMultiplexer:
-    """Manages multiple persistent MCP subprocesses.
+    """Manages multiple MCP subprocesses — lazy start, idle timeout, session handover.
 
-    Reads Hermes-style MCP server configs from ToolRecall config
-    and starts each as a persistent subprocess. Responses are
-    cached via ToolRecall's shared LRU+SQLite.
+    Server startet erst beim ersten mcp_call(). Laufen persistent über
+    Sessions hinweg. Idle Server werden nach idle_timeout Minuten
+    automatisch gestoppt (sparen RAM). Beim nächsten Aufruf neu gestartet.
+
+    Usage:
+        mux = MCPMultiplexer(cfg)
+        mux.call("github", "list_issues", {"owner": "whiskybeer", "repo": "toolrecall"})
+        # → first call starts github (~2s), subsequent calls are instant
+        # → after 15min idle, github shuts down automatically
     """
 
     def __init__(self, cfg):
         self.cfg = cfg
         self._sessions: dict[str, MCPClientSession] = {}
-        self._initialized = False
+        self._configs: dict[str, dict] = {}
+        self._lock = threading.Lock()
+        self._idle_timeout = cfg.mcp_multiplex_idle_minutes or 15  # minutes
+        self._last_use: dict[str, float] = {}
+        self._reaper_running = False
 
-    def _start_servers(self):
-        """Start and initialize all configured MCP servers."""
+    # ─── Discovery ────────────────────────────────────
+
+    def _discover_configs(self):
+        """Lese Server-Konfigurationen (einmalig)."""
+        if self._configs:
+            return
         servers = self.cfg.mcp_multiplex_servers_config
         if not servers:
             return
-
+        allow_servers = [s.lower() for s in self.cfg.mcp_multiplex_servers]
         for name, srv_config in servers.items():
             name_lower = name.lower()
-            if self.cfg.mcp_multiplex_servers:
-                if name_lower not in [s.lower() for s in self.cfg.mcp_multiplex_servers]:
-                    continue
+            if allow_servers and name_lower not in allow_servers:
+                continue
+            self._configs[name_lower] = {
+                "name": name,
+                "command": srv_config.get("command", ""),
+                "args": srv_config.get("args", []),
+                "env": srv_config.get("env", {}),
+            }
+
+    # ─── Lazy Server Start ────────────────────────────
+
+    def _ensure_server(self, name_lower: str) -> str | None:
+        """Start server wenn nötig. Gibt Fehler zurück oder None bei Erfolg."""
+        with self._lock:
+            if name_lower in self._sessions:
+                session = self._sessions[name_lower]
+                if session.running:
+                    return None  # Already running
+                # Stale session — restart
+                self._sessions.pop(name_lower, None)
+
+            config = self._configs.get(name_lower)
+            if not config:
+                return f"MCP server '{name_lower}' not configured"
+
             try:
                 session = MCPClientSession(
-                    name=name,
-                    command=srv_config.get("command", ""),
-                    args=srv_config.get("args", []),
-                    env=srv_config.get("env", {}),
+                    name=config["name"],
+                    command=config["command"],
+                    args=config["args"],
+                    env=config["env"],
                 )
-                # Initialize handshake
                 init_resp = session.initialize()
                 if "error" in init_resp:
-                    print(f"  ⚠ {name}: init failed — {init_resp['error'].get('message', 'unknown')}", file=sys.stderr)
-                    continue
-                # Fetch available tools
+                    return f"{name_lower}: init failed — {init_resp['error'].get('message', 'unknown')}"
+                # Fetch tools for warmup
                 tools = session.list_tools()
-                print(f"  ✓ {name}: {len(tools)} tools available", file=sys.stderr)
                 self._sessions[name_lower] = session
+                print(f"  ✓ {name_lower}: {len(tools)} tools started on-demand", file=sys.stderr)
             except Exception as e:
-                print(f"  ⚠ {name}: start failed — {e}", file=sys.stderr)
-        self._initialized = True
+                return f"{name_lower}: start failed — {e}"
+        return None
+
+    # ─── Idle Timeout (Reaper) ────────────────────────
+
+    def _start_reaper(self):
+        """Background thread: stops idle servers."""
+        if self._reaper_running:
+            return
+        self._reaper_running = True
+
+        def _reaper_loop():
+            while True:
+                time.sleep(60)  # Check every minute
+                now = time.time()
+                with self._lock:
+                    idle_names = []
+                    for name, last_used in list(self._last_use.items()):
+                        if name not in self._sessions:
+                            continue
+                        idle_mins = (now - last_used) / 60
+                        if idle_mins >= self._idle_timeout:
+                            idle_names.append((name, idle_mins))
+                    for name, mins in idle_names:
+                        session = self._sessions.pop(name, None)
+                        if session:
+                            try:
+                                session.shutdown()
+                                print(f"  💤 {name}: idle shutdown ({int(idle_mins)}min)", file=sys.stderr)
+                            except Exception:
+                                pass
+                            self._last_use.pop(name, None)
+
+        t = threading.Thread(target=_reaper_loop, daemon=True, name="mcp-reaper")
+        t.start()
+
+    # ─── Public API ───────────────────────────────────
+
+    def start(self):
+        """Initialisiert Konfiguration. Startet KEINE Server (lazy)."""
+        self._discover_configs()
+        self._start_reaper()
+        n = len(self._configs)
+        if n:
+            print(f"  {n} servers configured (lazy start — first call starts each)", file=sys.stderr)
 
     def shutdown(self):
-        """Shutdown all managed subprocesses."""
-        for name, session in self._sessions.items():
-            try:
-                session.shutdown()
-                print(f"  ✗ {name}: stopped", file=sys.stderr)
-            except Exception:
-                pass
-        self._sessions.clear()
+        """Shutdown all running servers."""
+        with self._lock:
+            for name, session in list(self._sessions.items()):
+                try:
+                    session.shutdown()
+                    print(f"  ✗ {name}: stopped", file=sys.stderr)
+                except Exception:
+                    pass
+            self._sessions.clear()
+            self._last_use.clear()
 
     def list_servers(self) -> list:
-        """List connected servers with tool counts."""
+        """List all configured servers — running, idle, or not yet started."""
+        self._discover_configs()
         result = []
-        for name, session in self._sessions.items():
-            try:
-                tools = session.list_tools()
-                result.append({
-                    "name": name,
-                    "running": session.running,
-                    "tools": len(tools),
-                    "tool_names": [t.get("name") for t in tools],
-                })
-            except Exception as e:
-                result.append({
-                    "name": name,
-                    "running": False,
-                    "tools": 0,
-                    "tool_names": [],
-                    "error": str(e),
-                })
+        with self._lock:
+            for name_lower, config in self._configs.items():
+                session = self._sessions.get(name_lower)
+                if session and session.running:
+                    try:
+                        tools = session.list_tools()
+                        result.append({
+                            "name": config["name"],
+                            "running": True,
+                            "status": "active",
+                            "tools": len(tools),
+                            "tool_names": [t.get("name") for t in tools],
+                        })
+                    except Exception:
+                        result.append({
+                            "name": config["name"],
+                            "running": False,
+                            "status": "error",
+                            "tools": 0,
+                            "tool_names": [],
+                        })
+                else:
+                    result.append({
+                        "name": config["name"],
+                        "running": False,
+                        "status": "idle",
+                        "tools": 0,
+                        "tool_names": [],
+                    })
         return result
 
     def call(self, server: str, tool: str, arguments: dict = None) -> dict:
-        """Call a tool on a multiplexed server."""
+        """Call a tool — lazy-starts server on first use, tracks idle."""
         server_lower = server.lower()
-        session = self._sessions.get(server_lower)
-        if not session:
-            return {"error": f"MCP server '{server}' not connected"}
-        resp = session.call_tool(tool, arguments or {})
-        return resp.get("result", resp)
+
+        # Ensure config known
+        self._discover_configs()
+        if server_lower not in self._configs:
+            return {"error": f"MCP server '{server}' is not configured"}
+
+        # Lazy start
+        err = self._ensure_server(server_lower)
+        if err:
+            return {"error": err}
+
+        # Mark used (for idle timeout)
+        self._last_use[server_lower] = time.time()
+
+        # Call
+        with self._lock:
+            session = self._sessions.get(server_lower)
+            if not session:
+                return {"error": f"MCP server '{server}' not available"}
+            resp = session.call_tool(tool, arguments or {})
+            return resp.get("result", resp)
 
 
 # ─── UDS Server ───────────────────────────────────────────
@@ -357,10 +465,10 @@ class DaemonServer:
         print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}", file=sys.stderr)
         print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}", file=sys.stderr)
 
-        # Start MCP Multiplexer
+        # Start MCP Multiplexer (lazy — no servers started yet)
         if self.cfg.mcp_multiplex_enabled:
             print(f"\nMCP Multiplexer:", file=sys.stderr)
-            self.multiplexer._start_servers()
+            self.multiplexer.start()
         print(file=sys.stderr)
 
         while self._running:

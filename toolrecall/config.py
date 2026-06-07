@@ -202,6 +202,12 @@ class Config:
         return self.get("mcp_multiplex", "hermes_config", default="")
 
     @property
+    def mcp_multiplex_idle_minutes(self) -> int:
+        """Minutes of inactivity before an MCP server is shut down (default: 15).
+        Set to 0 to keep servers alive forever."""
+        return self.get("mcp_multiplex", "idle_minutes", default=15)
+
+    @property
     def mcp_multiplex_servers_config(self) -> dict:
         """Parse Hermes-style mcp_servers config from toolrecall config or Hermes config.yaml.
 
