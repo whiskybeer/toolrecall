@@ -447,8 +447,14 @@ class MCPMultiplexer:
             session = self._sessions.get(server_lower)
             if not session:
                 return {"error": f"MCP server '{server}' not available"}
-            resp = session.call_tool(tool, arguments or {})
-            return resp.get("result", resp)
+                
+        # Execute outside global multiplexer lock (session has its own lock)
+        resp = session.call_tool(tool, arguments or {})
+        
+        with self._lock:
+            self._last_use[server_lower] = time.time()
+            
+        return resp.get("result", resp)
 
 
 # ─── UDS Server ───────────────────────────────────────────
@@ -725,7 +731,6 @@ _server_instance = None
 
 def _signal_handler(signum, frame):
     """Handle SIGTERM/SIGINT for graceful shutdown."""
-    global _server_instance
     if _server_instance:
         _server_instance.stop()
     sys.exit(0)
