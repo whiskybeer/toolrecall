@@ -84,6 +84,8 @@ class SecurityGate:
         self.allow_invalidate = cfg.mcp_allow_invalidate
         self.allow_multiplex = cfg.mcp_multiplex_enabled
         self.allowed_servers = [s.lower() for s in cfg.mcp_multiplex_servers]
+        self.read_only_sandbox = cfg.mcp_read_only_sandbox
+        self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords
 
     def check_read_path(self, path: str) -> str | None:
         """Check if path is allowed to be read. Returns None or error message."""
@@ -117,16 +119,27 @@ class SecurityGate:
                 
         return f"Terminal command not allowed by regex allowlist: {cmd}"
 
-    def check_invalidate(self) -> str:
+    def check_invalidate(self) -> str | None:
         if not self.allow_invalidate:
             return "cache_invalidate is disabled. Set mcp.allow_invalidate=true in config."
         return None
 
-    def check_mcp_server(self, server: str) -> str:
+    def check_mcp_server(self, server: str) -> str | None:
         if not self.allow_multiplex:
             return "MCP multiplexer is disabled."
         if self.allowed_servers and server.lower() not in self.allowed_servers:
             return f"MCP server '{server}' not in allowed_servers."
+        return None
+
+    def check_mcp_tool_sandbox(self, tool_name: str) -> str | None:
+        """Ultimate Sandbox WAF: If enabled, blocks tools that modify state."""
+        if not self.read_only_sandbox:
+            return None
+        
+        t_lower = tool_name.lower()
+        for kw in self.dangerous_tool_keywords:
+            if kw.lower() in t_lower:
+                return f"ToolRecall Sandbox WAF: Execution of modifying tool '{tool_name}' is blocked in read-only mode."
         return None
 
 
@@ -691,6 +704,11 @@ class DaemonServer:
             return {"error": "Missing 'server'"}
         if not tool:
             return {"error": "Missing 'tool'"}
+
+        # Ultimate Sandbox WAF check
+        sandbox_err = self.security.check_mcp_tool_sandbox(tool)
+        if sandbox_err:
+            return {"error": sandbox_err}
 
         # Check cache first
         # Pass TTL if configured for this server (defaulting to None falls back to MCP_DEFAULT_TTL)

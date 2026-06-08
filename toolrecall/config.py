@@ -200,6 +200,19 @@ class Config:
         """Allow cache_invalidate tool (default: False)."""
         return self.get("mcp", "allow_invalidate", default=False)
 
+    @property
+    def mcp_read_only_sandbox(self) -> bool:
+        """Ultimate Security Sandbox: If True, blocks all tools across all multiplexed servers
+        that match dangerous_tool_keywords (e.g. 'write', 'execute')."""
+        return bool(self.get("security", "read_only_sandbox", default=False))
+
+    @property
+    def mcp_dangerous_tool_keywords(self) -> list:
+        """Keywords that indicate a tool modifies state. Used by read_only_sandbox."""
+        default_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
+        val = self.get("security", "dangerous_tool_keywords", default=default_keywords)
+        return val if isinstance(val, list) else default_keywords
+
     # ─── MCP Multiplex Properties ─────────────────────
 
     @property

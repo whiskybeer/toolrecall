@@ -44,6 +44,15 @@ ssl_cert = ""
 ssl_key = ""
 
 # ─── MCP Server Security ────────────────
+[security]
+# 🛡️ THE ULTIMATE SANDBOX (WAF)
+# If enabled, ToolRecall blocks ALL state-modifying tools across ALL your multiplexed MCP servers.
+# It makes your AI agent strictly Read-Only. Perfect for safe exploration without risking your files or git repos.
+read_only_sandbox = false
+
+# Tools whose names contain these words will be dropped instantly when read_only_sandbox = true
+dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
+
 [mcp]
 # Paths allowed for cached_read (empty = all paths allowed — DANGEROUS!)
 # Default: restrict to skill dirs and scripts for Hermes

