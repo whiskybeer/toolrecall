@@ -786,7 +786,7 @@ def stop_daemon():
 def daemon_status():
     """Print daemon status."""
     if not os.path.exists(PID_FILE):
-        logger.info("ToolRecall Daemon: NOT RUNNING")
+        print("ToolRecall Daemon: NOT RUNNING")
         return
 
     with open(PID_FILE) as f:
@@ -794,8 +794,8 @@ def daemon_status():
 
     try:
         os.kill(pid, 0)  # Test if process exists
-        logger.info(f"ToolRecall Daemon: RUNNING (PID {pid})")
-        logger.info(f"  Socket: {_default_socket_path()}")
+        print(f"ToolRecall Daemon: RUNNING (PID {pid})")
+        print(f"  Socket: {_default_socket_path()}")
 
         # Try to ping the daemon
         try:
@@ -810,18 +810,16 @@ def daemon_status():
                 resp = json.loads(sock.recv(msg_len).decode("utf-8"))
                 sock.close()
                 if resp.get("pong"):
-                    logger.info(f"  PID from socket: {resp.get('pid')}")
-                    logger.info(f"  Path allowlist: {resp.get('allowed_paths', [])}")
-                    logger.info(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
-                    logger.info(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
+                    print(f"  PID from socket: {resp.get('pid')}")
+                    print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
+                    print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
+                    print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
                     servers = resp.get('multiplex_servers', [])
                     if servers:
-                        logger.info(f"  Multiplex servers: {', '.join(servers)}")
-                return
-            sock.close()
+                        print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
         except Exception:
-            logger.info("  ⚠ PID file exists but daemon is not responding")
-            logger.info("  → Run 'toolrecall daemon --stop' to clean up")
+            print("  Status: Unresponsive (Socket error)")
+
     except ProcessLookupError:
-        logger.info("ToolRecall Daemon: PID FILE STALE (process not found)")
-        logger.info("  → Run 'toolrecall daemon --stop' to clean up")
+        print("ToolRecall Daemon: DEAD (Stale PID file)")
+        print("  → Run 'toolrecall daemon --stop' to clean up")
