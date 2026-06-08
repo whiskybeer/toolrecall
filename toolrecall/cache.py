@@ -387,9 +387,16 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
 # ─── TERMINAL CACHE (SQLite — output not on disk) ──────────
 
 DEFAULT_CACHEABLE = {
-    "git status": 30, "git log --oneline -5": 30, "git branch": 60, "git diff --stat": 30,
-    "hostname": 3600, "whoami": 3600, "pwd": 3600, "uname -a": 3600,
-    "uptime": 300, "free -h": 300, "df -h /": 300, "ls -la": 60,
+    # System info (very static)
+    "hostname": 3600,
+    "whoami": 3600,
+    "pwd": 3600,
+    "uname -a": 3600,
+    
+    # State-checkers (moderate TTL)
+    "uptime": 300,
+    "free -h": 300,
+    "df -h /": 300,
     "crontab -l": 3600,
 }
 
@@ -487,7 +494,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
 SCRIPT_CACHEABLE_EXTENSIONS = {".py", ".sh", ".bash", ".js", ".ts", ".rs", ".go", ".rb", ".pl"}
 
 
-def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
+def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
     """Run a script file WITH cache (mtime + TTL, SQLite-backed).
 
     Uses shlex.split() for cacheable scripts — safer than shell=True.
@@ -561,7 +568,7 @@ def cached_run(script_path: str, args: str = "", ttl: int = 300) -> dict:
 
 # ─── CODE CACHE (SQLite + content hash) ─────────────────────
 
-def cached_exec(code: str, ttl: int = 120) -> dict:
+def cached_exec(code: str, ttl: int = 0) -> dict:
     """Execute Python code string WITH cache by content hash (SQLite-backed)."""
     import subprocess
 
