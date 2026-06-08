@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.3.1"
-description = "Universal Tool-Output Cache for LLM Agents — caches file reads, terminal commands, skills, scripts, and code execution in local SQLite FTS5. Now with MCP server support."
+version = "0.3.2"
+description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
 readme = "README.md"
 authors = [
     {name = "Robin Schultka", email = "robin@robka.de"},
