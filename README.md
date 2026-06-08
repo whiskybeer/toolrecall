@@ -7,8 +7,12 @@ ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous 
 The core value proposition: **It breaks the $O(N^2)$ context snowball effect.** 
 In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** in a single 13-hour session by serving tool results from a local SQLite database in 1.5ms.
 
-👉 **[Read the 141M Token Benchmark Case Study](BENCHMARK.md)**
-👉 **[Read the 85-Minute Latency Mitigation Pitch](LATENCY_PITCH.md)**
+## Documentation & Guides
+
+- **[141M Token Benchmark Case Study](BENCHMARK.md)**: How ToolRecall breaks the $O(N^2)$ context snowball.
+- **[The Latency Pitch](LATENCY_PITCH.md)**: How 1.5ms execution latency saves 85 minutes of wait time.
+- **[Emergent Byproducts](BYPRODUCTS.md)**: Offline coding, attention profiling, and zero-penalty context switching.
+- **[Troubleshooting & FAQ](TROUBLESHOOTING.md)**: Fixes for common issues like Access Denied or caching stale data.
 
 ---
 
