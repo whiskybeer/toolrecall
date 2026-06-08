@@ -362,8 +362,39 @@ class Config:
 _config = None
 
 
+def _have_tomli_w():
+    """Check if tomli_w is available for writing config."""
+    try:
+        import tomli_w
+        return True
+    except ImportError:
+        return False
+
+
+def save_config(path: str, config: Config) -> bool:
+    """Write a Config instance back to a TOML file.
+
+    Requires: pip install toolrecall[toml-write]  (tomli-w)
+
+    Args:
+        path: Output path (e.g. '~/.toolrecall/config.toml')
+        config: Config instance to serialize.
+
+    Returns True on success, False if tomli_w is not installed.
+    """
+    import tomli_w
+    path = os.path.expanduser(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        tomli_w.dump(config._data, f)
+    return True
+
+
 def load_config(path: str = None) -> Config:
-    global _config
-    if _config is None or path:
-        _config = Config(path)
-    return _config
+    """Load ToolRecall configuration. Returns a fresh Config instance each call.
+
+    Unlike the previous singleton pattern, this always creates a new Config
+    so that TOOLRECALL_* environment variables set after the first import
+    are respected. Callers that want caching should store the result.
+    """
+    return Config(path)

@@ -14,6 +14,9 @@ When designing systems, engineers usually have to pick two: *Fast, Cheap, or Goo
 
 ## Documentation & Guides
 
+- **[The Bottleneck Solved](docs/BOTTLENECK_SOLVED.md)**: Why O(N²) context destroys agent economics and how ToolRecall breaks the curve.
+- **[Knowledge DB](docs/KNOWLEDGE_DB.md)**: FTS5 knowledge base — index Hermes memory, Obsidian vaults, project wikis.
+- **[Docker Deployment](docs/DOCKER.md)**: Containerized daemon, proxy, MCP bridge, and optional Ollama model runner.
 - **[Security Architecture & Input Sanitation](SECURITY.md)**: Details the Zero-Trust WAF, SQLi prevention, Path Canonicalization, and OOM limits.
 - **[141M Token Benchmark Case Study](docs/BENCHMARK.md)**: How ToolRecall breaks the $O(N^2)$ context snowball.
 - **[Return on Investment (ROI) & Cost Savings](docs/ROI_AND_SAVINGS.md)**: CFO-friendly financial projections on API tokens, engineering salaries, and RAM.
@@ -151,10 +154,20 @@ print(json.dumps(get_stats(), indent=2))
 ```
 
 ### Configuration & Secrets
-Settings are managed in `~/.toolrecall/config.toml`.
+Settings are managed in `~/.toolrecall/config.toml` (default) or `~/.toolrecall/config.yaml` (optional).
 Secrets (like `GITHUB_PERSONAL_ACCESS_TOKEN`) should be placed in `~/.toolrecall/.env`. The daemon securely loads them before launching subprocesses. No secrets are ever stored in Git or passed via the LLM context.
 
+> **TOML vs YAML:** TOML is the default format — requires **zero dependencies** (stdlib `tomllib`, Python 3.11+).
+> YAML is supported via the optional `pyyaml` dependency:
+> ```bash
+> pip install toolrecall[yaml]
+> ```
+> The loader auto-detects by file extension (`.toml`, `.yaml`, `.yml`) — no config change needed.
+> **Trade-off:** YAML adds one dependency (`pyyaml`+libyaml C extension ~1MB). TOML keeps the project truly zero-dependency. Choose YAML only if you already use it for other tooling (Docker Compose, CI configs).
+
 ```toml
+[toolrecall]
+# config can also be written as YAML in config.yaml — same structure
 [mcp]
 allowed_paths = ["~/projects", "~/.hermes/skills"]
 allow_terminal = false # Security: Prevents Prompt Injection executions

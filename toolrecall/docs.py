@@ -7,17 +7,29 @@ import os, time, sqlite3, hashlib, subprocess
 from pathlib import Path
 from toolrecall.config import load_config
 
-config = load_config()
+# Lazy config — DO NOT cache at module level. The singleton in config.py
+# respects TOOLRECALL_* env vars, but ``from toolrecall.config import load_config``
+# followed by module-level ``config = load_config()`` freezes the path at import
+# time. Tests that set TOOLRECALL_KNOWLEDGE_DB before their own import still work
+# because the config singleton is only initialized once — the FIRST caller's env
+# wins. To guarantee isolation, callers MUST set the env var before the module
+# is first imported anywhere in the process.
+def _get_config():
+    return load_config()
 
 
 def _get_db_path():
-    return os.path.expanduser(config.get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db"))
+    # Environment variable takes priority — allows per-test isolation
+    env_path = os.environ.get("TOOLRECALL_KNOWLEDGE_DB")
+    if env_path:
+        return os.path.expanduser(env_path)
+    return os.path.expanduser(_get_config().get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db"))
 
 
 def _get_db():
     db_path = _get_db_path()
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.row_factory = sqlite3.Row
@@ -42,6 +54,29 @@ def _ensure_tables(conn):
             content='pages',
             content_rowid='rowid'
         );
+    """)
+    # Trigger to keep FTS5 in sync on INSERT
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
+            INSERT INTO pages_fts(rowid, source, path, title, content, url)
+            VALUES (new.rowid, new.source, new.path, new.title, new.content, new.url);
+        END;
+    """)
+    # Trigger to keep FTS5 in sync on DELETE
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
+            INSERT INTO pages_fts(pages_fts, rowid, source, path, title, content, url)
+            VALUES ('delete', old.rowid, old.source, old.path, old.title, old.content, old.url);
+        END;
+    """)
+    # Trigger to keep FTS5 in sync on UPDATE
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
+            INSERT INTO pages_fts(pages_fts, rowid, source, path, title, content, url)
+            VALUES ('delete', old.rowid, old.source, old.path, old.title, old.content, old.url);
+            INSERT INTO pages_fts(rowid, source, path, title, content, url)
+            VALUES (new.rowid, new.source, new.path, new.title, new.content, new.url);
+        END;
     """)
     conn.commit()
 
@@ -99,11 +134,18 @@ def docs_search(query: str, source: str = None) -> str:
 
         # Fallback: LIKE-Suche
         like = f"%{query[:50]}%"
-        rows = conn.execute("""
-            SELECT source, path, title, url, SUBSTR(content, 1, 200) as snippet
-            FROM pages WHERE title LIKE ? OR content LIKE ?
-            LIMIT 10
-        """, (like, like)).fetchall()
+        if source:
+            rows = conn.execute("""
+                SELECT source, path, title, url, SUBSTR(content, 1, 200) as snippet
+                FROM pages WHERE source = ? AND (title LIKE ? OR content LIKE ?)
+                LIMIT 10
+            """, (source, like, like)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT source, path, title, url, SUBSTR(content, 1, 200) as snippet
+                FROM pages WHERE title LIKE ? OR content LIKE ?
+                LIMIT 10
+            """, (like, like)).fetchall()
         conn.close()
 
         if rows:
@@ -151,17 +193,154 @@ def docs_get_page(path: str, source: str = "hermes") -> str:
         return f"Error: {e}"
 
 
+def index_hermes_memory(memory_dir: str = None, source: str = "hermes-memory") -> int:
+    """
+    Index Hermes persistent memory stores (MEMORY.md, USER.md) into the
+    knowledge database.
+
+    Each §-delimited entry becomes a separate page, FTS5-searchable.
+
+    Args:
+        memory_dir: Path to Hermes memories/ directory (default: ~/.hermes/memories)
+        source: FTS5 source label (default: 'hermes-memory')
+
+    Returns number of entries indexed.
+    """
+    import hashlib, re
+
+    if memory_dir is None:
+        hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+        memory_dir = os.path.join(hermes_home, "memories")
+
+    conn = _get_db()
+    _ensure_tables(conn)
+    cursor = conn.cursor()
+
+    memory_files = {
+        "MEMORY.md": "Agent memory (environment facts, conventions, lessons)",
+        "USER.md": "User profile (preferences, communication style, identity)",
+    }
+
+    total = 0
+    for fname, description in memory_files.items():
+        fpath = os.path.join(memory_dir, fname)
+        if not os.path.exists(fpath):
+            continue
+
+        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+            raw = f.read()
+
+        # Split by § delimiter; fallback to blank-line separation
+        if "§" in raw:
+            entries = [e.strip() for e in raw.split("§") if e.strip()]
+        else:
+            # No § found — use double-newline as delimiter
+            entries = [e.strip() for e in raw.split("\n\n") if e.strip()]
+            if not entries:
+                # Single block: entire file is one entry
+                entries = [raw.strip()]
+
+        for idx, entry in enumerate(entries):
+            content_hash = hashlib.md5(entry.encode()).hexdigest()[:12]
+            path_key = f"{fname}#{content_hash}"
+
+            title = entry.split("\n")[0][:80].strip()
+            if not title:
+                title = f"{fname} entry {idx + 1}"
+
+            cursor.execute(
+                "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                (source, path_key, title, entry,
+                 f"file://{fpath}#entry{idx + 1}"),
+            )
+            total += 1
+
+    conn.commit()
+    conn.close()
+    return total
+
+
+def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
+                    ignore_dirs: set = None, max_bytes: int = 100000) -> int:
+    """
+    Index all files in a directory into the knowledge database.
+
+    Each file becomes a page, FTS5-searchable via docs_search().
+
+    Args:
+        dir_path: Directory to scan (e.g. '~/Documents/Obsidian Vault')
+        source: FTS5 source label (default: basename of dir_path)
+        extensions: File extensions to include (default: .md)
+        ignore_dirs: Directories to skip (default: .git, node_modules, .venv)
+        max_bytes: Max file size to index in bytes (default: 100KB)
+
+    Returns number of files indexed.
+    """
+    import hashlib
+
+    if source is None:
+        source = os.path.basename(os.path.expanduser(dir_path))
+    if extensions is None:
+        extensions = (".md",)
+    if ignore_dirs is None:
+        ignore_dirs = {".git", "node_modules", ".venv", "dist", "build", "__pycache__"}
+
+    dir_path = os.path.expanduser(dir_path)
+    if not os.path.exists(dir_path):
+        return 0
+
+    conn = _get_db()
+    _ensure_tables(conn)
+    cursor = conn.cursor()
+
+    total = 0
+    for root, dirs, files in os.walk(dir_path):
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        for fname in files:
+            if not fname.endswith(extensions):
+                continue
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, dir_path)
+            try:
+                with open(full, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except Exception:
+                continue
+            if len(content) > max_bytes:
+                content = content[:max_bytes] + "\n...[TRUNCATED]..."
+
+            title = fname
+            if fname.endswith(".md"):
+                for line in content.split("\n"):
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+
+            cursor.execute(
+                "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                (source, rel, title, content, f"file://{full}"))
+            total += 1
+
+    conn.commit()
+    conn.close()
+    return total
+
+
 def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set = None, max_bytes: int = 100000):
     """
     Index all source files.
     Called on first `toolrecall index` or `docs_search()` when DB is missing.
+
+    Also indexes additional knowledge sources and Hermes memory from config.
     """
+    _cfg = _get_config()
+
     if scan_dirs is None:
-        scan_dirs = config.get("sources", "scan_dirs", default=[str(Path.home())])
+        scan_dirs = _cfg.get("sources", "scan_dirs", default=[str(Path.home())])
     if extensions is None:
-        extensions = tuple(config.get("sources", "scan_extensions", default=[".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]))
+        extensions = tuple(_cfg.get("sources", "scan_extensions", default=[".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]))
     if ignore_dirs is None:
-        ignore_dirs = set(config.get("sources", "scan_ignore", default=[".git", "node_modules", ".venv", "dist", "build", "__pycache__"]))
+        ignore_dirs = set(_cfg.get("sources", "scan_ignore", default=[".git", "node_modules", ".venv", "dist", "build", "__pycache__"]))
 
     conn = _get_db()
     _ensure_tables(conn)
@@ -201,4 +380,38 @@ def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set
 
     conn.commit()
     conn.close()
+
+    # Additional knowledge sources from config ([[sources.knowledge]])
+    _index_config_sources(_cfg)
+
+    # Hermes memory from config ([sources.memory])
+    memory_cfg = _cfg.get("sources", "memory", default={})
+    if isinstance(memory_cfg, dict) and memory_cfg.get("enabled", False):
+        try:
+            mem_total = index_hermes_memory()
+            total += mem_total
+        except Exception:
+            pass
+
     return total
+
+
+def _index_config_sources(cfg):
+    """Index additional knowledge sources defined in config.toml.[[sources.knowledge]]."""
+    raw = cfg.get("sources", "knowledge", default=[])
+    if not raw:
+        return
+    if isinstance(raw, dict):
+        raw = [raw]
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path", "")
+        source = entry.get("source") or os.path.basename(os.path.expanduser(path))
+        exts = entry.get("extensions", [".md"])
+        if isinstance(exts, str):
+            exts = [exts]
+        try:
+            index_directory(path, source=source, extensions=tuple(exts))
+        except Exception:
+            pass

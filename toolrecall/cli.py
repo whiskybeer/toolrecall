@@ -108,7 +108,7 @@ GITHUB_PERSONAL_ACCESS_TOKEN=""
     print("3. Start the daemon: toolrecall daemon &")
 
 def cmd_status():
-    """Show cache status via Daemon oder direkt."""
+    """Show cache status via daemon or directly."""
     try:
         from toolrecall.client import cache_status
         print(cache_status())
@@ -156,11 +156,153 @@ def cmd_invalidate():
         print("ToolRecall cache cleared (direct).")
 
 def cmd_index():
-    """Index knowledge base."""
-    from toolrecall.docs import index_all
+    """Index knowledge base. Use --memory to also index Hermes memory stores."""
+    from toolrecall.docs import index_all, index_hermes_memory
     print("Indexing knowledge database...")
     total = index_all()
     print(f"Done. {total} pages indexed.")
+    
+    if "--memory" in sys.argv:
+        print("Indexing Hermes memory stores...")
+        mem_total = index_hermes_memory()
+        print(f"Done. {mem_total} memory entries indexed.")
+
+def cmd_index_memory():
+    """Index Hermes persistent memory stores (MEMORY.md, USER.md) into knowledge DB."""
+    from toolrecall.docs import index_hermes_memory
+
+    # Optional: custom source label via --source
+    source = "hermes-memory"
+    if "--source" in sys.argv:
+        idx = sys.argv.index("--source")
+        if idx + 1 < len(sys.argv):
+            source = sys.argv[idx + 1]
+
+    print(f"Indexing Hermes memory stores (source='{source}')...")
+    total = index_hermes_memory(source=source)
+    print(f"Done. {total} memory entries indexed with FTS5 (source='{source}').")
+    print()
+    print("Query via: docs_search('<query>', source='<source>')")
+    print("Or via MCP: toolrecall docs_search '<query>'")
+    print()
+
+
+def cmd_index_dir():
+    """Index a directory into the knowledge database.
+    
+    Usage:
+        toolrecall index-dir ~/Documents/Obsidian\ Vault
+        toolrecall index-dir --source my-notes ~/notes
+    """
+    from toolrecall.docs import index_directory
+
+    # Parse args
+    args = [a for a in sys.argv[2:] if not a.startswith("--source")]
+    source_override = None
+    if "--source" in sys.argv:
+        idx = sys.argv.index("--source")
+        if idx + 1 < len(sys.argv):
+            source_override = sys.argv[idx + 1]
+
+    if not args:
+        print("Usage: toolrecall index-dir [--source label] <directory> [directory2 ...]")
+        print()
+        print("Index all .md files from the given directory into the FTS5 knowledge DB.")
+        print("Each file becomes a searchable page. Use --source to set a custom label")
+        print("(default: basename of the directory).")
+        print()
+        print("Examples:")
+        print("  toolrecall index-dir ~/Documents/Obsidian\\\\ Vault")
+        print("  toolrecall index-dir --source my-wiki ~/wiki")
+        print("  toolrecall index-dir ~/notes ~/Documents/Obsidian\\\\ Vault")
+        return
+
+    total_all = 0
+    for dir_arg in args:
+        dir_path = os.path.expanduser(dir_arg)
+        if not os.path.isdir(dir_path):
+            print(f"⚠️  Not a directory: {dir_path}")
+            continue
+
+        source = source_override or os.path.basename(dir_path)
+        print(f"Indexing '{dir_path}' as source='{source}'...")
+        count = index_directory(dir_path, source=source)
+        print(f"  → {count} pages indexed")
+        total_all += count
+
+    print(f"\nDone. {total_all} total pages indexed.")
+    print("Query via: docs_search('<query>', source='<source>')")
+
+
+def cmd_config_set():
+    """Set a config value in config.toml.
+    
+    Usage:
+        toolrecall config-set proxy.port 9090
+        toolrecall config-set mcp.allow_terminal true
+        toolrecall config-set mcp.allowed_paths "['/data', '/projects']"
+    """
+    from toolrecall.config import load_config, save_config, _have_tomli_w
+
+    if not _have_tomli_w():
+        print("❌ tomli-w not installed. Run: pip install toolrecall[toml-write]")
+        return
+
+    args = sys.argv[2:]
+    if len(args) < 2 or "--help" in args or "-h" in args:
+        print("Usage: toolrecall config-set <section.key> <value>")
+        print()
+        print("Examples:")
+        print("  toolrecall config-set proxy.port 9090")
+        print("  toolrecall config-set mcp.allow_terminal true")
+        print("  toolrecall config-set security.read_only_sandbox true")
+        print("  toolrecall config-set mcp.allowed_paths \"['/data', '/projects']\"")
+        return
+
+    key = args[0]
+    val = args[1]
+    parts = key.rsplit(".", 1)
+
+    if len(parts) != 2:
+        print(f"❌ Invalid key: '{key}'. Use section.key format (e.g. proxy.port)")
+        return
+
+    section, name = parts
+    cfg_path = os.path.expanduser("~/.toolrecall/config.toml")
+    cfg = load_config(cfg_path)
+
+    # Parse value
+    parsed_val = val
+    if val.lower() == "true":
+        parsed_val = True
+    elif val.lower() == "false":
+        parsed_val = False
+    else:
+        try:
+            parsed_val = int(val)
+        except ValueError:
+            try:
+                parsed_val = float(val)
+            except ValueError:
+                # Try as list
+                if val.startswith("[") and val.endswith("]"):
+                    import ast
+                    try:
+                        parsed_val = ast.literal_eval(val)
+                    except Exception:
+                        pass
+                # Keep as string
+
+    # Apply
+    if section not in cfg._data:
+        cfg._data[section] = {}
+    cfg._data[section][name] = parsed_val
+
+    if save_config(cfg_path, cfg):
+        print(f"✅ Set {key} = {parsed_val!r} in {cfg_path}")
+        print("⚠️  Restart the daemon for changes to take effect.")
+    else:
+        print(f"❌ Failed to write {cfg_path}")
 
 def cmd_serve():
     """Start HTTP proxy (via Daemon)."""
@@ -297,7 +439,10 @@ def main():
         print("  stats           Detailed stats (JSON)")
         print("  invalidate      Clear all caches")
         print("  index           Build/update knowledge database")
-        print("  export-dataset  [PRIVATE] Export tool calls to JSONL for AI training")
+        print("  index-memory    Index Hermes memory stores (MEMORY.md, USER.md)")
+        print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
+        print("  config-set      Set a config value (section.key = value)")
+        print("  export-dataset")
         print("  serve           Start HTTP proxy")
         print("  nginx           Generate nginx config")
         print("  mcp             Start MCP Bridge (requires daemon)")
@@ -312,6 +457,9 @@ def main():
         "stats": cmd_stats,
         "invalidate": cmd_invalidate,
         "index": cmd_index,
+        "index-memory": cmd_index_memory,
+        "index-dir": cmd_index_dir,
+        "config-set": cmd_config_set,
         "export-dataset": cmd_export_dataset,
         "serve": cmd_serve,
         "nginx": cmd_nginx,

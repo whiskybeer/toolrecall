@@ -1,0 +1,71 @@
+services:
+  daemon:
+    build:
+      context: .
+      target: daemon
+    volumes:
+      - toolrecall_data:/data
+      - ${PROJECTS_DIR:-./projects}:/projects:ro
+    ports:
+      - "8567:8567"
+    environment:
+      - TOOLRECALL_SCAN_DIRS=/projects
+      - INDEX_MEMORY=true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os,socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/data/tc.sock'); s.sendall(json.dumps({'action':'ping'}).encode()); r=json.loads(s.recv(4096).decode()); exit(0 if r.get('status')=='pong' else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mcp-bridge:
+    build:
+      context: .
+      target: mcp-bridge
+    volumes:
+      - toolrecall_data:/data
+    depends_on:
+      daemon:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+
+  proxy:
+    build:
+      context: .
+      target: proxy
+    volumes:
+      - toolrecall_data:/data
+    ports:
+      - "8567:8567"
+    depends_on:
+      daemon:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # === OPTIONAL: Full stack with Ollama ===
+  # Uncomment to run a local LLM alongside ToolRecall.
+  # Suitable for: offline dev, air-gapped environments, privacy-critical workloads.
+  with-ollama:
+    profiles: ["ollama"]
+    build:
+      context: .
+      target: with-ollama
+    volumes:
+      - toolrecall_data:/data
+      - ollama_models:/root/.ollama
+    ports:
+      - "8567:8567"
+      - "11434:11434"
+    environment:
+      - ENABLE_OLLAMA=true
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:1b}
+      - INDEX_MEMORY=true
+    restart: unless-stopped
+    # Pull model on first start:
+    command: >
+      sh -c "ollama pull $${OLLAMA_MODEL:-llama3.2:1b} && /entrypoint.sh"
+
+volumes:
+  toolrecall_data:
+  ollama_models:

@@ -39,6 +39,7 @@ import signal
 import threading
 import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from toolrecall.cache import (
     cached_read as _cache_read,
@@ -79,29 +80,44 @@ class SecurityGate:
     """
     def __init__(self, cfg):
         self.cfg = cfg
-        self.allowed_paths = cfg.mcp_allowed_paths
+        self.allowed_paths = cfg.mcp_allowed_paths or []
         self.allow_terminal = cfg.mcp_allow_terminal
-        self.allowed_terminal_commands = cfg.mcp_allowed_terminal_commands
+        self.allowed_terminal_commands = cfg.mcp_allowed_terminal_commands or []
         self.allow_invalidate = cfg.mcp_allow_invalidate
         self.allow_multiplex = cfg.mcp_multiplex_enabled
-        self.allowed_servers = [s.lower() for s in cfg.mcp_multiplex_servers]
+        self.allowed_servers = [s.lower() for s in (cfg.mcp_multiplex_servers or [])]
         self.read_only_sandbox = cfg.mcp_read_only_sandbox
-        self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords
+        self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords or [
+            "write", "edit", "delete", "remove", "terminal",
+            "bash", "exec", "run", "push", "commit", "update", "create",
+            "sudo", "chmod", "chown", "invalidate", "store", "set",
+        ]
         self.logger = logging.getLogger(__name__)
+
+    MAX_PATH_LENGTH = 4096  # POSIX PATH_MAX
 
     def check_read_path(self, path: str) -> str | None:
         """Check if path is allowed to be read. Returns None or error message."""
+        # Reject null bytes — can bypass extension checks
+        if "\x00" in path:
+            return "Path not allowed: contains null byte"
+
+        # Reject excessively long paths — prevents buffer issues
+        if len(path) > self.MAX_PATH_LENGTH:
+            return "Path not allowed: exceeds maximum length"
+
         if not self.allowed_paths:
-            return None  # All allowed (DANGEROUS — but configured)
-            
+            return None  # All allowed (DANGEROUS — but configured explicitly)
+
         # Security: Strict symlink resolution to prevent directory traversal escapes
         abs_path = os.path.realpath(os.path.expanduser(path))
-        
+
         for allowed in self.allowed_paths:
             allowed_abs = os.path.realpath(os.path.expanduser(allowed))
             if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
                 return None
-        return f"Path not allowed: {path}"
+        # Generic error — never leak the real resolved path to the caller
+        return "Path not allowed: access denied"
 
     def check_terminal(self, cmd: str) -> str | None:
         if not self.allow_terminal:
@@ -476,7 +492,7 @@ class MCPMultiplexer:
 
 
 class DaemonServer:
-    """Unix Domain Socket Server — ein Thread pro Connection."""
+    """Unix Domain Socket Server — ThreadPoolExecutor für Connection-Handling."""
 
     def __init__(self, socket_path: str = None):
         self.socket_path = socket_path or _default_socket_path()
@@ -485,6 +501,22 @@ class DaemonServer:
         self.multiplexer = MCPMultiplexer(self.cfg)
         self._server = None
         self._running = False
+        # Limit worker pool to prevent thread starvation under concurrent agent workflows
+        self._executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="TRWorker")
+
+    def _run_periodic_gc(self):
+        """Runs garbage collection every 4 hours in a background thread."""
+        from toolrecall.cache import garbage_collect
+        while self._running:
+            # Sleep in small increments so we can exit instantly on stop()
+            for _ in range(14400):  # 4 hours
+                if not self._running:
+                    return
+                time.sleep(1)
+            try:
+                garbage_collect()
+            except Exception:
+                pass
 
     def start(self):
         """Start the UDS server (blocking)."""
@@ -516,17 +548,21 @@ class DaemonServer:
             self.multiplexer.start()
         print("")
 
+        # Start periodic GC background thread
+        self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
+        self._gc_thread.start()
+
         while self._running:
             try:
                 conn, addr = self._server.accept()
-                t = threading.Thread(target=self._handle, args=(conn,), daemon=True)
-                t.start()
+                self._executor.submit(self._handle, conn)
             except OSError:
                 break  # Server closed
 
     def stop(self):
         """Graceful shutdown."""
         self._running = False
+        self._executor.shutdown(wait=False)
         self.multiplexer.shutdown()
         try:
             self._server.close()
@@ -759,6 +795,21 @@ def _signal_handler(signum, frame):
 def run_daemon(socket_path: str = None, foreground: bool = False):
     """Start the ToolRecall daemon."""
     global _server_instance
+
+    # Prevent starting multiple daemons (concurrency / socket-stealing guard)
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)  # Signal 0 tests process existence
+            print(f"❌ Error: ToolRecall Daemon is already running (PID: {pid}).")
+            sys.exit(1)
+        except (ValueError, ProcessLookupError, PermissionError):
+            # PID file is stale, clean it up
+            try:
+                os.remove(PID_FILE)
+            except Exception:
+                pass
 
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)

@@ -46,15 +46,24 @@ try:
     print("\n3. Sending a 'tools/call' request for a file read...")
     send_rpc(proc, "tools/call", {
         "name": "cached_read",
-        "arguments": {"path": "README.md"}
+        "arguments": {"path": "~/.toolrecall/config.toml"}
     }, req_id=2)
     
     response = read_rpc(proc)
-    result_json = response['result']['content'][0]['text']
-    result_data = json.loads(result_json)
-    
-    print(f" -> Cached: {result_data['cached']}")
-    print(f" -> Content length: {len(result_data['content'])} bytes")
+    if response is None:
+        print(" -> Connection closed by server.")
+    elif "error" in response:
+        print(f" -> Server returned error: {response['error']}")
+    elif "result" in response and response["result"] is not None and "content" in response["result"]:
+        result_json = response['result']['content'][0]['text']
+        result_data = json.loads(result_json)
+        if "error" in result_data:
+            print(f" -> Tool returned error: {result_data['error']}")
+        else:
+            print(f" -> Cached: {result_data.get('cached', False)}")
+            print(f" -> Content length: {len(result_data.get('content', ''))} bytes")
+    else:
+        print(f" -> Unexpected response: {response}")
 
 finally:
     proc.terminate()

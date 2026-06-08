@@ -71,13 +71,17 @@ except ImportError:
 def _is_path_allowed(path: str, allowed_paths: list) -> bool:
     """Check if a given path is within one of the allowed directories.
     
+    Uses os.path.realpath() to resolve all symlinks, .., and soft links
+    down to bare disk paths — prevents directory traversal attacks
+    and symlink-into-/etc/shadow bypasses.
+    
     If allowed_paths is empty, ALL paths are permitted (DANGEROUS — fallback only).
     """
     if not allowed_paths:
         return True  # empty = everything allowed (legacy/compat)
-    abs_path = os.path.abspath(os.path.expanduser(path))
+    abs_path = os.path.realpath(os.path.expanduser(path))
     for allowed in allowed_paths:
-        allowed_abs = os.path.abspath(os.path.expanduser(allowed))
+        allowed_abs = os.path.realpath(os.path.expanduser(allowed))
         if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
             return True
     return False

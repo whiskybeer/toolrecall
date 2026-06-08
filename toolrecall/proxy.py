@@ -109,7 +109,16 @@ def run_server(bind: str = "127.0.0.1", port: int = 8567):
         print("Set TOOLRECALL_PROXY_BIND=127.0.0.1 for localhost-only.")
         bind = "127.0.0.1"
 
-    server = http.server.HTTPServer((bind, port), ToolRecallHandler)
+    try:
+        server = http.server.HTTPServer((bind, port), ToolRecallHandler)
+    except OSError as e:
+        if e.errno == 98:  # Address already in use
+            print(f"❌ Error: Port {port} is already in use by another process.")
+            print(f"Please stop that process or select a different port in config.toml:")
+            print(f"  toolrecall config-set proxy.port <new_port>")
+            return
+        raise
+
     print(f"ToolRecall HTTP Proxy (Daemon Bridge) running on http://{bind}:{port}")
 
     # Check daemon

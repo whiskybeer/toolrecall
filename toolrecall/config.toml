@@ -32,7 +32,7 @@ terminal_default_ttl = 300  # 5 minutes for unknown commands
 # ─── HTTP Proxy (standalone, no deps) ─────
 [proxy]
 port = 8567
-bind = "[IP_ADDRESS]"                      # [IP_ADDRESS] = all interfaces
+bind = "[IP_ADDRESS]"                       # [IP_ADDRESS] = all interfaces
 nginx_recommended = true    # Show "nginx recommended" in docs
 
 # ─── Nginx Config (for SSL + auth) ────────
@@ -135,3 +135,24 @@ scan_dirs = [
 scan_extensions = [".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]
 scan_ignore = [".git", "node_modules", ".venv", "dist", "build", "__pycache__"]
 max_file_kb = 100
+
+# Additional knowledge sources — indexed on every `toolrecall index` run.
+# Each entry = {path, source_label}. The source_label is used to filter
+# searches: docs_search("query", source="obsidian").
+# These are also indexed at startup if knowledge DB is missing.
+#
+# Examples:
+#   [[sources.knowledge]]
+#   path = "~/Documents/Obsidian Vault"
+#   source = "obsidian"
+#   extensions = [".md"]
+#
+#   [[sources.knowledge]]
+#   path = "~/projects/my-wiki"
+#   source = "my-wiki"
+#   extensions = [".md", ".txt"]
+
+# Enable Hermes memory indexing on every `toolrecall index`
+# (MEMORY.md, USER.md → source='hermes-memory')
+[sources.memory]
+enabled = true

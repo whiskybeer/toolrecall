@@ -25,6 +25,11 @@ keywords = ["tool-cache", "llm", "agent", "token-savings", "sqlite", "fts5"]
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+yaml = ["pyyaml >= 6.0"]
+toml-write = ["tomli-w >= 1.0"]
+dev = ["pytest >= 7.0", "flake8 >= 6.0"]
+
 [project.urls]
 Homepage = "https://github.com/whiskybeer/toolrecall"
 Repository = "https://github.com/whiskybeer/toolrecall"
