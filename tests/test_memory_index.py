@@ -13,12 +13,7 @@ import unittest
 import tempfile
 import shutil
 
-# Isolated test environment
-test_dir = tempfile.mkdtemp()
-# Force isolated knowledge DB BEFORE any import — also ensures Config singleton
-# picks up the right env var before toolrecall docs module is first imported
-os.environ["TOOLRECALL_KNOWLEDGE_DB"] = os.path.join(test_dir, "test_knowledge.db")
-
+# Isolated test environment setup dynamically per-test inside TestMemoryIndex
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.docs import (
@@ -31,9 +26,10 @@ class TestMemoryIndex(unittest.TestCase):
     """Test that Hermes memory stores are correctly indexed into FTS5."""
 
     def setUp(self):
-        os.makedirs(test_dir, exist_ok=True)
+        self.test_dir = tempfile.mkdtemp()
+        os.environ["TOOLRECALL_KNOWLEDGE_DB"] = os.path.join(self.test_dir, "test_knowledge.db")
         # Create a fake Hermes memories directory with test content
-        self.memory_dir = os.path.join(test_dir, "memories")
+        self.memory_dir = os.path.join(self.test_dir, "memories")
         os.makedirs(self.memory_dir, exist_ok=True)
 
         # Write a test MEMORY.md with §-delimited entries
@@ -55,17 +51,10 @@ class TestMemoryIndex(unittest.TestCase):
             )
 
     def tearDown(self):
-        # Clean up files/directories inside test_dir, keeping test_dir itself
-        if os.path.exists(test_dir):
-            for item in os.listdir(test_dir):
-                item_path = os.path.join(test_dir, item)
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path, ignore_errors=True)
-                else:
-                    try:
-                        os.unlink(item_path)
-                    except Exception:
-                        pass
+        # Clean up the isolated test directory
+        if hasattr(self, "test_dir") and os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir, ignore_errors=True)
+        os.environ.pop("TOOLRECALL_KNOWLEDGE_DB", None)
 
     def test_index_creates_entries(self):
         """Each §-delimited entry becomes a separate page."""
@@ -133,7 +122,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_empty_memory_dir(self):
         """No crash when memory dir is empty or nonexistent."""
-        empty_dir = os.path.join(test_dir, "empty_memories")
+        empty_dir = os.path.join(self.test_dir, "empty_memories")
         os.makedirs(empty_dir, exist_ok=True)
         count = index_hermes_memory(empty_dir)
         self.assertEqual(count, 0, "No memory files = 0 entries")
@@ -164,7 +153,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_directory_creates_pages(self):
         """Each .md file in a dir becomes a page in the knowledge DB."""
-        vault = os.path.join(test_dir, "test_vault")
+        vault = os.path.join(self.test_dir, "test_vault")
         os.makedirs(vault)
         with open(os.path.join(vault, "note1.md"), "w") as f:
             f.write("# Note One\nContent alpha\n")
@@ -176,7 +165,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_directory_search(self):
         """Indexed directory files are searchable via their source label."""
-        vault = os.path.join(test_dir, "searchable_vault")
+        vault = os.path.join(self.test_dir, "searchable_vault")
         os.makedirs(vault)
         with open(os.path.join(vault, "meeting.md"), "w") as f:
             f.write("# Meeting Notes\nDiscussed Q3 budget allocation.\n")
@@ -189,7 +178,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_directory_only_md(self):
         """Non-.md files are skipped by default."""
-        vault = os.path.join(test_dir, "mixed_vault")
+        vault = os.path.join(self.test_dir, "mixed_vault")
         os.makedirs(vault)
         with open(os.path.join(vault, "note.md"), "w") as f:
             f.write("# Note\ncontent\n")
@@ -208,7 +197,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_directory_custom_extensions(self):
         """Custom extensions are respected."""
-        vault = os.path.join(test_dir, "custom_ext")
+        vault = os.path.join(self.test_dir, "custom_ext")
         os.makedirs(vault)
         with open(os.path.join(vault, "data.txt"), "w") as f:
             f.write("text content\n")
@@ -221,7 +210,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_directory_custom_source_label(self):
         """Custom source label via --source is used."""
-        vault = os.path.join(test_dir, "custom_source")
+        vault = os.path.join(self.test_dir, "custom_source")
         os.makedirs(vault)
         with open(os.path.join(vault, "doc.md"), "w") as f:
             f.write("# Doc\ncontent\n")
@@ -232,7 +221,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_directory_ignores_dot_dirs(self):
         """Directories like .git are skipped."""
-        vault = os.path.join(test_dir, "git_vault")
+        vault = os.path.join(self.test_dir, "git_vault")
         os.makedirs(os.path.join(vault, ".git"))
         with open(os.path.join(vault, ".git", "config"), "w") as f:
             f.write("git config\n")
@@ -244,7 +233,7 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_hermes_memory_custom_source(self):
         """index_hermes_memory() supports custom source label."""
-        mem_dir = os.path.join(test_dir, "custom_mem")
+        mem_dir = os.path.join(self.test_dir, "custom_mem")
         os.makedirs(mem_dir)
         with open(os.path.join(mem_dir, "MEMORY.md"), "w") as f:
             f.write("Test entry\n")
