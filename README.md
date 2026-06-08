@@ -59,6 +59,18 @@ ToolRecall acts as a **Frozen State Environment Simulator** and mathematically g
 
 ---
 
+
+## Why OS-Level Middleware? (The Hourglass Architecture)
+
+When optimizing agent bottlenecks, the instinct is often to build caching directly into the agent framework (e.g., a custom VSCode extension) or as a semantic proxy in front of the LLM API. Both approaches fail at scale.
+
+ToolRecall sits at the exact "neck of the hourglass"—the narrow IPC layer between diverse agent frameworks above, and diverse host environments below. This positioning unlocks three systemic advantages:
+
+1. **Zero Vendor Lock-In:** A cache built into Claude Code only speeds up Claude Code. Because ToolRecall operates at the OS/Socket level via the MCP protocol, it acts as a universal router. Cursor, Aider, Cline, and custom scripts can all benefit simultaneously without custom integrations.
+2. **The "Swarm Cache":** If Agent A pays the latency cost to read a massive repository, and a developer spins up a completely different agent (Agent B) two seconds later, Agent B instantly receives the cache hit from the shared SQLite database. They physically share the same memory.
+3. **Deterministic Fidelity:** API-level proxy caching relies on Vector/Semantic matching, which is lossy and introduces hallucinations. ToolRecall catches the exact execution bytes via OS interception, guaranteeing 100% data fidelity without vector databases.
+
+---
 ## Architecture & Security (The "Armor")
 
 ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** for LLM agents to mitigate Prompt Injections.
