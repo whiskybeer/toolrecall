@@ -1,8 +1,8 @@
 """ToolRecall HTTP Proxy — HTTP ↔ UDS Bridge.
 
-Der HTTP Proxy leitet HTTP-Requests an den ToolRecall Daemon weiter.
-Er hat keine eigene Cache-Logik, kein SQLite, keinen LRU — alles läuft
-über den Daemon.
+The HTTP Proxy forwards HTTP requests to the ToolRecall Daemon.
+It contains no independent caching logic, no SQLite, and no LRU memory —
+everything is routed through the Daemon.
 
 Endpoints:
     GET /cached_read?path=       → cached_read via Daemon

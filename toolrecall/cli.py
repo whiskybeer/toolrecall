@@ -130,13 +130,13 @@ def cmd_stats():
     try:
         from toolrecall.client import cache_status
         import re
-        print(cache_status())  # String output für CLI
+        print(cache_status())  # String output for CLI
     except Exception:
         from toolrecall.cache import get_stats
         print(json.dumps(get_stats(), indent=2))
 
 def cmd_invalidate():
-    """Clear cache via Daemon oder direkt."""
+    """Clear cache via Daemon or direct SQLite fallback."""
     try:
         from toolrecall.client import cache_invalidate
         print(cache_invalidate())

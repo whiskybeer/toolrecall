@@ -19,6 +19,9 @@ These points serve as the **Roadmap for v0.4.0 and Enterprise Readiness**.
 - Implement sub-millisecond hashing alongside `mtime`.
 - Implement active Cache Invalidation via MCP mutation tracking (if a tool name contains "update", "write", or "delete", automatically purge the cache for that server).
 
+
+*Update (v0.3.0 patch): The OOM vulnerability caused by agents attempting to `cached_read` massive payloads (e.g. 2GB `/var/log/syslog`) has been patched with a hard 5MB (1.2M token) read limit.*
+
 ## 3. Single Point of Failure (SPOF) & IPC Fragility
 **The Reality:** The Python daemon is a strict SPOF.
 - If the daemon crashes (e.g., due to an OOM kill from an underlying Node.js MCP memory leak), the `.sock` file may be orphaned.

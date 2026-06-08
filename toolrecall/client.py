@@ -1,9 +1,8 @@
-"""ToolRecall Client — UDS-Client mit Fallback auf direktes SQLite.
+"""ToolRecall Client — UDS Client with Direct SQLite Fallback.
 
-Der Client versucht zuerst, mit dem ToolRecall Daemon über Unix Domain Socket
-zu kommunizieren. Falls kein Daemon läuft, wird direkt auf SQLite zugegriffen
-(legacy behavior). This makes the client always usable — with or
-ohne Daemon.
+The client first attempts to communicate with the ToolRecall Daemon via Unix Domain Socket.
+If no Daemon is running, it falls back to direct SQLite access (legacy behavior).
+This ensures the client is always usable — with or without a running Daemon.
 
 Usage:
     from toolrecall.client import (
