@@ -330,7 +330,7 @@ class MCPMultiplexer:
                 # Fetch tools for warmup
                 tools = session.list_tools()
                 self._sessions[name_lower] = session
-                logger.info(f"  ✓ {name_lower}: {len(tools)} tools started on-demand")
+                print(f"  ✓ {name_lower}: {len(tools)} tools started on-demand")
             except Exception as e:
                 return f"{name_lower}: start failed — {e}"
         return None
@@ -360,7 +360,7 @@ class MCPMultiplexer:
                         if session:
                             try:
                                 session.shutdown()
-                                logger.info(f"  💤 {name}: idle shutdown ({int(idle_mins)}min)")
+                                print(f"  💤 {name}: idle shutdown ({int(idle_mins)}min)")
                             except Exception:
                                 pass
                             self._last_use.pop(name, None)
@@ -376,7 +376,7 @@ class MCPMultiplexer:
         self._start_reaper()
         n = len(self._configs)
         if n:
-            logger.info(f"  {n} servers configured (lazy start — first call starts each)")
+            print(f"  {n} servers configured (lazy start — first call starts each)")
 
     def shutdown(self):
         """Shutdown all running servers."""
@@ -384,7 +384,7 @@ class MCPMultiplexer:
             for name, session in list(self._sessions.items()):
                 try:
                     session.shutdown()
-                    logger.info(f"  ✗ {name}: stopped")
+                    print(f"  ✗ {name}: stopped")
                 except Exception:
                     pass
             self._sessions.clear()
@@ -488,18 +488,18 @@ class DaemonServer:
 
         self._running = True
 
-        logger.info(f"ToolRecall Daemon v0.3.0")
-        logger.info(f"  Socket: {self.socket_path}")
-        logger.info(f"  PID: {os.getpid()}")
-        logger.info(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
-        logger.info(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
-        logger.info(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}")
+        print(f"ToolRecall Daemon v0.3.0")
+        print(f"  Socket: {self.socket_path}")
+        print(f"  PID: {os.getpid()}")
+        print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
+        print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
+        print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}")
 
         # Start MCP Multiplexer (lazy — no servers started yet)
         if self.cfg.mcp_multiplex_enabled:
-            logger.info(f"\nMCP Multiplexer:")
+            print(f"\nMCP Multiplexer:")
             self.multiplexer.start()
-        logger.info("")
+        print("")
 
         while self._running:
             try:
@@ -519,9 +519,9 @@ class DaemonServer:
             pass
         try:
             os.unlink(self.socket_path)
-        except FileNotFoundError:
+        except Exception:
             pass
-        logger.info("ToolRecall Daemon stopped.")
+        print("ToolRecall Daemon stopped.")
 
     def _handle(self, conn: socket.socket):
         """Handle one client connection."""
