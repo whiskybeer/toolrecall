@@ -115,9 +115,13 @@ idle_minutes = 15
 # sequential-thinking = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
 
 # Python stdlib-based (opt-in — zero external deps, token-secure):
-github = { command = "uv", args = ["run", "-m", "toolrecall.mcp_github"] }
-time = { command = "uv", args = ["run", "-m", "toolrecall.mcp_time"] }
-"sequential-thinking" = { command = "uv", args = ["run", "-m", "toolrecall.mcp_seqthink"] }
+# These use `python3 -m` directly instead of `uv run -m` for:
+#   - ~50ms faster cold start (no uv overhead)
+#   - No pip/uv dependency in the pool daemon
+#   - Works in any environment with Python 3.11+
+github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
+time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
+"sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
 
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
 "hermes-docs" = { command = "uv", args = ["run", "/home/hermes/.hermes/scripts/docs_mcp/server.py"] }
