@@ -164,6 +164,28 @@ def cmd_index():
 
 def cmd_serve():
     """Start HTTP proxy (via Daemon)."""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: toolrecall serve")
+        print()
+        print("Start the ToolRecall HTTP proxy server.")
+        print()
+        print("Options:")
+        print("  --help, -h    Show this help message")
+        print()
+        print("Configuration:")
+        print("  Port:    proxy.port in config.toml (default: 8567)")
+        print("  Bind:    proxy.bind in config.toml (default: 0.0.0.0)")
+        print()
+        print("Endpoints:")
+        print("  GET /cached_read?path=...")
+        print("  GET /cached_skill?name=...")
+        print("  GET /cached_terminal?cmd=...&ttl=...")
+        print("  GET /docs_search?query=...")
+        print("  GET /health")
+        print()
+        print("Recommended: put nginx in front for SSL + auth.")
+        print("  toolrecall nginx  ->  generates nginx config")
+        return
     from toolrecall.proxy import run_server
     from toolrecall.config import load_config
     cfg = load_config()
