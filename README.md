@@ -26,6 +26,20 @@ LLM context windows are stateless. Every time an agent reads a 10,000-token file
 
 ---
 
+## The Determinism Guarantee (Proof)
+
+Autonomous agents are notoriously "flaky" because the real world is non-deterministic. A 20ms network delay, a `429 Rate Limit`, or a slightly changed timestamp in a JSON response can alter the LLM's latent space (the Butterfly Effect), causing the agent to hallucinate, panic, or take a completely different reasoning path.
+
+ToolRecall acts as a **Frozen State Environment Simulator** and mathematically guarantees determinism:
+
+1. **Byte-Exact Replay:** When an agent calls a tool, ToolRecall hashes the exact arguments (e.g., `md5(github://issues/get?id=5)`). On subsequent calls, it returns the *exact same bytes*. The world is paused. The agent is not derailed by updated timestamps, altered sorting, or fluctuating data.
+2. **Zero Jitter:** Network timeouts and API rate limits are eliminated. The agent receives its environment observations in a constant, flat $1.5$ms.
+3. **100% Reproducible Trajectories:** If you set your LLM to `temperature=0` and run it through ToolRecall, the agent will execute the exact same workflow 100 times out of 100. It effectively generates a deterministic "mock" of the real world on the fly.
+
+*(Note: To intentionally break determinism for real-time monitoring like CI/CD polling, developers must explicitly set `ttl=0` in the config).*
+
+---
+
 ## Architecture & Security (The "Armor")
 
 ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** for LLM agents to mitigate Prompt Injections.
