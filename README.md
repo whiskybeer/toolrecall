@@ -121,9 +121,11 @@ Docker `docker run --rm` costs 1–2s cold start. The [Sandbox Container Pool](d
 **Requirements:** Python 3.10+, standard SQLite.
 
 ```bash
-# 1. Install via pip (GitHub release)
+# 1. Install via pip (PyPI)
+pip install toolrecall
+
+# Alternative: Install the latest development version directly from GitHub
 pip install git+https://github.com/whiskybeer/toolrecall.git
-# Note: A PyPI release (`pip install toolrecall`) is pending.
 
 # 2. Initialize default config and .env (Creates ~/.toolrecall/)
 toolrecall init
