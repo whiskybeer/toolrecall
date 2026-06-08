@@ -676,17 +676,33 @@ def cached_mcp_check(server: str, tool: str, arguments: dict = None, ttl: int = 
     return {"cached": False, "key": request_hash, "server": server, "tool": tool}
 
 
-def cached_mcp_store(request_hash: str, data: str, ttl: int = None):
+def cached_mcp_store(request_hash: str, server: str, tool: str, arguments: dict, data: str, ttl: int = None):
     """Store an MCP tool call result for future cache hits."""
+    import json as _json
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
     now = time.time()
     expires = now + ttl
+    args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
     try:
         conn = _get_db()
-        conn.execute("""INSERT OR REPLACE INTO mcp_cache (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)""", (request_hash, "", "", "", data, now, expires))
+        conn.execute("""
+            INSERT OR REPLACE INTO mcp_cache 
+            (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (request_hash, server, tool, args_json, data, now, expires))
         conn.commit(); conn.close()
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP cache store failed: {e}")
+
+def invalidate_mcp_server(server: str):
+    """Invalidate all cached items for a specific MCP server."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM mcp_cache WHERE mcp_server = ?", (server,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP server invalidate failed: {e}")
 
 def cached_mcp(server: str, tool: str, arguments: dict = None,
                fetch_fn: callable = None, ttl: int = None) -> dict:
@@ -702,7 +718,7 @@ def cached_mcp(server: str, tool: str, arguments: dict = None,
         return _json.loads(result["data"])
     if fetch_fn is not None:
         data = fetch_fn()
-        cached_mcp_store(result["key"], _json.dumps(data), ttl)
+        cached_mcp_store(result["key"], server, tool, arguments, _json.dumps(data), ttl)
         return data
     return result
 

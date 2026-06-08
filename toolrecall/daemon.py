@@ -76,29 +76,46 @@ class SecurityGate:
     - cache_invalidate: only if allow_invalidate=true
     - mcp_call: only allowed servers
     """
-
     def __init__(self, cfg):
+        self.cfg = cfg
         self.allowed_paths = cfg.mcp_allowed_paths
         self.allow_terminal = cfg.mcp_allow_terminal
+        self.allowed_terminal_commands = cfg.mcp_allowed_terminal_commands
         self.allow_invalidate = cfg.mcp_allow_invalidate
         self.allow_multiplex = cfg.mcp_multiplex_enabled
         self.allowed_servers = [s.lower() for s in cfg.mcp_multiplex_servers]
 
-    def check_read_path(self, path: str) -> str:
+    def check_read_path(self, path: str) -> str | None:
         """Check if path is allowed to be read. Returns None or error message."""
         if not self.allowed_paths:
             return None  # All allowed (DANGEROUS — but configured)
-        abs_path = os.path.abspath(os.path.expanduser(path))
+            
+        # Security: Strict symlink resolution to prevent directory traversal escapes
+        abs_path = os.path.realpath(os.path.expanduser(path))
+        
         for allowed in self.allowed_paths:
-            allowed_abs = os.path.abspath(os.path.expanduser(allowed))
+            allowed_abs = os.path.realpath(os.path.expanduser(allowed))
             if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
                 return None
         return f"Path not allowed: {path}"
 
-    def check_terminal(self) -> str:
+    def check_terminal(self, cmd: str) -> str | None:
         if not self.allow_terminal:
             return "cached_terminal is disabled. Set mcp.allow_terminal=true in config."
-        return None
+            
+        if not self.allowed_terminal_commands:
+            # If terminal is allowed but no specific regexes defined, allow all (Binary WAF fallback)
+            return None
+            
+        import re
+        for pattern in self.allowed_terminal_commands:
+            try:
+                if re.search(pattern, cmd):
+                    return None
+            except re.error as e:
+                print(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})", file=sys.stderr)
+                
+        return f"Terminal command not allowed by regex whitelist: {cmd}"
 
     def check_invalidate(self) -> str:
         if not self.allow_invalidate:
@@ -162,6 +179,7 @@ class MCPClientSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=full_env,
+            preexec_fn=os.setsid,  # Start in a new process group for clean killing
         )
 
     def _send_raw(self, payload: dict) -> dict:
@@ -223,13 +241,19 @@ class MCPClientSession:
         return resp
 
     def shutdown(self):
-        """Graceful shutdown."""
-        if self.running:
+        """Graceful shutdown of entire process group."""
+        import signal
+        if self._proc is not None:
+            pid = self._proc.pid
             try:
-                self._proc.terminate()
+                # Kill the entire process group to eradicate Node.js zombie trees
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
                 self._proc.wait(timeout=3)
             except Exception:
-                self._proc.kill()
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception:
+                    pass
         self._proc = None
 
 
@@ -602,10 +626,10 @@ class DaemonServer:
         return _cache_read(path)
 
     def _handle_terminal(self, req: dict) -> dict:
-        err = self.security.check_terminal()
+        command = req.get("command", "")
+        err = self.security.check_terminal(command)
         if err:
             return {"error": err}
-        command = req.get("command", "")
         if not command:
             return {"error": "Missing 'command'"}
         ttl = req.get("ttl")
@@ -677,7 +701,11 @@ class DaemonServer:
         # Store in cache
         import json as _json
         result_json = _json.dumps(result)
-        _cache_mcp_store(cached["key"], result_json)
+        
+        server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
+        ttl = server_cfg.get("ttl", None)
+        
+        _cache_mcp_store(cached["key"], server, tool, arguments, result_json, ttl=ttl)
 
         return {"result": result, "cached": False}
 
