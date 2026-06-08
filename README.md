@@ -108,6 +108,9 @@ Running 5 different MCP Servers (GitHub, Postgres, Brave Search, etc.) per sessi
 - **Idle Timeout:** Servers are killed after 15 minutes of inactivity to recover RAM (dropping daemon footprint from 130MB to 11MB).
 - Agents only connect to **ONE** server: `toolrecall mcp`.
 
+### 3. Sandbox Container Pool (Kubernetes / Risk Isolation)
+Docker `docker run --rm` costs 1–2s cold start. The [Sandbox Container Pool](docs/sandbox-container-pool.md) keeps N warm containers ready for **~5ms exec latency** — ideal for kubectl, untrusted package installs, or any repetitive sandboxed task.
+
 ---
 
 ## Installation & Quickstart
