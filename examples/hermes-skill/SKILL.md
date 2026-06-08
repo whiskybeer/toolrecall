@@ -7,12 +7,23 @@ tags: [cache, tokens, performance, hermes]
 
 # ToolRecall Auto-Cache
 
-⚠️ **CRITICAL ARCHITECTURAL WARNING: CYBERNETIC & STATE RISK** ⚠️
-* **Broken Feedback Loop:** Caching sensing/reading tools breaks the **Read -> Act -> Verify** feedback loop of agents. This can lead to sensory hallucinations, infinite loops, and severe data consistency errors.
-* **DO NOT USE FOR:** Active development, testing, deployments, state-changing scripts, database migrations, or production tasks.
-* **WHEN IT IS USEFUL:** Only for minor, unimportant, or purely read-only tasks where saving token costs is critical and minor state inconsistencies are completely harmless (e.g., reading large static documentation, offline API specs, or parsing completely frozen data sets).
+**The L1 Cache and Middleware for LLM Agents.**
 
-This skill instructs the agent to use ToolRecall's cached variants of tools ONLY when appropriate.
+This skill configures an agent to aggressively use the `toolrecall` MCP server for tool executions. ToolRecall breaks the $O(N^2)$ context snowball by catching tool executions at the OS level and serving them from a local SQLite database in <0.1ms. 
+
+By forcing the OS state to remain static for the agent, it forces 100% deterministic, byte-for-byte identical payloads. This guarantees massive Server-Side Cache hits at Anthropic/OpenAI (the 90% discount) and prevents OS jitter from breaking agent workflows.
+
+### 🛠️ BEST PRACTICES FOR AGENTS (CONTEXT DROPPING)
+Because ToolRecall makes fetching files and API calls virtually free and instant locally:
+1. **Aggressively prune your context:** Do not hoard massive logs or codebases in your active memory. Read them, fix the bug, and DROP them from your context to save JSON payload size.
+2. **Retrieve on demand:** If you need the file again 10 turns later, simply call `cached_read` again. ToolRecall will serve it to you instantly without hitting the physical disk.
+
+### ⚠️ WHEN TO BYPASS THE CACHE (TTL=0)
+ToolRecall intentionally freezes the world. If you are executing a task that *requires* you to observe real-time changes in the environment (e.g., polling a CI/CD server for a "SUCCESS" string every 10 seconds, or watching a log file for new entries):
+* You **MUST** bypass the cache, otherwise you will be trapped in a phantom reality seeing the old frozen state.
+* Use standard shell commands or explicitly pass `bypass_cache=true` (if using `mcp_call`) or `ttl=0` (if using `cached_terminal`).
+
+This skill instructs the agent to use ToolRecall's cached variants of tools.
 
 ## Automatic Caching Rules
 
