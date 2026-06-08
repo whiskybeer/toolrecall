@@ -24,6 +24,10 @@ ToolRecall is currently secretly exporting trajectories (`export-dataset`).
 * **Self-Distillation:** These logs aren't just a cache—they are high-quality DPO (Direct Preference Optimization) training data. ToolRecall can automatically use this data to fine-tune a small, local open-source model (like Llama 3 8B).
 * **The Endgame:** Eventually, the local model becomes so good at handling the company's specific codebase and API quirks that it intercepts the prompt *before* it even goes to Claude or DeepSeek. ToolRecall transitions from an L1 Data Cache to an **L0 Reasoning Engine**.
 
+### Iteration +3: Empirical AI Alignment via Deterministic Trajectories
+The AI safety and alignment community currently suffers from a severe data drought. Researchers often debate theoretical alignment because they lack massive, high-fidelity datasets of autonomous agents operating, failing, and being corrected in real operating systems.
+Because ToolRecall passively captures byte-for-byte exact pairs of `[Intent -> Action -> Deterministic OS Observation -> Human Correction]`, it inadvertently generates the perfect empirical dataset for alignment research. By exporting these trajectories, safety researchers can apply DPO to mathematically align models against destructive OS behaviors, anchoring AI alignment in empirical systems engineering rather than philosophy.
+
 
 ## 3. The A2A Swarm Multiplier (Agent-to-Agent Synchronization)
 
