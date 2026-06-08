@@ -3,7 +3,7 @@
 Welcome to the ToolRecall technical library. This directory contains the architectural, financial, and strategic documentation required to understand, scale, and pitch the ToolRecall L1-Cache infrastructure.
 
 ## 1. Hard Data & Benchmarks
-- **[`BENCHMARK.md`](BENCHMARK.md)**: The raw $O(N^2)$ mitigation data. Proves how 141.1 million input tokens were intercepted locally in a single 13-hour session.
+- **[`BENCHMARK.md`](BENCHMARK.md)**: The raw $O(N^2)$ mitigation data. Hit rates, latency, and timing from a real 13-hour session. *(Token count corrected for double-counting bug, see file for details.)*
 - **[`LATENCY_PITCH.md`](LATENCY_PITCH.md)**: Explains the math behind dropping tool execution latency from ~1.5s down to <0.1ms, eliminating ~85 minutes of wait time per developer/day.
 
 ## 2. Business & Enterprise Value

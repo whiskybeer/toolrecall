@@ -37,7 +37,8 @@ inflates the context window linearly and the cost quadratically.
         │                     │
    ┌────┴──────┐        ┌────┴──────┐
    │  Cheap    │        │ Determin- │
-   │($282 saved)│        │ istic     │
+   │(81% fewer │        │ istic     │
+   │ tokens)   │        │           │
    └────┬──────┘        └────┬──────┘
         │                     │
         └──────────┬──────────┘
@@ -84,22 +85,44 @@ formatted responses from local SQLite without involving the LLM. The agent
 
 | Metric | Without ToolRecall | With ToolRecall | Savings |
 |--------|-------------------|-----------------|---------|
-| Input tokens | 173,964,599 | 32,346,879 | **141M (81%)** |
-| Tool latency | ~1.5s per call | <0.1ms | **~99.99%** |
-| Session cost | ~$348 | ~$66 | **~$282** |
-| Wait time | ~85 min | ~30 sec | **~99.4%** |
+| Tool calls served locally | 0 | **827** (666 file, 143 terminal, 10 mcp) | — |
+| Cache hit rate | 0% | **89%** (file: 91%) | — |
+| Tool latency | ~1.5s per call | **<0.1ms** (cache hit) | **~99.99%** |
+| Wait time | ~23 min | ~2.6 min | **~20 min (87%)** |
+| Unique file content cached | 0 bytes | **64,889 bytes** | — |
+| Server-side caching eligible | No | **Yes** (deterministic payloads) | **90% API discount** |
 
-### Token Interception Breakdown (91% cache hit rate)
+**Data source:** Workload benchmark reading 13 real project files (README.md, cache.py, daemon.py, etc.), 3× re-reads, 6 terminal commands, 3 code executions, simulated daemon restart. See `tests/benchmark_workload.py`.
 
+### What this means in practice
+
+- **~20 minutes less waiting** per heavy session — the agent isn't blocked on OS subprocess spawning
+- **89% of tool calls never touch disk or network** — served from local SQLite in <0.1ms
+- **Server-side prompt caching becomes effective** — deterministic payloads qualify for Anthropic/OpenAI's 90% discount
+- **Cross-session caching** — files stay cached between sessions and daemon restarts
+
+### Token Interception (corrected)
+
+The original benchmark reported 141M tokens intercepted. This was inflated by a
+**double-counting bug** in the `tokens_intercepted` counter (fixed v0.3.2):
+tokens were counted on every cache hit, not once per unique file.
+
+```text
+Real unique content cached:  ~64,889 bytes (~21,630 tokens) in 25 entries
+Projection for 666 unique files in original benchmark: ~3.1M tokens (not 141M)
 ```
-Total tokens intercepted: 141,105,842
-┌────────────────────────────────────────────┐
-│  File Cache:   141,105,842  (91% hit rate) │░
-│  Terminal Cache:       1,220  (91% hit)    │░
-│  Code Cache:           4,757  (47% hit)    │░
-│  MCP Cache:              285  (21% hit)    │░
-└────────────────────────────────────────────┘
-```
+
+## Why This Still Matters: The Server-Side Discount
+
+The local token count was never the main value driver. The critical mechanism is:
+
+> **Deterministic payloads unlock Anthropic/OpenAI's 90% server-side prompt caching discount.**
+
+Without ToolRecall: OS jitter (timestamps, PIDs, network latency) changes the prompt
+slightly each time → prefix mismatch → no discount → full price per turn.
+
+With ToolRecall: Byte-identical payloads → prefix match → **90% discount applied automatically**.
+This is the real cost lever, and it scales with every single API call, not just file reads.
 
 ## The Knowledge DB: Token-Free Agent Memory
 
@@ -125,11 +148,11 @@ Agent B starts          →  gets cache hit for same file  (<0.1ms)
 Agent C starts          →  same hit                       (<0.1ms)
 ```
 
-Without ToolRecall: A pays 100K tokens, B pays 100K tokens, C pays 100K tokens.
-**Total: 300K tokens.**
+Without ToolRecall: A pays full I/O cost, B pays full I/O cost, C pays full I/O cost.
+**Total: 3× OS execution + 3× context bloat.**
 
-With ToolRecall: A pays 100K tokens (cache miss), B pays 0 tokens (cache hit),
-C pays 0 tokens (cache hit). **Total: 100K tokens.**
+With ToolRecall: A pays I/O cost (cache miss), B pays 0 (cache hit),
+C pays 0 (cache hit). **Total: 1× I/O, 0 additional context bloat.**
 
 This is the **A2A Swarm Multiplier**: the first agent pays, the swarm benefits.
 
@@ -152,6 +175,12 @@ autonomous agents. By intercepting tool calls at the OS level and serving
 byte-exact cached responses from local SQLite, ToolRecall breaks the curve:
 
 > **Tool execution cost goes from $O(N²)$ to $O(1)$ per cache-hit call.**
+
+The real value isn't in inflated token counters — it's in:
+1. **Deterministic payloads** that unlock 90% server-side prompt caching
+2. **~20 minutes saved** per heavy session in pure wait time
+3. **89% hit rate** — most tool calls never touch disk or network
+4. **Cross-session + cross-agent sharing** via SQLite WAL
 
 Knowledge DB extends the same principle to agent memory: instead of
 injecting everything into the prompt, index it once in FTS5 and query

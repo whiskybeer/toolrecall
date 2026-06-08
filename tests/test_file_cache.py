@@ -84,5 +84,84 @@ class TestFileCache(unittest.TestCase):
             if os.path.exists(large_file):
                 os.remove(large_file)
 
+    def test_single_counting_file_cache(self):
+        """Prove tokens_intercepted is counted exactly once per unique file (disk-read), not on cache hits."""
+        from toolrecall.cache import get_stats, reset_stats, _estimate_tokens
+
+        reset_stats()
+
+        # Create fresh file never seen before
+        fd2, f2 = tempfile.mkstemp(text=True)
+        with os.fdopen(fd2, 'w') as f:
+            f.write("Hello World! " * 50)
+        expected_tokens = _estimate_tokens("Hello World! " * 50)
+
+        # 1st read: disk miss → counted once
+        r1 = cached_read(f2)
+        self.assertFalse(r1.get("cached"))
+
+        stats_after_first = get_stats().get("file_cache", {})
+        self.assertEqual(
+            stats_after_first["tokens_intercepted"],
+            expected_tokens,
+            "First disk-read should count tokens exactly once"
+        )
+
+        # 2nd read: in-memory hit → NO new tokens
+        r2 = cached_read(f2)
+        self.assertTrue(r2.get("cached"))
+
+        # 3rd: force SQLite hit by clearing in-memory
+        from toolrecall.cache import _file_cache
+        _file_cache.remove(f2)
+        r3 = cached_read(f2)
+        self.assertTrue(r3.get("cached"))
+
+        stats_after_three = get_stats().get("file_cache", {})
+        self.assertEqual(
+            stats_after_three["tokens_intercepted"],
+            expected_tokens,
+            "Tokens should NOT increase on cache hits (in-memory or SQLite)"
+        )
+        self.assertEqual(stats_after_three["hits"], 2, "Should have 2 hits (2nd read + 3rd read)")
+
+        os.unlink(f2)
+
+    def test_reset_stats_preserves_entries(self):
+        """Prove reset_stats clears counters but keeps cache entries intact."""
+        from toolrecall.cache import get_stats, reset_stats
+
+        # Populate via a miss
+        fd3, f3 = tempfile.mkstemp(text=True)
+        with os.fdopen(fd3, 'w') as f:
+            f.write("test data")
+        cached_read(f3)
+
+        entries_before = get_stats().get("file_cache_entries", 0)
+        self.assertGreater(entries_before, 0, "Should have entries")
+
+        reset_stats()
+
+        stats = get_stats()
+        # Counters gone
+        self.assertNotIn("file_cache", stats, "file_cache stats should be reset")
+        # Entries preserved
+        entries_after = stats.get("file_cache_entries", 0)
+        self.assertEqual(entries_after, entries_before,
+                         "Cache entries should survive reset_stats")
+
+        os.unlink(f3)
+
+    def test_reset_stats_all_layers(self):
+        """Prove reset_stats clears all 6 cache layer counters."""
+        from toolrecall.cache import get_stats, reset_stats
+
+        reset_stats()
+        stats = get_stats()
+        for layer in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache"]:
+            self.assertNotIn(layer, stats,
+                             f"'{layer}' should be absent after reset_stats (category deleted)")
+
+
 if __name__ == "__main__":
     unittest.main()

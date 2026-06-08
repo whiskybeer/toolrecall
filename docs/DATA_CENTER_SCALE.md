@@ -4,7 +4,7 @@ When evaluating an infrastructure primitive like ToolRecall, you must zoom out f
 
 At planetary scale, ToolRecall doesn't just save dollars; it shifts the physical limits of global GPU compute, power grids, and network bandwidth.
 
-Here is the mathematical and physical extrapolation of ToolRecall's architecture, based on a baseline of **141 million tokens saved per agent in 13 hours** (approx. 250M tokens/day).
+Here is the mathematical and physical extrapolation of ToolRecall's architecture, based on measured workload benchmarks (~64K tokens per 25 unique cache entries). Token savings at scale scale linearly with unique I/O operations cached, not with session duration. *(The 141M token figure previously cited was inflated by a double-counting bug fixed in v0.3.2 — hit rates and architecture insights remain valid.)*
 
 ---
 

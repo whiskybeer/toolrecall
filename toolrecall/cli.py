@@ -4,6 +4,7 @@ Usage:
     toolrecall status          # Show cache status
     toolrecall stats           # Detailed statistics (JSON)
     toolrecall invalidate      # Clear cache
+    toolrecall reset-stats     # Reset statistics counters
     toolrecall index           # Index knowledge base
     toolrecall serve           # Start HTTP proxy (via Daemon)
     toolrecall nginx           # Generate nginx config
@@ -154,6 +155,12 @@ def cmd_invalidate():
         from toolrecall.cache import invalidate_all
         invalidate_all()
         print("ToolRecall cache cleared (direct).")
+
+def cmd_reset_stats():
+    """Reset cache statistics counters (hits, misses, tokens_intercepted) without clearing cache entries."""
+    from toolrecall.cache import reset_stats
+    reset_stats()
+    print("Cache statistics reset (hits/misses/tokens). Cache entries preserved.")
 
 def cmd_index():
     """Index knowledge base. Use --memory to also index Hermes memory stores."""
@@ -438,6 +445,7 @@ def main():
         print("  status          Cache status and stats")
         print("  stats           Detailed stats (JSON)")
         print("  invalidate      Clear all caches")
+        print("  reset-stats     Reset statistics counters (preserves cache entries)")
         print("  index           Build/update knowledge database")
         print("  index-memory    Index Hermes memory stores (MEMORY.md, USER.md)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
@@ -456,6 +464,7 @@ def main():
         "status": cmd_status,
         "stats": cmd_stats,
         "invalidate": cmd_invalidate,
+        "reset-stats": cmd_reset_stats,
         "index": cmd_index,
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,

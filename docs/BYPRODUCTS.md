@@ -44,14 +44,14 @@ Example Output:
 ```json
 {
   "file_cache": {
-    "hits": 666,
-    "misses": 62,
-    "tokens_intercepted": 141105842,
-    "hit_rate": "91%"
+    "hits": 22,
+    "misses": 16,
+    "tokens_intercepted": 63811,
+    "hit_rate": "58%"
   }
 }
 ```
-This proves that 141 million tokens were completely bypassed, showing the exact financial impact in real-time.
+*(Note: `tokens_intercepted` counts unique file content once, not per-hit. The 141M figure previously shown was inflated by a double-counting bug fixed in v0.3.2.)*
 
 ## 4. The "Golden Dataset" Generator (SFT & DPO)
 
