@@ -15,6 +15,7 @@ When designing systems, engineers usually have to pick two: *Fast, Cheap, or Goo
 ## Documentation & Guides
 
 - **[141M Token Benchmark Case Study](docs/BENCHMARK.md)**: How ToolRecall breaks the $O(N^2)$ context snowball.
+- **[Planetary Scale Extrapolation](docs/DATA_CENTER_SCALE.md)**: Macro-economics, GPU silicon, megawatt grids, and why forcing determinism saves Hyperscalers.
 - **[Enterprise Scale & The L1 Architecture](docs/ENTERPRISE_SCALE.md)**: Financial projections for 100+ devs, the L1 Cache metaphor, and why OpenAI/Anthropic server-side caching is insufficient.
 - **[The Latency Pitch](docs/LATENCY_PITCH.md)**: How 1.5ms execution latency saves 85 minutes of wait time.
 - **[Emergent Byproducts](docs/BYPRODUCTS.md)**: Offline coding, attention profiling, and zero-penalty context switching.
