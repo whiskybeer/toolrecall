@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "TOOLRECALL_DAEMON_AUTOSTART": "1"
+      }
+    }
+  }
+}

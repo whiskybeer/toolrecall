@@ -27,13 +27,17 @@ When designing systems, engineers usually have to pick two: *Fast, Cheap, or Goo
 ---
 
 ## Universal Agent Compatibility (Drop-In MCP)
-ToolRecall is completely client-agnostic. Because it exposes a standard `stdio` MCP interface (`toolrecall mcp`), it works out-of-the-box with any modern AI agent. You don't need to change a single line of your agent's code. 
+ToolRecall is completely client-agnostic. Because it exposes a standard `stdio` MCP interface (`toolrecall mcp`), it works out-of-the-box with **any** modern AI agent. You don't need to change a single line of your agent's code. 
+
+**This provides massive value for all skills and all agents, not just Hermes.** Whether you are doing data-science via Jupyter, doing front-end work via Cursor, or general tasks via Claude Desktop, ToolRecall caches the filesystem underneath them.
 
 For example, to supercharge **Claude Code** with the L1 cache, simply add it as a server:
 ```bash
 claude mcp add toolrecall toolrecall mcp
 ```
-The agent will automatically route its tool calls through the ToolRecall Daemon, instantly gaining the latency and caching benefits.
+For **Cursor IDE**, you just add `toolrecall` as an MCP server with the command `toolrecall mcp` in your settings.
+
+Check the `examples/` directory in this repository for full integration guides for **Cursor**, **Claude Desktop**, and the official **MCP Inspector**.
 
 ---
 
