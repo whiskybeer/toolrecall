@@ -20,6 +20,17 @@ In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** i
 
 ---
 
+## Universal Agent Compatibility (Drop-In MCP)
+ToolRecall is completely client-agnostic. Because it exposes a standard `stdio` MCP interface (`toolrecall mcp`), it works out-of-the-box with any modern AI agent. You don't need to change a single line of your agent's code. 
+
+For example, to supercharge **Claude Code** with the L1 cache, simply add it as a server:
+```bash
+claude mcp add toolrecall toolrecall mcp
+```
+The agent will automatically route its tool calls through the ToolRecall Daemon, instantly gaining the latency and caching benefits.
+
+---
+
 ## The Core Problem: The Context Snowball
 
 LLM context windows are stateless. Every time an agent reads a 10,000-token file to debug an issue, those 10,000 tokens are added to the history. If the session continues for 100 turns, those same 10,000 tokens are re-transmitted to the API 100 times, costing 1,000,000 billed input tokens.
