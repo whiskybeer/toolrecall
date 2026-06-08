@@ -267,10 +267,14 @@ def cached_read(path: str) -> dict:
         _file_cache.put(path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size})
         tokens_intercepted = _estimate_tokens(row["content"])
         _record("file_cache", hit=True, tokens_intercepted=tokens_intercepted)
-        return {"cached": True, "content": row["content"], "path": path}
-
-    # ── 3. Cache miss — read from disk ──
+        return {"cached": True, "content": row["content"], "path": path}    # ── 3. Cache miss — read from disk ──
     _record("file_cache", hit=False)
+
+    # Security: Hard limit to prevent OOM on huge files (e.g. logs/binaries)
+    # 5MB max ~ 1.2M tokens (exceeds most context windows anyway)
+    if stat.st_size > 5 * 1024 * 1024:
+        return {"error": f"File exceeds 5MB limit ({stat.st_size / 1024 / 1024:.1f} MB). Refusing to cache or read."}
+
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
