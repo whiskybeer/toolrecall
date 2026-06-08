@@ -14,7 +14,7 @@ ENV TOOLRECALL_UDS_PATH=/data/tc.sock
 # Create non-root user (used by daemon, proxy, mcp-bridge targets)
 RUN groupadd --gid 1001 toolrecall && \
     useradd --uid 1001 --gid toolrecall --create-home --shell /bin/bash toolrecall && \
-    mkdir -p /data /projects && \
+    mkdir -p /data /projects /toolrecall && \
     chown -R toolrecall:toolrecall /data /projects /toolrecall
 
 WORKDIR /toolrecall
@@ -62,6 +62,7 @@ FROM base AS with-ollama
 # Install Ollama (benötigt root)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    zstd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://ollama.com/install.sh | sh

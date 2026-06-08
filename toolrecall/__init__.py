@@ -22,7 +22,7 @@ from toolrecall.docs import docs_search, docs_get_page
 from toolrecall.config import Config
 from toolrecall.cli import main as cli_main
 
-__version__ = "0.2.0"
+__version__ = "0.3.1"
 __all__ = [
     "cached_read",
     "cached_skill",

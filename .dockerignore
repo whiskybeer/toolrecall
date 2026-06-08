@@ -2,6 +2,7 @@
 .gitignore
 .gitattributes
 *.md
+!README.md
 .tox/
 .coverage
 coverage/
