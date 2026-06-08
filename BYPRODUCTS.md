@@ -30,3 +30,9 @@ Training new open-weight models to act as agents requires massive datasets of hu
 
 **The Byproduct:** 
 ToolRecall passively records the exact arguments the agent sent to tools, and the exact `stdout` or JSON it received in return, permanently logging them in SQLite. This allows developers to use the hidden CLI command `toolrecall export-dataset` to dump these successful (and failed) trajectories directly into JSONL format. ToolRecall acts as a passive, zero-cost data engine for Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO).
+## 5. Zero-Integration Ecosystem Penetration (The "Bonus" Leverage)
+
+Building custom plugins or native integrations for every new AI agent on the market (Cursor, Aider, Claude Code, Cline, AutoGPT) would normally take months of engineering and constant maintenance.
+
+**The Byproduct:** 
+By adopting the standard MCP (Model Context Protocol) `stdio` architecture, ToolRecall bypasses the entire integration pipeline. Because it presents itself as just another MCP server, **it achieves 100% ecosystem penetration on Day 1**. Any agent that speaks MCP can instantly use the ToolRecall Daemon without a single line of custom integration code. What would have taken "forever" to integrate is solved natively by the protocol standard.
