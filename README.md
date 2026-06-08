@@ -2,7 +2,7 @@
 
 **An $O(N^2)$ Context Mitigation & AI-Gateway Middleware**
 
-ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous AI agents like Claude Code, Cursor, Aider, and Hermes. It sits between the agent and the operating system, caching tool executions and managing external MCP (Model Context Protocol) servers via Unix Domain Sockets (IPC).
+ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous AI agents like Claude Code, Cursor, Aider, and Hermes. Think of it as the **L1 Cache** or the **`gzip` for AI context**. It sits between the agent and the operating system, caching tool executions and managing external MCP (Model Context Protocol) servers via Unix Domain Sockets (IPC).
 
 The core value proposition: **It breaks the $O(N^2)$ context snowball effect.** 
 In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** in a single 13-hour session by serving tool results from a local SQLite database in 1.5ms.

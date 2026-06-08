@@ -48,3 +48,12 @@ Instead of allowing the LLM client to spin up and tear down Node.js/Python MCP s
 * They are gracefully terminated after 15 minutes of idle time.
 
 This reduces the idle footprint of the agent's context pipeline to ~11MB of RAM while providing instant, multiplexed tool access.
+
+
+## 5. The Jevons Paradox: The `gzip` for AI Context
+A common initial assumption is that by mitigating 90% of token traffic, ToolRecall destroys the revenue models of AI providers. Economic history suggests the exact opposite via the **Jevons Paradox**: *When a technology increases the efficiency with which a resource is used, the overall consumption of that resource rises, not falls.*
+
+ToolRecall is effectively the **`gzip` for AI Context**. 
+In the early days of the internet, HTTP compression (`gzip`) didn't bankrupt telecommunication companies by reducing payload sizes. Instead, it made the web fast and responsive enough for mainstream adoption, ultimately leading to an exponential explosion in total global bandwidth usage.
+
+Currently, enterprises hesitate to deploy autonomous agents at scale because the $O(N^2)$ context latency makes them too slow, flaky, and economically unviable. By removing the local I/O bottleneck and making tool execution instant, ToolRecall doesn't just save money on a single agent—it makes it financially and technically viable for an enterprise to deploy fleets of 10,000 concurrent agents. It unlocks the true Total Addressable Market (TAM) for autonomous AI workflows.
