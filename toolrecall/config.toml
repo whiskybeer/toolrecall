@@ -91,12 +91,36 @@ idle_minutes = 15
 # Explicit server configs (same format as Hermes mcp_servers).
 # These are used when mcp_multiplex.hermes_config is empty or the servers
 # are only defined here. Can supplement or override the Hermes config.
+#
+# ⚠️ SUPPLY CHAIN NOTICE
+# The servers below marked "(npx)" download packages from npm on first use.
+# ToolRecall also ships optional stdlib-only Python MCP servers at
+# toolrecall/mcp_github.py, toolrecall/mcp_time.py, toolrecall/mcp_seqthink.py
+# that replace npx-based servers with zero external dependencies.
+#
+# To switch a server from npx to the Python stdlib version, replace e.g.:
+#   github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
+# with:
+#   github = { command = "uv", args = ["run", "-m", "toolrecall.mcp_github"] }
+#
+# The Python servers share 3 key advantages:
+#   1. No npm dependency (supply chain: zero)
+#   2. Token stays in daemon process memory (never in subprocess env)
+#   3. Lower RAM: ~3MB vs ~30MB per Node.js subprocess
+
 [mcp_multiplex.servers_config]
-github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
-time = { command = "uvx", args = ["mcp-server-time"] }
+# npm-based (default — simple but higher supply chain risk):
+# github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
+# time = { command = "uvx", args = ["mcp-server-time"] }
+# sequential-thinking = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
+
+# Python stdlib-based (opt-in — zero external deps, token-secure):
+github = { command = "uv", args = ["run", "-m", "toolrecall.mcp_github"] }
+time = { command = "uv", args = ["run", "-m", "toolrecall.mcp_time"] }
+"sequential-thinking" = { command = "uv", args = ["run", "-m", "toolrecall.mcp_seqthink"] }
+
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
 "hermes-docs" = { command = "uv", args = ["run", "/home/hermes/.hermes/scripts/docs_mcp/server.py"] }
-"sequential-thinking" = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]
