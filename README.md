@@ -14,6 +14,7 @@ When designing systems, engineers usually have to pick two: *Fast, Cheap, or Goo
 
 ## Documentation & Guides
 
+- **[Security Architecture & Input Sanitation](SECURITY.md)**: Details the Zero-Trust WAF, SQLi prevention, Path Canonicalization, and OOM limits.
 - **[141M Token Benchmark Case Study](docs/BENCHMARK.md)**: How ToolRecall breaks the $O(N^2)$ context snowball.
 - **[Return on Investment (ROI) & Cost Savings](docs/ROI_AND_SAVINGS.md)**: CFO-friendly financial projections on API tokens, engineering salaries, and RAM.
 - **[Planetary Scale Extrapolation](docs/DATA_CENTER_SCALE.md)**: Macro-economics, GPU silicon, megawatt grids, and why forcing determinism saves Hyperscalers.
