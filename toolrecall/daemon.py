@@ -753,8 +753,8 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
             os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
             with open(PID_FILE, "w") as f:
                 f.write(str(pid))
-            logger.info(f"ToolRecall Daemon started (PID: {pid})")
-            logger.info(f"  Socket: {_server_instance.socket_path}")
+            print(f"ToolRecall Daemon started (PID: {pid})")
+            print(f"  Socket: {_server_instance.socket_path}")
             sys.exit(0)
             
         # Child process: Redirect standard streams to catch low-level crashes
@@ -766,9 +766,9 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
 
 
 def stop_daemon():
-    """Stop a running daemon via PID file."""
+    """Stop the daemon if running."""
     if not os.path.exists(PID_FILE):
-        logger.info("No PID file found. Is the daemon running?")
+        print("ToolRecall Daemon is not running.")
         return
 
     with open(PID_FILE) as f:
@@ -776,12 +776,17 @@ def stop_daemon():
 
     try:
         os.kill(pid, signal.SIGTERM)
-        logger.info(f"Sent stop signal to PID {pid}")
+        print(f"Sent SIGTERM to Daemon (PID {pid})")
     except ProcessLookupError:
-        logger.info(f"Daemon (PID {pid}) not running. Cleaning up PID file.")
+        print(f"Daemon (PID {pid}) not running. Cleaning up PID file.")
     finally:
-        os.unlink(PID_FILE)
-
+        os.remove(PID_FILE)
+        socket_path = _default_socket_path()
+        if os.path.exists(socket_path):
+            try:
+                os.unlink(socket_path)
+            except Exception:
+                pass
 
 def daemon_status():
     """Print daemon status."""
