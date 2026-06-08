@@ -25,9 +25,6 @@ keywords = ["tool-cache", "llm", "agent", "token-savings", "sqlite", "fts5"]
 requires-python = ">=3.11"
 dependencies = []
 
-[project.optional-dependencies]
-mcp = ["mcp>=1.0.0"]
-
 [project.urls]
 Homepage = "https://github.com/whiskybeer/toolrecall"
 Repository = "https://github.com/whiskybeer/toolrecall"
