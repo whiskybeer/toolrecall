@@ -29,6 +29,7 @@ Architektur:
 """
 
 import json
+import logging
 import os
 import socket
 import struct
@@ -86,6 +87,7 @@ class SecurityGate:
         self.allowed_servers = [s.lower() for s in cfg.mcp_multiplex_servers]
         self.read_only_sandbox = cfg.mcp_read_only_sandbox
         self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords
+        self.logger = logging.getLogger(__name__)
 
     def check_read_path(self, path: str) -> str | None:
         """Check if path is allowed to be read. Returns None or error message."""
@@ -115,7 +117,7 @@ class SecurityGate:
                 if re.search(pattern, cmd):
                     return None
             except re.error as e:
-                logger.info(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})")
+                self.logger.info(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})")
                 
         return f"Terminal command not allowed by regex allowlist: {cmd}"
 
