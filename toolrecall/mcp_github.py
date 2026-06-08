@@ -10,6 +10,12 @@ Token is loaded from the ToolRecall daemon environment (never exposed to subproc
 import base64, json, os, sys, urllib.request, urllib.error
 
 TOKEN = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+
+if not TOKEN:
+    sys.stderr.write("ERROR: No GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN in environment.\n")
+    sys.stderr.write("  Set the token in ~/.toolrecall/.env and restart the daemon.\n")
+    sys.stderr.flush()
+
 API_BASE = "https://api.github.com"
 
 HEADERS = {
