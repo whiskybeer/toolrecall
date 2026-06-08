@@ -115,7 +115,7 @@ class SecurityGate:
             except re.error as e:
                 logger.info(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})")
                 
-        return f"Terminal command not allowed by regex whitelist: {cmd}"
+        return f"Terminal command not allowed by regex allowlist: {cmd}"
 
     def check_invalidate(self) -> str:
         if not self.allow_invalidate:

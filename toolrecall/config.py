@@ -189,7 +189,7 @@ class Config:
         
     @property
     def mcp_allowed_terminal_commands(self) -> list:
-        """Regex whitelist for terminal commands (e.g. ['^npm run (lint|test)$']).
+        """Regex allowlist for terminal commands (e.g. ['^npm run (lint|test)$']).
         If list is empty but allow_terminal=True, all commands are allowed (DANGEROUS).
         """
         raw = self.get("mcp", "allowed_terminal_commands", default=[])
