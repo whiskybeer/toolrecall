@@ -122,7 +122,22 @@ toolrecall daemon &
 ### Usage: Claude Code (Drop-in Replacement)
 To instantly make Claude Code 80% cheaper and faster, route it through ToolRecall:
 ```bash
-claude mcp add toolrecall -- uv run python -m toolrecall.mcp_server
+claude mcp add toolrecall toolrecall mcp
+```
+
+### Usage: Python Import (Direct Stats Testing)
+You can test the caching mechanism and view your live saved tokens directly via Python without needing an MCP client:
+
+```python
+from toolrecall.cache import cached_read, get_stats
+import json
+
+# 1. Trigger a cache hit
+result = cached_read("README.md")
+print(f"Cached: {result['cached']}")
+
+# 2. View your live savings
+print(json.dumps(get_stats(), indent=2))
 ```
 
 ### Configuration & Secrets
