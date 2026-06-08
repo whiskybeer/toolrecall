@@ -105,7 +105,7 @@ GITHUB_PERSONAL_ACCESS_TOKEN=""
     print("\nNext steps:")
     print("1. Edit ~/.toolrecall/config.toml to add your project paths.")
     print("2. Edit ~/.toolrecall/.env to add your API keys.")
-    print("3. Start the daemon: toolrecall daemon")
+    print("3. Start the daemon: toolrecall daemon &")
 
 def cmd_status():
     """Show cache status via Daemon oder direkt."""

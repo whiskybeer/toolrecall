@@ -218,7 +218,7 @@ class MCPBridge:
                     f"  cached_read: path-allowlisted\n"
                     f"  cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
                     f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
-                    "Start daemon: toolrecall daemon"
+                    "Start daemon: toolrecall daemon &"
                 ),
             }
         }
