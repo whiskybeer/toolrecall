@@ -98,7 +98,7 @@ ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** designed for 
 
 ---
 
-## Features (v0.3.0)
+## Features (v0.3.1)
 
 ### 1. Byte-Exact Tool Caching
 - **File Cache:** Invalidates instantly based on file modifications (`mtime`) and internal invalidation locks.
