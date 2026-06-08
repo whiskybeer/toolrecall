@@ -17,12 +17,41 @@ In traditional software engineering, developers use CPU profilers to find the "h
 ToolRecall accidentally acts as an attention profiler for the LLM. By querying the `file_cache` table in SQLite and sorting by hit-count, a developer can mathematically prove which files the LLM struggles to understand or relies on the most. 
 If an agent repeatedly pulls `daemon.py` 150 times but `cli.py` only 3 times, `daemon.py` is the cognitive bottleneck of the project. This tells the human developer exactly which files need better inline documentation, refactoring, or splitting to reduce the AI's cognitive load.
 
-## 3. Zero-Penalty Context Switching
+## 3. Zero-Penalty Context Switching & The New Session Philosophy
 
 A common frustration with AI agents is the cost of context switching. If an agent is working on the Frontend, and the user interrupts: *"Stop, let's fix a DevOps Docker issue"*, the agent drops the Frontend files from context. Switching back 20 minutes later incurs massive latency and API costs as the agent re-reads the Frontend codebase.
 
 **The Byproduct:** 
-Because ToolRecall reduces file-read latency from 1.5 seconds to 1.5 milliseconds, the penalty for dropping and re-acquiring context is effectively zero. A developer can wildly pivot the agent between Frontend, Database, and DevOps tasks within the same session. The agent freely discards and instantly recalls files, making multi-domain workflows financially viable and completely fluid.
+Because ToolRecall reduces file-read latency from 1.5 seconds to 1.5 milliseconds, the penalty for dropping and re-acquiring context is effectively zero. A developer can wildly pivot the agent between Frontend, Database, and DevOps tasks. The agent freely discards and instantly recalls files, making multi-domain workflows financially viable.
+
+### The Paradigm Shift in Session Management
+Historically, developers killed LLM sessions when they became "too expensive" or "too slow" due to context bloat. With ToolRecall, cost and latency for re-reading files are eliminated. **You no longer start a new session to save money or time.**
+
+Instead, sessions are now strictly managed around **Attention Degradation**:
+1. **Drop Context, Keep Session:** If the agent's context window is full, but you are still working on the *same task* (e.g., debugging an auth bug), do not start a new session. Simply tell the agent to "drop old files and read them fresh via the cache". It clears space instantly at zero cost.
+2. **New Task = New Session:** You should *only* start a new session when you change topics (e.g., moving from "Auth Bug" to "UI Redesign"). This clears the LLM's "Chain of Thought" (hidden scratchpad memory) so it doesn't hallucinate old variables into the new task.
+
+*(Note: While ToolRecall eliminates the cost of the agent re-reading the file from the OS, you can track the exact amount of tokens intercepted and saved using the built-in telemetry).*
+
+### Live Token & Savings Telemetry
+ToolRecall tracks every byte intercepted and converts it into exact token savings metrics. While agents don't natively show you how much ToolRecall is saving them under the hood, you can actively monitor it at any time:
+
+```bash
+# View live telemetry in the terminal
+python3 -c "import json; from toolrecall.cache import get_stats; print(json.dumps(get_stats(), indent=2))"
+```
+Example Output:
+```json
+{
+  "file_cache": {
+    "hits": 666,
+    "misses": 62,
+    "tokens_intercepted": 141105842,
+    "hit_rate": "91%"
+  }
+}
+```
+This proves that 141 million tokens were completely bypassed, showing the exact financial impact in real-time.
 
 ## 4. The "Golden Dataset" Generator (SFT & DPO)
 
