@@ -20,22 +20,20 @@ If an agent needs to check `git status` or read a 500-line configuration file:
 
 ToolRecall intercepts this at the local edge. If the state is unchanged, the tool is never executed on the OS, and the redundant data is never transmitted over the network. It eliminates both local compute latency and network round-trip time (RTT).
 
-## 3. Enterprise Scale Cost Projection
+## 3. Enterprise Scale Extrapolation
 Based on real-world benchmarking (`BENCHMARK.md`), a single developer running an autonomous agent for a 13-hour session generated **141,112,165 redundant tokens** that were successfully intercepted by ToolRecall.
-
-Assuming a baseline API cost of $2.00 per 1M input tokens (e.g., standard Claude 3.5 Sonnet or equivalent models without assuming 100% server-side cache hits):
 
 ### Single Developer
 * **Daily intercepted tokens:** ~140M
-* **Daily savings:** ~$280
-* **Annual savings (200 working days):** ~$56,000
+* **Daily execution latency saved:** ~85 minutes
+* **Annual latency saved (200 working days):** ~280 hours
 
 ### Enterprise Team (100 Developers)
 * **Daily intercepted tokens:** 14 Billion
-* **Daily savings:** ~$28,000
-* **Annual savings:** ~$5,600,000
+* **Daily execution latency saved:** ~140 hours
+* **Annual latency saved:** ~28,000 hours
 
-*Note: Even if provider-side prompt caching reduces the effective token cost by 50-80%, the financial savings remain strictly in the 6-to-7 figure range for mid-sized engineering teams, excluding the value of engineering time saved by eliminating ~85 minutes of mechanical API latency per developer, per day.*
+*Note: ToolRecall does not magically prevent the LLM from billing for input tokens—the LLM still needs to process the text to reason about it. However, by intercepting the read requests locally at zero latency, it enables the agent to safely drop context and re-read it instantly without any disk or network penalty. When paired with provider-side Prompt Caching (Anthropic/OpenAI), this edge-gateway architecture allows teams to maximize their server-side cache hits (90% discount) while completely eliminating the local execution bottlenecks.*
 
 ## 4. The Edge-Gateway Architecture (MCP Multiplexer)
 Beyond caching, ToolRecall functions as a local Model Context Protocol (MCP) Multiplexer.

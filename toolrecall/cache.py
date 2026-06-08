@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     category TEXT PRIMARY KEY,
     hits INTEGER DEFAULT 0,
     misses INTEGER DEFAULT 0,
-    tokens_saved INTEGER DEFAULT 0
+    tokens_intercepted INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_file_mtime ON file_cache(mtime);
 CREATE INDEX IF NOT EXISTS idx_terminal_expires ON terminal_cache(expires_at);
@@ -187,28 +187,28 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
-def _record(category, hit: bool, tokens_saved: int = 0):
+def _record(category, hit: bool, tokens_intercepted: int = 0):
     """Track cache statistics."""
     conn = _get_db()
     try:
         if hit:
             conn.execute("""
-                INSERT INTO cache_stats (category, hits, misses, tokens_saved)
+                INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
                 VALUES (?, 1, 0, 0)
                 ON CONFLICT(category) DO UPDATE SET hits = hits + 1
             """, (category,))
         else:
             conn.execute("""
-                INSERT INTO cache_stats (category, hits, misses, tokens_saved)
+                INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
                 VALUES (?, 0, 1, 0)
                 ON CONFLICT(category) DO UPDATE SET misses = misses + 1
             """, (category,))
-        if tokens_saved:
+        if tokens_intercepted:
             conn.execute("""
-                INSERT INTO cache_stats (category, hits, misses, tokens_saved)
+                INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
                 VALUES (?, 0, 0, ?)
-                ON CONFLICT(category) DO UPDATE SET tokens_saved = tokens_saved + ?
-            """, (category, tokens_saved, tokens_saved))
+                ON CONFLICT(category) DO UPDATE SET tokens_intercepted = tokens_intercepted + ?
+            """, (category, tokens_intercepted, tokens_intercepted))
         conn.commit()
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
@@ -247,8 +247,8 @@ def cached_read(path: str) -> dict:
     # ── 1. In-memory cache (fast path) ──
     entry = _file_cache.get(path)
     if entry and entry["mtime"] == stat.st_mtime:
-        tokens_saved = _estimate_tokens(entry["content"])
-        _record("file_cache", hit=True, tokens_saved=tokens_saved)
+        tokens_intercepted = _estimate_tokens(entry["content"])
+        _record("file_cache", hit=True, tokens_intercepted=tokens_intercepted)
         return {"cached": True, "content": entry["content"], "path": path}
 
     # ── 2. SQLite cache (warm from previous session) ──
@@ -265,8 +265,8 @@ def cached_read(path: str) -> dict:
 
     if row and row["mtime"] == stat.st_mtime:
         _file_cache.put(path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size})
-        tokens_saved = _estimate_tokens(row["content"])
-        _record("file_cache", hit=True, tokens_saved=tokens_saved)
+        tokens_intercepted = _estimate_tokens(row["content"])
+        _record("file_cache", hit=True, tokens_intercepted=tokens_intercepted)
         return {"cached": True, "content": row["content"], "path": path}
 
     # ── 3. Cache miss — read from disk ──
@@ -333,8 +333,8 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     with _skill_cache_lock:
         mem = _skill_cache.get(skill_name)
         if mem and mem.get("cached_at", 0) >= max_mtime:
-            tokens_saved = _estimate_tokens(mem["content"])
-            _record("skill_cache", hit=True, tokens_saved=tokens_saved)
+            tokens_intercepted = _estimate_tokens(mem["content"])
+            _record("skill_cache", hit=True, tokens_intercepted=tokens_intercepted)
             return {"cached": True, "content": mem["content"], "skill": skill_name, "files": len(skill_files)}
 
     try:
@@ -351,8 +351,8 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     if row and row.get("cached_at", 0) >= max_mtime:
         with _skill_cache_lock:
             _skill_cache[skill_name] = {"content": row["content"], "cached_at": row["cached_at"]}
-        tokens_saved = _estimate_tokens(row["content"])
-        _record("skill_cache", hit=True, tokens_saved=tokens_saved)
+        tokens_intercepted = _estimate_tokens(row["content"])
+        _record("skill_cache", hit=True, tokens_intercepted=tokens_intercepted)
         return {"cached": True, "content": row["content"], "skill": skill_name, "files": len(skill_files)}
 
     _record("skill_cache", hit=False)
@@ -457,8 +457,8 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
             conn.execute("UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,))
             conn.commit()
             conn.close()
-            tokens_saved = _estimate_tokens(row["output"])
-            _record("terminal_cache", hit=True, tokens_saved=tokens_saved)
+            tokens_intercepted = _estimate_tokens(row["output"])
+            _record("terminal_cache", hit=True, tokens_intercepted=tokens_intercepted)
             return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
         conn.close()
     except Exception as e:
@@ -539,8 +539,8 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
             valid = True
 
     if valid:
-        tokens_saved = _estimate_tokens(row["output"])
-        _record("script_cache", hit=True, tokens_saved=tokens_saved)
+        tokens_intercepted = _estimate_tokens(row["output"])
+        _record("script_cache", hit=True, tokens_intercepted=tokens_intercepted)
         return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
 
     _record("script_cache", hit=False)
@@ -600,8 +600,8 @@ def cached_exec(code: str, ttl: int = 0) -> dict:
             valid = True
 
     if valid:
-        tokens_saved = _estimate_tokens(row["output"])
-        _record("code_cache", hit=True, tokens_saved=tokens_saved)
+        tokens_intercepted = _estimate_tokens(row["output"])
+        _record("code_cache", hit=True, tokens_intercepted=tokens_intercepted)
         return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
 
     _record("code_cache", hit=False)
@@ -665,7 +665,7 @@ def cached_mcp_check(server: str, tool: str, arguments: dict = None, ttl: int = 
             conn.execute("UPDATE mcp_cache SET hits = hits + 1 WHERE request_hash = ?", (request_hash,))
             conn.commit()
             conn.close()
-            _record("mcp_cache", hit=True, tokens_saved=_estimate_tokens(row["data"]))
+            _record("mcp_cache", hit=True, tokens_intercepted=_estimate_tokens(row["data"]))
             return {"cached": True, "data": row["data"], "server": server, "tool": tool}
 
         conn.close()
@@ -735,7 +735,7 @@ def get_stats() -> dict:
             stats[row["category"]] = {
                 "hits": row["hits"],
                 "misses": row["misses"],
-                "tokens_saved": row["tokens_saved"],
+                "tokens_intercepted": row["tokens_intercepted"],
                 "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
             }
         for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache"]:
