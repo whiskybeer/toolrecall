@@ -59,7 +59,15 @@ Instead of trying to out-prompt the attacker, ToolRecall assumes the agent will 
 2. **Cryptographic Path Resolution:** If an injection triggers `read_file("../../../etc/shadow")`, the Python daemon intercepts it, resolves the path to the physical disk via `os.path.realpath`, checks it against the strict `allow_list`, and drops it before the OS is ever touched.
 3. **Execution Blackholes:** By default, `allow_terminal = false`. Remote Code Execution (RCE) attempts (`rm -rf /` or downloading malware) are dropped into a black hole at the socket layer.
 
-## 6. The Jevons Paradox: The `gzip` for AI Context
+## 6. Enterprise GDPR & Data Sovereignty
+In standard autonomous agent setups, massive amounts of internal code, logs, and potentially PII (Personally Identifiable Information) are continuously streamed to cloud LLMs due to context snowballing. This creates massive friction with European GDPR and corporate data sovereignty policies.
+
+ToolRecall fundamentally alters the data flow:
+1. **Local-First Interception:** 90% of file reads and terminal outputs are intercepted by the local SQLite database. The data never leaves the developer's machine or the corporate VPC.
+2. **Context Pruning:** Because local retrieval is instant, agents can be instructed to aggressively drop sensitive files from their context window after the immediate task is done, preventing sensitive data from persisting in the payload.
+3. **No Telemetry:** ToolRecall contains zero telemetry, tracking, or call-home functions. The SQLite database remains exclusively on the host. 
+
+## 7. The Jevons Paradox: The `gzip` for AI Context
 A common initial assumption is that by mitigating 90% of token traffic, ToolRecall destroys the revenue models of AI providers. Economic history suggests the exact opposite via the **Jevons Paradox**: *When a technology increases the efficiency with which a resource is used, the overall consumption of that resource rises, not falls.*
 
 ToolRecall is effectively the **`gzip` for AI Context**. 

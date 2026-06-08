@@ -9,7 +9,7 @@ When designing systems, engineers usually have to pick two: *Fast, Cheap, or Goo
 1. **Faster:** Drops tool execution latency from ~1.5s down to <0.1ms. It eliminates OS polling and sub-process overhead, saving roughly 85 minutes of pure wait time per developer per day.
 2. **Cheaper:** By forcing Server-Side Cache hits, it intercepts massive context payloads locally, guaranteeing the 90% discount at Anthropic/OpenAI. It saved **141 Million tokens (~$282)** in a single 13h benchmark.
 3. **Deterministic:** It freezes OS state. For the first time, agents can run 100% reproducible loops. OS flakiness and jitter disappear.
-4. **Safer:** It implements a Zero-Trust WAF. Prompt-injected agents are trapped in a cryptographic path sandbox (`os.path.realpath`) and have zero visibility into your API keys (`.env` air-gapping).
+4. **Safer (GDPR & Zero-Trust):** It implements a Zero-Trust WAF. Prompt-injected agents are trapped in a cryptographic path sandbox (`os.path.realpath`) and have zero visibility into your API keys. No telemetry. Data stays strictly on your local disk.
 5. **Universal:** It requires zero custom plugins. Because it exposes the official `stdio` MCP protocol, any agent on the market can use it out-of-the-box on Day 1.
 
 ## Documentation & Guides
