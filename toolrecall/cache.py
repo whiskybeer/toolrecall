@@ -796,3 +796,20 @@ def invalidate_file(path: str):
 
 
 _init()
+
+def garbage_collect() -> int:
+    """Remove expired cache entries and vacuum database to free disk space."""
+    import time
+    try:
+        conn = _get_db()
+        now = time.time()
+        c1 = conn.execute("DELETE FROM terminal_cache WHERE expires_at < ?", (now,)).rowcount
+        c2 = conn.execute("DELETE FROM mcp_cache WHERE expires_at < ?", (now,)).rowcount
+        conn.commit()
+        conn.execute("VACUUM")
+        conn.close()
+        return c1 + c2
+    except Exception as e:
+        warnings.warn(f"ToolRecall GC failed: {e}")
+        return -1
+

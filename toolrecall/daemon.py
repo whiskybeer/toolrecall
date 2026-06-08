@@ -113,7 +113,7 @@ class SecurityGate:
                 if re.search(pattern, cmd):
                     return None
             except re.error as e:
-                print(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})", file=sys.stderr)
+                logger.info(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})")
                 
         return f"Terminal command not allowed by regex whitelist: {cmd}"
 
@@ -330,7 +330,7 @@ class MCPMultiplexer:
                 # Fetch tools for warmup
                 tools = session.list_tools()
                 self._sessions[name_lower] = session
-                print(f"  ✓ {name_lower}: {len(tools)} tools started on-demand", file=sys.stderr)
+                logger.info(f"  ✓ {name_lower}: {len(tools)} tools started on-demand")
             except Exception as e:
                 return f"{name_lower}: start failed — {e}"
         return None
@@ -360,7 +360,7 @@ class MCPMultiplexer:
                         if session:
                             try:
                                 session.shutdown()
-                                print(f"  💤 {name}: idle shutdown ({int(idle_mins)}min)", file=sys.stderr)
+                                logger.info(f"  💤 {name}: idle shutdown ({int(idle_mins)}min)")
                             except Exception:
                                 pass
                             self._last_use.pop(name, None)
@@ -376,7 +376,7 @@ class MCPMultiplexer:
         self._start_reaper()
         n = len(self._configs)
         if n:
-            print(f"  {n} servers configured (lazy start — first call starts each)", file=sys.stderr)
+            logger.info(f"  {n} servers configured (lazy start — first call starts each)")
 
     def shutdown(self):
         """Shutdown all running servers."""
@@ -384,7 +384,7 @@ class MCPMultiplexer:
             for name, session in list(self._sessions.items()):
                 try:
                     session.shutdown()
-                    print(f"  ✗ {name}: stopped", file=sys.stderr)
+                    logger.info(f"  ✗ {name}: stopped")
                 except Exception:
                     pass
             self._sessions.clear()
@@ -488,18 +488,18 @@ class DaemonServer:
 
         self._running = True
 
-        print(f"ToolRecall Daemon v0.3.0", file=sys.stderr)
-        print(f"  Socket: {self.socket_path}", file=sys.stderr)
-        print(f"  PID: {os.getpid()}", file=sys.stderr)
-        print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
-        print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}", file=sys.stderr)
-        print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}", file=sys.stderr)
+        logger.info(f"ToolRecall Daemon v0.3.0")
+        logger.info(f"  Socket: {self.socket_path}")
+        logger.info(f"  PID: {os.getpid()}")
+        logger.info(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
+        logger.info(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
+        logger.info(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}")
 
         # Start MCP Multiplexer (lazy — no servers started yet)
         if self.cfg.mcp_multiplex_enabled:
-            print(f"\nMCP Multiplexer:", file=sys.stderr)
+            logger.info(f"\nMCP Multiplexer:")
             self.multiplexer.start()
-        print(file=sys.stderr)
+        logger.info("")
 
         while self._running:
             try:
@@ -521,7 +521,7 @@ class DaemonServer:
             os.unlink(self.socket_path)
         except FileNotFoundError:
             pass
-        print("ToolRecall Daemon stopped.", file=sys.stderr)
+        logger.info("ToolRecall Daemon stopped.")
 
     def _handle(self, conn: socket.socket):
         """Handle one client connection."""
@@ -753,9 +753,14 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
             os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
             with open(PID_FILE, "w") as f:
                 f.write(str(pid))
-            print(f"ToolRecall Daemon started (PID: {pid})")
-            print(f"  Socket: {_server_instance.socket_path}")
+            logger.info(f"ToolRecall Daemon started (PID: {pid})")
+            logger.info(f"  Socket: {_server_instance.socket_path}")
             sys.exit(0)
+            
+        # Child process: Redirect standard streams to catch low-level crashes
+        log_file = os.path.expanduser("~/.toolrecall/daemon.log")
+        sys.stdout = open(log_file, "a")
+        sys.stderr = sys.stdout
 
     _server_instance.start()
 
@@ -763,7 +768,7 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
 def stop_daemon():
     """Stop a running daemon via PID file."""
     if not os.path.exists(PID_FILE):
-        print("No PID file found. Is the daemon running?")
+        logger.info("No PID file found. Is the daemon running?")
         return
 
     with open(PID_FILE) as f:
@@ -771,9 +776,9 @@ def stop_daemon():
 
     try:
         os.kill(pid, signal.SIGTERM)
-        print(f"Sent stop signal to PID {pid}")
+        logger.info(f"Sent stop signal to PID {pid}")
     except ProcessLookupError:
-        print(f"Daemon (PID {pid}) not running. Cleaning up PID file.")
+        logger.info(f"Daemon (PID {pid}) not running. Cleaning up PID file.")
     finally:
         os.unlink(PID_FILE)
 
@@ -781,7 +786,7 @@ def stop_daemon():
 def daemon_status():
     """Print daemon status."""
     if not os.path.exists(PID_FILE):
-        print("ToolRecall Daemon: NOT RUNNING")
+        logger.info("ToolRecall Daemon: NOT RUNNING")
         return
 
     with open(PID_FILE) as f:
@@ -789,8 +794,8 @@ def daemon_status():
 
     try:
         os.kill(pid, 0)  # Test if process exists
-        print(f"ToolRecall Daemon: RUNNING (PID {pid})")
-        print(f"  Socket: {_default_socket_path()}")
+        logger.info(f"ToolRecall Daemon: RUNNING (PID {pid})")
+        logger.info(f"  Socket: {_default_socket_path()}")
 
         # Try to ping the daemon
         try:
@@ -805,18 +810,18 @@ def daemon_status():
                 resp = json.loads(sock.recv(msg_len).decode("utf-8"))
                 sock.close()
                 if resp.get("pong"):
-                    print(f"  PID from socket: {resp.get('pid')}")
-                    print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
-                    print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
-                    print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
+                    logger.info(f"  PID from socket: {resp.get('pid')}")
+                    logger.info(f"  Path allowlist: {resp.get('allowed_paths', [])}")
+                    logger.info(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
+                    logger.info(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
                     servers = resp.get('multiplex_servers', [])
                     if servers:
-                        print(f"  Multiplex servers: {', '.join(servers)}")
+                        logger.info(f"  Multiplex servers: {', '.join(servers)}")
                 return
             sock.close()
         except Exception:
-            print("  ⚠ PID file exists but daemon is not responding")
-            print("  → Run 'toolrecall daemon --stop' to clean up")
+            logger.info("  ⚠ PID file exists but daemon is not responding")
+            logger.info("  → Run 'toolrecall daemon --stop' to clean up")
     except ProcessLookupError:
-        print("ToolRecall Daemon: PID FILE STALE (process not found)")
-        print("  → Run 'toolrecall daemon --stop' to clean up")
+        logger.info("ToolRecall Daemon: PID FILE STALE (process not found)")
+        logger.info("  → Run 'toolrecall daemon --stop' to clean up")

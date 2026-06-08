@@ -90,7 +90,8 @@ Running 5 different MCP Servers (GitHub, Postgres, Brave Search, etc.) per sessi
 
 ```bash
 # 1. Install via pip
-pip install toolrecall[mcp]
+pip install git+https://github.com/whiskybeer/toolrecall.git
+# Note: 'pip install toolrecall' on PyPI is currently a placeholder to prevent name-squatting.
 
 # 2. Initialize default config and .env (Creates ~/.toolrecall/)
 toolrecall init
