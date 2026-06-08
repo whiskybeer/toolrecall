@@ -36,13 +36,28 @@ If you want an LLM to decide what to cache, you're adding a second agent that ca
 
 ## The Core Problem: The Context Snowball
 
-LLM context windows are stateless. Every time an agent reads a 10,000-token file, those 10,000 tokens enter the history. Over 100 turns, that's 1,000,000 billed input tokens for the same file — the O(N²) context snowball.
+LLM context windows are stateless. Everything accumulates. This means two independent cost escalators:
 
-**ToolRecall's solution (Micro-RAG):**
-1. Agents read the file once.
-2. The agent drops the dump from its active context window.
-3. Hours later if needed again, ToolRecall serves the exact bytes from SQLite — 1.5ms, no API call.
-4. File edited? `mtime` invalidates the entry. Next read is fresh.
+**Level 1 — File repetition (O(N), linear):**
+A 10,000-token file, read once, stays in context for 100 turns: 10K × 100 = **1,000,000 billed input tokens** for the same content. Expensive, but at least predictable.
+
+**Level 2 — The real O(N²) snowball (quadratic):**
+In reality, context grows continuously through new tool outputs — not just one file. After 100 turns it hits ~500K tokens, not 10K. And attention mechanisms scale at O(N²):
+
+```
+Context size → Attention pairs per turn
+   10K     →       50 million
+  100K     →      5 billion
+  500K     →    250 billion   (after 100 turns without ToolRecall)
+```
+
+Every additional turn then costs 500K input tokens + 250B compute operations. The iceberg isn't the one file — it's the **accumulated garbage**.
+
+**ToolRecall breaks both curves:**
+1. **File cache** → file read once, then <0.1ms from SQLite → 0 tokens for repeats
+2. **Micro-RAG** → agent drops large outputs from active context, re-fetches byte-exact from cache on demand → context stays bounded, attention costs don't explode
+
+Result: **81% fewer input tokens + context stays manageable + attention costs flat.**
 
 **The paradigm shift:** Cost and latency are eliminated from sessions. The *only* reason to end a session now is attention degradation (topic drift), not token bills or wait time.
 
