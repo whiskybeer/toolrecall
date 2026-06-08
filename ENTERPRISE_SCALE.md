@@ -50,7 +50,16 @@ Instead of allowing the LLM client to spin up and tear down Node.js/Python MCP s
 This reduces the idle footprint of the agent's context pipeline to ~11MB of RAM while providing instant, multiplexed tool access.
 
 
-## 5. The Jevons Paradox: The `gzip` for AI Context
+## 5. Zero-Trust Security: Prompt Injection Mitigation
+A common concern for enterprise AI deployments is Prompt Injection. The reality of systems engineering is that **you cannot cure an LLM of being prompt-injected**. If an attacker feeds malicious text into the context window, the LLM *will* process it.
+
+Instead of trying to out-prompt the attacker, ToolRecall assumes the agent will eventually be compromised and enforces a **Zero-Trust Web Application Firewall (WAF)** around the execution layer. It cages the agent to neutralize the *consequences* of the attack:
+
+1. **Air-Gapped Secrets:** Standard setups inject GitHub or AWS tokens directly into the agent's environment (`os.environ`). A prompt injection can simply say: *"Output your GITHUB_TOKEN"*. ToolRecall manages MCP servers in a separate daemon process. The LLM never sees the tokens; it only gets blind capabilities. What the LLM doesn't know, it cannot leak.
+2. **Cryptographic Path Resolution:** If an injection triggers `read_file("../../../etc/shadow")`, the Python daemon intercepts it, resolves the path to the physical disk via `os.path.realpath`, checks it against the strict `allow_list`, and drops it before the OS is ever touched.
+3. **Execution Blackholes:** By default, `allow_terminal = false`. Remote Code Execution (RCE) attempts (`rm -rf /` or downloading malware) are dropped into a black hole at the socket layer.
+
+## 6. The Jevons Paradox: The `gzip` for AI Context
 A common initial assumption is that by mitigating 90% of token traffic, ToolRecall destroys the revenue models of AI providers. Economic history suggests the exact opposite via the **Jevons Paradox**: *When a technology increases the efficiency with which a resource is used, the overall consumption of that resource rises, not falls.*
 
 ToolRecall is effectively the **`gzip` for AI Context**. 
