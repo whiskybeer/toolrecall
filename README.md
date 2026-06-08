@@ -7,6 +7,8 @@ ToolRecall is a deterministic middleware layer (API Gateway/WAF) for autonomous 
 The core value proposition: **It breaks the $O(N^2)$ context snowball effect.** 
 In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** in a single 13-hour session by serving tool results from a local SQLite database in 1.5ms.
 
+**The "Forced Cache Hit" Theory:** Cloud providers (Anthropic/OpenAI) offer a 90% discount on prompt caching, but *only* if the payload is exactly identical. Non-deterministic OS outputs (like `ls -la` timestamps) bust this cache immediately. By freezing state locally, ToolRecall guarantees byte-for-byte identical payloads, forcing the cloud provider to grant the 90% discount on massive context windows.
+
 ## Documentation & Guides
 
 - **[141M Token Benchmark Case Study](BENCHMARK.md)**: How ToolRecall breaks the $O(N^2)$ context snowball.
