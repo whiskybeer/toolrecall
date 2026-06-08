@@ -108,10 +108,9 @@ Running 5 different MCP Servers (GitHub, Postgres, Brave Search, etc.) per sessi
 **Requirements:** Python 3.10+, standard SQLite.
 
 ```bash
-# 1. Install via pip [TEMPORARY FOR PRIVATE BETA]
+# 1. Install via pip (GitHub release)
 pip install git+https://github.com/whiskybeer/toolrecall.git
-# Note: The 'toolrecall' name on PyPI is secured but currently an empty placeholder. 
-# This instruction will revert to `pip install toolrecall` upon public release.
+# Note: A PyPI release (`pip install toolrecall`) is pending.
 
 # 2. Initialize default config and .env (Creates ~/.toolrecall/)
 toolrecall init
