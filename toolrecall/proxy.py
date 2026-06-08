@@ -98,16 +98,16 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_server(bind: str = "[IP_ADDRESS]", port: int = 8567):
+def run_server(bind: str = "127.0.0.1", port: int = 8567):
     """Start the ToolRecall HTTP proxy bridge."""
     import socket as sock_mod
     try:
         sock_mod.getaddrinfo(bind, port)
     except sock_mod.gaierror:
         print(f"Warning: '{bind}' does not resolve on this system.")
-        print("Falling back to '[IP_ADDRESS]' (all interfaces).")
-        print("Set TOOLRECALL_PROXY_BIND=[IP_ADDRESS] for localhost-only.")
-        bind = "[IP_ADDRESS]"
+        print("Falling back to '127.0.0.1' (all interfaces).")
+        print("Set TOOLRECALL_PROXY_BIND=127.0.0.1 for localhost-only.")
+        bind = "127.0.0.1"
 
     server = http.server.HTTPServer((bind, port), ToolRecallHandler)
     print(f"ToolRecall HTTP Proxy (Daemon Bridge) running on http://{bind}:{port}")

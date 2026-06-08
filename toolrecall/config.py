@@ -162,7 +162,7 @@ class Config:
 
     @property
     def proxy_bind(self) -> str:
-        return self.get("proxy", "bind", default="[IP_ADDRESS]")
+        return self.get("proxy", "bind", default="127.0.0.1")
 
     @property
     def nginx_recommended(self) -> bool:
@@ -186,6 +186,14 @@ class Config:
     def mcp_allow_terminal(self) -> bool:
         """Allow cached_terminal tool (default: False — security risk)."""
         return self.get("mcp", "allow_terminal", default=False)
+        
+    @property
+    def mcp_allowed_terminal_commands(self) -> list:
+        """Regex whitelist for terminal commands (e.g. ['^npm run (lint|test)$']).
+        If list is empty but allow_terminal=True, all commands are allowed (DANGEROUS).
+        """
+        raw = self.get("mcp", "allowed_terminal_commands", default=[])
+        return raw if isinstance(raw, list) else []
 
     @property
     def mcp_allow_invalidate(self) -> bool:

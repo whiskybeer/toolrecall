@@ -213,7 +213,7 @@ server {
     proxy_cache_bypass 1;
 
     location /toolrecall/ {
-        proxy_pass http://[IP_ADDRESS]:8567/;
+        proxy_pass http://127.0.0.1:8567/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -226,7 +226,7 @@ server {
     # location /toolrecall/ {
     #     auth_basic "ToolRecall";
     #     auth_basic_user_file /etc/nginx/.htpasswd_toolrecall;
-    #     proxy_pass http://[IP_ADDRESS]:8567/;
+    #     proxy_pass http://127.0.0.1:8567/;
     # }
 }
 
@@ -237,7 +237,7 @@ server {
 #     ssl_certificate /etc/letsencrypt/live/toolrecall.dev/fullchain.pem;
 #     ssl_certificate_key /etc/letsencrypt/live/toolrecall.dev/privkey.pem;
 #     location /toolrecall/ {
-#         proxy_pass http://[IP_ADDRESS]:8567/;
+#         proxy_pass http://127.0.0.1:8567/;
 #     }
 # }
 """
