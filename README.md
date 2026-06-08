@@ -10,6 +10,7 @@ In a recent benchmark, ToolRecall saved **141.1 million input tokens (~$282)** i
 ## Documentation & Guides
 
 - **[141M Token Benchmark Case Study](BENCHMARK.md)**: How ToolRecall breaks the $O(N^2)$ context snowball.
+- **[Enterprise Scale & The L1 Architecture](ENTERPRISE_SCALE.md)**: Financial projections for 100+ devs, the L1 Cache metaphor, and why OpenAI/Anthropic server-side caching is insufficient.
 - **[The Latency Pitch](LATENCY_PITCH.md)**: How 1.5ms execution latency saves 85 minutes of wait time.
 - **[Emergent Byproducts](BYPRODUCTS.md)**: Offline coding, attention profiling, and zero-penalty context switching.
 - **[Troubleshooting & FAQ](TROUBLESHOOTING.md)**: Fixes for common issues like Access Denied or caching stale data.
