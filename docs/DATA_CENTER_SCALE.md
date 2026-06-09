@@ -1,28 +1,29 @@
 # Planetary Extrapolation: From Laptop to Data Center
 
-When evaluating an infrastructure primitive like ToolRecall, you must zoom out from a single developer's laptop to the scale of a Hyperscaler (AWS, Azure) or an AI provider (OpenAI, Anthropic). 
+*This document is a speculative thought experiment.* Measured baseline: ~55K tokens saved from 13 project files in a single session. The extrapolations below assume linear scaling to enterprise fleet sizes — actual results depend on workload patterns, file change frequency, and re-read depth.
 
-At planetary scale, ToolRecall doesn't just save dollars; it shifts the physical limits of global GPU compute, power grids, and network bandwidth.
+## 1. Server-Side Cache Stability
 
-Here is the mathematical and physical extrapolation of ToolRecall's architecture, based on measured workload benchmarks (~64K tokens per 25 unique cache entries). Token savings at scale scale linearly with unique I/O operations cached, not with session duration. *(The 141M token figure previously cited was inflated by a double-counting bug fixed in v0.3.2 — hit rates and architecture insights remain valid.)*
+The primary mechanism for cost reduction at scale is not local token savings but server-side prompt caching. When ToolRecall delivers byte-identical tool outputs, the provider's prefix cache stays valid across turns.
 
----
+- **Without ToolRecall:** OS jitter (timestamps, PIDs) changes the prompt prefix on every turn → server-side cache busted → no discount.
+- **With ToolRecall:** Deterministic output → prefix matches → provider's 90% discount applies to every API call.
 
-## 1. The GPU Compute Crisis (Saving Silicon)
-AI providers are currently constrained by physical hardware. They cannot buy Nvidia H100 GPUs fast enough.
-*   **The Problem:** Without a local L1 cache, non-deterministic OS jitter (like a changed file timestamp) forces the LLM provider to ingest the *entire* 200,000-token context window from scratch. The GPU must perform massive matrix multiplications to rebuild the KV-Cache in VRAM. This blocks the GPU for seconds.
-*   **The Solution:** Because ToolRecall forces the local OS to be **100% deterministic**, the payload sent to the API is byte-for-byte identical. 
-*   **The Scale:** The cloud provider's GPU no longer computes the prompt; it simply retrieves it from RAM. By forcing determinism at the edge, **ToolRecall effectively 10x's the global capacity of OpenAI/Anthropic for agentic workflows without them needing to buy a single new server.** 
+## 2. Bandwidth
 
-## 2. The Bandwidth and Power Grid Collapse
-Data centers are currently limited by megawatt availability, not square footage.
-*   **Bandwidth:** 250 million redundant tokens per day equals roughly 1 gigabyte of raw text. A fleet of 100,000 enterprise agents would blast **100 Terabytes** of redundant JSON across global undersea cables to API gateways every single day. ToolRecall stops this traffic at the local socket layer.
-*   **Power (Watts):** An Nvidia H100 burns ~700W under load. When GPUs are forced into "Cache Hit" mode by ToolRecall's deterministic payloads, they drop out of heavy matrix multiplication and into memory-read mode. Extrapolated across an AWS data center, this local L1 cache significantly reduces the megawatt draw of the facility.
+A single tool call returning ~5KB of JSON output, repeated 10 times per session × 1,000 concurrent agents, produces ~50MB/day of redundant transit. Caching at the edge eliminates this at the socket layer — no network round-trip for repeated calls.
+
+## 3. Power
+
+*Speculative.* Prompt-cache-hit inference (reading from KV-cache) is cheaper per token than full attention computation for a cold prompt. The exact savings depend on model architecture, batch size, and cache hit ratio at the provider level. ToolRecall's contribution is making the prefix deterministic so the provider can rely on its cache at all.
 
 ## 3. The Financial Meltdown (Enterprise CapEx)
 Imagine a tech giant (Meta, Microsoft) deploying a fleet of **100,000 autonomous CI/CD agents** to review pull requests and refactor code 24/7.
-*   **Without L1 Cache:** The fleet generates 250M tokens $\times$ 100,000 = **25 Trillion input tokens per day**. At ~$3 per 1M tokens (Claude 3.5 Sonnet), this single data center burns **$75,000,000 per day** on redundant execution overhead.
-*   **With ToolRecall:** The forced determinism triggers the 90% cloud caching discount, dropping the daily cost below $7.5 Million. **ToolRecall saves the enterprise $24 Billion per year in pure CapEx waste.**
+
+*The following numbers are speculative worst-case extrapolations.* Measured data for a single session: ~55K tokens saved from 13 project files with 3× re-reads.
+
+*   **Without L1 Cache:** The fleet generates 250M tokens $\\times$ 100,000 = **25 Trillion input tokens per day**. At ~$3 per 1M tokens (Claude 3.5 Sonnet), this single data center burns **$75,000,000 per day** on redundant execution overhead.
+*   **With ToolRecall:** The forced determinism triggers the 90% cloud caching discount, dropping the daily cost below $7.5 Million. **At this hypothetical scale, ToolRecall could save the enterprise ~$24 Billion per year in CapEx waste — though real-world savings depend heavily on actual re-read patterns and file sizes.**
 
 ## 4. The Jevons Paradox at Scale
 One might assume Anthropic would hate ToolRecall for exploiting their 90% discount. The opposite is true.

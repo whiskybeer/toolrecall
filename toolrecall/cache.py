@@ -323,7 +323,7 @@ _skill_cache_lock = Lock()
 def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
     """Load skill + linked files with cache."""
     if skill_dirs is None:
-        skill_dirs = [str(Path.home() / ".hermes" / "skills")]
+        skill_dirs = load_config().skill_dirs
 
     skill_path = None
     for base in skill_dirs:
@@ -651,6 +651,153 @@ def cached_exec(code: str, ttl: int = 0) -> dict:
     _record_tokens_saved("code_cache", _estimate_tokens(result.stdout))
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+
+
+# ─── WRITE CACHE (content-hash dedup, skip identical writes) ──
+#
+# cached_write: write a file only if content differs from disk.
+#   Returns {"unchanged": True, "path": ...} when content matches.
+#   Returns {"cached": False, "path": ...} when write actually happened.
+#
+# cached_patch: apply a find-and-replace only if not already applied.
+#   Returns {"unchanged": True, "reason": "already_applied"|"not_found", ...}
+#   Returns {"cached": False, ...} when patch actually happened.
+#
+# Both are idempotency checks — they save output tokens by skipping
+# redundant work, and reduce agent loop-waste.
+#
+# ⚠️  TOCTOU: content comparison is at read-time only. External
+#    mutations between the check and the write are not detected.
+# ⚠️  Metadata-agnostic: chmod/chown-only changes are not detected.
+# ⚠️  Read overhead: adds a read+hash before every write.
+#    For large files (>5MB) both operations auto-fall through.
+# ⚠️  Not persisted to SQLite — stateless per-call decision.
+# ─────────────────────────────────────────────────────────────
+
+WRITE_CACHE_MAX_BYTES = 5 * 1024 * 1024  # 5MB — same as file cache limit
+
+
+def cached_write(path: str, content: str) -> dict:
+    """Write a file, skipping if content is identical to disk.
+
+    Args:
+        path: File path to write.
+        content: Content to write.
+
+    Returns:
+        On content-match:  {"unchanged": True, "path": path}
+        On new write:      {"cached": False, "path": path, "size": N}
+        On error:          {"error": "...", "path": path}
+    """
+    path = os.path.expanduser(path)
+
+    # Create parent directories if needed
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    # File doesn't exist yet — always write
+    if not os.path.exists(path):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            _record("write_cache", hit=False)
+            return {"cached": False, "path": path, "size": len(content)}
+        except Exception as e:
+            return {"error": str(e), "path": path}
+
+    # File exists — check size threshold
+    try:
+        stat = os.stat(path)
+    except OSError as e:
+        return {"error": str(e), "path": path}
+
+    if stat.st_size > WRITE_CACHE_MAX_BYTES:
+        # Skip dedup for large files — read would cost more than write
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            _record("write_cache", hit=False)
+            return {"cached": False, "path": path, "size": len(content)}
+        except Exception as e:
+            return {"error": str(e), "path": path}
+
+    # Read current content and compare
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            current = f.read()
+    except Exception as e:
+        return {"error": str(e), "path": path}
+
+    if current == content:
+        _record("write_cache", hit=True)
+        _record_tokens_saved("write_cache", _estimate_tokens(content))
+        return {"unchanged": True, "path": path}
+
+    # Content differs — write
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _record("write_cache", hit=False)
+        return {"cached": False, "path": path, "size": len(content)}
+    except Exception as e:
+        return {"error": str(e), "path": path}
+
+
+def cached_patch(path: str, old_string: str, new_string: str) -> dict:
+    """Apply a find-and-replace patch, skipping if already applied or missing.
+
+    Three outcomes:
+      - new_string already in place → {"unchanged": True, "reason": "already_applied"}
+      - old_string not found        → {"unchanged": True, "reason": "not_found"}
+      - patch applied               → {"cached": False, "path": path, "changes": N}
+
+    ⚠️  Same TOCTOU caveat as cached_write — comparison is read-time only.
+    ⚠️  If old_string appears multiple times, only the first is checked.
+    """
+    path = os.path.expanduser(path)
+
+    if not os.path.exists(path):
+        return {"error": f"File not found: {path}", "path": path}
+    # Read current content
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    except Exception as e:
+        return {"error": str(e), "path": path}
+
+    # Check: is new_string already in place (regardless of old_string)?
+    if new_string in content:
+        if old_string not in content:
+            # new_string is there, old_string isn't → likely already applied
+            _record("patch_cache", hit=True)
+            _record_tokens_saved("patch_cache", _estimate_tokens(new_string))
+            return {"unchanged": True, "reason": "already_applied", "path": path}
+        # Both present — check position
+        idx_old = content.find(old_string)
+        idx_new = content.find(new_string)
+        if idx_new <= idx_old:
+            # new_string appears at or before old_string — already applied
+            _record("patch_cache", hit=True)
+            _record_tokens_saved("patch_cache", _estimate_tokens(new_string))
+            return {"unchanged": True, "reason": "already_applied", "path": path}
+
+    # Check: is old_string present at all?
+    if old_string not in content:
+        _record("patch_cache", hit=True)
+        return {"unchanged": True, "reason": "not_found", "path": path}
+
+    # Apply the patch
+    change_count = content.count(old_string)
+    new_content = content.replace(old_string, new_string, 1)  # match Hermes' single-replace
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        _record("patch_cache", hit=False)
+        return {"cached": False, "path": path, "changes": change_count}
+    except Exception as e:
+        return {"error": str(e), "path": path}
 
 
 # ─── MCP CACHE (SQLite, TTL-based) ─────────────────────────

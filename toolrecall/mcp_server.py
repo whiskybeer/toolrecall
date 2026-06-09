@@ -23,14 +23,14 @@ Why isn't cached_terminal enabled by default?
 
 RECOMMENDED SETUP
 =================
-  Level 1 (BEST): Python import via hermes_init.py
+  Level 1 (BEST): Python import as plugin
     → Full API, zero network exposure, no subprocess overhead
-    → Register in Hermes: agent.init_scripts = ["~/.toolrecall/hermes_init.py"]
+    → Register in agent init_scripts (Hermes: hermes_init.py)
 
-  Level 2: Hermes MCP client (mcp_servers config)
+  Level 2: Agent MCP client (mcp_servers config)
     → stdio-local, no network, auto-injected tools
-    → Only Hermes itself has access
-    → Add to ~/.hermes/config.yaml:
+    → Only the agent itself has access
+    → Add to agent config.yaml:
         mcp_servers:
           toolrecall:
             command: "uv"
@@ -112,7 +112,7 @@ def create_fastmcp_server() -> FastMCP:
         active_tools.append("   cached_read  →  path-allowlisted file reads")
     else:
         active_tools.append("   cached_read  →  ⚠️ UNRESTRICTED file reads (all paths)")
-    active_tools.append("   cached_skill →  Hermes skill content")
+    active_tools.append("   cached_skill →  agent skill content")
     active_tools.append("   docs_search  →  FTS5 full-text search")
     active_tools.append("   docs_get_page→  indexed page retrieval")
     active_tools.append("   cache_status →  cache statistics")
@@ -141,8 +141,8 @@ SECURITY:
 {chr(10).join(sec_note)}
 
 RECOMMENDATION:
-  Level 1 (best): Python import via hermes_init.py
-  Level 2: Hermes mcp_servers config
+  Level 1 (best): Python import as plugin
+  Level 2: Agent mcp_servers config
   Level 3: HTTP proxy (toolrecall serve)
 """
     )
@@ -170,8 +170,8 @@ RECOMMENDATION:
     # ─── cached_skill (safe) ─────────────────────────────
     @mcp.tool(
         name="cached_skill",
-        description="View a Hermes skill with caching. "
-                    "Cached until any file in the skill directory changes."
+        description="View an agent skill with caching. "
+                    "Cached until any file in the skill directory changes.",
     )
     def tool_cached_skill(name: str) -> str:
         """View a skill via ToolRecall cache.
@@ -305,7 +305,7 @@ def _build_tool_list(cfg):
     # cached_skill
     tools.append({
         "name": "cached_skill",
-        "description": "View a Hermes skill with caching",
+        "description": "View an agent skill with caching.",
         "inputSchema": {
             "type": "object",
             "properties": {

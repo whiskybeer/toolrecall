@@ -7,7 +7,7 @@ Modern computing relies on caching layers to mitigate physical latency:
 * **Autonomous AI Agents**, however, default to a naive execution model. They repeatedly hit local file systems, execute OS commands, and query network APIs for data that has not changed within the context window.
 
 **ToolRecall acts as the L1 Cache for AI Agents.** 
-It sits directly between the LLM client (e.g., Claude Code, Hermes) and the operating system/MCP servers. By caching exact byte-responses of deterministic tool calls in a local SQLite database, it drops tool execution time from ~1.5 seconds down to <0.1 milliseconds via Unix Domain Sockets (UDS).
+It sits directly between the LLM client (e.g., Claude Code, Hermes) and the operating system/MCP servers. By caching exact byte-responses of deterministic tool calls in a local SQLite database, it drops tool execution time from ~1.5 seconds down to <0.6 milliseconds via Unix Domain Sockets (UDS) in the hot path.
 
 ## 2. The "Forced Cache Hit" Theory (Why Determinism Prints Money)
 A common misconception is that provider-side features like Anthropic's Prompt Caching or OpenAI's API caching solve the context bloat problem natively. They offer up to a **90% discount** on input tokens—*but only if the payload is byte-for-byte identical to a previous request.*
@@ -24,16 +24,17 @@ By acting as a local State-Freezer, ToolRecall forces **Determinism**. Because i
 ## 3. Three Dimensions of Enterprise Scale
 
 ### Dimension 1: The Massive Codebase Migration (2M+ Context)
-Imagine tasking an agent to migrate a 1,000,000-token legacy Java backend to Go.
+Imagine tasking an agent to migrate a 1,000,000-token legacy Java codebase to Go.
 * The agent keeps 1M tokens in context. It iterates, compiles, hits errors, and loops 500 times over a few days.
-* **Without L1 Cache:** The OS reads 1M tokens from disk 500 times. Tiny file system changes constantly bust the cloud cache.
-* **With L1 Cache:** **500 Million tokens are intercepted locally.** The disk is hit exactly *once*. The rest is an instant RAM-to-Network passthrough, forcing cloud-cache hits and allowing developers to work with 2M-token contexts as if they were small text files.
+* **Without L1 Cache:** Every loop, tool outputs differ (timestamps, error messages) → server-side cache busted on every turn → full API price for each 1M-token context.
+* **With L1 Cache:** File reads and deterministic commands return byte-identical output → server-side prefix cache stays valid → **90% API discount applied on every turn.**
 
 ### Dimension 2: The 24/7 CI/CD Agent Fleet
 A tech enterprise runs 10 autonomous agents 24/7 to review Pull Requests.
-* Each agent reads 200,000 tokens of repository context per PR.
-* At 500 PRs per day and 5 reasoning loops per PR, the fleet processes **500 Million tokens daily**.
-* **Annual Impact:** **180 Billion tokens.** Without an L1 cache, the central CI server must physically scrape, parse, and execute ~2GB of raw text operations daily. ToolRecall eliminates this I/O overhead entirely.
+* Each agent reads ~200,000 tokens of repository context per PR.
+* At 500 PRs per day, the fleet processes **100 Million tokens daily** (500 PRs × 200K tokens).
+* **Without L1 Cache:** Every read hits the filesystem and sends the full context to the API. Timestamps differ → no server-side caching → full price.
+* **With L1 Cache:** Static files cache on first read (mtime-tracked). Subsequent reads are byte-identical → 90% discount applies.
 
 ### Dimension 3: Rate Limit Immunity & Air-Gapped Reasoning
 When an agent searches the web or queries an MCP server (e.g., Jira, GitHub):
@@ -60,17 +61,14 @@ Instead of trying to out-prompt the attacker, ToolRecall assumes the agent will 
 3. **Execution Blackholes:** By default, `allow_terminal = false`. Remote Code Execution (RCE) attempts (`rm -rf /` or downloading malware) are dropped into a black hole at the socket layer.
 
 ## 6. Enterprise GDPR & Data Sovereignty
-In standard autonomous agent setups, massive amounts of internal code, logs, and potentially PII (Personally Identifiable Information) are continuously streamed to cloud LLMs due to context snowballing. This creates massive friction with European GDPR and corporate data sovereignty policies.
+Standard autonomous agent setups stream large amounts of internal code, logs, and potentially PII to cloud LLMs due to context snowballing. This creates friction with GDPR and corporate data sovereignty policies.
 
-ToolRecall fundamentally alters the data flow:
-1. **Local-First Interception:** 90% of file reads and terminal outputs are intercepted by the local SQLite database. The data never leaves the developer's machine or the corporate VPC.
-2. **Context Pruning:** Because local retrieval is instant, agents can be instructed to aggressively drop sensitive files from their context window after the immediate task is done, preventing sensitive data from persisting in the payload.
-3. **No Telemetry:** ToolRecall contains zero telemetry, tracking, or call-home functions. The SQLite database remains exclusively on the host. 
+ToolRecall alters the data flow:
+1. **Local-First Interception:** File reads are intercepted by the local SQLite database — the data never leaves the machine or the corporate VPC. Measured hit rate: 67–97% depending on re-read depth.
+2. **Context Pruning:** Because local retrieval is instant (~0.6ms), agents can drop sensitive files from their active context window after the immediate task is done, preventing them from persisting in the API payload.
+3. **No Telemetry:** ToolRecall contains zero telemetry, tracking, or call-home functions. The SQLite database stays on the host.
 
-## 7. The Jevons Paradox: The `gzip` for AI Context
-A common initial assumption is that by mitigating 90% of token traffic, ToolRecall destroys the revenue models of AI providers. Economic history suggests the exact opposite via the **Jevons Paradox**: *When a technology increases the efficiency with which a resource is used, the overall consumption of that resource rises, not falls.*
+## 7. The gzip for AI Context
+A common initial reaction is that caching 60–80% of tool outputs reduces API token consumption, which could hurt provider revenue. Economic history suggests the opposite: HTTP compression (`gzip`) didn't bankrupt telecoms — it made the web fast enough for mainstream adoption, leading to more total data transferred.
 
-ToolRecall is effectively the **`gzip` for AI Context**. 
-In the early days of the internet, HTTP compression (`gzip`) didn't bankrupt telecommunication companies by reducing payload sizes. Instead, it made the web fast and responsive enough for mainstream adoption, ultimately leading to an exponential explosion in total global bandwidth usage.
-
-Currently, enterprises hesitate to deploy autonomous agents at scale because the $O(N^2)$ context latency makes them too slow, flaky, and economically unviable. By removing the local I/O bottleneck and making tool execution instant, ToolRecall doesn't just save money on a single agent—it makes it financially and technically viable for an enterprise to deploy fleets of 10,000 concurrent agents. It unlocks the true Total Addressable Market (TAM) for autonomous AI workflows.
+ToolRecall doesn't destroy the market for AI inference. By making deterministic tool caches available as a primitive, it makes longer, deeper agent sessions economically viable — which increases total API usage, not decreases. The gzip comparison is useful: compression at the transport layer grew the web; caching at the tool layer will grow agent workloads.

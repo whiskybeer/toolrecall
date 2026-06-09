@@ -59,7 +59,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "cached_skill",
-        "description": "View a Hermes skill with caching.",
+        "description": "View an agent skill with caching.",
         "inputSchema": {
             "type": "object",
             "properties": {

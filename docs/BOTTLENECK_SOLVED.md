@@ -30,7 +30,7 @@ inflates the context window linearly and the cost quadratically.
 ```text
             ┌──────────────┐
             │   Fast       │
-            │  (<0.1ms)    │
+            │  (~0.6ms)    │
             └──────┬───────┘
                    │
         ┌──────────┴──────────┐
@@ -51,7 +51,7 @@ inflates the context window linearly and the cost quadratically.
 
 Traditional caching tools force you to pick two. ToolRecall delivers all four:
 
-1. **Fast:** <0.1ms local cache hits vs 1.5s subprocess calls
+1. **Fast:** ~0.6ms local cache hits vs 1.5s subprocess calls
 2. **Cheap:** 81% fewer input tokens → forces 90% server-side prompt caching
 3. **Deterministic:** Byte-identical cache hits — agents produce reproducible results
 4. **Secure:** Zero-Trust WAF cages injected prompts
@@ -87,7 +87,7 @@ formatted responses from local SQLite without involving the LLM. The agent
 |--------|-------------------|-----------------|---------|
 | Tool calls served locally | 0 | **827** (666 file, 143 terminal, 10 mcp) | — |
 | Cache hit rate | 0% | **89%** (file: 91%) | — |
-| Tool latency | ~1.5s per call | **<0.1ms** (cache hit) | **~99.99%** |
+| Tool latency | ~1.5s per call | **~0.6ms** (daemon cache hit) | **~99.96%** |
 | Wait time | ~23 min | ~2.6 min | **~20 min (87%)** |
 | Unique file content cached | 0 bytes | **64,889 bytes** | — |
 | Server-side caching eligible | No | **Yes** (deterministic payloads) | **90% API discount** |
@@ -97,9 +97,11 @@ formatted responses from local SQLite without involving the LLM. The agent
 ### What this means in practice
 
 - **~20 minutes less waiting** per heavy session — the agent isn't blocked on OS subprocess spawning
-- **89% of tool calls never touch disk or network** — served from local SQLite in <0.1ms
+- **89% of tool calls never touch disk or network** — served from local SQLite in <0.6ms
 - **Server-side prompt caching becomes effective** — deterministic payloads qualify for Anthropic/OpenAI's 90% discount
 - **Cross-session caching** — files stay cached between sessions and daemon restarts
+
+*Latency details: The ~0.6ms daemon cache hit latency (UDS) was measured directly. The estimated ~10s/TTFT savings per turn is workload-dependent — actual savings vary by model, provider, and context window size. See [docs/MEASURED_BENCHMARKS.md](MEASURED_BENCHMARKS.md) for full data.*
 
 ### Token Interception (corrected)
 
@@ -144,8 +146,8 @@ In a multi-agent setup, the bottleneck isn't single-agent cost — it's
 
 ```text
 Agent A reads codebase  →  caches in SQLite WAL
-Agent B starts          →  gets cache hit for same file  (<0.1ms)
-Agent C starts          →  same hit                       (<0.1ms)
+Agent B starts          →  gets cache hit for same file  (~0.6ms)
+Agent C starts          →  same hit                       (~0.6ms)
 ```
 
 Without ToolRecall: A pays full I/O cost, B pays full I/O cost, C pays full I/O cost.

@@ -8,6 +8,11 @@
 [paths]
 cache_db = "~/.toolrecall/cache.db"        # Tool output cache
 knowledge_db = "~/.toolrecall/knowledge.db" # FTS5 knowledge base
+# Agent home directory — toolrecall discovers skills, memories, and config
+# from here. Set AGENT_HOME env var for non-Hermes agents (Claude Code, Codex, etc.)
+# agent_home = "~/.hermes"
+# Directories to search for cached_skill(). Default: agent_home/skills
+# skill_dirs = ["~/.hermes/skills"]
 
 # ─── Storage Backend ──────────────────────
 [storage]
@@ -55,7 +60,7 @@ dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bas
 
 [mcp]
 # Paths allowed for cached_read (empty = all paths allowed — DANGEROUS!)
-# Default: restrict to skill dirs and scripts for Hermes
+# Default: agent_home/skills and agent_home/scripts
 allowed_paths = [
     "~/.hermes/skills",
     "~/.hermes/scripts",
@@ -73,8 +78,18 @@ allow_invalidate = false
 [mcp_multiplex]
 # Enable multiplexing of external MCP servers through the daemon.
 # When enabled, the daemon starts persistent subprocesses for each configured
-# MCP server. Hermes then needs only ONE MCP server in config.yaml (toolrecall).
+# MCP server. Agents then need only ONE MCP server in config (toolrecall).
 enabled = true
+
+# Transparent caching: cache MCP tool responses automatically.
+# When true, every tools/call response is cached by default (TTL per server config).
+# When false, only explicit cached_mcp_call routes through the cache.
+# Works with ANY MCP client routing through the daemon — not Hermes-specific.
+transparent_cache = true
+
+# Default TTL for transparently cached MCP responses (seconds)
+# Per-server TTLs in servers_config override this
+default_ttl = 60
 
 # Allowlist of server names to multiplex. Empty = all configured.
 # Example: ["github", "time", "fetch"]
@@ -84,13 +99,15 @@ servers = []
 # Default: 15 minutes. Set to 0 to keep servers alive forever.
 idle_minutes = 15
 
-# Path to Hermes config.yaml for auto-discovery of MCP servers.
-# Empty = auto-detect (~/.hermes/config.yaml)
-# hermes_config = ""
+# Path to agent config.yaml for auto-discovery of MCP servers.
+# Default: agent_home/config.yaml (AGENT_HOME env var → ~/.hermes)
+# For Hermes: AGENT_HOME=~/.hermes → ~/.hermes/config.yaml
+# For Claude Code: AGENT_HOME=~/.claude → ~/.claude/config.yaml
+# config_path = ""
 
-# Explicit server configs (same format as Hermes mcp_servers).
-# These are used when mcp_multiplex.hermes_config is empty or the servers
-# are only defined here. Can supplement or override the Hermes config.
+# Explicit server configs (same format as agent mcp_servers).
+# These are used when mcp_multiplex.config_path is empty or the servers
+# are only defined here. Can supplement or override the agent config.
 #
 # ⚠️ SUPPLY CHAIN NOTICE
 # The servers below marked "(npx)" download packages from npm on first use.
@@ -152,7 +169,36 @@ max_file_kb = 100
 #   source = "my-wiki"
 #   extensions = [".md", ".txt"]
 
-# Enable Hermes memory indexing on every `toolrecall index`
-# (MEMORY.md, USER.md → source='hermes-memory')
+# Enable agent memory indexing on every `toolrecall index`
+# (MEMORY.md, USER.md from agent_home/memories → source='agent-memory')
 [sources.memory]
 enabled = true
+
+# ─── Hermes Auto-Cache (agent-specific, keep under [hermes] for bc) ──
+[hermes]
+# Transparent caching: replaces the agent's native read_file and terminal
+# with ToolRecall's cached_read and cached_terminal.
+#
+# When enabled, ALL tool calls are silently cached — no change in
+# agent behavior, just fewer tokens billed.
+#
+# Options:
+#   "separate"   — (default) registers cached_read/cached_terminal
+#                  as additional tools. Agent must choose to use them.
+#                  Safe for all workloads.
+#   "transparent" — monkey-patches read_file and terminal in the
+#                   Hermes tool registry. Agent uses them automatically.
+#                   Best for stable, read-heavy projects.
+#                   Skip for: active development, deployments, CI/CD.
+#   "write"      — like "transparent" + also patches write_file and
+#                  patch to skip redundant operations. Saves output
+#                  tokens and halts agent write-loop waste.
+#                  ⚠️  TOCTOU: content comparison is at read-time only.
+#                      External mutations between check and write are
+#                      not detected — single-agent workloads only.
+#                  ⚠️  Metadata-agnostic: chmod/chown-only changes to
+#                      already-identical content are not detected.
+#                  ⚠️  Read overhead: adds a read+compare before every
+#                      write. For files >5MB this auto-fallthroughs.
+#
+transparent_cache = "separate"

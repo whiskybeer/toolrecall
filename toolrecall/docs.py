@@ -160,7 +160,7 @@ def docs_search(query: str, source: str = None) -> str:
         return f"Search error: {e}"
 
 
-def docs_get_page(path: str, source: str = "hermes") -> str:
+def docs_get_page(path: str, source: str = "") -> str:
     """Get a single page from the knowledge database."""
     if not os.path.exists(_get_db_path()):
         return "No knowledge database found. Run 'toolrecall index' first."
@@ -193,24 +193,32 @@ def docs_get_page(path: str, source: str = "hermes") -> str:
         return f"Error: {e}"
 
 
-def index_hermes_memory(memory_dir: str = None, source: str = "hermes-memory") -> int:
+def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -> int:
     """
-    Index Hermes persistent memory stores (MEMORY.md, USER.md) into the
+    Index agent persistent memory stores (MEMORY.md, USER.md) into the
     knowledge database.
 
     Each §-delimited entry becomes a separate page, FTS5-searchable.
 
     Args:
-        memory_dir: Path to Hermes memories/ directory (default: ~/.hermes/memories)
-        source: FTS5 source label (default: 'hermes-memory')
+        memories_dir: Path to agent memories/ directory (default: agent_home/memories)
+        source: FTS5 source label (default: 'agent-memory')
 
     Returns number of entries indexed.
     """
     import hashlib, re
 
-    if memory_dir is None:
-        hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
-        memory_dir = os.path.join(hermes_home, "memories")
+    if memories_dir is None:
+        agent_home = (
+            os.environ.get("AGENT_HOME")
+            or os.environ.get("HERMES_HOME")
+            or _get_config().get("paths", "agent_home", default=None)
+        )
+        if agent_home:
+            agent_home = os.path.expanduser(agent_home)
+        else:
+            agent_home = os.path.expanduser("~/.hermes")
+        memories_dir = os.path.join(agent_home, "memories")
 
     conn = _get_db()
     _ensure_tables(conn)
@@ -223,7 +231,7 @@ def index_hermes_memory(memory_dir: str = None, source: str = "hermes-memory") -
 
     total = 0
     for fname, description in memory_files.items():
-        fpath = os.path.join(memory_dir, fname)
+        fpath = os.path.join(memories_dir, fname)
         if not os.path.exists(fpath):
             continue
 
@@ -258,6 +266,20 @@ def index_hermes_memory(memory_dir: str = None, source: str = "hermes-memory") -
     conn.commit()
     conn.close()
     return total
+
+
+def index_hermes_memory(memory_dir: str = None, source: str = "hermes-memory") -> int:
+    """Backward-compat wrapper around index_agent_memory.
+
+    DEPRECATED: Use index_agent_memory() instead. The 'hermes-memory'
+    source label is kept for existing indexed data.
+    """
+    import warnings
+    warnings.warn(
+        "index_hermes_memory is deprecated, use index_agent_memory",
+        DeprecationWarning, stacklevel=2,
+    )
+    return index_agent_memory(memories_dir=memory_dir, source=source)
 
 
 def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
@@ -384,11 +406,11 @@ def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set
     # Additional knowledge sources from config ([[sources.knowledge]])
     _index_config_sources(_cfg)
 
-    # Hermes memory from config ([sources.memory])
+    # Agent memory from config ([sources.memory])
     memory_cfg = _cfg.get("sources", "memory", default={})
     if isinstance(memory_cfg, dict) and memory_cfg.get("enabled", False):
         try:
-            mem_total = index_hermes_memory()
+            mem_total = index_agent_memory()
             total += mem_total
         except Exception:
             pass

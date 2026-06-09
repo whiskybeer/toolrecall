@@ -17,18 +17,20 @@ Usage:
     info = docs_search('query')
 """
 
-from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, invalidate_all, cached_mcp_check, cached_mcp_store, cached_mcp, get_stats
+from toolrecall.cache import cached_read, cached_skill, cached_terminal, cached_run, cached_exec, cached_write, cached_patch, invalidate_all, cached_mcp_check, cached_mcp_store, cached_mcp, get_stats
 from toolrecall.docs import docs_search, docs_get_page
 from toolrecall.config import Config
 from toolrecall.cli import main as cli_main
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 __all__ = [
     "cached_read",
     "cached_skill",
     "cached_terminal",
     "cached_run",
     "cached_exec",
+    "cached_write",
+    "cached_patch",
     "cached_mcp_check",
     "cached_mcp_store",
     "cached_mcp",

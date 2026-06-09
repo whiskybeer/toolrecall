@@ -4,7 +4,7 @@ Welcome to the ToolRecall technical library. This directory contains the archite
 
 ## 1. Hard Data & Benchmarks
 - **[`BENCHMARK.md`](BENCHMARK.md)**: The raw $O(N^2)$ mitigation data. Hit rates, latency, and timing from a real 13-hour session. *(Token count corrected for double-counting bug, see file for details.)*
-- **[`LATENCY_PITCH.md`](LATENCY_PITCH.md)**: Explains the math behind dropping tool execution latency from ~1.5s down to <0.1ms, eliminating ~85 minutes of wait time per developer/day.
+- **[`LATENCY_PITCH.md`](LATENCY_PITCH.md)**: Explains the math behind dropping tool execution latency from ~1.5s (end-to-end) down to ~0.6ms (daemon UDS hit) on cached calls, eliminating ~85 minutes of wait time per developer/day.
 
 ## 2. Business & Enterprise Value
 - **[`ROI_AND_SAVINGS.md`](ROI_AND_SAVINGS.md)**: CFO-friendly financial projections. Breaks down exact dollar savings across API tokens (forcing the 90% cloud discount), engineering salaries, and AWS RAM reductions.

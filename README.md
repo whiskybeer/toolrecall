@@ -54,12 +54,12 @@ Context size → Attention pairs per turn
 Every additional turn then costs 500K input tokens + 250B compute operations. The iceberg isn't the one file — it's the **accumulated garbage**.
 
 **ToolRecall breaks both curves:**
-1. **File cache** → file read once, then <0.1ms from SQLite → 0 tokens for repeats
+1. **File cache** → file read once, then ~0.6ms from SQLite → 0 tokens for repeats
 2. **Micro-RAG** → agent drops large outputs from active context, re-fetches byte-exact from cache on demand → context stays bounded, attention costs don't explode
 
 Result: **81% fewer input tokens + context stays manageable + attention costs flat.**
 
-**The paradigm shift:** Cost and latency are eliminated from sessions. The *only* reason to end a session now is attention degradation (topic drift), not token bills or wait time.
+Cost and latency per session decrease, but the LLM API call (~8-12s per turn) remains the bottleneck. The benefit is longer sessions before context compression kicks in, not free sessions.
 
 ---
 
@@ -87,13 +87,28 @@ ToolRecall doesn't cure an LLM of being prompt-injected — it cages the agent t
 
 ---
 
-## The Five Axes (Breaking the Iron Triangle)
+## How It Saves Cost — Two Mechanisms
 
-1. **Faster:** Tool execution drops from ~1.5s to <0.1ms on cache hits — ~85 minutes saved in a 13-hour session.
-2. **Cheaper:** Deterministic byte-exact responses qualify for 90% server-side prompt caching discount. 81% fewer input tokens.
-3. **Deterministic:** Freeze OS state. 100% reproducible agent runs. No OS flakiness, no network jitter.
-4. **Safer:** Zero-Trust WAF, path sandboxing, secret air-gapping.
-5. **Universal:** Standard `stdio` MCP — any agent, any framework.
+ToolRecall reduces API cost through two independent mechanisms. The second one is the larger lever.
+
+### 1. Local Token Reduction (~81% fewer input tokens)
+Repeated tool calls (file reads, terminal commands) are served from local SQLite instead of being re-sent to the LLM. In a 13-file project with 3–10× re-reads per file, this removes ~55–77K tokens from the context per session. Measured hit rate: 67–97% depending on re-read depth.
+
+### 2. Server-Side Prompt Caching Discount (up to 90%)
+Anthropic and OpenAI offer a discount of up to 90% on input tokens that match a previous request's prefix. The catch: the prefix must be **byte-identical** — any OS jitter (different timestamp, PID, ls output) busts the cache.
+
+ToolRecall freezes OS tool outputs: every `read_file`, `git status`, and `hostname` returns the exact same byte string until the file changes or the TTL expires. This stabilizes the prompt prefix across turns, making the server-side discount **reliably available** instead of randomly busted by OS noise.
+
+**The local token reduction saves ~$6/session. The server-side discount applies to every API call and scales with context size — it's the larger lever.**
+
+### 3. Deterministic
+Byte-identical cache hits mean 100% reproducible agent runs. No OS flakiness, no network jitter.
+
+### 4. Safer
+Zero-Trust WAF: cryptographic path resolution (`os.path.realpath`), `.env` air-gapping (the LLM never sees API keys), and `allow_terminal=false` drops RCE attempts into a blackhole.
+
+### 5. Universal
+Standard `stdio` MCP (`toolrecall mcp`). Works with Claude Code, Cursor, Cline, Hermes, Aider — any MCP-speaking agent.
 
 ---
 
@@ -130,15 +145,15 @@ ToolRecall doesn't cure an LLM of being prompt-injected — it cages the agent t
 ## Features
 
 ### Byte-Exact Tool Caching
-- **File Cache:** Invalidates on file modification (`mtime`) — no stale reads.
-- **Terminal Cache:** Caches read-only commands by TTL (`git status` for 30s, `hostname` for 1h).
-- **Script & Code Cache:** `cached_run`, `cached_exec` with explicit `ttl=0` bypass for state-changing operations.
-- **MCP Cache:** TTL-based caching for external MCP tool responses (13.5× speedup measured).
+| **File Cache:** Invalidates on file modification (`mtime`) — no stale reads.
+| **Terminal Cache:** Caches read-only commands by TTL (`git status` for 30s, `hostname` for 1h).
+| **Script & Code Cache:** `cached_run`, `cached_exec` with explicit `ttl=0` bypass for state-changing operations.
+| **MCP Cache:** TTL-based caching for external MCP tool responses (~12× speedup measured).
 
 ### MCP Multiplexer (AI Gateway)
 - One daemon manages all your MCP servers (GitHub, Brave Search, time, fetch, ...).
 - **Lazy loading:** Servers boot in 0.01s only when first called.
-- **Idle timeout:** Killed after 15min inactivity — daemon drops from 130MB to 11MB RAM.
+- **Idle timeout:** Inactive MCP subprocesses killed after 15min — daemon stays at ~8-11 MB RSS; Node.js subprocesses spike to ~130 MB VSZ when active, then get cleaned up.
 - Agents connect to **one** server: `toolrecall mcp`. Session startup: ~0.01s instead of ~1.7s.
 
 ### FTS5 Knowledge Base

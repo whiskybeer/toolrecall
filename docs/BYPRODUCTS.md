@@ -1,6 +1,6 @@
 # Accidental Byproducts: The Unforeseen Architecture Wins
 
-When building ToolRecall to solve the $O(N^2)$ context bloat problem, shifting tool execution to an OS-level IPC middleware created several massive "accidental" benefits. These features were not explicitly designed, but emerged naturally from the architecture.
+When building ToolRecall to solve the $O(N^2)$ context bloat problem, shifting tool execution to an OS-level IPC middleware created several secondary benefits that were not explicitly designed, but emerged naturally from the architecture.
 
 ## 1. "Air-Gapped" Autonomous Agents (Offline Mode)
 

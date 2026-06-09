@@ -4,9 +4,9 @@ The daemon holds the In-Memory LRU + SQLite and accepts requests
 via Unix Domain Socket. All access paths (Python import, MCP, HTTP)
 communicate with the daemon — one cache, always warm.
 
-The MCP Multiplexer manages persistent subprocesses for external MCP
-servers (github, time, fetch, ...). Hermes then only needs a single
-MCP server in its config (toolrecall mcp) instead of all individually.
+|The MCP Multiplexer manages persistent subprocesses for external MCP
+|servers (github, time, fetch, ...). Agents then only need a single
+|MCP server in their config (toolrecall mcp) instead of all individually.
 
 Usage:
     toolrecall daemon [--socket PATH] [--foreground]
@@ -45,6 +45,8 @@ from toolrecall.cache import (
     cached_read as _cache_read,
     cached_terminal as _cache_terminal,
     cached_skill as _cache_skill,
+    cached_write as _cache_write,
+    cached_patch as _cache_patch,
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_store as _cache_mcp_store,
     invalidate_all,
@@ -642,6 +644,10 @@ class DaemonServer:
                 return self._handle_terminal(request)
             elif cmd == "cached_skill":
                 return self._handle_skill(request)
+            elif cmd == "cached_write":
+                return self._handle_write(request)
+            elif cmd == "cached_patch":
+                return self._handle_patch(request)
             elif cmd == "docs_search":
                 return self._handle_docs_search(request)
             elif cmd == "docs_get_page":
@@ -698,6 +704,31 @@ class DaemonServer:
             return {"error": "Missing 'name'"}
         return _cache_skill(name)
 
+    def _handle_write(self, req: dict) -> dict:
+        path = req.get("path", "")
+        content = req.get("content", "")
+        if not path:
+            return {"error": "Missing 'path'"}
+        if content is None:
+            return {"error": "Missing 'content'"}
+        err = self.security.check_read_path(path)
+        if err:
+            return {"error": err}
+        return _cache_write(path, content)
+
+    def _handle_patch(self, req: dict) -> dict:
+        path = req.get("path", "")
+        old_string = req.get("old_string", "")
+        new_string = req.get("new_string", "")
+        if not path:
+            return {"error": "Missing 'path'"}
+        if not old_string:
+            return {"error": "Missing 'old_string'"}
+        err = self.security.check_read_path(path)
+        if err:
+            return {"error": err}
+        return _cache_patch(path, old_string, new_string)
+
     def _handle_docs_search(self, req: dict) -> dict:
         query = req.get("query", "")
         if not query:
@@ -748,26 +779,25 @@ class DaemonServer:
         if sandbox_err:
             return {"error": sandbox_err}
 
-        # Check cache first
-        # Pass TTL if configured for this server (defaulting to None falls back to MCP_DEFAULT_TTL)
-        server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
-        ttl = server_cfg.get("ttl", None)
-        
-        cached = _cache_mcp_check(server, tool, arguments, ttl=ttl)
-        if cached.get("cached"):
-            return {"result": cached["data"], "cached": True}
+        # Check cache (only when transparent cache is enabled)
+        cached = {"key": f"{server}:{tool}"}  # default for type checker
+        if self.multiplexer.cfg.mcp_multiplex_transparent_cache:
+            server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
+            ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
+            cached = _cache_mcp_check(server, tool, arguments, ttl=ttl)
+            if cached.get("cached"):
+                return {"result": cached["data"], "cached": True}
 
         # Call the multiplexed server
         result = self.multiplexer.call(server, tool, arguments)
 
-        # Store in cache
-        import json as _json
-        result_json = _json.dumps(result)
-        
-        server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
-        ttl = server_cfg.get("ttl", None)
-        
-        _cache_mcp_store(cached["key"], server, tool, arguments, result_json, ttl=ttl)
+        # Store in cache (only when transparent cache is enabled)
+        if self.multiplexer.cfg.mcp_multiplex_transparent_cache:
+            import json as _json
+            result_json = _json.dumps(result)
+            server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
+            ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
+            _cache_mcp_store(cached.get("key", f"{server}:{tool}"), server, tool, arguments, result_json, ttl=ttl)
 
         return {"result": result, "cached": False}
 

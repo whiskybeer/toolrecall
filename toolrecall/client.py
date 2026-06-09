@@ -22,6 +22,8 @@ from toolrecall.cache import (
     cached_read as _direct_read,
     cached_terminal as _direct_terminal,
     cached_skill as _direct_skill,
+    cached_write as _direct_write,
+    cached_patch as _direct_patch,
     invalidate_all as _direct_invalidate,
     get_stats as _direct_stats,
 )
@@ -189,6 +191,25 @@ def cached_skill(name: str) -> dict:
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     return _direct_skill(name)
+
+
+def cached_write(path: str, content: str) -> dict:
+    """Write file via Daemon or direct — skips write if content matches disk."""
+    client = _get_client()
+    resp = client._send({"cmd": "cached_write", "path": path, "content": content})
+    if "error" not in resp or resp["error"] != "daemon_unavailable":
+        return resp
+    return _direct_write(path, content)
+
+
+def cached_patch(path: str, old_string: str, new_string: str) -> dict:
+    """Apply patch via Daemon or direct — skips if already applied."""
+    client = _get_client()
+    resp = client._send({"cmd": "cached_patch", "path": path,
+                         "old_string": old_string, "new_string": new_string})
+    if "error" not in resp or resp["error"] != "daemon_unavailable":
+        return resp
+    return _direct_patch(path, old_string, new_string)
 
 
 def docs_search(query: str, source: str = None) -> str:

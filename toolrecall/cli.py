@@ -163,30 +163,34 @@ def cmd_reset_stats():
     print("Cache statistics reset (hits/misses/tokens). Cache entries preserved.")
 
 def cmd_index():
-    """Index knowledge base. Use --memory to also index Hermes memory stores."""
-    from toolrecall.docs import index_all, index_hermes_memory
+    """Index knowledge base. Use --memory to also index agent memory stores."""
+    from toolrecall.docs import index_all, index_agent_memory
     print("Indexing knowledge database...")
     total = index_all()
     print(f"Done. {total} pages indexed.")
-    
+
     if "--memory" in sys.argv:
-        print("Indexing Hermes memory stores...")
-        mem_total = index_hermes_memory()
+        print("Indexing agent memory stores...")
+        mem_total = index_agent_memory()
         print(f"Done. {mem_total} memory entries indexed.")
 
 def cmd_index_memory():
-    """Index Hermes persistent memory stores (MEMORY.md, USER.md) into knowledge DB."""
-    from toolrecall.docs import index_hermes_memory
+    """Index agent persistent memory stores (MEMORY.md, USER.md) into knowledge DB.
+    
+    Uses AGENT_HOME env var (or HERMES_HOME for backward compat) to locate
+    the memories/ directory.
+    """
+    from toolrecall.docs import index_agent_memory
 
     # Optional: custom source label via --source
-    source = "hermes-memory"
+    source = "agent-memory"
     if "--source" in sys.argv:
         idx = sys.argv.index("--source")
         if idx + 1 < len(sys.argv):
             source = sys.argv[idx + 1]
 
-    print(f"Indexing Hermes memory stores (source='{source}')...")
-    total = index_hermes_memory(source=source)
+    print(f"Indexing agent memory stores (source='{source}')...")
+    total = index_agent_memory(source=source)
     print(f"Done. {total} memory entries indexed with FTS5 (source='{source}').")
     print()
     print("Query via: docs_search('<query>', source='<source>')")
@@ -447,7 +451,7 @@ def main():
         print("  invalidate      Clear all caches")
         print("  reset-stats     Reset statistics counters (preserves cache entries)")
         print("  index           Build/update knowledge database")
-        print("  index-memory    Index Hermes memory stores (MEMORY.md, USER.md)")
+        print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
         print("  config-set      Set a config value (section.key = value)")
         print("  export-dataset")

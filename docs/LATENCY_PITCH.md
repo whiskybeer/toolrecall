@@ -6,18 +6,19 @@ Here is the hard math behind how ToolRecall saved **1 hour and 25 minutes of pur
 
 ---
 
-## 1. Local Execution Latency (1.5s vs 1.5ms)
+## 1. Local Execution Latency (1.5s vs 0.6ms)
 
 When an AI agent (like Claude Code or Hermes) executes a tool (reading a file, running a shell command, or calling an MCP server), the operating system has to spawn a subprocess, execute the task, and return the `stdout`.
 
-**The Unoptimized Agent:**
-- `read_file` or `git status`: **~1.5 seconds**
+**The Unoptimized Agent (end-to-end, including LLM overhead):**
+- `read_file` or `git status`: **~1.5 seconds** (includes tool dispatch, JSON serialization, LLM context injection)
+- Subprocess-only: **~3 ms** (raw `cat` or `hostname`)
 - MCP Server execution (e.g., Node.js GitHub MCP via `npx`): **~2.0 to 3.0 seconds**
 
-**With ToolRecall (Cache Hit):**
+**With ToolRecall (Cache Hit, Daemon UDS path):**
 - The agent hits the Unix Domain Socket (`.sock`).
-- The ToolRecall daemon serves the exact bytes from the SQLite/LRU cache.
-- Execution time: **~0.0015 seconds (1.5 milliseconds)**.
+- The ToolRecall daemon serves the exact bytes from the in-memory LRU cache.
+- Execution time: **~0.0006 seconds (0.6 milliseconds)**.
 
 **The Math (from the Benchmark):**
 During the session, ToolRecall intercepted **827 redundant tool calls**.
@@ -58,10 +59,10 @@ You cannot cache everything. If an agent is scraping live stock prices, tailing 
 While ToolRecall drastically reduces LLM API costs and execution time, it trades this for local RAM and Disk IO. The local host must run the ToolRecall Daemon, maintain the SQLite database, and hold the LRU cache in memory. 
 
 **For example (Data from our GCP e2-medium instance):**
-- **Daemon Base RAM:** ~11 MB (idle state).
+- **Daemon Base RAM:** ~8-11 MB (idle, measured).
 - **SQLite DB Size:** ~2.1 MB on disk (after 827 tool executions).
 - **Active MCP Server Footprint:** Spiking to ~130 MB when a Node-based MCP server (like GitHub) is lazy-loaded, then returning to 11 MB after the 15-minute idle timeout.
-- **The Trade-off:** You are spending ~11-130 MB of local RAM to avoid paying $280 in cloud API token fees.
+- **The Trade-off:** You are spending ~8-130 MB of local RAM to avoid paying ~$6 in cloud API token fees (based on corrected unique-content benchmark; the previously cited $282 was inflated by a double-counting bug fixed in v0.3.2).
 
 ## Conclusion
-ToolRecall is not magic; it is **Middleware Proxy Caching** applied to AI. It sacrifices a small amount of local RAM and requires strict cache invalidation rules. In return, it yields a 1000x speedup in local tool execution and saves hours of API latency.
+ToolRecall is not magic; it is **Middleware Proxy Caching** applied to AI. It sacrifices a small amount of local RAM and requires strict cache invalidation rules. In return, it drops local tool latency from ~1.5s (end-to-end agent overhead) to ~0.6ms (daemon UDS hit) — that's ~2500x on that specific path, or ~5x vs a raw subprocess call.
