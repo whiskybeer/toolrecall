@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.toolrecall/venv/bin/toolrecall daemon --foreground
+ExecStart=python3 -m toolrecall daemon --foreground
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
