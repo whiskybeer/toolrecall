@@ -608,12 +608,12 @@ class DaemonServer:
             response = self._route(request)
             self._send_response(conn, response)
 
-        except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError) as e:
-            try:
-                self._send_response(conn, {"error": str(e)})
-            except Exception:
-                pass
+        except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError):
+            # These errors mean the response cannot be sent — that's fine,
+            # just close the connection. No send_response attempt needed.
+            pass
         except Exception as e:
+            # Try to send the error back, but swallow if connection is gone
             try:
                 self._send_response(conn, {"error": str(e)})
             except Exception:
