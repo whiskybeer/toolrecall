@@ -187,9 +187,25 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
+_stats_conn: sqlite3.Connection | None = None
+
+def _get_stats_conn():
+    """Get a persistent connection for stats (avoids connect/disconnect per call).
+
+    ToolRecall's cache operations call _record() on every hit/miss — up to
+    hundreds per session. Opening a fresh sqlite3 connection for each call
+    adds measurable overhead. This cached connection lives for the module
+    lifetime.
+    """
+    global _stats_conn
+    if _stats_conn is None:
+        _stats_conn = _get_db()
+    return _stats_conn
+
+
 def _record(category, hit: bool, tokens_intercepted: int = 0):
     """Track cache statistics."""
-    conn = _get_db()
+    conn = _get_stats_conn()
     try:
         if hit:
             conn.execute("""
@@ -212,8 +228,6 @@ def _record(category, hit: bool, tokens_intercepted: int = 0):
         conn.commit()
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
-    finally:
-        conn.close()
 
 
 def _record_tokens_saved(category: str, tokens: int):
@@ -226,7 +240,7 @@ def _record_tokens_saved(category: str, tokens: int):
     """
     if tokens <= 0:
         return
-    conn = _get_db()
+    conn = _get_stats_conn()
     try:
         conn.execute("""
             INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
@@ -236,8 +250,6 @@ def _record_tokens_saved(category: str, tokens: int):
         conn.commit()
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record tokens saved: {e}")
-    finally:
-        conn.close()
 
 
 # ─── FILE CACHE (hybrid: in-memory LRU + SQLite) ────────────
