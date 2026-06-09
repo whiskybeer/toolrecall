@@ -1,11 +1,11 @@
 """
-Security tests: OWASP injection vectors against ToolRecall's WAF and cache layer.
+Security tests: OWASP injection vectors against ToolRecall's access control and cache layer.
 
 Tests cover:
   - A03:2021 — Injection (SSTI, NoSQL, LDAP, Command injection via tool args)
   - A05:2021 — Security Misconfiguration (hardcoded defaults, debug mode)
   - A07:2021 — Identification Failures (token leakage via error messages)
-  - LLM06:2025 — Excessive Agency (tool sandbox bypass attempts)
+  - LLM06:2025 — Excessive Agency (keyword access control bypass attempts)
 
 Usage:
   pytest tests/test_security_injection.py -v --tb=short   # Quick run
@@ -38,7 +38,7 @@ def _log(msg: str) -> None:
 class TestSecurityInjectionA03(unittest.TestCase):
     """A03:2021 — Injection: SSTI, NoSQL, LDAP, Command via tool args.
 
-    These tests prove that the WAF rejects dangerous payloads embedded
+    These tests prove that the access control rejects dangerous payloads embedded
     in tool call arguments, even when the tool name itself looks safe.
     """
 
@@ -80,7 +80,7 @@ class TestSecurityInjectionA03(unittest.TestCase):
         Attack: read_file("/tmp/valid.png\x00/etc/passwd") — null byte to bypass extension check.
         Defense: check_read_path detects null bytes before path resolution.
         """
-        _log("Testing null byte path: read_file('/tmp/valid.png\\x00/etc/passwd')")
+        _log("Testing null byte path: read_file('/tmp/valid.png\\\\x00/etc/passwd')")
         # Must have allowed_paths set for path resolution to run
         self.mock_cfg.mcp_allowed_paths = ["/tmp/safe"]
         security = SecurityGate(self.mock_cfg)
@@ -108,21 +108,21 @@ class TestSecurityInjectionA03(unittest.TestCase):
         """A03-004: Prove command injection in tool metadata fields is rejected.
         
         Attack: tool name containing '; rm -rf /' as social engineering.
-        Defense: WAF sandbox filters at tool name level — blocks if name
+        Defense: keyword access control filters at tool name level — blocks if name
                  contains a dangerous keyword (e.g. 'exec', 'run', 'remove').
                  The tool name 'run_injected_code' contains 'run' which is blocked.
         """
         _log("Testing command injection in metadata args")
         security = SecurityGate(self.mock_cfg)
-        # Even safe-looking tools with injected args pass through sandbox
+        # Even safe-looking tools with injected args pass through
         err = security.check_mcp_tool_sandbox("read_file")
-        self.assertIsNone(err, "Safe tool must pass sandbox")
+        self.assertIsNone(err, "Safe tool must pass")
         # Tools containing dangerous verb keywords are blocked
         err = security.check_mcp_tool_sandbox("run_injected_code")
         self.assertIsNotNone(err, "Tool with 'run' keyword must be blocked")
-        # Note: the sandbox checks the tool NAME, not command injection in the
+        # Note: the access control checks the tool NAME, not command injection in the
         # tool arguments. Command injection inside arguments is handled by
-        # shlex.quote() at the execution layer, not the WAF.
+        # shlex.quote() at the execution layer, not this keyword filter.
         _log("  PASS: Tool with embedded run command blocked")
 
 
@@ -144,19 +144,19 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
         self.mock_cfg.mcp_allow_invalidate = False
 
     def test_sandbox_default_is_read_only(self):
-        """A05-001: Prove sandbox defaults to read-only.
+        """A05-001: Prove the keyword access control defaults to read-only.
         
         A read-write default would let any agent modify files immediately.
         SecurityGate now has built-in default dangerous_tool_keywords,
         so even without cfg.mcp_dangerous_tool_keywords, write tools are blocked.
         """
-        _log("Checking sandbox default: read_only=True")
+        _log("Checking access control default: read_only=True")
         # Remove mock keywords to test built-in defaults
         self.mock_cfg.mcp_dangerous_tool_keywords = None
         security = SecurityGate(self.mock_cfg)
         err = security.check_mcp_tool_sandbox("write_file")
-        self.assertIsNotNone(err, "Sandbox must block write tools by default")
-        _log("  PASS: Sandbox is read-only by default (built-in keywords)")
+        self.assertIsNotNone(err, "Access control must block write tools by default")
+        _log("  PASS: Access control is read-only by default (built-in keywords)")
 
     def test_terminal_default_is_disabled(self):
         """A05-002: Prove terminal execution is disabled by default.
@@ -165,9 +165,6 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
         Defense: allow_terminal=False by default — can only be enabled explicitly.
         """
         _log("Checking terminal default: allow_terminal=False")
-        # If terminal is disabled, SecurityGate doesn't check it — 
-        # the tool itself won't be registered. This test verifies the
-        # config default is safe.
         self.assertFalse(
             self.mock_cfg.mcp_allow_terminal,
             "Terminal must be disabled by default",
@@ -222,7 +219,7 @@ class TestIdentificationFailuresA07(unittest.TestCase):
         self.assertIn("access denied", err.lower(), "Error must use generic message")
 
     def test_sandbox_block_error_has_no_stack_trace(self):
-        """A07-002: Prove sandbox errors don't include Python stack traces.
+        """A07-002: Prove access control errors don't include Python stack traces.
         
         Attack: Tool call triggers exception — error message includes traceback.
         Defense: SecurityGate returns plain string errors, not exception objects.
@@ -237,15 +234,15 @@ class TestIdentificationFailuresA07(unittest.TestCase):
 
 
 class TestExcessiveAgencyLLM06(unittest.TestCase):
-    """LLM06:2025 — Excessive Agency: tool sandbox bypass attempts.
+    """LLM06:2025 — Excessive Agency: keyword access control bypass attempts.
 
-    These tests prove that the WAF cannot be bypassed by creative tool naming
+    These tests prove that the access control cannot be bypassed by creative tool naming
     or argument manipulation.
     """
 
     @classmethod
     def setUpClass(cls):
-        _log("=== LLM06: Excessive Agency (Sandbox Bypass) ===")
+        _log("=== LLM06: Excessive Agency (Bypass Attempts) ===")
 
     def setUp(self):
         self.mock_cfg = MagicMock(spec=Config)
@@ -258,23 +255,19 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         ]
 
     def test_case_sandbox_bypass(self):
-        """LLM06-001: Prove case-mutation cannot bypass WAF.
+        """LLM06-001: Prove case-mutation cannot bypass.
         
-        Attack: Write_file (capital W) vs write_file — keyword check is case-sensitive.
-        Defense: Keyword check should be case-insensitive.
+        Attack: Write_file (capital W) vs write_file — keyword check is case-insensitive.
+        Defense: Keyword check is case-insensitive (both converted to .lower()).
         """
         _log("Testing case-mutation bypass: Write_File vs write_file")
         security = SecurityGate(self.mock_cfg)
         err = security.check_mcp_tool_sandbox("Write_File")
-        # Current behavior: keyword check in SecurityGate uses `in` operator,
-        # which is case-sensitive. This is a known limitation.
-        _log(f"  Note: case-sensitivity = {'blocked' if err else 'ALLOWED (potential issue)'}")
-        # Document current behavior without asserting (this is an audit finding)
-        if err is None:
-            _log("  ⚠️  Case-mutation bypasses sandbox (lowercase-only keyword check)")
+        self.assertIsNotNone(err, "Case-mutated tool name must still be blocked")
+        _log("  PASS: Case-mutation blocked (lowercased keyword check)")
 
     def test_unicode_homoglyph_bypass(self):
-        """LLM06-002: Prove Unicode homoglyphs cannot bypass WAF.
+        """LLM06-002: Prove Unicode homoglyphs cannot bypass.
         
         Attack: wrіte (Cyrillic і) vs write (Latin i) — visually identical.
         Defense: Tool names are ASCII-only in MCP spec — homoglyph tools
@@ -282,29 +275,28 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         """
         _log("Testing Unicode homoglyph: wrіte_file (Cyrillic 'і')")
         security = SecurityGate(self.mock_cfg)
-        # This would likely pass through since the keyword doesn't match
-        # But the tool itself wouldn't exist on the server, so no harm
         err = security.check_mcp_tool_sandbox("wrіte_file")
-        _log(f"  Result: {'blocked' if err else 'passed (tool would not exist anyway)'}")
+        if err:
+            _log("  PASS: homoglyph blocked (unlikely but possible)")
+        else:
+            _log("  Note: homoglyph passes through — tool would not exist on server anyway")
 
-    def test_substring_tool_name_not_blocked(self):
-        """LLM06-003: Prove safe tools with dangerous substrings work.
+    def test_substring_tool_name_false_positive(self):
+        """LLM06-003: Document false-positive risk with substrings.
         
-        Attack scenario: tool named "update_manager" contains "update" keyword.
-        Defense: The WAF checks if the tool NAME *contains* a keyword.
-                 "update_manager" would be blocked because "update" is a substring.
-                 This is a known false-positive risk, not a bypass.
+        Scenario: tool named "update_manager" contains "update" keyword.
+        Known limitation: The substring match causes false positives.
+                         "update_manager" would be blocked because "update" is a substring.
         """
         _log("Testing safe tool with dangerous substring: list_updates")
         security = SecurityGate(self.mock_cfg)
         err = security.check_mcp_tool_sandbox("list_updates")
-        # "update" is a substring of "list_updates"
         _log(f"  Result: {'blocked (false positive)' if err else 'allowed'}")
 
     def test_multi_word_tool_bypass(self):
-        """LLM06-004: Prove multi-word tool arguments don't bypass sandbox.
+        """LLM06-004: Prove multi-word tool arguments don't bypass.
         
-        Attack: terminal with piped commands — tool name contains 'exec'.
+        Attack: execute_command — tool name contains 'exec'.
         Defense: exec is in the dangerous keyword list.
         """
         _log("Testing multi-word tool: execute_command")
@@ -345,18 +337,16 @@ class TestWAFDirectCachePoisoning(unittest.TestCase):
         _log("  PASS: cache_invalidate blocked via check_invalidate()")
 
     def test_read_only_sandbox_prevents_tool_execution(self):
-        """WAF-002: Prove read-only sandbox blocks dangerous MCP tool names.
+        """WAF-002: Prove read-only keyword filtering blocks dangerous MCP tool names.
         
-        In read-only sandbox, MCP tool names containing dangerous keywords are blocked.
+        In read-only mode, MCP tool names containing dangerous keywords are blocked.
         write_file -> 'write' is a dangerous keyword.
         """
-        _log("Testing read-only sandbox blocks write_file MCP tool")
+        _log("Testing read-only access control blocks write_file MCP tool")
         security = SecurityGate(self.mock_cfg)
-        # cache_store and set_key are not registered MCP tools — they use check_invalidate
-        # But write_file IS a tool name that the sandbox filters:
         err = security.check_mcp_tool_sandbox("write_file")
         self.assertIsNotNone(err, "write_file must be blocked in read-only mode")
-        _log("  PASS: write_file blocked by MCP tool sandbox")
+        _log("  PASS: write_file blocked by MCP keyword access control")
 
 
 if __name__ == "__main__":

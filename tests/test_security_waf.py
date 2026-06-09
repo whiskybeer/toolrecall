@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 import os
 
-# Import the Daemon components to test the WAF isolation
+# Import the Daemon components to test the MCP keyword access control
 from toolrecall.daemon import SecurityGate
 from toolrecall.config import Config
 
@@ -20,10 +20,9 @@ class TestSecurityWAF(unittest.TestCase):
         self.mock_cfg.mcp_dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
 
     def test_sandbox_blocks_dangerous_tools(self):
-        """Mathematically prove that dangerous tools are blocked when read_only_sandbox=True"""
+        """Verify tools whose names contain dangerous keywords are blocked"""
         security = SecurityGate(self.mock_cfg)
         
-        # Test tools that should be BLOCKED
         blocked_tools = [
             "write_file",
             "edit_code",
@@ -35,14 +34,13 @@ class TestSecurityWAF(unittest.TestCase):
         
         for tool in blocked_tools:
             err = security.check_mcp_tool_sandbox(tool)
-            self.assertIsNotNone(err, f"Tool '{tool}' should have been BLOCKED by WAF.")
-            self.assertIn("ToolRecall Sandbox WAF", err)
+            self.assertIsNotNone(err, f"Tool '{tool}' should have been BLOCKED.")
+            self.assertIn("ToolRecall MCP Access Control", err)
 
     def test_sandbox_allows_safe_tools(self):
-        """Prove that safe read tools are allowed even when read_only_sandbox=True"""
+        """Verify tools without dangerous keywords are allowed even when read_only_sandbox=True"""
         security = SecurityGate(self.mock_cfg)
         
-        # Test tools that should be ALLOWED
         allowed_tools = [
             "read_file",
             "list_issues",
@@ -53,21 +51,18 @@ class TestSecurityWAF(unittest.TestCase):
         
         for tool in allowed_tools:
             err = security.check_mcp_tool_sandbox(tool)
-            self.assertIsNone(err, f"Tool '{tool}' should have been ALLOWED by WAF.")
+            self.assertIsNone(err, f"Tool '{tool}' should have been ALLOWED.")
 
     def test_sandbox_disabled_allows_all(self):
-        """Prove that disabling the sandbox allows modifying tools to execute"""
+        """Verify that disabling the access control allows all tools through"""
         self.mock_cfg.mcp_read_only_sandbox = False
         security = SecurityGate(self.mock_cfg)
         
-        # Now dangerous tools should pass without error
         err = security.check_mcp_tool_sandbox("write_file")
-        self.assertIsNone(err, "Tool should be allowed when WAF is disabled.")
+        self.assertIsNone(err, "Tool should be allowed when access control is disabled.")
 
     def test_directory_traversal_waf(self):
-        """Prove that path allowlists prevent directory traversal"""
-        # Configure WAF to only allow reading from /tmp/safe_dir
-        # We must use real paths for the test because SecurityGate uses os.path.realpath
+        """Verify path allowlists prevent directory traversal via realpath resolution"""
         safe_base = os.path.realpath("/tmp/safe_dir")
         self.mock_cfg.mcp_allowed_paths = [safe_base]
         security = SecurityGate(self.mock_cfg)
@@ -78,10 +73,8 @@ class TestSecurityWAF(unittest.TestCase):
         
         # Malicious directory traversal attempt
         malicious_path = os.path.join(safe_base, "../../etc/passwd")
-        # Since os.path.realpath("/tmp/safe_dir/../../etc/passwd") resolves to "/etc/passwd"
-        # It should NOT start with safe_base
         err = security.check_read_path(malicious_path)
-        self.assertIsNotNone(err, "Directory traversal must be blocked by WAF.")
+        self.assertIsNotNone(err, "Directory traversal must be blocked.")
         self.assertIn("Path not allowed", err)
 
 if __name__ == "__main__":

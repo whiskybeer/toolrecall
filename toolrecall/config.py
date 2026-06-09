@@ -247,8 +247,12 @@ class Config:
 
     @property
     def mcp_read_only_sandbox(self) -> bool:
-        """Ultimate Security Sandbox: If True, blocks all tools across all multiplexed servers
-        that match dangerous_tool_keywords (e.g. 'write', 'execute')."""
+        """Keyword-based access control for MCP tools (not an OS sandbox).
+
+        Blocks tools whose names contain dangerous substrings (write, delete, etc.).
+        This is a STRING MATCH — not process isolation. Combine with Docker/gVisor
+        for real sandboxing.
+        """
         return bool(self.get("security", "read_only_sandbox", default=False))
 
     @property

@@ -154,14 +154,20 @@ class SecurityGate:
         return None
 
     def check_mcp_tool_sandbox(self, tool_name: str) -> str | None:
-        """Ultimate Sandbox WAF: If enabled, blocks tools that modify state."""
+        """MCP Keyword Access Control: blocks tools whose name contains a dangerous substring.
+
+        This is NOT an OS sandbox. There is no process isolation, no container,
+        no cgroups. It's a simple substring match on tool names — tools whose names
+        happen to not match any keyword (e.g. 'post_to_slack', 'run_migration')
+        are NOT blocked. For real sandboxing, combine with Docker/gVisor.
+        """
         if not self.read_only_sandbox:
             return None
         
         t_lower = tool_name.lower()
         for kw in self.dangerous_tool_keywords:
             if kw.lower() in t_lower:
-                return f"ToolRecall Sandbox WAF: Execution of modifying tool '{tool_name}' is blocked in read-only mode."
+                return f"ToolRecall MCP Access Control: tool '{tool_name}' blocked (matches keyword '{kw}')."
         return None
 
 
@@ -806,7 +812,7 @@ class DaemonServer:
         if not tool:
             return {"error": "Missing 'tool'"}
 
-        # Ultimate Sandbox WAF check
+        # MCP Keyword Access Control check
         sandbox_err = self.security.check_mcp_tool_sandbox(tool)
         if sandbox_err:
             return {"error": sandbox_err}

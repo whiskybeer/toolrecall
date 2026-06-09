@@ -1,12 +1,18 @@
 # Sandbox Container Pool — Zero-Latency Isolation for Agent Tasks
 
+⚠️ **⚠️ NOT IMPLEMENTED — DESIGN DOCUMENT ONLY ⚠️**
+
+This document describes a planned architecture. There is NO code,
+NO daemon script, NO systemd service implementing this.
+`sandbox-daemon.sh` does not exist. Docker sandboxing is NOT active.
+
 ## Problem
 
 Docker `run --rm` costs **1-2 seconds** per task (pull, create, start). For
 frequent operations (kubectl, npm install, pip in untrusted code), that latency
 adds up fast.
 
-## Solution: Warm Container Pool
+## Solution: Warm Container Pool (Planned)
 
 Keep N containers running `sleep infinity`. When a task comes in, pick one from
 the pool via `docker exec` (~5ms). Recreate it immediately so the pool stays

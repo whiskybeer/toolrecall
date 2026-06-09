@@ -32,15 +32,31 @@ If terminal execution is enabled (`allow_terminal = true`), an injected agent mi
 
 ---
 
-## 2. The Ultimate Read-Only Sandbox
+## 2. MCP Keyword Access Control
 
-The strongest feature of ToolRecall's security posture is the **Read-Only Sandbox**. 
+The **Read-Only Sandbox** (`read_only_sandbox`) is a **keyword-based access control on MCP tool names**, not an OS sandbox.
 
-By enabling `[security] read_only_sandbox = true` in `config.toml`, ToolRecall acts as a semantic firewall for the Model Context Protocol (MCP).
-- It intercepts every tool call targeting *any* of your multiplexed servers (GitHub, Bash, Postgres, etc.).
-- If the requested tool name contains modifying verbs defined in `dangerous_tool_keywords` (e.g., `write`, `execute`, `delete`, `push`, `commit`), the payload is dropped entirely.
+**What it is:** A string-substring filter on tool names passing through the MCP multiplexer.
 
-This allows developers to unleash autonomous agents on their entire local codebase or database with the mathematical guarantee that the agent is physically unable to alter a single byte of state.
+**What it is NOT:**
+- ❌ NOT Docker/gVisor process isolation
+- ❌ NOT cgroups or namespace-based containment
+- ❌ NOT a guarantee against all state-modifying operations
+
+**How it works:**
+- Enabled via `[security] read_only_sandbox = true` in `config.toml`.
+- It intercepts every MCP tool call targeting any multiplexed server.
+- If the tool name contains a substring from `dangerous_tool_keywords` (e.g. `write`, `delete`, `push`, `commit`), the call is dropped.
+- Tools whose names do NOT contain any keyword (e.g. `post_to_slack`, `run_migration`, `execute_query`) pass through — even if they modify state.
+
+**Limitations:**
+1. **Substring match only** — `create_comment` is blocked (matches `create`), but `post_message` is not.
+2. **Only MCP multiplexer** — direct `cached_terminal` calls bypass this entirely.
+3. **Keyword list must be hand-maintained** — new tools need new keywords.
+4. **No behavioral analysis** — a tool named `read_and_delete` could be blocked by `delete` but `safe_delete_all` also matches `delete`.
+5. **English-only** — non-English tool names bypass the filter.
+
+**Use case:** Safety net for exploratory sessions. For real OS-level sandboxing, combine with Docker, gVisor, or Firecracker.
 
 ---
 

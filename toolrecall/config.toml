@@ -8,17 +8,9 @@
 [paths]
 cache_db = "~/.toolrecall/cache.db"        # Tool output cache
 knowledge_db = "~/.toolrecall/knowledge.db" # FTS5 knowledge base
-# Agent home directory — toolrecall discovers skills, memories, and config
-# from here. Set AGENT_HOME env var for non-Hermes agents (Claude Code, Codex, etc.)
-# agent_home = "~/.hermes"
-# Directories to search for cached_skill(). Default: agent_home/skills
-# skill_dirs = ["~/.hermes/skills"]
 
 # ─── Storage Backend ──────────────────────
 [storage]
-# Currently supported: "sqlite"
-# Future roadmap: "redis", "postgres", "memory_only"
-# Using an abstraction flag to prepare for future implementations.
 backend = "sqlite"
 
 # ─── Cache TTLs (seconds, -1 = infinite) ──
@@ -50,12 +42,21 @@ ssl_key = ""
 
 # ─── MCP Server Security ────────────────
 [security]
-# 🛡️ THE ULTIMATE SANDBOX (WAF)
-# If enabled, ToolRecall blocks ALL state-modifying tools across ALL your multiplexed MCP servers.
-# It makes your AI agent strictly Read-Only. Perfect for safe exploration without risking your files or git repos.
+# 🛡️ MCP Keyword Access Control (not an OS sandbox)
+#
+# When enabled, ToolRecall blocks MCP tools whose names contain substrings
+# listed in dangerous_tool_keywords. This is a STRING MATCH on tool names,
+# NOT an OS-level sandbox — there is no process isolation, no cgroups,
+# no containerization. Tools whose names happen to not match any keyword
+# (e.g. "post_to_slack", "run_migration", "execute_query") are NOT blocked.
+#
+# This is useful as a safety net for exploratory sessions, but provides
+# no guarantee against all state-modifying operations.
+# For real sandboxing, combine with Docker or gVisor.
 read_only_sandbox = false
 
-# Tools whose names contain these words will be dropped instantly when read_only_sandbox = true
+# Tools whose names contain these substrings will be blocked when read_only_sandbox = true
+# Note: substring match only — works for English tool names, partial matches possible
 dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
 
 [mcp]
@@ -76,72 +77,17 @@ allow_invalidate = false
 
 # ─── MCP Multiplexer ─────────────────────
 [mcp_multiplex]
-# Enable multiplexing of external MCP servers through the daemon.
-# When enabled, the daemon starts persistent subprocesses for each configured
-# MCP server. Agents then need only ONE MCP server in config (toolrecall).
 enabled = true
-
-# Transparent caching: cache MCP tool responses automatically.
-# When true, every tools/call response is cached by default (TTL per server config).
-# When false, only explicit cached_mcp_call routes through the cache.
-# Works with ANY MCP client routing through the daemon — not Hermes-specific.
 transparent_cache = true
-
-# Default TTL for transparently cached MCP responses (seconds)
-# Per-server TTLs in servers_config override this
 default_ttl = 60
-
-# Allowlist of server names to multiplex. Empty = all configured.
-# Example: ["github", "time", "fetch"]
 servers = []
-
-# Minutes of inactivity before an MCP server shuts down (saves RAM).
-# Default: 15 minutes. Set to 0 to keep servers alive forever.
 idle_minutes = 15
 
-# Path to agent config.yaml for auto-discovery of MCP servers.
-# Default: agent_home/config.yaml (AGENT_HOME env var → ~/.hermes)
-# For Hermes: AGENT_HOME=~/.hermes → ~/.hermes/config.yaml
-# For Claude Code: AGENT_HOME=~/.claude → ~/.claude/config.yaml
-# config_path = ""
-
-# Explicit server configs (same format as agent mcp_servers).
-# These are used when mcp_multiplex.config_path is empty or the servers
-# are only defined here. Can supplement or override the agent config.
-#
-# ⚠️ SUPPLY CHAIN NOTICE
-# The servers below marked "(npx)" download packages from npm on first use.
-# ToolRecall also ships optional stdlib-only Python MCP servers at
-# toolrecall/mcp_github.py, toolrecall/mcp_time.py, toolrecall/mcp_seqthink.py
-# that replace npx-based servers with zero external dependencies.
-#
-# To switch a server from npx to the Python stdlib version, replace e.g.:
-#   github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
-# with:
-#   github = { command = "uv", args = ["run", "-m", "toolrecall.mcp_github"] }
-#
-# The Python servers share 3 key advantages:
-#   1. No npm dependency (supply chain: zero)
-#   2. Token stays in daemon process memory (never in subprocess env)
-#   3. Lower RAM: ~3MB vs ~30MB per Node.js subprocess
-
 [mcp_multiplex.servers_config]
-# npm-based (default — simple but higher supply chain risk):
-# github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
-# time = { command = "uvx", args = ["mcp-server-time"] }
-# sequential-thinking = { command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }
-
-# Python stdlib-based (opt-in — zero external deps, token-secure):
-# These use `python3 -m` directly instead of `uv run -m` for:
-#   - ~50ms faster cold start (no uv overhead)
-#   - No pip/uv dependency in the pool daemon
-#   - Works in any environment with Python 3.11+
 github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
 time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
 "sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
-
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
-# hermes-docs resolved via AGENT_HOME env var at daemon startup (agent-agnostic)
 "hermes-docs" = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
@@ -154,52 +100,9 @@ scan_extensions = [".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json",
 scan_ignore = [".git", "node_modules", ".venv", "dist", "build", "__pycache__"]
 max_file_kb = 100
 
-# Additional knowledge sources — indexed on every `toolrecall index` run.
-# Each entry = {path, source_label}. The source_label is used to filter
-# searches: docs_search("query", source="obsidian").
-# These are also indexed at startup if knowledge DB is missing.
-#
-# Examples:
-#   [[sources.knowledge]]
-#   path = "~/Documents/Obsidian Vault"
-#   source = "obsidian"
-#   extensions = [".md"]
-#
-#   [[sources.knowledge]]
-#   path = "~/projects/my-wiki"
-#   source = "my-wiki"
-#   extensions = [".md", ".txt"]
-
-# Enable agent memory indexing on every `toolrecall index`
-# (MEMORY.md, USER.md from agent_home/memories → source='agent-memory')
 [sources.memory]
 enabled = true
 
-# ─── Hermes Auto-Cache (agent-specific, keep under [hermes] for bc) ──
+# ─── Hermes Auto-Cache (agent-specific) ──
 [hermes]
-# Transparent caching: replaces the agent's native read_file and terminal
-# with ToolRecall's cached_read and cached_terminal.
-#
-# When enabled, ALL tool calls are silently cached — no change in
-# agent behavior, just fewer tokens billed.
-#
-# Options:
-#   "separate"   — (default) registers cached_read/cached_terminal
-#                  as additional tools. Agent must choose to use them.
-#                  Safe for all workloads.
-#   "transparent" — monkey-patches read_file and terminal in the
-#                   Hermes tool registry. Agent uses them automatically.
-#                   Best for stable, read-heavy projects.
-#                   Skip for: active development, deployments, CI/CD.
-#   "write"      — like "transparent" + also patches write_file and
-#                  patch to skip redundant operations. Saves output
-#                  tokens and halts agent write-loop waste.
-#                  ⚠️  TOCTOU: content comparison is at read-time only.
-#                      External mutations between check and write are
-#                      not detected — single-agent workloads only.
-#                  ⚠️  Metadata-agnostic: chmod/chown-only changes to
-#                      already-identical content are not detected.
-#                  ⚠️  Read overhead: adds a read+compare before every
-#                      write. For files >5MB this auto-fallthroughs.
-#
 transparent_cache = "separate"

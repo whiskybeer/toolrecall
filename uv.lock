@@ -172,6 +172,9 @@ wheels = [
 name = "toolrecall"
 version = "0.4.0"
 source = { editable = "." }
+dependencies = [
+    { name = "pytest" },
+]
 
 [package.optional-dependencies]
 dev = [
@@ -188,6 +191,7 @@ yaml = [
 [package.metadata]
 requires-dist = [
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0" },
+    { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0" },
     { name = "tomli-w", marker = "extra == 'toml-write'", specifier = ">=1.0" },

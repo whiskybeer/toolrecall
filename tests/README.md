@@ -1,6 +1,6 @@
 # ToolRecall Test Suite
 
-> **Tests:** 50+ unit tests covering cache, WAF, MCP servers, and security.
+> **Tests:** 50+ unit tests covering cache, MCP keyword access control, MCP servers, and security.
 > **Run:** `pytest tests/ -v` inside the toolrecall venv.
 
 ---
@@ -33,8 +33,8 @@ python3 -m pytest tests/ -v --log-cli-level=DEBUG
 | `test_integration.py` | 9 | **End-to-end pipeline**: memory index → FTS5 search → get_page, directory index → source-filtered search, multi-source isolation, re-index after delete, 100-entry stress test, file cache hit/miss/invalidation, index_all with config |
 | `test_cache_safety.py` | 6 | Cache TTL behaviour: default TTL=0 means no caching, explicit TTL enables cache, dynamic commands not cached |
 | `test_file_cache.py` | 3 | File cache hit/miss, mtime-based invalidation, file size limit (5MB OOM protection) |
-| `test_security_waf.py` | 4 | WAF sandbox: dangerous tool blocking, safe tool allowing, sandbox disable, directory traversal |
-| `test_security_injection.py` | 12+ | OWASP injection vectors: SSTI, null byte, buffer overflow, error message leakage, sandbox bypass attempts, cache poisoning |
+| `test_security_waf.py` | 4 | MCP keyword access control: dangerous tool blocking, safe tool allowing, access control disable, directory traversal |
+| `test_security_injection.py` | 12+ | OWASP injection vectors: SSTI, null byte, buffer overflow, error message leakage, bypass attempts, cache poisoning |
 | `test_mcp_time.py` | 10 | Time MCP server: initialize, tool listing, get_time (UTC/GMT/EST/PST/unknown), list_timezones, missing args |
 | `test_mcp_seqthink.py` | 17 | Sequential Thinking MCP: think_step depth/caching/hedging/questions, analyze contradictions, validate_reasoning, protocol compliance |
 | `test_mcp_github.py` | 6 | GitHub MCP: 5 tool schemas, token detection, no-token warning on stderr, JSON-RPC error handling |
@@ -43,15 +43,15 @@ python3 -m pytest tests/ -v --log-cli-level=DEBUG
 
 ---
 
-## Using the WAF Security Tests
+## Using the Security Tests
 
-The security tests (`test_security_waf.py` and `test_security_injection.py`) use `SecurityGate` from `toolrecall.daemon` with a mock config. They test **logical correctness** of the WAF — not the network layer.
+The security tests (`test_security_waf.py` and `test_security_injection.py`) use `SecurityGate` from `toolrecall.daemon` with a mock config. They test **logical correctness** of the access control — not the network layer.
 
 ### What They Prove
 
 | Test | Attack | What It Verifies |
 |------|--------|-----------------|
-| `test_sandbox_blocks_dangerous_tools` | `execute_bash`, `delete_table` | WAF blocks tool names containing dangerous verbs |
+| `test_sandbox_blocks_dangerous_tools` | `execute_bash`, `delete_table` | Keyword filter blocks tool names containing dangerous verbs |
 | `test_sandbox_allows_safe_tools` | `read_file`, `list_issues` | Safe tools pass through |
 | `test_directory_traversal_waf` | `../../etc/passwd` | `os.path.realpath()` canonicalization blocks traversal |
 | `test_ssti_injection_in_path` | `read_file("{{config}}")` | Path allowlist rejects template injection |
@@ -72,7 +72,7 @@ Example output:
 tests/test_security_injection.py::TestSecurityInjectionA03::test_ssti_injection_in_path 
   [SECURITY] === A03: Injection Attack Vectors ===
   [SECURITY] Testing SSTI path injection: read_file('{{config}}')
-  [SECURITY]   PASS: Path rejected — ToolRecall Sandbox WAF blocked tool...
+  [SECURITY]   PASS: Path rejected — ToolRecall MCP Access Control blocked tool...
 ```
 
 To see all log output without assertion passthrough:
@@ -109,7 +109,7 @@ This runs 20 tests covering pool lifecycle, warm/cold exec, exit codes, parallel
 |--------|---------|
 | `test_cache_*` | Cache hit/miss, TTL, invalidation |
 | `test_file_*` | File I/O specific tests |
-| `test_security_*` | WAF, injection, OWASP compliance |
+| `test_security_*` | Access control, injection, OWASP compliance |
 | `test_mcp_*` | MCP server protocol and logic |
 | `test_*` | General (catch-all) |
 

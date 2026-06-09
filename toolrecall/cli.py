@@ -266,7 +266,7 @@ def cmd_config_set():
         print("Examples:")
         print("  toolrecall config-set proxy.port 9090")
         print("  toolrecall config-set mcp.allow_terminal true")
-        print("  toolrecall config-set security.read_only_sandbox true")
+        print("  toolrecall config-set security.read_only_sandbox true  # keyword access control (not OS sandbox)")
         print("  toolrecall config-set mcp.allowed_paths \"['/data', '/projects']\"")
         return
 

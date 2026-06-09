@@ -10,7 +10,7 @@ Unlike caching frameworks that use a second LLM ("Cache Planner") to classify to
 |---|---|
 | ✅ **Deterministic** — byte-exact tool output cache from SQLite, no LLM in the caching loop | ❌ Not an LLM-driven Cache Planner — no second agent deciding what to cache |
 | ✅ **MCP Multiplexer** — single daemon manages all external MCP servers | ❌ Not a chronological call-graph — mtime handles staleness without state tracking |
-| ✅ **Zero-Trust WAF** — path sandboxing, secret air-gapping, read-only mode | ❌ Not a vector database — no embeddings, no GPU, no semantic search |
+| ✅ **Zero-Trust WAF** — path canonicalization, secret air-gapping, read-only MCP keyword filter | ❌ Not a vector database — no embeddings, no GPU, no semantic search |
 | ✅ **FTS5 Knowledge Base** — zero-dep full-text search over docs and notes | ❌ Not a distributed cache — single-node SQLite, no Redis/Cluster |
 | ✅ **Deterministic replay** — freeze OS state for 100% reproducible agent runs | ❌ Not a replacement for real-time data — use `ttl=0` for dynamic endpoints |
 
@@ -83,7 +83,7 @@ ToolRecall doesn't cure an LLM of being prompt-injected — it cages the agent t
 - **Cryptographic path resolution:** `os.path.realpath` blocks `../../../etc/shadow` before the OS is touched.
 - **Execution blackholes:** `allow_terminal = false` drops RCE attempts into a void.
 - **Air-gapped secrets:** API keys in `~/.toolrecall/.env` — the LLM never sees them.
-- **Read-only sandbox:** `read_only_sandbox = true` drops any tool containing `write`, `delete`, `push`.
+- **Read-only MCP keyword filter:** `read_only_sandbox = true` drops any MCP tool whose name contains `write`, `delete`, `push`. This is a STRING MATCH on tool names — not an OS sandbox, no process isolation.
 
 ---
 
@@ -105,7 +105,7 @@ ToolRecall freezes OS tool outputs: every `read_file`, `git status`, and `hostna
 Byte-identical cache hits mean 100% reproducible agent runs. No OS flakiness, no network jitter.
 
 ### 4. Safer
-Zero-Trust WAF: cryptographic path resolution (`os.path.realpath`), `.env` air-gapping (the LLM never sees API keys), and `allow_terminal=false` drops RCE attempts into a blackhole.
+Zero-Trust WAF: cryptographic path resolution (`os.path.realpath`), `.env` air-gapping (the LLM never sees API keys), `allow_terminal=false` drops RCE attempts into a blackhole, and an optional MCP keyword filter blocks tool names containing `write`/`delete`/`push`.
 
 ### 5. Universal
 Standard `stdio` MCP (`toolrecall mcp`). Works with Claude Code, Cursor, Cline, Hermes, Aider — any MCP-speaking agent.
