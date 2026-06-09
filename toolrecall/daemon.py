@@ -50,6 +50,8 @@ from toolrecall.cache import (
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_store as _cache_mcp_store,
     invalidate_all,
+    invalidate_file as _invalidate_file,
+    refresh_file as _refresh_file,
     get_stats,
 )
 from toolrecall.docs import docs_search as _docs_search, docs_get_page as _docs_get_page
@@ -664,6 +666,8 @@ class DaemonServer:
                 return self._handle_status(request)
             elif cmd == "cache_invalidate":
                 return self._handle_invalidate(request)
+            elif cmd == "cache_refresh_file":
+                return self._handle_refresh_file(request)
             elif cmd == "mcp_call":
                 return self._handle_mcp_call(request)
             elif cmd == "mcp_list_servers":
@@ -694,6 +698,9 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
+        bypass = req.get("bypass_cache", False)
+        if bypass:
+            return _refresh_file(path)
         return _cache_read(path)
 
     def _handle_terminal(self, req: dict) -> dict:
@@ -763,6 +770,23 @@ class DaemonServer:
             return {"error": err}
         invalidate_all()
         return {"result": "All ToolRecall caches cleared"}
+
+    def _handle_refresh_file(self, req: dict) -> dict:
+        """Invalidate and re-read a single file. Safe — no security gate needed.
+        Only re-reads from disk, does not destroy other cache entries.
+        Returns same shape as _handle_read().
+        """
+        path = req.get("path", "")
+        if not path:
+            return {"error": "Missing 'path'"}
+        err = self.security.check_read_path(path)
+        if err:
+            return {"error": err}
+        result = _refresh_file(path)
+        # Force "cached": False in the result so the caller knows it was fresh
+        if isinstance(result, dict):
+            result["cached"] = False
+        return result
 
     def _handle_mcp_call(self, req: dict) -> dict:
         """Call a tool on a multiplexed MCP server.

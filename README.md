@@ -150,6 +150,23 @@ Standard `stdio` MCP (`toolrecall mcp`). Works with Claude Code, Cursor, Cline, 
 | **Script & Code Cache:** `cached_run`, `cached_exec` with explicit `ttl=0` bypass for state-changing operations.
 | **MCP Cache:** TTL-based caching for external MCP tool responses (~12× speedup measured).
 
+
+### Manual Cache Refresh
+| **cache_refresh_file:** Invalidate and re-read a single file from disk. Always returns fresh data. Safe by default — no security gate needed, respects the path allowlist.
+| **bypass_cache flag:** Set `bypass_cache=true` on any `cached_read` MCP call to force a fresh read, bypassing the cache for that single call.
+| **cache_invalidate:** Clear ALL caches (memory + SQLite). ⚠ Gated behind `mcp.allow_invalidate=true`.
+
+```bash
+# Refresh a single file (safe, no gate needed)
+toolrecall mcp  # then call: cache_refresh_file({"path": "/home/hermes/config.yaml"})
+
+# Bypass cache on read (safe, no gate needed)
+toolrecall mcp  # then call: cached_read({"path": "/home/hermes/config.yaml", "bypass_cache": true})
+
+# Clear everything (requires allow_invalidate=true)
+toolrecall mcp  # then call: cache_invalidate({})
+```
+
 ### MCP Multiplexer (AI Gateway)
 - One daemon manages all your MCP servers (GitHub, Brave Search, time, fetch, ...).
 - **Lazy loading:** Servers boot in 0.01s only when first called.
@@ -180,6 +197,63 @@ toolrecall init
 
 # 3. Start daemon
 toolrecall daemon &
+
+# 4. Use via MCP (Claude Code / Cursor / Cline)
+toolrecall mcp
+```
+
+### Hermes Auto-Cache (Hermes Agent only)
+```bash
+# One-command setup
+bash <(curl -s https://raw.githubusercontent.com/Robin/toolrecall/main/scripts/setup.sh)
+```
+
+## Uninstall
+
+Run the uninstaller to cleanly remove ToolRecall from your system:
+
+```bash
+python3 scripts/uninstall.py          # interactive
+python3 scripts/uninstall.py --force  # non-interactive
+```
+
+It removes:
+
+- Running daemon processes
+- Systemd user service (`~/.config/systemd/user/toolrecall-daemon.service`)
+- Data directory (`~/.toolrecall/` — cache DB, config, logs, init script)
+- Hermes config references (`init_scripts`, `mcp_servers.toolrecall`)
+- Sandbox config references
+- Pip package (if installed)
+- Hermes skills
+
+The repo directory is preserved — you can `rm -rf ~/toolrecall` manually if desired.
+Cron jobs (toolrecall-watchdog, memory-db-sync) are flagged for removal via the agent.
+
+## Update
+
+Auto-detect your install method and update to the latest version:
+
+```bash
+python3 scripts/update.py              # interactive
+python3 scripts/update.py --force      # non-interactive
+python3 scripts/update.py --check      # check version only
+```
+
+**What it does:**
+
+| Install method | Update command | Behaviour |
+|---|---|---|
+| `pip install` | `pip install --upgrade toolrecall` | Standard pip upgrade |
+| Local repo (git clone) | `git pull --ff-only` | Fast-forward pull |
+| Unknown | Error with manual instructions | — |
+
+It also restarts the daemon if it was running, and verifies the import works after the update.
+
+For major version bumps (>0.x.0), consider a clean reinstall:
+```bash
+python3 scripts/uninstall.py --force
+pip install toolrecall
 ```
 
 ### Claude Code

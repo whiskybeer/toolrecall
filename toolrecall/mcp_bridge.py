@@ -35,11 +35,13 @@ TOOL_DEFINITIONS = [
     {
         "name": "cached_read",
         "description": "Read a file with hybrid In-Memory + SQLite cache. "
-                       "Cached until file modification time (mtime) changes.",
+                       "Cached until file modification time (mtime) changes. "
+                       "Set bypass_cache=true to force a fresh read from disk.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path to read"}
+                "path": {"type": "string", "description": "File path to read"},
+                "bypass_cache": {"type": "boolean", "description": "Skip cache and force fresh read from disk"}
             },
             "required": ["path"]
         }
@@ -113,6 +115,19 @@ TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "cache_refresh_file",
+        "description": "Invalidate and re-read a single file from disk. "
+                       "Always returns a fresh result. Safe — no security gate needed. "
+                       "Respects the path allowlist.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to refresh"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
         "name": "mcp_call",
         "description": "Call a tool on a multiplexed MCP server (github, time, fetch, etc.). "
                        "The daemon manages persistent subprocesses for all MCP servers. "
@@ -149,6 +164,7 @@ CMD_TO_MCP = {
     "docs_get_page": "docs_get_page",
     "cache_status": "cache_status",
     "cache_invalidate": "cache_invalidate",
+    "cache_refresh_file": "cache_refresh_file",
     "mcp_call": "mcp_call",
     "mcp_list_servers": "mcp_list_servers",
 }
@@ -212,14 +228,16 @@ class MCPBridge:
                     "security": security,
                 },
                 "instructions": (
-                    "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
-                    "This bridge connects to the ToolRecall daemon. "
-                    "5 tools always available, 2 opt-in via config.\n"
-                    f"  cached_read: path-allowlisted\n"
-                    f"  cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
-                    f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
-                    "Start daemon: toolrecall daemon &"
-                ),
+                                    "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
+                                    "This bridge connects to the ToolRecall daemon. "
+                                    "6 tools always available, 2 opt-in via config.\n"
+                                    f"  cached_read: path-allowlisted (bypass_cache=true for fresh read)\n"
+                                    f"  cache_refresh_file: re-read a single file from disk (safe)\n"
+                                    f"  cache_status: view cache statistics\n"
+                                    f"  cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
+                                    f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
+                                    "Start daemon: toolrecall daemon &"
+                                ),
             }
         }
 
@@ -274,7 +292,14 @@ class MCPBridge:
             elif tool_name == "mcp_list_servers":
                 resp = self.client._send({"cmd": "mcp_list_servers"})
             else:
-                resp = self._uds_request(uds_cmd, **arguments)
+                # cached_read with bypass_cache → translate to refresh_file
+                if tool_name == "cached_read" and arguments.get("bypass_cache", False):
+                    resp = self.client._send({
+                        "cmd": "cache_refresh_file",
+                        "path": arguments.get("path", ""),
+                    })
+                else:
+                    resp = self._uds_request(uds_cmd, **arguments)
 
             if "error" in resp:
                 return self._error(req_id, -32603, resp["error"])

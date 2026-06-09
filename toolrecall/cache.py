@@ -983,6 +983,21 @@ def invalidate_file(path: str):
 
 _init()
 
+def refresh_file(path: str) -> dict:
+    """Invalidate cache for a file and re-read it from disk in one call.
+
+    Combines invalidate_file() + cached_read() so the caller always
+    gets a fresh result.  Useful for manual refresh during a session
+    or after an external edit.
+
+    Returns the same dict as cached_read() — {"content": ..., "cached": False}
+    (always "cached": False since we force a fresh read).
+    """
+    from toolrecall.cache import invalidate_file
+    invalidate_file(path)
+    return cached_read(path)
+
+
 def garbage_collect() -> int:
     """Remove expired cache entries and vacuum database to free disk space."""
     import time

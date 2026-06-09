@@ -25,6 +25,7 @@ from toolrecall.cache import (
     cached_write as _direct_write,
     cached_patch as _direct_patch,
     invalidate_all as _direct_invalidate,
+    refresh_file as _direct_refresh,
     get_stats as _direct_stats,
 )
 from toolrecall.docs import docs_search as _direct_docs_search, docs_get_page as _direct_docs_get_page
@@ -259,6 +260,19 @@ def cache_invalidate() -> str:
         return resp.get("result", "Cache invalidated via daemon")
     _direct_invalidate()
     return "Cache invalidated (direct)"
+
+
+def refresh_file(path: str) -> dict:
+    """Invalidate and re-read a single file via Daemon or direct SQLite.
+
+    Always returns a fresh result (cached: False).
+    Respects the path allowlist when going through the daemon.
+    """
+    client = _get_client()
+    resp = client._send({"cmd": "cache_refresh_file", "path": path})
+    if "error" not in resp or resp["error"] != "daemon_unavailable":
+        return resp
+    return _direct_refresh(path)
 
 
 # ─── Connection Check ─────────────────────────────────────
