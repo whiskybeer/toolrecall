@@ -54,9 +54,8 @@ Requires=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/home/hermes/.hermes/scripts/sandbox-daemon.sh start 3
-ExecStop=/home/hermes/.hermes/scripts/sandbox-daemon.sh stop
-User=hermes
+ExecStart=%h/.hermes/scripts/sandbox-daemon.sh start 3
+ExecStop=%h/.hermes/scripts/sandbox-daemon.sh stop
 
 [Install]
 WantedBy=default.target
