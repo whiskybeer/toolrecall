@@ -37,7 +37,7 @@ terminal_default_ttl = 300  # 5 minutes for unknown commands
 # ─── HTTP Proxy (standalone, no deps) ─────
 [proxy]
 port = 8567
-bind = "[IP_ADDRESS]"                       # [IP_ADDRESS] = all interfaces
+bind = "localhost"                       # localhost = bind to loopback only
 nginx_recommended = true    # Show "nginx recommended" in docs
 
 # ─── Nginx Config (for SSL + auth) ────────

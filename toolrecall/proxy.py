@@ -98,22 +98,27 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_server(bind: str = "127.0.0.1", port: int = 8567):
+def run_server(bind: str = "0.0.0.0", port: int = 8567):
     """Start the ToolRecall HTTP proxy bridge."""
     import socket as sock_mod
+
+    # If bind is a non-resolving placeholder, fall back to localhost
+    if bind.strip("<>[]").lower() in ("ip_address", "your_ip", "host", "[ip_address]"):
+        bind = "127.0.0.1"
+
     try:
         sock_mod.getaddrinfo(bind, port)
     except sock_mod.gaierror:
         print(f"Warning: '{bind}' does not resolve on this system.")
-        print("Falling back to '127.0.0.1' (all interfaces).")
-        print("Set TOOLRECALL_PROXY_BIND=127.0.0.1 for localhost-only.")
+        print("Falling back to '127.0.0.1' (localhost).")
+        print("Set TOOLRECALL_PROXY_BIND=<ip> for a specific address.")
         bind = "127.0.0.1"
 
     try:
         server = http.server.HTTPServer((bind, port), ToolRecallHandler)
     except OSError as e:
         if e.errno == 98:  # Address already in use
-            print(f"❌ Error: Port {port} is already in use by another process.")
+            print(f"Error: Port {port} is already in use by another process.")
             print(f"Please stop that process or select a different port in config.toml:")
             print(f"  toolrecall config-set proxy.port <new_port>")
             return
@@ -125,9 +130,9 @@ def run_server(bind: str = "127.0.0.1", port: int = 8567):
     client = UDSClient()
     ping = client._send({"cmd": "ping"})
     if ping.get("error") == "daemon_unavailable":
-        print("  ⚠ ToolRecall daemon not running! Start with: toolrecall daemon &")
+        print("  Warning: ToolRecall daemon not running! Start with: toolrecall daemon &")
     else:
-        print("  ✓ Connected to ToolRecall daemon")
+        print("  Connected to ToolRecall daemon")
 
     print(f"Endpoints:")
     print(f"  GET /cached_read?path=/path/to/file")
