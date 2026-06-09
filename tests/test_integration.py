@@ -28,7 +28,7 @@ os.environ["TOOLRECALL_SCAN_DIRS"] = ""
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.docs import (
-    index_hermes_memory, index_directory, index_all,
+    index_agent_memory, index_directory, index_all,
     docs_search, docs_get_page
 )
 from toolrecall.cache import cached_read, _init
@@ -65,15 +65,15 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
 
     def test_full_pipeline_memory(self):
         """Index → FTS5 search → get_page returns consistent results."""
-        count = index_hermes_memory(self.mem_dir)
+        count = index_agent_memory(self.mem_dir)
         self.assertEqual(count, 5)
 
-        result = docs_search("tomllib", source="hermes-memory")
+        result = docs_search("tomllib", source="agent-memory")
         self.assertIn("3.11", result)
         self.assertIn("BM25", result)
 
         # docs_get_page uses LIKE-based fuzzy match — it finds the entry
-        page = docs_get_page("tomllib", source="hermes-memory")
+        page = docs_get_page("tomllib", source="agent-memory")
         self.assertIn("tomllib", page, "docs_get_page should find the tomllib entry")
 
     def test_full_pipeline_directory(self):
@@ -88,14 +88,14 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
         result = docs_search("Q3", source="corp-notes")
         self.assertIn("Budget", result)
 
-        result2 = docs_search("Q3", source="hermes-memory")
+        result2 = docs_search("Q3", source="agent-memory")
         self.assertIn("No results", result2,
                       "Other source should NOT return cross-contaminated results")
 
     def test_multiple_source_isolation(self):
         """Entries from different sources don't cross-contaminate."""
-        index_hermes_memory(self.mem_dir, source="mem-a")
-        index_hermes_memory(self.mem_dir, source="mem-b")
+        index_agent_memory(self.mem_dir, source="mem-a")
+        index_agent_memory(self.mem_dir, source="mem-b")
 
         for src in ("mem-a", "mem-b"):
             r = docs_search("tomllib", source=src)
@@ -107,7 +107,7 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
 
     def test_reindex_after_delete(self):
         """Delete knowledge DB, re-index, search still works."""
-        index_hermes_memory(self.mem_dir, source="test-src")
+        index_agent_memory(self.mem_dir, source="test-src")
 
         db_path = os.environ["TOOLRECALL_KNOWLEDGE_DB"]
         for ext in ("", "-wal", "-shm"):
@@ -116,7 +116,7 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
             except OSError:
                 pass
 
-        count = index_hermes_memory(self.mem_dir, source="test-src")
+        count = index_agent_memory(self.mem_dir, source="test-src")
         self.assertEqual(count, 5)
 
         result = docs_search("tomllib", source="test-src")
@@ -159,8 +159,8 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
 
     def test_proxy_docs_search_endpoint(self):
         """Simulate HTTP proxy /docs_search endpoint."""
-        index_hermes_memory(self.mem_dir)
-        result = docs_search(query="deployment", source="hermes-memory")
+        index_agent_memory(self.mem_dir)
+        result = docs_search(query="deployment", source="agent-memory")
         self.assertIn("systemd", result)
 
 

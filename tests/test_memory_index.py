@@ -1,7 +1,7 @@
 """Tests for Hermes memory indexing in ToolRecall's FTS5 knowledge database.
 
 Tests verify:
-  - index_hermes_memory() parses §-delimited entries correctly
+  - index_agent_memory() parses §-delimited entries correctly
   - FTS5 triggers sync on INSERT (pages → pages_fts)
   - docs_search(source='hermes-memory') returns BM25-weighted results
   - Re-indexing updates existing entries (INSERT OR REPLACE)
@@ -17,7 +17,7 @@ import shutil
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.docs import (
-    _get_db, _ensure_tables, index_hermes_memory, index_directory,
+    _get_db, _ensure_tables, index_agent_memory, index_directory,
     docs_search, docs_get_page
 )
 
@@ -58,33 +58,33 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_index_creates_entries(self):
         """Each §-delimited entry becomes a separate page."""
-        count = index_hermes_memory(self.memory_dir)
+        count = index_agent_memory(self.memory_dir)
         self.assertEqual(count, 5)  # 3 from MEMORY.md + 2 from USER.md
 
     def test_fts5_search_finds_entries(self):
-        """FTS5 BM25 search returns matched entries with source='hermes-memory'."""
-        index_hermes_memory(self.memory_dir)
+        """FTS5 BM25 search returns matched entries with source='agent-memory'."""
+        index_agent_memory(self.memory_dir)
 
         # Search via FTS5
-        result = docs_search("security", source="hermes-memory")
+        result = docs_search("security", source="agent-memory")
         self.assertIn("Security rules", result)
-        self.assertIn("hermes-memory", result)
+        self.assertIn("agent-memory", result)
 
     def test_fts5_search_python(self):
         """Porter stemming: 'python' should match 'Python'."""
-        index_hermes_memory(self.memory_dir)
-        result = docs_search("python", source="hermes-memory")
+        index_agent_memory(self.memory_dir)
+        result = docs_search("python", source="agent-memory")
         self.assertIn("tomllib", result, "Porter stemming should match 'Python'")
 
     def test_fts5_search_german(self):
         """German text with Porter unicode61 tokenizer."""
-        index_hermes_memory(self.memory_dir)
-        result = docs_search("fluff", source="hermes-memory")
+        index_agent_memory(self.memory_dir)
+        result = docs_search("fluff", source="agent-memory")
         self.assertIn("prefers dense", result)
 
     def test_fts5_triggers_sync_on_insert(self):
         """Verify FTS5 content sync trigger fires on INSERT into pages."""
-        index_hermes_memory(self.memory_dir)
+        index_agent_memory(self.memory_dir)
 
         conn = _get_db()
         _ensure_tables(conn)
@@ -100,16 +100,16 @@ class TestMemoryIndex(unittest.TestCase):
 
     def test_docs_get_page_returns_entry(self):
         """Individual memory entries are retrievable by path (fuzzy match)."""
-        index_hermes_memory(self.memory_dir)
+        index_agent_memory(self.memory_dir)
 
-        page = docs_get_page("MEMORY.md#", source="hermes-memory")
+        page = docs_get_page("MEMORY.md#", source="agent-memory")
         self.assertIn("MEMORY.md#", page, "Fuzzy match should find memory entry")
         self.assertIn("tomllib", page)
 
     def test_reindex_updates_entries(self):
         """Re-indexing replaces existing entries (INSERT OR REPLACE)."""
-        count1 = index_hermes_memory(self.memory_dir)
-        count2 = index_hermes_memory(self.memory_dir)
+        count1 = index_agent_memory(self.memory_dir)
+        count2 = index_agent_memory(self.memory_dir)
         self.assertEqual(count1, count2, "Re-index should produce same count")
         self.assertEqual(count1, 5)
 
@@ -117,36 +117,36 @@ class TestMemoryIndex(unittest.TestCase):
         with open(os.path.join(self.memory_dir, "MEMORY.md"), "w") as f:
             f.write("New entry replacing all\n")
 
-        count3 = index_hermes_memory(self.memory_dir)
+        count3 = index_agent_memory(self.memory_dir)
         self.assertEqual(count3, 3, "1 MEMORY + 2 USER entries after edit")
 
     def test_empty_memory_dir(self):
         """No crash when memory dir is empty or nonexistent."""
         empty_dir = os.path.join(self.test_dir, "empty_memories")
         os.makedirs(empty_dir, exist_ok=True)
-        count = index_hermes_memory(empty_dir)
+        count = index_agent_memory(empty_dir)
         self.assertEqual(count, 0, "No memory files = 0 entries")
 
     def test_search_no_source_filter(self):
-        """docs_search without source filter should include hermes-memory."""
-        index_hermes_memory(self.memory_dir)
+        """docs_search without source filter should include agent-memory."""
+        index_agent_memory(self.memory_dir)
         result = docs_search("tomllib")
         self.assertIn("3.11", result, "Unfiltered search should find memory entries")
 
     def test_cli_command_output_format(self):
         """Simulates `toolrecall index-memory` output structure."""
-        index_hermes_memory(self.memory_dir)
+        index_agent_memory(self.memory_dir)
         # Search and verify standard output format
-        result = docs_search("air-gapped", source="hermes-memory")
+        result = docs_search("air-gapped", source="agent-memory")
         self.assertIn("BM25", result, "Should include BM25 ranking label")
-        self.assertIn("hermes-memory", result, "Should show source label")
+        self.assertIn("agent-memory", result, "Should show source label")
         self.assertIn("【", result, "Should use FTS5 snippet markers")
 
     def test_fts5_bm25_ranking(self):
         """BM25 ranks entries with more keyword occurrences higher."""
-        index_hermes_memory(self.memory_dir)
+        index_agent_memory(self.memory_dir)
 
-        result = docs_search("security", source="hermes-memory")
+        result = docs_search("security", source="agent-memory")
         self.assertIn("BM25", result, "BM25 ranking label should appear")
 
     # ── index_directory tests ──────────────────────────────────
@@ -231,14 +231,14 @@ class TestMemoryIndex(unittest.TestCase):
         count = index_directory(vault, source="git-vault", ignore_dirs={".git"})
         self.assertEqual(count, 1, ".git contents skipped")
 
-    def test_index_hermes_memory_custom_source(self):
-        """index_hermes_memory() supports custom source label."""
+    def test_index_agent_memory_custom_source(self):
+        """index_agent_memory() supports custom source label."""
         mem_dir = os.path.join(self.test_dir, "custom_mem")
         os.makedirs(mem_dir)
         with open(os.path.join(mem_dir, "MEMORY.md"), "w") as f:
             f.write("Test entry\n")
 
-        count = index_hermes_memory(mem_dir, source="custom-memory")
+        count = index_agent_memory(mem_dir, source="custom-memory")
         self.assertEqual(count, 1)
         result = docs_search("Test", source="custom-memory")
         self.assertIn("custom-memory", result)

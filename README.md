@@ -205,7 +205,7 @@ toolrecall mcp
 ### Hermes Auto-Cache (Hermes Agent only)
 ```bash
 # One-command setup
-bash <(curl -s https://raw.githubusercontent.com/Robin/toolrecall/main/scripts/setup.sh)
+bash <(curl -s https://raw.githubusercontent.com/whiskybeer/toolrecall/main/scripts/setup.sh)
 ```
 
 ## Uninstall
