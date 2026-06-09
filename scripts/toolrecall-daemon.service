@@ -4,9 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=hermes
-ExecStart=/home/hermes/toolrecall/.venv/bin/toolrecall daemon --foreground
-WorkingDirectory=/home/hermes/toolrecall
+ExecStart=%h/.toolrecall/venv/bin/toolrecall daemon --foreground
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
