@@ -141,7 +141,8 @@ time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
 "sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
 
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
-"hermes-docs" = { command = "uv", args = ["run", "/home/hermes/.hermes/scripts/docs_mcp/server.py"] }
+# hermes-docs resolved via AGENT_HOME env var at daemon startup (agent-agnostic)
+"hermes-docs" = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]

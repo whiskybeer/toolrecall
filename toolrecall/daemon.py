@@ -206,8 +206,16 @@ class MCPClientSession:
                                 full_env[key] = val
             except Exception:
                 pass
+        # Resolve $AGENT_HOME and $HOME in args for agent-agnostic paths
+        resolved_args = []
+        agent_home = full_env.get("AGENT_HOME") or full_env.get("HERMES_HOME") or ""
+        for arg in self.args:
+            arg = arg.replace("$AGENT_HOME", agent_home).replace("${AGENT_HOME}", agent_home)
+            arg = arg.replace("$HERMES_HOME", agent_home).replace("${HERMES_HOME}", agent_home)
+            arg = os.path.expanduser(arg)
+            resolved_args.append(arg)
         self._proc = subprocess.Popen(
-            [self.command, *self.args],
+            [self.command, *resolved_args],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
