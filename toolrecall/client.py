@@ -140,7 +140,7 @@ def cached_write(path: str, content: str) -> dict:
 def cached_patch(path: str, old_string: str, new_string: str) -> dict:
     """Apply patch via Daemon or direct — skips if already applied."""
     client = _get_client()
-    resp = client._send({"cmd": "cached_patch", "path": path,
+    resp = client.send({"cmd": "cached_patch", "path": path,
                          "old_string": old_string, "new_string": new_string})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
@@ -162,7 +162,7 @@ def docs_search(query: str, source: str = None) -> str:
 def docs_get_page(source: str, path: str) -> str:
     """Get indexed page via Daemon or direktem SQLite."""
     client = _get_client()
-    resp = client._send({"cmd": "docs_get_page", "source": source, "path": path})
+    resp = client.send({"cmd": "docs_get_page", "source": source, "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
     return _direct_docs_get_page(source, path)
