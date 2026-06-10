@@ -174,7 +174,7 @@ def cmd_status():
         for k, v in stats.items():
             if isinstance(v, dict):
                 print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
-                      f"hit_rate={v['hit_rate']}, tokens_saved={v['tokens_saved']:,}")
+                      f"hit_rate={v['hit_rate']}, tokens_intercepted={v['tokens_intercepted']:,}")
             else:
                 print(f"  {k}: {v}")
 

@@ -99,7 +99,7 @@ def mcp_list_servers() -> dict:
 def cached_read(path: str) -> dict:
     """Read file via Daemon (UDS) or direktes SQLite."""
     client = _get_client()
-    resp = client._send({"cmd": "cached_read", "path": path})
+    resp = client.send({"cmd": "cached_read", "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp  # Success or real error from Daemon
 
@@ -122,7 +122,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
 def cached_skill(name: str) -> dict:
     """View skill via Daemon or direktem SQLite."""
     client = _get_client()
-    resp = client._send({"cmd": "cached_skill", "name": name})
+    resp = client.send({"cmd": "cached_skill", "name": name})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     return _direct_skill(name)
@@ -131,7 +131,7 @@ def cached_skill(name: str) -> dict:
 def cached_write(path: str, content: str) -> dict:
     """Write file via Daemon or direct — skips write if content matches disk."""
     client = _get_client()
-    resp = client._send({"cmd": "cached_write", "path": path, "content": content})
+    resp = client.send({"cmd": "cached_write", "path": path, "content": content})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     return _direct_write(path, content)
@@ -171,7 +171,7 @@ def docs_get_page(source: str, path: str) -> str:
 def cache_status() -> str:
     """Get cache stats via Daemon or direktem SQLite."""
     client = _get_client()
-    resp = client._send({"cmd": "cache_status"})
+    resp = client.send({"cmd": "cache_status"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
     stats = _direct_stats()
@@ -189,7 +189,7 @@ def cache_status() -> str:
 def cache_invalidate() -> str:
     """Invalidate cache via Daemon or direktem SQLite."""
     client = _get_client()
-    resp = client._send({"cmd": "cache_invalidate"})
+    resp = client.send({"cmd": "cache_invalidate"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", "Cache invalidated via daemon")
     _direct_invalidate()
@@ -203,7 +203,7 @@ def refresh_file(path: str) -> dict:
     Respects the path allowlist when going through the daemon.
     """
     client = _get_client()
-    resp = client._send({"cmd": "cache_refresh_file", "path": path})
+    resp = client.send({"cmd": "cache_refresh_file", "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     return _direct_refresh(path)
