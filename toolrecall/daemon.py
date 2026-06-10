@@ -1,7 +1,8 @@
-"""ToolRecall Daemon — Central cache process with UDS interface + MCP Multiplexer.
+"""ToolRecall Daemon — Central cache process with IPC interface + MCP Multiplexer.
 
 The daemon holds the In-Memory LRU + SQLite and accepts requests
-via Unix Domain Socket. All access paths (Python import, MCP, HTTP)
+via Unix Domain Socket (POSIX) or TCP (Windows fallback).
+All access paths (Python import, MCP, HTTP)
 communicate with the daemon — one cache, always warm.
 
 |The MCP Multiplexer manages persistent subprocesses for external MCP
@@ -55,6 +56,11 @@ from toolrecall.cache import (
     refresh_file as _refresh_file,
     get_stats,
 )
+from toolrecall.transport import (
+    TransportClient, DEFAULT_PATH,
+    create_socket, bind_socket, send_message,
+    recv_exact, receive_message, IS_WINDOWS,
+)
 from toolrecall.docs import docs_search as _docs_search, docs_get_page as _docs_get_page
 from toolrecall.config import load_config
 
@@ -64,12 +70,9 @@ PID_FILE = os.path.expanduser("~/.toolrecall/daemon.pid")
 
 
 def _default_socket_path():
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
-        return os.path.join(xdg, "toolrecall.sock")
-    home = Path.home() / ".toolrecall"
-    home.mkdir(parents=True, exist_ok=True)
-    return str(home / "toolrecall.sock")
+    """Default IPC path: UDS on POSIX, TCP on Windows."""
+    from toolrecall.transport import _default_socket_path as _tsp
+    return _tsp()
 
 
 # ─── Security Gates ───────────────────────────────────────
@@ -704,11 +707,15 @@ class MCPMultiplexer:
         return resp.get("result", resp)
 
 
-# ─── UDS Server ───────────────────────────────────────────
+# ─── IPC Server ──────────────────────────────────────────
 
 
 class DaemonServer:
-    """Unix Domain Socket Server — ThreadPoolExecutor für Connection-Handling."""
+    """IPC server — Unix Domain Socket (POSIX) or TCP (Windows).
+    
+    Uses ThreadPoolExecutor for connection handling.
+    The transport.py layer handles platform selection automatically.
+    """
 
     def __init__(self, socket_path: str = None):
         self.socket_path = socket_path or _default_socket_path()
@@ -735,24 +742,16 @@ class DaemonServer:
                 pass
 
     def start(self):
-        """Start the UDS server (blocking)."""
-        # Remove stale socket
-        try:
-            os.unlink(self.socket_path)
-        except FileNotFoundError:
-            pass
-
-        os.makedirs(os.path.dirname(self.socket_path), exist_ok=True)
-
-        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._server.bind(self.socket_path)
+        """Start the IPC server (blocking)."""
+        self._server = create_socket(self.socket_path)
+        bind_socket(self._server, self.socket_path)
         self._server.listen(10)
-        os.chmod(self.socket_path, 0o700)  # Nur Owner
 
         self._running = True
 
+        transport_type = "TCP" if IS_WINDOWS else "UDS"
         print(f"ToolRecall Daemon v0.3.0")
-        print(f"  Socket: {self.socket_path}")
+        print(f"  Transport: {transport_type} at {self.socket_path}")
         print(f"  PID: {os.getpid()}")
         print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
         print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
@@ -784,44 +783,29 @@ class DaemonServer:
             self._server.close()
         except Exception:
             pass
-        try:
-            os.unlink(self.socket_path)
-        except Exception:
-            pass
+        # Clean up socket file (UDS only — TCP sockets aren't files)
+        if not IS_WINDOWS:
+            try:
+                os.unlink(self.socket_path)
+            except Exception:
+                pass
         print("ToolRecall Daemon stopped.")
 
     def _handle(self, conn: socket.socket):
         """Handle one client connection."""
         try:
             conn.settimeout(30.0)
-            # Read 4-byte length prefix + payload
-            raw_len = self._recv_exact(conn, 4)
-            if not raw_len:
+            request = receive_message(conn)
+            if request is None:
                 conn.close()
                 return
-            msg_len = struct.unpack("!I", raw_len)[0]
-            if msg_len > 1024 * 1024:  # Max 1MB request
-                self._send_response(conn, {"error": "Request too large"})
-                conn.close()
-                return
-
-            raw_data = self._recv_exact(conn, msg_len)
-            if not raw_data:
-                conn.close()
-                return
-
-            request = json.loads(raw_data.decode("utf-8"))
             response = self._route(request)
-            self._send_response(conn, response)
-
+            send_message(conn, response)
         except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError):
-            # These errors mean the response cannot be sent — that's fine,
-            # just close the connection. No send_response attempt needed.
             pass
         except Exception as e:
-            # Try to send the error back, but swallow if connection is gone
             try:
-                self._send_response(conn, {"error": str(e)})
+                send_message(conn, {"error": str(e)})
             except Exception:
                 pass
         finally:
@@ -830,22 +814,6 @@ class DaemonServer:
             except Exception:
                 pass
 
-    def _recv_exact(self, conn: socket.socket, n: int) -> bytes:
-        """Receive exactly n bytes."""
-        chunks = []
-        remaining = n
-        while remaining > 0:
-            chunk = conn.recv(min(remaining, 65536))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
-
-    def _send_response(self, conn: socket.socket, data: dict):
-        """Send length-prefixed JSON response."""
-        payload = json.dumps(data).encode("utf-8")
-        conn.sendall(struct.pack("!I", len(payload)) + payload)
 
     def _route(self, request: dict) -> dict:
         """Route a request to the appropriate handler."""
@@ -1077,13 +1045,15 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
             except Exception:
                 pass
 
-    signal.signal(signal.SIGTERM, _signal_handler)
-    signal.signal(signal.SIGINT, _signal_handler)
+    # Register signal handlers (POSIX only)
+    if not IS_WINDOWS:
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
 
     _server_instance = DaemonServer(socket_path)
 
-    if not foreground:
-        # Daemonize: fork, exit parent
+    if not foreground and not IS_WINDOWS:
+        # Daemonize: fork, exit parent (POSIX only)
         pid = os.fork()
         if pid > 0:
             # Write PID file
@@ -1094,10 +1064,23 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
             print(f"  Socket: {_server_instance.socket_path}")
             sys.exit(0)
             
-        # Child process: Redirect standard streams to catch low-level crashes
+        # Child process: Redirect standard streams
         log_file = os.path.expanduser("~/.toolrecall/daemon.log")
         sys.stdout = open(log_file, "a")
         sys.stderr = sys.stdout
+    
+    elif not foreground and IS_WINDOWS:
+        # Windows: use multiprocessing instead of fork
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        p = ctx.Process(target=_server_instance.start)
+        p.start()
+        os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+        with open(PID_FILE, "w") as f:
+            f.write(str(p.pid))
+        print(f"ToolRecall Daemon started (PID: {p.pid})")
+        print(f"  Transport: {_server_instance.socket_path}")
+        sys.exit(0)
 
     _server_instance.start()
 
@@ -1112,14 +1095,20 @@ def stop_daemon():
         pid = int(f.read().strip())
 
     try:
-        os.kill(pid, signal.SIGTERM)
-        print(f"Sent SIGTERM to Daemon (PID {pid})")
+        if IS_WINDOWS:
+            # Windows: use taskkill / PID (SIGTERM equivalent)
+            import subprocess as _sp
+            _sp.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+            print(f"Sent kill to Daemon (PID {pid})")
+        else:
+            os.kill(pid, signal.SIGTERM)
+            print(f"Sent SIGTERM to Daemon (PID {pid})")
     except ProcessLookupError:
         print(f"Daemon (PID {pid}) not running. Cleaning up PID file.")
     finally:
         os.remove(PID_FILE)
         socket_path = _default_socket_path()
-        if os.path.exists(socket_path):
+        if os.path.exists(socket_path) and not IS_WINDOWS:
             try:
                 os.unlink(socket_path)
             except Exception:
@@ -1137,28 +1126,20 @@ def daemon_status():
     try:
         os.kill(pid, 0)  # Test if process exists
         print(f"ToolRecall Daemon: RUNNING (PID {pid})")
-        print(f"  Socket: {_default_socket_path()}")
+        print(f"  Transport: {_default_socket_path()}")
 
         # Try to ping the daemon
         try:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(2.0)
-            sock.connect(_default_socket_path())
-            data = json.dumps({"cmd": "ping"}).encode("utf-8")
-            sock.sendall(struct.pack("!I", len(data)) + data)
-            raw_len = sock.recv(4)
-            if raw_len:
-                msg_len = struct.unpack("!I", raw_len)[0]
-                resp = json.loads(sock.recv(msg_len).decode("utf-8"))
-                sock.close()
-                if resp.get("pong"):
-                    print(f"  PID from socket: {resp.get('pid')}")
-                    print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
-                    print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
-                    print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
-                    servers = resp.get('multiplex_servers', [])
-                    if servers:
-                        print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
+            client = TransportClient(_default_socket_path())
+            resp = client.send({"cmd": "ping"})
+            if resp.get("pong"):
+                print(f"  PID from socket: {resp.get('pid')}")
+                print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
+                print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
+                print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
+                servers = resp.get('multiplex_servers', [])
+                if servers:
+                    print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
         except Exception:
             print("  Status: Unresponsive (Socket error)")
 

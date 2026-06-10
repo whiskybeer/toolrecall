@@ -15,7 +15,7 @@ Instead of letting an AI agent waste time and money repeatedly making the exact 
 
 ToolRecall behaves like a highly efficient filing cabinet, not an expensive librarian. It strips away unnecessary cloud dependencies and AI guesswork — making your developer tools faster, cheaper, and inherently secure.
 
-ToolRecall is a **deterministic** middleware layer for autonomous AI agents. It sits between the agent and the OS, catching tool executions and managing MCP servers via Unix Domain Sockets.
+ToolRecall is a **deterministic** middleware layer for autonomous AI agents. It sits between the agent and the OS, catching tool executions and managing MCP servers via Unix Domain Sockets (Linux/Mac) or TCP localhost fallback (Windows).
 
 Unlike caching frameworks that use a second LLM ("Cache Planner") to classify tools as cacheable or not — introducing hallucination risk, extra API cost, and cold-start latency — ToolRecall is purely deterministic: files invalidate on mtime, commands expire by explicit TTL, and `ttl=0` guarantees a tool **always** executes live. No guesses. No grey zones. No data loss from a bad LLM classification.
 
@@ -92,10 +92,11 @@ No custom plugins. No SDK changes. 100% Day-1 ecosystem penetration.
 
 ToolRecall doesn't cure an LLM of being prompt-injected — it cages the agent to neutralize the consequences:
 
-- **Daemon-based IPC:** Unix Domain Sockets only. No open TCP ports (immune to SSRF).
+- **Daemon-based IPC:** Unix Domain Sockets (Linux/Mac) or TCP localhost fallback (Windows). No open ports — immune to SSRF.
 - **Cryptographic path resolution:** `os.path.realpath` blocks `../../../etc/shadow` before the OS is touched.
 - **Execution blackholes:** `allow_terminal = false` drops RCE attempts into a void.
 - **Air-gapped secrets:** API keys in `~/.toolrecall/.env` — the LLM never sees them.
+- **Default-deny init flow:** `toolrecall init` prompts for allowed paths interactively. Without config, ALL paths are blocked until explicitly allowed.
 - **MCP keyword access control:** `tool_access_control = true` blocks any MCP tool whose name contains `write`, `delete`, `push`, etc. This is a substring match on tool names — not an OS sandbox, no process isolation. A tool named `post_message` passes through even if it modifies state. Pair with Docker/gVisor for real isolation.
 - **Cognitive Pre-Flight (deterministic semantic scan):** Before dispatching any MCP tool call, the daemon evaluates arguments against a library of prompt-injection patterns — regex signatures for jailbreak families, heuristic entropy scores, and keyword blacklists. Zero LLM involved. Zero dependencies. Sub-millisecond hot-path overhead. Measured against a labeled test corpus (70 injection, 50 legitimate prompts) — benchmarked in `tests/test_cognitive_scan.py`. Optional ONNX classifier (cold path) available for edge cases — still fully local, no data leaves the machine.
 
@@ -154,7 +155,8 @@ Standard `stdio` MCP (`toolrecall mcp`). Works with Claude Code, Cursor, Cline, 
         +───────────────────────────────────+
         │  Standard stdio Protocol (Bridge) │  <- Client Layer
         +─────────────────┬─────────────────+
-                          │ Unix Domain Socket
+                          │ Unix Domain Socket (Linux/Mac)
+                          │ TCP localhost:8567 (Windows)
         +─────────────────▼─────────────────+
         │         ToolRecall Daemon         │  <- Gateway Layer
         │  ┌─────────────────────────────┐  │
@@ -316,7 +318,7 @@ TOML (default, zero deps via stdlib `tomllib`) or YAML (optional, requires `pyya
 
 ```toml
 [mcp]
-allowed_paths = ["~/projects", "~/.hermes/skills"]
+allowed_paths = ["~/projects", "~/.toolrecall"]
 allow_terminal = false
 default_ttl = 60
 
@@ -324,8 +326,9 @@ default_ttl = 60
 enabled = true
 idle_minutes = 15
 
-[mcp_multiplex.servers_config]
-github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"], ttl = 60 }
+[security]
+tool_access_control = false
+dangerous_tool_keywords = []
 ```
 
 `TOOLRECALL_*` environment variables override TOML (for CI/CD, multi-agent setups).
@@ -354,6 +357,16 @@ The metaphor is useful for understanding caching topology (closest tier → agen
 ## Status
 
 **Experimental.** Used in heavy autonomous agent workflows. Before production CI/CD: ensure your allowlist is strictly scoped.
+
+---
+
+## Platform Support
+
+| Platform | Transport | Status |
+|----------|-----------|--------|
+| **Linux** | Unix Domain Sockets | ✅ Tested in CI (176/176 pass) |
+| **macOS** | Unix Domain Sockets | ✅ Should work (POSIX). Not in CI — manually verify before relying on it. |
+| **Windows** | TCP localhost:8567 fallback | ⚠️ **Unsupported / untested.** Transport layer has TCP fallback and signal-handling adaptations, but the full test suite has never run on Windows. Expect breakage (path separators, process management, systemd setup). Community contributions welcome. |
 
 ---
 

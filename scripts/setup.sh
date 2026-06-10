@@ -64,7 +64,7 @@ echo ""
 
 # --- 1. Install ---
 echo "[1/5] Installing ToolRecall..."
-pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null || pip install git+https://github.com/Robin/toolrecall.git 2>/dev/null || {
+pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null || pip install git+https://github.com/whiskybeer/toolrecall.git 2>/dev/null || {
     echo "  ⚠ pip not found. Trying uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
     uv pip install toolrecall
@@ -226,7 +226,7 @@ if command -v hermes &>/dev/null && [ -z "$NO_RC" ]; then
     echo "      → Zero network, full API, 0ms overhead"
     echo "      → Register auto-cache init script..."
     mkdir -p ~/.toolrecall
-    curl -sL https://raw.githubusercontent.com/Robin/toolrecall/main/toolrecall/hermes_init.py \
+    curl -sL https://raw.githubusercontent.com/whiskybeer/toolrecall/main/toolrecall/hermes_init.py \
         -o ~/.toolrecall/hermes_init.py 2>/dev/null || true
     hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]' 2>/dev/null || true
     echo "      → Restart Hermes or run /reset"

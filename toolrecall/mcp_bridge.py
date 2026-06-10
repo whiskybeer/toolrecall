@@ -21,12 +21,10 @@ Requires a running ToolRecall Daemon:
 
 import json
 import os
-import socket
-import struct
 import sys
 from pathlib import Path
 
-from toolrecall.client import UDSClient
+from toolrecall.transport import TransportClient, DEFAULT_PATH
 
 
 # ─── MCP Tool Definitions ────────────────────────────────
@@ -176,12 +174,12 @@ class MCPBridge:
     """Liest MCP JSON-RPC von stdin, leitet an Daemon weiter, schreibt auf stdout."""
 
     def __init__(self, socket_path: str = None):
-        self.client = UDSClient(socket_path)
+        self.client = TransportClient(socket_path or DEFAULT_PATH)
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:
         """Send a request to the daemon and return parsed response."""
         payload = {"cmd": cmd, **kwargs}
-        return self.client._send(payload)
+        return self.client.send(payload)
 
     def _format_result(self, result) -> str:
         """Format a result for MCP text content."""
@@ -288,13 +286,13 @@ class MCPBridge:
                 }
                 if bypass:
                     payload["ttl"] = 0
-                resp = self.client._send(payload)
+                resp = self.client.send(payload)
             elif tool_name == "mcp_list_servers":
-                resp = self.client._send({"cmd": "mcp_list_servers"})
+                resp = self.client.send({"cmd": "mcp_list_servers"})
             else:
                 # cached_read with bypass_cache → translate to refresh_file
                 if tool_name == "cached_read" and arguments.get("bypass_cache", False):
-                    resp = self.client._send({
+                    resp = self.client.send({
                         "cmd": "cache_refresh_file",
                         "path": arguments.get("path", ""),
                     })

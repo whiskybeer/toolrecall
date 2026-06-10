@@ -21,7 +21,7 @@ import json
 import logging
 import urllib.parse
 
-from toolrecall.client import UDSClient
+from toolrecall.transport import TransportClient
 
 log = logging.getLogger("toolrecall.proxy")
 
@@ -30,7 +30,7 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler — forwards to Daemon via UDS."""
 
     def __init__(self, *args, **kwargs):
-        self._client = UDSClient()
+        self._client = TransportClient()
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
@@ -45,7 +45,7 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
                 if not p:
                     result = {"error": "Missing 'path' query parameter"}
                 else:
-                    result = self._client._send({"cmd": "cached_read", "path": p})
+                    result = self._client.send({"cmd": "cached_read", "path": p})
 
             elif path == "/cached_terminal":
                 c = q.get("cmd", "")
@@ -54,14 +54,14 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     ttl_str = q.get("ttl", "0")
                     ttl = int(ttl_str) if ttl_str else None
-                    result = self._client._send({"cmd": "cached_terminal", "command": c, "ttl": ttl})
+                    result = self._client.send({"cmd": "cached_terminal", "command": c, "ttl": ttl})
 
             elif path == "/cached_skill":
                 s = q.get("name", "")
                 if not s:
                     result = {"error": "Missing 'name' query parameter"}
                 else:
-                    result = self._client._send({"cmd": "cached_skill", "name": s})
+                    result = self._client.send({"cmd": "cached_skill", "name": s})
 
             elif path == "/docs_search":
                 query = q.get("query", "")
@@ -69,10 +69,10 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
                     result = {"error": "Missing 'query' query parameter"}
                 else:
                     src = q.get("source", None)
-                    result = self._client._send({"cmd": "docs_search", "query": query, "source": src})
+                    result = self._client.send({"cmd": "docs_search", "query": query, "source": src})
 
             elif path == "/health":
-                ping = self._client._send({"cmd": "ping"})
+                ping = self._client.send({"cmd": "ping"})
                 if ping.get("error") == "daemon_unavailable":
                     result = {"status": "error", "daemon": "not running"}
                     self.send_response(503)
@@ -124,8 +124,8 @@ def run_server(bind: str = "127.0.0.1", port: int = 8567):
     log.info("ToolRecall HTTP Proxy running on http://%s:%d", bind, port)
 
     # Check daemon
-    client = UDSClient()
-    ping = client._send({"cmd": "ping"})
+    client = TransportClient()
+    ping = client.send({"cmd": "ping"})
     if ping.get("error") == "daemon_unavailable":
         log.warning("ToolRecall daemon not running! Start with: toolrecall daemon &")
         log.info("Proxy started — will connect when daemon becomes available")

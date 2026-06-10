@@ -1,8 +1,7 @@
-"""ToolRecall Client — UDS Client with Direct SQLite Fallback.
+"""ToolRecall Client — Platform-agnostic IPC client.
 
-The client first attempts to communicate with the ToolRecall Daemon via Unix Domain Socket.
-If no Daemon is running, it falls back to direct SQLite access (legacy behavior).
-This ensures the client is always usable — with or without a running Daemon.
+Connects via TransportClient (UDS on POSIX, TCP on Windows).
+Falls back to direct SQLite when the daemon is unavailable.
 
 Usage:
     from toolrecall.client import (
@@ -13,10 +12,10 @@ Usage:
 
 import json
 import os
-import socket
-import struct
 import sys
 from pathlib import Path
+
+from toolrecall.transport import TransportClient, DEFAULT_PATH
 
 from toolrecall.cache import (
     cached_read as _direct_read,
@@ -31,90 +30,25 @@ from toolrecall.cache import (
 from toolrecall.docs import docs_search as _direct_docs_search, docs_get_page as _direct_docs_get_page
 from toolrecall.config import load_config
 
-# ─── Default Socket Path ─────────────────────────────────
-
-def _default_socket_path():
-    """Determine default UDS path. Prefer user-local over /tmp."""
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
-        return os.path.join(xdg, "toolrecall.sock")
-    home = Path.home() / ".toolrecall"
-    home.mkdir(parents=True, exist_ok=True)
-    return str(home / "toolrecall.sock")
-
-
-SOCKET_PATH = os.environ.get("TOOLRECALL_SOCKET", _default_socket_path())
-
-
-# ─── UDS Client ───────────────────────────────────────────
-
-class UDSClient:
-    """Stateless UDS-Client. Verbindet sich pro Request neu (einfach, robust)."""
-
-    def __init__(self, socket_path: str = None):
-        self._path = socket_path or SOCKET_PATH
-
-    def _send(self, payload: dict) -> dict:
-        """Send JSON-RPC-like request, receive response."""
-        try:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
-            sock.connect(self._path)
-
-            data = json.dumps(payload).encode("utf-8")
-            # Length-prefixed framing (4 bytes = message length)
-            sock.sendall(struct.pack("!I", len(data)) + data)
-
-            # Read response: 4 bytes length + payload
-            raw_len = sock.recv(4)
-            if not raw_len:
-                sock.close()
-                return {"error": "Empty response from daemon"}
-            msg_len = struct.unpack("!I", raw_len)[0]
-
-            chunks = []
-            remaining = msg_len
-            while remaining > 0:
-                chunk = sock.recv(min(remaining, 65536))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            sock.close()
-
-            resp = json.loads(b"".join(chunks).decode("utf-8"))
-            return resp
-
-        except (ConnectionRefusedError, FileNotFoundError, socket.timeout, OSError):
-            return {"error": "daemon_unavailable"}
-        except Exception as e:
-            return {"error": str(e)}
-
+# ─── Shared Client Instance ───────────────────────────────
 
 _client = None
 
 
-def _get_client() -> UDSClient:
+def _get_client() -> TransportClient:
+    """Get or create the shared TransportClient."""
     global _client
     if _client is None:
-        _client = UDSClient()
+        _client = TransportClient(DEFAULT_PATH)
     return _client
 
 
 def _check_daemon() -> bool:
-    """Check if Daemon is running (fast payload-less health check)."""
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        sock.connect(SOCKET_PATH)
-        sock.close()
-        return True
-    except Exception:
-        return False
+    """Check if Daemon is running (fast ping)."""
+    return TransportClient(DEFAULT_PATH).ping()
 
 
-
-# ─── Public API (UDS first, Fallback auf direktes SQLite) ──
+# ─── Public API (Daemon first, fallback to direct SQLite) ──
 
 
 def mcp_call(server: str, tool: str, arguments: dict = None, bypass_cache: bool = False) -> dict:
@@ -144,7 +78,7 @@ def mcp_call(server: str, tool: str, arguments: dict = None, bypass_cache: bool 
     if bypass_cache:
         payload["ttl"] = 0
 
-    resp = client._send(payload)
+    resp = client.send(payload)
     if "error" in resp and resp["error"] == "MCP multiplexer is disabled.":
         return {"error": "MCP multiplexer is not enabled in ToolRecall config."}
     return resp
@@ -158,7 +92,7 @@ def mcp_list_servers() -> dict:
     """
     client = _get_client()
     payload = {"cmd": "mcp_list_servers"}
-    resp = client._send(payload)
+    resp = client.send(payload)
     return resp
 
 
@@ -179,7 +113,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     payload = {"cmd": "cached_terminal", "command": command}
     if ttl is not None:
         payload["ttl"] = ttl
-    resp = client._send(payload)
+    resp = client.send(payload)
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     return _direct_terminal(command, ttl=ttl)
@@ -219,7 +153,7 @@ def docs_search(query: str, source: str = None) -> str:
     payload = {"cmd": "docs_search", "query": query}
     if source:
         payload["source"] = source
-    resp = client._send(payload)
+    resp = client.send(payload)
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
     return _direct_docs_search(query, source=source)
@@ -282,10 +216,13 @@ def daemon_running() -> bool:
     return _check_daemon()
 
 
-# ─── Set socket path (for testing / custom setups) ─────────
+# ─── Set transport path (for testing / custom setups) ──────
 
 def set_socket_path(path: str):
-    """Override the default UDS socket path."""
-    global SOCKET_PATH, _client
-    SOCKET_PATH = path
+    """Override the default transport path (UDS file or tcp://host:port)."""
+    from toolrecall.transport import DEFAULT_PATH as _DP
+    global _client
+    # Swap DEFAULT_PATH
+    import toolrecall.transport as _tp
+    _tp.DEFAULT_PATH = path
     _client = None  # Force reconnect

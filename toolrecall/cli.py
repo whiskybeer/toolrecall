@@ -48,11 +48,12 @@ def cmd_init():
     print()
 
     # ─── Interactive path collection ───────────────────
-    default_paths = ["~/projects", "~/.hermes/skills"]
+    default_paths = ["~/projects", "~/.toolrecall"]
     paths = []
 
-    print("Enter one path per line. Empty line when done.")
-    print(f"Press Enter for default: {', '.join(default_paths)}")
+    print("Enter the directories your agent should be able to read.")
+    print("One path per line. Empty line when done.")
+    print(f"Default (press Enter): {', '.join(default_paths)}")
     print()
 
     first = True
@@ -84,6 +85,19 @@ def cmd_init():
 [storage]
 backend = "sqlite"
 
+[cache]
+file_ttl = -1          # read_file: until file modification
+skill_ttl = -1         # skill_view: until skill update
+terminal_default_ttl = 300
+
+[proxy]
+port = 8567
+bind = "127.0.0.1"
+
+[security]
+tool_access_control = false
+dangerous_tool_keywords = []
+
 [mcp]
 # ⚠️ SECURITY: Default-deny file access control.
 # The agent can ONLY read files under these directories.
@@ -95,22 +109,18 @@ allowed_paths = [
 ]
 allow_terminal = false
 allow_invalidate = false
-default_ttl = 60
 
 [mcp_multiplex]
 enabled = true
+default_ttl = 60
+servers = []
 idle_minutes = 15
 
 [mcp_multiplex.servers_config]
-# ToolRecall multiplexes all your MCP servers through a single connection.
-# Servers are lazy-loaded on the first call and killed after 15min idle to save RAM.
-
-# --- Useful Default Examples ---
-# github = {{ command = "npx", args = ["-y", "@modelcontextprotocol/server-github"], ttl = 60 }}
-# sequential-thinking = {{ command = "npx", args = ["-y", "@modelcontextprotocol/server-sequential-thinking"] }}
-# brave-search = {{ command = "npx", args = ["-y", "@modelcontextprotocol/server-brave-search"], ttl = 3600 }}
-# fetch = {{ command = "uvx", args = ["mcp-server-fetch"], ttl = 3600 }}
-# Note: For servers that POST data or stream live updates (like Slack), set `ttl = 0` to bypass caching!
+time = {{ command = "python3", args = ["-m", "toolrecall.mcp_time"] }}
+"sequential-thinking" = {{ command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }}
+fetch = {{ command = "uvx", args = ["mcp-server-fetch"] }}
+# github = {{ command = "python3", args = ["-m", "toolrecall.mcp_github"] }}  # opt-in, needs GITHUB_TOKEN
 """
 
     env_content = """# ToolRecall Secrets
