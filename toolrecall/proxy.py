@@ -105,7 +105,7 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_server(bind: str = "[IP_ADDRESS]", port: int = 8567):
+def run_server(bind: str = "127.0.0.1", port: int = 8567):
     """Start the ToolRecall HTTP proxy bridge.
 
     Binds to localhost only (safe default). No network exposure.

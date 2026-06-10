@@ -32,7 +32,7 @@ terminal_default_ttl = 300  # 5 minutes for unknown commands
 # you don't need this running unless you hook up an HTTP-only agent.
 [proxy]
 port = 8567
-bind = "[IP_ADDRESS]"                       # localhost only
+bind = "127.0.0.1"                       # localhost only
 nginx_recommended = true    # Show "nginx recommended" in docs
 
 # ─── Nginx Config (for SSL + auth) ────────

@@ -11,7 +11,7 @@
 #   --db PATH        Cache database path (default: ~/.toolrecall/cache.db)
 #   --knowledge PATH Knowledge database path (default: ~/.toolrecall/knowledge.db)
 #   --proxy PORT     HTTP proxy port (default: 8567, 0 = disable)
-#   --bind ADDR      HTTP proxy bind address (default: [IP_ADDRESS])
+#   --bind ADDR      HTTP proxy bind address (default: 127.0.0.1)
 #   --nginx          Generate nginx config in addition
 #   --scan DIRS      Comma-separated dirs to index for knowledge search
 #   --no-rc          Don't add to agent init scripts
@@ -129,7 +129,7 @@ if [ -z "$PROXY_PORT" ]; then
 fi
 
 if [ "$PROXY_PORT" != "0" ]; then
-    BIND_ADDR="${BIND_ADDR:-[IP_ADDRESS]}"
+    BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
 
     # Test if bind address resolves (common issue on cloud VMs)
     echo -n "  Testing bind address..."
@@ -142,12 +142,12 @@ if [ "$PROXY_PORT" != "0" ]; then
         echo "  ⚠ '$BIND_ADDR' does not resolve on this system."
         echo "    This is common on cloud VMs (GCP, AWS) with custom hostnames."
         echo "    Options:"
-        echo "      [IP_ADDRESS] (all interfaces)  → works everywhere"
-        echo "      [IP_ADDRESS] (localhost only)  → works everywhere (secure)"
+        echo "      127.0.0.1 (all interfaces)  → works everywhere"
+        echo "      127.0.0.1 (localhost only)  → works everywhere (secure)"
         echo ""
-        echo "  → Using [IP_ADDRESS] (all interfaces)."
-        echo "    Set TOOLRECALL_PROXY_BIND=[IP_ADDRESS] for localhost-only."
-        BIND_ADDR="[IP_ADDRESS]"
+        echo "  → Using 127.0.0.1 (all interfaces)."
+        echo "    Set TOOLRECALL_PROXY_BIND=127.0.0.1 for localhost-only."
+        BIND_ADDR="127.0.0.1"
     else
         echo " OK"
     fi
