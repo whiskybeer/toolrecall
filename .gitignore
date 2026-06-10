@@ -9,3 +9,11 @@ __pycache__/
 dist/
 build/
 .venv/
+
+# Editor artifacts
+*.swp
+*.swo
+*~
+
+# Test artifacts
+Dockerfile.test
