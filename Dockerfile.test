@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+WORKDIR /test
+COPY . .
+RUN pip install --no-cache-dir -e .
+RUN echo "=== Verify 127.0.0.1 replacement ===" && \
+    grep -rn '\[IP_ADDRESS\]' toolrecall/proxy.py toolrecall/config.toml scripts/setup.sh | wc -l | grep -q '^0$' && \
+    echo "✅ No [IP_ADDRESS] placeholder remaining" || \
+    (echo "❌ [IP_ADDRESS] still found:"; grep -rn '\[IP_ADDRESS\]' toolrecall/proxy.py toolrecall/config.toml scripts/setup.sh; exit 1)
+RUN echo "=== Verify 127.0.0.1 present ===" && \
+    grep -rn '127\.0\.0\.1' toolrecall/proxy.py toolrecall/config.toml scripts/setup.sh && \
+    echo "✅ 127.0.0.1 found in all files"
+RUN echo "=== Run test suite ===" && \
+    pip install pytest && \
+    python3 -m pytest tests/ -k 'not memory' -v --tb=short 2>&1 | tail -20

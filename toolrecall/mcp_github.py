@@ -7,7 +7,19 @@ Supports: create_repository, create_or_update_file, push_files, list_commits
 
 Token is loaded from the ToolRecall daemon environment (never exposed to subprocess).
 """
-import base64, json, os, sys, urllib.request, urllib.error
+import base64, json, os, sys, time, logging, urllib.request, urllib.error
+
+# Local-only request logger — one line per API call
+_log = logging.getLogger("toolrecall.github")
+_log.setLevel(logging.DEBUG)
+_fh = logging.FileHandler(os.path.expanduser(
+    os.environ.get("TOOLRECALL_GITHUB_LOG", "~/.toolrecall/github_api.log")
+))
+_fh.setFormatter(logging.Formatter(
+    "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+))
+_log.addHandler(_fh)
+_log.info("=== GitHub MCP Request Log started ===")
 
 TOKEN = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
 
@@ -28,11 +40,18 @@ def _api(method, path, data=None):
     url = f"{API_BASE}/{path}"
     body = json.dumps(data).encode() if data else None
     req = urllib.request.Request(url, data=body, headers=HEADERS, method=method)
+    t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req) as r:
-            return json.loads(r.read())
+            resp = json.loads(r.read())
+        elapsed = (time.perf_counter() - t0) * 1000
+        _log.info(f"{method:>6} /{path} → {r.status}  {elapsed:.0f}ms")
+        return resp
     except urllib.error.HTTPError as e:
-        return {"error": e.code, "message": e.read().decode()[:200]}
+        elapsed = (time.perf_counter() - t0) * 1000
+        body_preview = e.read().decode()[:200]
+        _log.warning(f"{method:>6} /{path} → {e.code}  {elapsed:.0f}ms  {body_preview}")
+        return {"error": e.code, "message": body_preview}
 
 def _handle(method, params):
     if method == "create_repository":

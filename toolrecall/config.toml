@@ -45,22 +45,42 @@ ssl_key = ""
 
 # ─── MCP Server Security ────────────────
 [security]
-# 🛡️ MCP Keyword Access Control (not an OS sandbox)
+# 🛡️ MCP Tool Access Control — default-deny for state-modifying tools
 #
-# When enabled, ToolRecall blocks MCP tools whose names contain substrings
-# listed in dangerous_tool_keywords. This is a STRING MATCH on tool names,
-# NOT an OS-level sandbox — there is no process isolation, no cgroups,
-# no containerization. Tools whose names happen to not match any keyword
-# (e.g. "post_to_slack", "run_migration", "execute_query") are NOT blocked.
+# ═══ WHAT THIS DOES ═══
+# When enabled, ToolRecall BLOCKS MCP tools whose names contain any substring
+# from dangerous_tool_keywords below. This only affects the MCP Multiplexer
+# (the github, time, fetch, etc. servers) — it does NOT affect cached_read,
+# cached_skill, cached_mcp, or other file-caching tools, which have their own
+# path-based allowlist.
 #
-# This is useful as a safety net for exploratory sessions, but provides
-# no guarantee against all state-modifying operations.
-# For real sandboxing, combine with Docker or gVisor.
+# ═══ RISK OF ADDING KEYWORDS ═══
+# Adding a keyword like "write" or "push" is a SUBSTRING MATCH:
+#   - "write_file"           → blocked ✅
+#   - "create_repository"    → blocked ✅
+#   - "push_files"           → blocked ✅
+#   - "set_temperature"      → blocked by "set" keyword (unexpected!)
+#   - "update_issue"         → blocked by "update" keyword
+#   - "post_to_slack"        → NOT blocked (no keyword matches)
+#
+# Partial matches are inherent — "edit" blocks "credit_score" and
+# "run" blocks "runoff_election". The longer your keyword list, the
+# higher the chance of false positives. Add terms cautiously.
+#
+# ═══ DEFAULT: DISABLED (empty list) ═══
+# The list below is EMPTY by default. Setting tool_access_control=true
+# with an empty list blocks NOTHING — you must explicitly add keywords
+# to activate filtering. This forces a conscious choice about what
+# operations you want to restrict.
+#
+# 🔐 For real sandboxing: combine with Docker/gVisor/cgroups.
+#    This is a naming convention check, NOT process isolation.
 tool_access_control = false
 
 # Tools whose names contain these substrings will be blocked when tool_access_control = true
 # Note: substring match only — works for English tool names, partial matches possible
-dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
+# EMPTY by default — set tool_access_control=true AND add keywords below to activate filtering
+dangerous_tool_keywords = []
 
 [mcp]
 # ⚠️ SECURITY: Filesystem access control
@@ -91,7 +111,15 @@ allow_terminal = false
 # Allow cache_invalidate tool (OFF by default — destructive!)
 allow_invalidate = false
 
-# ─── MCP Multiplexer ─────────────────────
+# ─── MCP Multiplexer — Security-sensitive servers are opt-in ──
+#
+# GitHub is intentionally NOT pre-configured here. The GitHub MCP
+# server (toolrecall.mcp_github) can read/write repos via your
+# GITHUB_TOKEN from ~/.toolrecall/.env — any agent with MCP access
+# could call list_repos, push_files, create_repository, etc.
+#
+# To enable: uncomment the line below (and set GITHUB_TOKEN in env).
+# The code is shipped with the package; no extra install needed.
 [mcp_multiplex]
 enabled = true
 transparent_cache = true
@@ -100,7 +128,7 @@ servers = []
 idle_minutes = 15
 
 [mcp_multiplex.servers_config]
-github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
+# github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
 time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
 "sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
