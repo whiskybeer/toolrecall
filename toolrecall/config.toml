@@ -85,23 +85,23 @@ dangerous_tool_keywords = []
 [mcp]
 # ⚠️ SECURITY: Filesystem access control
 #
-# Only directories listed here are readable through ToolRecall's MCP
-# file-caching tools (cached_read, cached_mcp tools).
+# DEFAULT-DENY: ONLY directories listed here are readable through ToolRecall's
+# MCP file-caching tools (cached_read, cached_mcp tools).
+# If this list is empty, NO paths are readable at all.
 #
-# DEFAULT-DENY: If this list is empty, NO paths are readable at all.
-# The daemon will reject every file read with an error until you add paths.
+# Default: nothing but ToolRecall's own data dir. You MUST add your project
+# directories before any files can be cached. This is intentional — you
+# consciously choose what the agent can access.
 #
 # Consequences of adding a path:
-#   ✓ Any file under it becomes readable via MCP file tools
+#   ✓ Any file under it becomes readable via MCP cache tools
 #   ✗ A prompt-injected agent could read files under these paths
 #   🛡️ The sensitive file blocklist (.env, .ssh/, .pem keys) still applies
 #      as a secondary safety net within allowed paths
 #
 # For best security: list only directories the agent needs to read.
 allowed_paths = [
-    "~/.hermes/skills",
-    "~/.hermes/scripts",
-    "~/.toolrecall",
+    "~/.toolrecall",              # ToolRecall's own data dir
 ]
 
 # Allow cached_terminal tool (OFF by default — security risk!)
@@ -117,9 +117,10 @@ allow_invalidate = false
 # server (toolrecall.mcp_github) can read/write repos via your
 # GITHUB_TOKEN from ~/.toolrecall/.env — any agent with MCP access
 # could call list_repos, push_files, create_repository, etc.
-#
 # To enable: uncomment the line below (and set GITHUB_TOKEN in env).
-# The code is shipped with the package; no extra install needed.
+#
+# hermes-docs requires Hermes Agent ($AGENT_HOME) — commented out by default.
+# Uncomment if you use Hermes.
 [mcp_multiplex]
 enabled = true
 transparent_cache = true
@@ -132,13 +133,12 @@ idle_minutes = 15
 time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
 "sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
-"hermes-docs" = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
+# hermes-docs = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]
 scan_dirs = [
-    "~/.hermes/skills",
-    "~/.hermes/scripts",
+    "~/.toolrecall",                   # self-docs, setup scripts
 ]
 scan_extensions = [".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]
 scan_ignore = [".git", "node_modules", ".venv", "dist", "build", "__pycache__"]
