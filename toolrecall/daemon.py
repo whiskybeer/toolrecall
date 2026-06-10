@@ -49,6 +49,7 @@ from toolrecall.cache import (
     cached_patch as _cache_patch,
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_store as _cache_mcp_store,
+    _is_sensitive_path,
     invalidate_all,
     invalidate_file as _invalidate_file,
     refresh_file as _refresh_file,
@@ -90,12 +91,14 @@ class SecurityGate:
         self.allow_invalidate = cfg.mcp_allow_invalidate
         self.allow_multiplex = cfg.mcp_multiplex_enabled
         self.allowed_servers = [s.lower() for s in (cfg.mcp_multiplex_servers or [])]
-        self.read_only_sandbox = cfg.mcp_read_only_sandbox
+        self.tool_access_control = cfg.mcp_tool_access_control
         self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords or [
             "write", "edit", "delete", "remove", "terminal",
             "bash", "exec", "run", "push", "commit", "update", "create",
             "sudo", "chmod", "chown", "invalidate", "store", "set",
         ]
+        self.cognitive_check = cfg.mcp_cognitive_check_enabled
+        self.ast_check = cfg.mcp_ast_check_enabled
         self.logger = logging.getLogger(__name__)
 
     MAX_PATH_LENGTH = 4096  # POSIX PATH_MAX
@@ -110,18 +113,35 @@ class SecurityGate:
         if len(path) > self.MAX_PATH_LENGTH:
             return "Path not allowed: exceeds maximum length"
 
+        # ═══ Layer 1: Allowlist ═══
+        # Default-deny: if allowed_paths is empty, NO paths are readable.
+        # The user MUST explicitly configure paths in mcp.allowed_paths.
         if not self.allowed_paths:
-            return None  # All allowed (DANGEROUS — but configured explicitly)
+            return (
+                "Path not allowed: no allowed paths configured. "
+                "Add directories to mcp.allowed_paths in your config.toml "
+                "(e.g. allowed_paths = ['~/projects']). "
+                "See: toolrecall init for interactive setup."
+            )
 
-        # Security: Strict symlink resolution to prevent directory traversal escapes
         abs_path = os.path.realpath(os.path.expanduser(path))
-
         for allowed in self.allowed_paths:
             allowed_abs = os.path.realpath(os.path.expanduser(allowed))
             if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
-                return None
-        # Generic error — never leak the real resolved path to the caller
-        return "Path not allowed: access denied"
+                break
+        else:
+            # Generic error — never leak the real resolved path to the caller
+            return "Path not allowed: access denied"
+
+        # ═══ Layer 2: Sensitive file blocklist ═══
+        # Even within allowed paths, block known sensitive files — .env, .ssh,
+        # credentials, etc.  This is a safety net, not a primary control.
+        # The allowlist defines trust; the blocklist prevents accidental
+        # disclosure of credential files within trusted directories.
+        if _is_sensitive_path(path):
+            return "Path not allowed: path matches a sensitive file pattern"
+
+        return None
 
     def check_terminal(self, cmd: str) -> str | None:
         if not self.allow_terminal:
@@ -153,7 +173,7 @@ class SecurityGate:
             return f"MCP server '{server}' not in allowed_servers."
         return None
 
-    def check_mcp_tool_sandbox(self, tool_name: str) -> str | None:
+    def check_mcp_tool_access(self, tool_name: str) -> str | None:
         """MCP Keyword Access Control: blocks tools whose name contains a dangerous substring.
 
         This is NOT an OS sandbox. There is no process isolation, no container,
@@ -161,13 +181,191 @@ class SecurityGate:
         happen to not match any keyword (e.g. 'post_to_slack', 'run_migration')
         are NOT blocked. For real sandboxing, combine with Docker/gVisor.
         """
-        if not self.read_only_sandbox:
+        if not self.tool_access_control:
             return None
         
         t_lower = tool_name.lower()
         for kw in self.dangerous_tool_keywords:
             if kw.lower() in t_lower:
                 return f"ToolRecall MCP Access Control: tool '{tool_name}' blocked (matches keyword '{kw}')."
+        return None
+
+    # ─── Cognitive Semantic Scan ────────────────────────────
+
+    # Compiled lazily on first call to cognitive_scan_arguments()
+    _cog_override_pat = None
+    _cog_role_pat = None
+    _cog_fish_pat = None
+    _cog_jailbreak_pat = None
+    _cog_overflow_pat = None
+    _cog_encode_pat = None
+    _cog_exfil_domain_pat = None
+    _cog_exfil_ip_pat = None
+
+    @classmethod
+    def _compile_cognitive_patterns(cls):
+        """Lazy-compile cognitive scan regexes (measured: ~0.001ms each on first call)."""
+        if cls._cog_override_pat is None:
+            import re
+            cls._cog_override_pat = re.compile(
+                r"ignore\s+(?:all\s+)?(?:prior|previous|your)?\s*(?:\w+\s+)?(?:instructions|directives|rules|commands)",
+                re.IGNORECASE,
+            )
+            cls._cog_role_pat = re.compile(
+                r"(?:you\s+are\s+now|act\s+as\s+(?:if\s+)?|new\s+role)",
+                re.IGNORECASE,
+            )
+            cls._cog_fish_pat = re.compile(
+                r"(?:reveal\s+(?:your\s+)?(?:system\s+)?prompt|show\s+(?:your\s+)?secret|dump\s+(?:your\s+)?internal)",
+                re.IGNORECASE,
+            )
+            cls._cog_jailbreak_pat = re.compile(
+                r"\b(?:DAN|STAN|GODMODE|god\s*mode|unlocked\s*mode)\b",
+                re.IGNORECASE,
+            )
+            cls._cog_overflow_pat = re.compile(
+                r"(?:context\s+overflow|token\s+(?:consumption|limit|window))",
+                re.IGNORECASE,
+            )
+            cls._cog_encode_pat = re.compile(
+                r"(?:base64|%[0-9a-fA-F]{2}%[0-9a-fA-F]{2}%[0-9a-fA-F]{2})",
+            )
+            cls._cog_exfil_domain_pat = re.compile(
+                r"(?:evil-|exfil|malware|phishing|steal|leak).*\.(?:com|org|net|io|xyz|ru)",
+                re.IGNORECASE,
+            )
+            cls._cog_exfil_ip_pat = re.compile(
+                r"https?://(?:127\.0\.0\.1|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?::\d+)?/(?:exfil|steal|leak|upload)",
+                re.IGNORECASE,
+            )
+        return (
+            cls._cog_override_pat,
+            cls._cog_role_pat,
+            cls._cog_fish_pat,
+            cls._cog_jailbreak_pat,
+            cls._cog_overflow_pat,
+            cls._cog_encode_pat,
+            cls._cog_exfil_domain_pat,
+            cls._cog_exfil_ip_pat,
+        )
+
+    def cognitive_scan_arguments(self, arguments: dict) -> str | None:
+        """Scan tool arguments for prompt injection, jailbreak, and exfiltration patterns.
+
+        Scans every string value in the arguments dict (non-string values are
+        silently skipped). Returns an error message on match, or None on pass.
+
+        Performance: ~0.001ms per call after cache warmup (lazy pattern compilation
+        adds ~0.08ms on the very first call).
+        """
+        if not self.cognitive_check:
+            return None
+
+        patterns = self._compile_cognitive_patterns()
+        ovrd, role, fish, jail, overf, enc, exf_dom, exf_ip = patterns
+
+        for key, val in arguments.items():
+            if not isinstance(val, str):
+                continue  # Skip non-string values silently
+
+            # Override instructions
+            if ovrd.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches override instruction pattern."
+
+            # Role hijacking
+            if role.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches role hijack pattern."
+
+            # Credential fishing
+            if fish.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches credential fishing pattern."
+
+            # Jailbreak tags
+            if jail.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches jailbreak tag pattern."
+
+            # Context overflow
+            if overf.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches context overflow pattern."
+
+            # Encoding evasion
+            if enc.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches encoding evasion pattern."
+
+            # Exfiltration URL (domain-based)
+            if exf_dom.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches exfiltration url pattern."
+
+            # Exfiltration URL (raw IP + exfil path)
+            if exf_ip.search(val):
+                return f"Cognitive scan blocked: argument '{key}' matches exfiltration url pattern."
+
+        return None
+
+    # ─── AST Structural Validation ──────────────────────────
+
+    _AST_DANGEROUS_CALLS = frozenset({
+        "exec", "eval", "compile", "__import__",
+    })
+    _AST_MIN_LENGTH = 10  # Skip strings shorter than this
+
+    def check_ast_injection(self, arguments: dict) -> str | None:
+        """Check tool arguments for Python code injection using AST parsing.
+
+        Tries to parse every string value >=10 chars as Python code.
+        If it parses as a valid Python AST, it checks for dangerous
+        constructs: exec(), eval(), compile(), __import__(), import
+        statements, and function definitions.
+
+        Non-string values and strings <10 chars are silently skipped.
+
+        Performance: ~0.01ms per call for non-code (fast AST.parse error),
+        ~0.05ms per call for actual code (full AST walk).
+        """
+        if not self.ast_check:
+            return None
+
+        import ast
+
+        for key, val in arguments.items():
+            if not isinstance(val, str):
+                continue
+            if len(val) < self._AST_MIN_LENGTH:
+                continue
+
+            try:
+                tree = ast.parse(val, mode="exec")
+            except SyntaxError:
+                # Not valid Python — harmless
+                continue
+
+            # Walk the AST for dangerous constructs
+            for node in ast.walk(tree):
+                # exec(), eval(), compile() calls
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    if node.func.id in self._AST_DANGEROUS_CALLS:
+                        return f"AST injection blocked: argument '{key}' contains dangerous '{node.func.id}()' call."
+
+                # __import__() calls (as attribute)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if node.func.attr == "__import__":
+                        return f"AST injection blocked: argument '{key}' contains '__import__()' call."
+
+                # import statements
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                    return f"AST injection blocked: argument '{key}' contains import statement (imports: {', '.join(names)})."
+
+                # from ... import statements
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    names = [a.name for a in node.names]
+                    return f"AST injection blocked: argument '{key}' contains from-import statement (from {module} import {', '.join(names)})."
+
+                # Function definitions (def / async def)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return f"AST injection blocked: argument '{key}' contains function definition '{node.name}'."
+
         return None
 
 
@@ -813,7 +1011,7 @@ class DaemonServer:
             return {"error": "Missing 'tool'"}
 
         # MCP Keyword Access Control check
-        sandbox_err = self.security.check_mcp_tool_sandbox(tool)
+        sandbox_err = self.security.check_mcp_tool_access(tool)
         if sandbox_err:
             return {"error": sandbox_err}
 

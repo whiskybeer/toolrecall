@@ -54,7 +54,7 @@ class TestSecurityInjectionA03(unittest.TestCase):
         self.mock_cfg.mcp_allow_invalidate = False
         self.mock_cfg.mcp_multiplex_enabled = True
         self.mock_cfg.mcp_multiplex_servers = []
-        self.mock_cfg.mcp_read_only_sandbox = True
+        self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = [
             "write", "edit", "delete", "remove", "terminal",
             "bash", "exec", "run", "push", "commit", "update", "create",
@@ -115,10 +115,10 @@ class TestSecurityInjectionA03(unittest.TestCase):
         _log("Testing command injection in metadata args")
         security = SecurityGate(self.mock_cfg)
         # Even safe-looking tools with injected args pass through
-        err = security.check_mcp_tool_sandbox("read_file")
+        err = security.check_mcp_tool_access("read_file")
         self.assertIsNone(err, "Safe tool must pass")
         # Tools containing dangerous verb keywords are blocked
-        err = security.check_mcp_tool_sandbox("run_injected_code")
+        err = security.check_mcp_tool_access("run_injected_code")
         self.assertIsNotNone(err, "Tool with 'run' keyword must be blocked")
         # Note: the access control checks the tool NAME, not command injection in the
         # tool arguments. Command injection inside arguments is handled by
@@ -139,11 +139,11 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
 
     def setUp(self):
         self.mock_cfg = MagicMock(spec=Config)
-        self.mock_cfg.mcp_read_only_sandbox = True
+        self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_allow_terminal = False
         self.mock_cfg.mcp_allow_invalidate = False
 
-    def test_sandbox_default_is_read_only(self):
+    def test_access_control_default_is_read_only(self):
         """A05-001: Prove the keyword access control defaults to read-only.
         
         A read-write default would let any agent modify files immediately.
@@ -154,7 +154,7 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
         # Remove mock keywords to test built-in defaults
         self.mock_cfg.mcp_dangerous_tool_keywords = None
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("write_file")
+        err = security.check_mcp_tool_access("write_file")
         self.assertIsNotNone(err, "Access control must block write tools by default")
         _log("  PASS: Access control is read-only by default (built-in keywords)")
 
@@ -199,7 +199,7 @@ class TestIdentificationFailuresA07(unittest.TestCase):
     def setUp(self):
         self.mock_cfg = MagicMock(spec=Config)
         self.mock_cfg.mcp_allowed_paths = ["/tmp/safe_dir"]
-        self.mock_cfg.mcp_read_only_sandbox = True
+        self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = [
             "write", "edit", "delete", "remove",
         ]
@@ -218,7 +218,7 @@ class TestIdentificationFailuresA07(unittest.TestCase):
         self.assertNotIn("etc/shadow", err.lower(), "Error must not leak real path")
         self.assertIn("access denied", err.lower(), "Error must use generic message")
 
-    def test_sandbox_block_error_has_no_stack_trace(self):
+    def test_access_control_block_error_has_no_stack_trace(self):
         """A07-002: Prove access control errors don't include Python stack traces.
         
         Attack: Tool call triggers exception — error message includes traceback.
@@ -226,7 +226,7 @@ class TestIdentificationFailuresA07(unittest.TestCase):
         """
         _log("Testing error message doesn't leak stack trace")
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("delete_all")
+        err = security.check_mcp_tool_access("delete_all")
         self.assertIsNotNone(err)
         self.assertNotIn("Traceback", err, "Error must not contain stack trace")
         self.assertNotIn("File \"", err, "Error must not contain file paths")
@@ -247,14 +247,14 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
     def setUp(self):
         self.mock_cfg = MagicMock(spec=Config)
         self.mock_cfg.mcp_allowed_paths = ["/tmp/safe"]
-        self.mock_cfg.mcp_read_only_sandbox = True
+        self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = [
             "write", "edit", "delete", "remove", "terminal",
             "bash", "exec", "run", "push", "commit", "update", "create",
             "sudo", "chmod", "chown",
         ]
 
-    def test_case_sandbox_bypass(self):
+    def test_case_access_control_bypass(self):
         """LLM06-001: Prove case-mutation cannot bypass.
         
         Attack: Write_file (capital W) vs write_file — keyword check is case-insensitive.
@@ -262,7 +262,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         """
         _log("Testing case-mutation bypass: Write_File vs write_file")
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("Write_File")
+        err = security.check_mcp_tool_access("Write_File")
         self.assertIsNotNone(err, "Case-mutated tool name must still be blocked")
         _log("  PASS: Case-mutation blocked (lowercased keyword check)")
 
@@ -275,7 +275,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         """
         _log("Testing Unicode homoglyph: wrіte_file (Cyrillic 'і')")
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("wrіte_file")
+        err = security.check_mcp_tool_access("wrіte_file")
         if err:
             _log("  PASS: homoglyph blocked (unlikely but possible)")
         else:
@@ -290,7 +290,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         """
         _log("Testing safe tool with dangerous substring: list_updates")
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("list_updates")
+        err = security.check_mcp_tool_access("list_updates")
         _log(f"  Result: {'blocked (false positive)' if err else 'allowed'}")
 
     def test_multi_word_tool_bypass(self):
@@ -301,7 +301,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         """
         _log("Testing multi-word tool: execute_command")
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("execute_command")
+        err = security.check_mcp_tool_access("execute_command")
         self.assertIsNotNone(err, "exec keyword must be blocked")
         _log("  PASS: execute_command blocked")
 
@@ -312,7 +312,7 @@ class TestWAFDirectCachePoisoning(unittest.TestCase):
     These tests prove that cached data cannot be poisoned by a compromised agent.
     Note: cache_invalidate() and write tools are blocked via dedicated check_*
     methods (check_invalidate, check_read_path for write tools), not via
-    check_mcp_tool_sandbox (which only applies to MCP server tool names).
+    check_mcp_tool_access (which only applies to MCP server tool names).
     """
 
     @classmethod
@@ -321,7 +321,7 @@ class TestWAFDirectCachePoisoning(unittest.TestCase):
 
     def setUp(self):
         self.mock_cfg = MagicMock(spec=Config)
-        self.mock_cfg.mcp_read_only_sandbox = True
+        self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_allow_invalidate = False
         # Explicitly set dangerous_tool_keywords to None so SecurityGate
         # uses its built-in default list (MagicMock returns truthy object
@@ -336,16 +336,16 @@ class TestWAFDirectCachePoisoning(unittest.TestCase):
         self.assertIsNotNone(err, "cache_invalidate must be blocked by default")
         _log("  PASS: cache_invalidate blocked via check_invalidate()")
 
-    def test_read_only_sandbox_prevents_tool_execution(self):
-        """WAF-002: Prove read-only keyword filtering blocks dangerous MCP tool names.
+    def test_access_control_prevents_tool_execution(self):
+        """WAF-002: Prove keyword access control blocks dangerous MCP tool names.
         
-        In read-only mode, MCP tool names containing dangerous keywords are blocked.
+        When enabled, MCP tool names containing dangerous keywords are blocked.
         write_file -> 'write' is a dangerous keyword.
         """
-        _log("Testing read-only access control blocks write_file MCP tool")
+        _log("Testing access control blocks write_file MCP tool")
         security = SecurityGate(self.mock_cfg)
-        err = security.check_mcp_tool_sandbox("write_file")
-        self.assertIsNotNone(err, "write_file must be blocked in read-only mode")
+        err = security.check_mcp_tool_access("write_file")
+        self.assertIsNotNone(err, "write_file must be blocked when access control is enabled")
         _log("  PASS: write_file blocked by MCP keyword access control")
 
 

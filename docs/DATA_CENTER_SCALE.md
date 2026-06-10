@@ -1,6 +1,6 @@
 # Planetary Extrapolation: From Laptop to Data Center
 
-*This document is a speculative thought experiment.* Measured baseline: ~55K tokens saved from 13 project files in a single session. The extrapolations below assume linear scaling to enterprise fleet sizes — actual results depend on workload patterns, file change frequency, and re-read depth.
+*This document uses the term "L1 Cache" as a metaphor for ToolRecall's in-memory cache — the fastest tier closest to the agent. For the physical limitations of actual CPU L1 cache, see [the main README](../README.md#physical-limitations-the-l1-cache-metaphor).* Measured baseline: ~55K tokens saved from 13 project files in a single session. The extrapolations below assume linear scaling to enterprise fleet sizes — actual results depend on workload patterns, file change frequency, and re-read depth.
 
 ## 1. Server-Side Cache Stability
 

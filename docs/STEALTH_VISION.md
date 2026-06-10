@@ -1,9 +1,11 @@
 # ToolRecall: Stealth Vision & Iterative Roadmap
 
 ## Current State (v0.3/v0.4)
-- **Local L1 Cache & MCP Multiplexer**
+- **Local In-Memory Cache & MCP Multiplexer**
 - Drastically reduces latency (<1ms) and breaks the O(N^2) context snowball locally.
 - Forces deterministic cache-hits for cloud LLM providers (Anthropic/OpenAI).
+
+> **Note on the "L1" terminology:** The in-memory cache is described as an "L1 Cache" throughout these docs as a metaphor for its role as the fastest caching tier closest to the agent. This is **not** a claim about CPU cache hardware. See [the main README](../README.md#physical-limitations-the-l1-cache-metaphor) for the physical limitations.
 
 ## Is Encryption Needed? (Security Analysis)
 **Currently: No.**

@@ -1,0 +1,9 @@
+# ─── HTTP Proxy (standalone, no deps) ─────
+# The proxy is an HTTP ↔ UDS bridge that exposes cache endpoints over HTTP.
+# It's LOCAL-ONLY by default (127.0.0.1:8567) — no network exposure.
+# Change bind to "0.0.0.0" to allow access from other machines
+# (e.g. for monitoring dashboards, CI integration).
+[proxy]
+port = 8567
+bind = "127.0.0.1"                       # localhost-only (safe default)
+nginx_recommended = true    # Show "nginx recommended" in docs

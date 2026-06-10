@@ -118,7 +118,7 @@ allow_terminal = false   # ❌ Im Container besonders kritisch!
 allow_invalidate = false
 
 [security]
-read_only_sandbox = false  # MCP keyword access control (not OS sandbox)
+tool_access_control = false  # MCP keyword access control (not OS sandbox)
 ```
 
 ### Typische Fallstricke (Docker)
@@ -168,7 +168,7 @@ nicht vom Host-OS beeinflusst. Wichtig für Docker/K8s:
 |------|---------|-------------------|
 | **Path Canonicalization** (`os.path.realpath`) | Blockiert Directory Traversal | Funktioniert **innerhalb des Container-FS** — relative Pfade zum Host sind unmöglich |
 | **Null Byte Poisoning** | `valid.png%00/etc/shadow` wird erkannt | Container hat kein Zugriff auf Host-`/etc/shadow` — zusätzliche Sicherheit |
-|| **Read-Only Sandbox** | Blockiert Tools deren Name `write`, `delete`, `exec` etc. enthält (substring match) | Empfohlen (default off): `security.read_only_sandbox = true` — **kein OS-Sandbox** |
+|| **MCP Keyword Access Control** | Blockiert Tools deren Name `write`, `delete`, `exec` etc. enthält (substring match) | Empfohlen (default off): `security.tool_access_control = true` — **kein OS-Sandbox** |
 | **Terminal Block** | `allow_terminal=false` (default) | Besonders wichtig: Container-Shell-Zugriff via Agent verhindern |
 | **Dangerous Tool Detection** | Blockiert Tools mit `write`, `delete`, `exec` im Namen | Kompiliert mit Read-Only-Sandbox für K8s-Deployments |
 
@@ -177,7 +177,7 @@ nicht vom Host-OS beeinflusst. Wichtig für Docker/K8s:
 ```toml
 # ~/.toolrecall/config.toml — K8s-optimiert
 [security]
-read_only_sandbox = true
+tool_access_control = true
 
 [mcp]
 allowed_paths = ["/data", "/projects"]

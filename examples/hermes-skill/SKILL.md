@@ -7,7 +7,7 @@ tags: [cache, tokens, performance, hermes]
 
 # ToolRecall Auto-Cache
 
-**The L1 Cache and Middleware for LLM Agents.**
+**An in-memory cache and middleware layer for LLM agents.** The term "L1 Cache" in related documentation is a metaphor for the fastest caching tier — not a literal claim about CPU cache hardware. See the [physical limitations note](../../README.md#physical-limitations-the-l1-cache-metaphor).
 
 This skill configures an agent to aggressively use the `toolrecall` MCP server for tool executions. ToolRecall breaks the $O(N^2)$ context snowball by catching tool executions at the OS level and serving them from a local SQLite database in <0.1ms. 
 

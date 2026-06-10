@@ -9,7 +9,7 @@ Then configure the agent to use http://localhost:8567 as a tool proxy.
 USAGE_HTTP = """
 # Start the ToolRecall proxy
 $ toolrecall serve
-ToolRecall HTTP proxy running on http://127.0.0.1:8567
+|ToolRecall HTTP proxy running on http://localhost:8567
 
 # Available endpoints:
 # GET /cached_read?path=/path/to/file

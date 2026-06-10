@@ -2,8 +2,10 @@
 # ToolRecall Setup — one-time configuration for any LLM agent
 #
 # Usage:
-#   curl -s https://raw.githubusercontent.com/Robin/toolrecall/main/setup.sh | bash
-#   curl -s https://raw.githubusercontent.com/Robin/toolrecall/main/setup.sh | bash -s -- --help
+#   git clone https://github.com/whiskybeer/toolrecall.git
+#   cd toolrecall
+#   bash scripts/setup.sh
+#   bash scripts/setup.sh --help
 #
 # Options:
 #   --db PATH        Cache database path (default: ~/.toolrecall/cache.db)

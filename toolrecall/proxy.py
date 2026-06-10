@@ -1,8 +1,12 @@
 """ToolRecall HTTP Proxy — HTTP ↔ UDS Bridge.
 
-The HTTP Proxy forwards HTTP requests to the ToolRecall Daemon.
-It contains no independent caching logic, no SQLite, and no LRU memory —
-everything is routed through the Daemon.
+The HTTP Proxy forwards requests to the ToolRecall Daemon over UDS.
+It contains no caching logic — everything is routed through the Daemon.
+
+Purpose: agents that only speak HTTP (Claude Code, Codex, Cursor, etc.)
+can talk to ToolRecall via this bridge instead of UDS.
+
+Hermes users: you don't need this — Hermes uses UDS/MCP directly.
 
 Endpoints:
     GET /cached_read?path=       → cached_read via Daemon
@@ -14,13 +18,16 @@ Endpoints:
 
 import http.server
 import json
+import logging
 import urllib.parse
 
 from toolrecall.client import UDSClient
 
+log = logging.getLogger("toolrecall.proxy")
+
 
 class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP request handler — leitet an Daemon weiter."""
+    """HTTP request handler — forwards to Daemon via UDS."""
 
     def __init__(self, *args, **kwargs):
         self._client = UDSClient()
@@ -93,51 +100,46 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(result).encode())
 
-    def log_message(self, fmt, *args):
+    def log_message(self, format, *args):
         """Suppress default request logging."""
         pass
 
 
 def run_server(bind: str = "127.0.0.1", port: int = 8567):
-    """Start the ToolRecall HTTP proxy bridge."""
-    import socket as sock_mod
-    try:
-        sock_mod.getaddrinfo(bind, port)
-    except sock_mod.gaierror:
-        print(f"Warning: '{bind}' does not resolve on this system.")
-        print("Falling back to '127.0.0.1' (all interfaces).")
-        print("Set TOOLRECALL_PROXY_BIND=127.0.0.1 for localhost-only.")
-        bind = "127.0.0.1"
+    """Start the ToolRecall HTTP proxy bridge.
 
+    Binds to localhost only (safe default). No network exposure.
+    The proxy is a bridge for agents that only speak HTTP
+    (Claude Code, Codex, Cursor, etc).
+    Hermes uses UDS natively — no proxy needed.
+    """
     try:
-        server = http.server.HTTPServer((bind, port), ToolRecallHandler)
+        server = http.server.HTTPServer(("127.0.0.1", port), ToolRecallHandler)
     except OSError as e:
         if e.errno == 98:  # Address already in use
-            print(f"❌ Error: Port {port} is already in use by another process.")
-            print(f"Please stop that process or select a different port in config.toml:")
-            print(f"  toolrecall config-set proxy.port <new_port>")
+            log.error("Port %d already in use — is another proxy running?", port)
             return
         raise
 
-    print(f"ToolRecall HTTP Proxy (Daemon Bridge) running on http://{bind}:{port}")
+    log.info("ToolRecall HTTP Proxy running on http://%s:%d", bind, port)
 
     # Check daemon
     client = UDSClient()
     ping = client._send({"cmd": "ping"})
     if ping.get("error") == "daemon_unavailable":
-        print("  ⚠ ToolRecall daemon not running! Start with: toolrecall daemon &")
+        log.warning("ToolRecall daemon not running! Start with: toolrecall daemon &")
+        log.info("Proxy started — will connect when daemon becomes available")
     else:
-        print("  ✓ Connected to ToolRecall daemon")
+        log.info("Connected to ToolRecall daemon")
 
-    print(f"Endpoints:")
-    print(f"  GET /cached_read?path=/path/to/file")
-    print(f"  GET /cached_terminal?cmd=<command>&ttl=<seconds>")
-    print(f"  GET /cached_skill?name=skill-name")
-    print(f"  GET /docs_search?query=<search terms>")
-    print(f"  GET /health")
-    print()
-    print("Recommended: put nginx in front for SSL + auth.")
+    log.info("Endpoints:")
+    log.info("  GET /cached_read?path=/path/to/file")
+    log.info("  GET /cached_terminal?cmd=<command>&ttl=<seconds>")
+    log.info("  GET /cached_skill?name=skill-name")
+    log.info("  GET /docs_search?query=<search terms>")
+    log.info("  GET /health")
+    log.info("Recommended: put nginx in front for SSL + auth.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down.")
+        log.info("Shutting down.")

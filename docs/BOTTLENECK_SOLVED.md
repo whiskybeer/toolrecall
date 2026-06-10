@@ -56,7 +56,7 @@ Traditional caching tools force you to pick two. ToolRecall delivers all four:
 3. **Deterministic:** Byte-identical cache hits — agents produce reproducible results
 4. **Secure:** Zero-Trust WAF cages injected prompts
 
-## The Solution: L1 Cache for AI Context
+## The Solution: In-Memory Cache for AI Context
 
 ToolRecall sits between the agent and the OS — **not** between the agent and
 the LLM API. This is the critical architectural insight:
@@ -64,8 +64,8 @@ the LLM API. This is the critical architectural insight:
 ```text
 ┌──────────┐    Tool Calls    ┌──────────────┐    LLM API    ┌─────────┐
 │  Agent   │ ────────────────▶│  ToolRecall  │ ─────────────▶│  LLM    │
-│ (Claude, │                  │  L1 Cache    │               │ (API)   │
-│  Codex)  │◀────────────────│  + WAF       │◀─────────────│         │
+│ (Claude, │                  │  In-Memory   │               │ (API)   │
+│  Codex)  │◀────────────────│  Cache + WAF │◀─────────────│         │
 └──────────┘   Cached Result  └──────────────┘   Tokens      └─────────┘
                                     │
                                     ▼

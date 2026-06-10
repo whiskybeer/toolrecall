@@ -96,8 +96,27 @@ ToolRecall doesn't cure an LLM of being prompt-injected — it cages the agent t
 - **Cryptographic path resolution:** `os.path.realpath` blocks `../../../etc/shadow` before the OS is touched.
 - **Execution blackholes:** `allow_terminal = false` drops RCE attempts into a void.
 - **Air-gapped secrets:** API keys in `~/.toolrecall/.env` — the LLM never sees them.
-- **Read-only MCP keyword filter:** `read_only_sandbox = true` drops any MCP tool whose name contains `write`, `delete`, `push`. This is a STRING MATCH on tool names — not an OS sandbox, no process isolation.
-- **Cognitive Pre-Flight (deterministic semantic scan):** Before dispatching any MCP tool call, the daemon evaluates arguments against a library of prompt-injection patterns — regex signatures for jailbreak families, heuristic entropy scores, and keyword blacklists. Zero LLM involved. Zero dependencies. Sub-millisecond hot-path overhead. Catches ~86% of known injection patterns without a single API call. Optional ONNX classifier (cold path) available for the remaining edge cases — still fully local, no data leaves the machine.
+- **MCP keyword access control:** `tool_access_control = true` blocks any MCP tool whose name contains `write`, `delete`, `push`, etc. This is a substring match on tool names — not an OS sandbox, no process isolation. A tool named `post_message` passes through even if it modifies state. Pair with Docker/gVisor for real isolation.
+- **Cognitive Pre-Flight (deterministic semantic scan):** Before dispatching any MCP tool call, the daemon evaluates arguments against a library of prompt-injection patterns — regex signatures for jailbreak families, heuristic entropy scores, and keyword blacklists. Zero LLM involved. Zero dependencies. Sub-millisecond hot-path overhead. Measured against a labeled test corpus (70 injection, 50 legitimate prompts) — benchmarked in `tests/test_cognitive_scan.py`. Optional ONNX classifier (cold path) available for edge cases — still fully local, no data leaves the machine.
+
+---
+
+## How ToolRecall Compares
+
+ToolRecall does **3 things in one daemon**: cache, WAF, MCP multiplex. Each individual piece has more polished alternatives — the value is having them integrated and agent-agnostic.
+
+| Your need | ToolRecall | Alternative | Pick if |
+|---|---|---|---|
+| Token reduction / fewer re-reads | ✅ SQLite+in-memory cache (~0.6ms) | [RTK](https://github.com/thinkerai/rtk) (Rust, hook-based, transparent) | You use one agent and want zero config |
+| Context compression | ✅ Micro-RAG (agent drops + re-fetches) | [headroom MCP](https://github.com/nicholasgriffintn/headroom) | You want LLM-guided compression, not deterministic |
+| Code/doc search | ✅ FTS5 (BM25, zero deps) | [serena](https://github.com/SerenadeAI/serena) (semantic) | You need embeddings, not just keyword search |
+| MCP server management | ✅ Multiplexer + lazy loading + idle timeout | Claude Code native MCP | You use only Claude Code and 1-2 servers |
+| Server-side prompt cache stability | ✅ Freezes OS output for byte-identical prefix | Anthropic API (automatic) | You don't run agents long enough for OS jitter to matter |
+| Security gate (non-OS) | ✅ Path canonicalization, keyword access control, cognitive scan | None standalone — glue RTK + custom scripts | You want one config for all agents |
+
+**ToolRecall wins when**: you run multiple agents (Hermes + Claude Code + Cursor), have 3+ MCP servers with cold-start latency, and want a single security config that applies to all of them.
+
+**RTK wins when**: you use one agent exclusively, want a transparent hook with no MCP config, and don't need the multiplexer or WAF.
 
 ---
 
@@ -139,7 +158,7 @@ Standard `stdio` MCP (`toolrecall mcp`). Works with Claude Code, Cursor, Cline, 
         +─────────────────▼─────────────────+
         │         ToolRecall Daemon         │  <- Gateway Layer
         │  ┌─────────────────────────────┐  │
-        │  │   In-Memory LRU (L1 Cache)  │  │
+        │  │   In-Memory LRU (Cache)  │  │
         │  └──────────────┬──────────────┘  │
         │  ┌──────────────▼──────────────┐  │
         │  │   SQLite WAL (Persistent)   │  │
@@ -217,10 +236,16 @@ toolrecall mcp
 ```
 
 ### Hermes Auto-Cache (Hermes Agent only)
+
+For one-command setup, clone the repo and run the setup script locally:
+
 ```bash
-# One-command setup
-bash <(curl -s https://raw.githubusercontent.com/whiskybeer/toolrecall/main/scripts/setup.sh)
+git clone https://github.com/whiskybeer/toolrecall.git
+cd toolrecall
+bash scripts/setup.sh
 ```
+
+> **Note:** The setup script is for convenience after a verified clone. `pip install toolrecall` is the recommended install path — no curl-pipe, no remote execution.
 
 ## Uninstall
 
@@ -307,6 +332,25 @@ github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"]
 
 ---
 
+## Physical Limitations: The "L1 Cache" Metaphor
+
+ToolRecall's in-memory LRU cache is described throughout this documentation as an **"L1 Cache"** — a metaphor for its position in the caching hierarchy (nearest to the agent, fastest tier). This is **not** a literal claim about CPU cache hardware.
+
+**CPU L1 cache facts:**
+- L1 data cache: ~32 KB per core on modern x86-64 CPUs
+- LLM weights minimum (4-bit quantized 10M params): ~5 MB — ~160× larger than L1 capacity
+- A 7B-parameter model in 4-bit: ~3.5 GB — the entire L1 cache across all cores of a consumer CPU (~1.5 MB aggregate) would need to be refilled ~2,300 times per single forward pass
+- LLM inference is **memory-bandwidth-bound**, not latency-bound: HBM bandwidth (~3.35 TB/s on H100) is the bottleneck, not L1 latency (~1 ns)
+
+**What ToolRecall's memory tier actually is:**
+- A configurable in-memory LRU cache in **userspace heap** (default: 20 MB max)
+- Persisted to **SQLite with WAL mode** on disk
+- Competing with the Python process's heap, not with the CPU's L1/L2 cache hierarchy
+
+The metaphor is useful for understanding caching topology (closest tier → agent). It does **not** imply LLM inference can run inside CPU L1 cache — that is physically impossible at any quantization level with current or near-future silicon.
+
+---
+
 ## Status
 
 **Experimental.** Used in heavy autonomous agent workflows. Before production CI/CD: ensure your allowlist is strictly scoped.
@@ -328,6 +372,7 @@ github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"]
 - [The Bottleneck Solved](docs/BOTTLENECK_SOLVED.md) — O(N²) context theory
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide
 - [Docker Deployment](docs/DOCKER.md) — containerized stack
-- [Security Architecture](SECURITY.md) — WAF details
+- [Security Architecture](SECURITY.md) — WAF details, trust boundary, known limitations
+- [Tool Comparison](README.md#how-toolrecall-compares) — ToolRecall vs RTK, headroom, serena
 - [Enterprise Scale](docs/ENTERPRISE_SCALE.md) — L1 cache metaphor
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common fixes

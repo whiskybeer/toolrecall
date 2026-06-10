@@ -16,10 +16,10 @@ class TestSecurityWAF(unittest.TestCase):
         self.mock_cfg.mcp_allow_invalidate = False
         self.mock_cfg.mcp_multiplex_enabled = True
         self.mock_cfg.mcp_multiplex_servers = []
-        self.mock_cfg.mcp_read_only_sandbox = True
+        self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
 
-    def test_sandbox_blocks_dangerous_tools(self):
+    def test_access_control_blocks_dangerous_tools(self):
         """Verify tools whose names contain dangerous keywords are blocked"""
         security = SecurityGate(self.mock_cfg)
         
@@ -33,12 +33,12 @@ class TestSecurityWAF(unittest.TestCase):
         ]
         
         for tool in blocked_tools:
-            err = security.check_mcp_tool_sandbox(tool)
+            err = security.check_mcp_tool_access(tool)
             self.assertIsNotNone(err, f"Tool '{tool}' should have been BLOCKED.")
             self.assertIn("ToolRecall MCP Access Control", err)
 
-    def test_sandbox_allows_safe_tools(self):
-        """Verify tools without dangerous keywords are allowed even when read_only_sandbox=True"""
+    def test_access_control_allows_safe_tools(self):
+        """Verify tools without dangerous keywords are allowed even when tool_access_control=True"""
         security = SecurityGate(self.mock_cfg)
         
         allowed_tools = [
@@ -50,15 +50,15 @@ class TestSecurityWAF(unittest.TestCase):
         ]
         
         for tool in allowed_tools:
-            err = security.check_mcp_tool_sandbox(tool)
+            err = security.check_mcp_tool_access(tool)
             self.assertIsNone(err, f"Tool '{tool}' should have been ALLOWED.")
 
-    def test_sandbox_disabled_allows_all(self):
+    def test_access_control_disabled_allows_all(self):
         """Verify that disabling the access control allows all tools through"""
-        self.mock_cfg.mcp_read_only_sandbox = False
+        self.mock_cfg.mcp_tool_access_control = False
         security = SecurityGate(self.mock_cfg)
         
-        err = security.check_mcp_tool_sandbox("write_file")
+        err = security.check_mcp_tool_access("write_file")
         self.assertIsNone(err, "Tool should be allowed when access control is disabled.")
 
     def test_directory_traversal_waf(self):
