@@ -7,13 +7,11 @@ import os, time, sqlite3, hashlib, subprocess
 from pathlib import Path
 from toolrecall.config import load_config
 
-# Lazy config — DO NOT cache at module level. The singleton in config.py
-# respects TOOLRECALL_* env vars, but ``from toolrecall.config import load_config``
-# followed by module-level ``config = load_config()`` freezes the path at import
-# time. Tests that set TOOLRECALL_KNOWLEDGE_DB before their own import still work
-# because the config singleton is only initialized once — the FIRST caller's env
-# wins. To guarantee isolation, callers MUST set the env var before the module
-# is first imported anywhere in the process.
+# Lazy config — the Config class in config.py always creates a fresh
+# instance from env vars + config files, so this lazy wrapper
+# is only needed to defer import time (not for singleton isolation).
+# Tests that need isolated DB paths should set TOOLRECALL_KNOWLEDGE_DB
+# before the first import.
 def _get_config():
     return load_config()
 
