@@ -48,12 +48,15 @@ def cmd_init():
     print()
 
     # ─── Interactive path collection ───────────────────
-    default_paths = ["~/projects", "~/.toolrecall"]
+    default_paths = ["~/.toolrecall"]
     paths = []
 
     print("Enter the directories your agent should be able to read.")
     print("One path per line. Empty line when done.")
     print(f"Default (press Enter): {', '.join(default_paths)}")
+    print()
+    print("  ⚠️  Home directory (~/) is NOT in the default allowlist.")
+    print("     Add only what the agent needs — keep everything else off-limits.")
     print()
 
     first = True

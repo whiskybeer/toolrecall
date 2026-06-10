@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.4.6"
+version = "0.4.7"
 description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
 readme = "README.md"
 authors = [
@@ -23,11 +23,12 @@ classifiers = [
 ]
 keywords = ["tool-cache", "llm", "agent", "token-savings", "sqlite", "fts5"]
 requires-python = ">=3.11"
-dependencies = [
-    "mcp>=1.0.0",
-]
+dependencies = []  # Zero runtime deps — pure Python stdlib
+# Note: mcp_server.py has a fallback for optional FastMCP.
+# Enable with: pip install toolrecall[mcp-fastmcp]
 
 [project.optional-dependencies]
+mcp-fastmcp = ["mcp>=1.0.0"]
 yaml = ["pyyaml >= 6.0"]
 toml-write = ["tomli-w >= 1.0"]
 dev = [

@@ -101,7 +101,7 @@ dangerous_tool_keywords = []
 #
 # For best security: list only directories the agent needs to read.
 allowed_paths = [
-    "~/.toolrecall",              # ToolRecall's own data dir
+    "~/.toolrecall",              # ToolRecall's own data dir only
 ]
 
 # Allow cached_terminal tool (OFF by default — security risk!)

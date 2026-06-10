@@ -19,7 +19,6 @@ _fh.setFormatter(logging.Formatter(
     "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 ))
 _log.addHandler(_fh)
-_log.info("=== GitHub MCP Request Log started ===")
 
 TOKEN = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
 
@@ -114,6 +113,8 @@ def _handle(method, params):
     elif method == "list_repos":
         return _api("GET", "user/repos?per_page=30")
     return None
+
+_api_calls = 0
 
 def main():
     """Minimal stdio MCP server loop."""

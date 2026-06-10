@@ -64,12 +64,32 @@ echo ""
 
 # --- 1. Install ---
 echo "[1/5] Installing ToolRecall..."
+echo ""
+echo "  ToolRecall is a pure-Python package with zero dependencies —"
+echo "  only Python 3.11+ and pip (standard Python package manager)."
+echo ""
+echo "  ────────────────────────────────────────────────"
+echo "  Install methods (choose ONE):"
+echo ""
+echo "    🥇 Recommended — from PyPI:"
+echo "       pip install toolrecall"
+echo "       → Stable release, signed checksums, no build tools"
+echo ""
+echo "    🥈 Bleeding edge — from GitHub:"
+echo "       pip install git+https://github.com/whiskybeer/toolrecall.git"
+echo "       → Latest commit, may include unreleased changes"
+echo ""
+echo "  ────────────────────────────────────────────────"
+echo ""
+
 pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null || pip install git+https://github.com/whiskybeer/toolrecall.git 2>/dev/null || {
-    echo "  ⚠ pip not found. Trying uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    uv pip install toolrecall
+    echo "  ❌ pip not found."
+    echo "  ToolRecall requires Python 3.11+ with pip."
+    echo "  Install Python first: https://python.org/downloads/"
+    echo "  Then re-run this script."
+    exit 1
 }
-echo "  ✓ Installed"
+echo "  ✓ ToolRecall v$(python3 -c 'from toolrecall import __version__; print(__version__)' 2>/dev/null || echo 'installed')"
 echo ""
 
 # --- 2. Database location ---
@@ -241,18 +261,15 @@ if command -v hermes &>/dev/null && [ -z "$NO_RC" ]; then
     if [ "$ADD_MCP" = "y" ] || [ "$ADD_MCP" = "Y" ]; then
         # Check if mcp_servers section exists
         if grep -q "mcp_servers:" ~/.hermes/config.yaml 2>/dev/null; then
-            # Insert before the first non-mcp_servers line after the block
-            # Simple: append toolrecall entry after existing mcp_servers
-            sed -i '/^mcp_servers:/a\  toolrecall:\n    command: uv\n    args:\n    - run\n    - python\n    - -m\n    - toolrecall.mcp_server\n    timeout: 30' ~/.hermes/config.yaml
+            # Append toolrecall entry after mcp_servers: line
+            sed -i '/^mcp_servers:/a\  toolrecall:\n    command: python\n    args:\n    - -m\n    - toolrecall.mcp_server\n    timeout: 30' ~/.hermes/config.yaml
         else
             cat >> ~/.hermes/config.yaml << 'YAML'
 
 mcp_servers:
   toolrecall:
-    command: uv
+    command: python
     args:
-    - run
-    - python
     - -m
     - toolrecall.mcp_server
     timeout: 30
@@ -263,8 +280,8 @@ YAML
         echo "  → Skipped. Add manually anytime:"
         echo "    mcp_servers:"
         echo "      toolrecall:"
-        echo '        command: "uv"'
-        echo '        args: ["run", "python", "-m", "toolrecall.mcp_server"]'
+        echo '        command: "python"'
+        echo '        args: ["-m", "toolrecall.mcp_server"]'
         echo "        timeout: 30"
     fi
     echo ""
