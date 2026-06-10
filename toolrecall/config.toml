@@ -27,9 +27,12 @@ terminal_default_ttl = 300  # 5 minutes for unknown commands
 "crontab -l" = 3600
 
 # ─── HTTP Proxy (standalone, no deps) ─────
+# The proxy is an HTTP ↔ UDS bridge for agents that only speak HTTP
+# (Claude Code, Codex, Cursor, etc.). Hermes talks UDS natively —
+# you don't need this running unless you hook up an HTTP-only agent.
 [proxy]
 port = 8567
-bind = "localhost"                       # localhost = bind to loopback only
+bind = "[IP_ADDRESS]"                       # localhost only
 nginx_recommended = true    # Show "nginx recommended" in docs
 
 # ─── Nginx Config (for SSL + auth) ────────
@@ -53,15 +56,28 @@ ssl_key = ""
 # This is useful as a safety net for exploratory sessions, but provides
 # no guarantee against all state-modifying operations.
 # For real sandboxing, combine with Docker or gVisor.
-read_only_sandbox = false
+tool_access_control = false
 
-# Tools whose names contain these substrings will be blocked when read_only_sandbox = true
+# Tools whose names contain these substrings will be blocked when tool_access_control = true
 # Note: substring match only — works for English tool names, partial matches possible
 dangerous_tool_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
 
 [mcp]
-# Paths allowed for cached_read (empty = all paths allowed — DANGEROUS!)
-# Default: agent_home/skills and agent_home/scripts
+# ⚠️ SECURITY: Filesystem access control
+#
+# Only directories listed here are readable through ToolRecall's MCP
+# file-caching tools (cached_read, cached_mcp tools).
+#
+# DEFAULT-DENY: If this list is empty, NO paths are readable at all.
+# The daemon will reject every file read with an error until you add paths.
+#
+# Consequences of adding a path:
+#   ✓ Any file under it becomes readable via MCP file tools
+#   ✗ A prompt-injected agent could read files under these paths
+#   🛡️ The sensitive file blocklist (.env, .ssh/, .pem keys) still applies
+#      as a secondary safety net within allowed paths
+#
+# For best security: list only directories the agent needs to read.
 allowed_paths = [
     "~/.hermes/skills",
     "~/.hermes/scripts",

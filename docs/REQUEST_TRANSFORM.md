@@ -35,7 +35,7 @@ Agent thoughts -> "I should read file X"
                 -> LLM sees: result (full text, every time)
 ```
 
-### With ToolRecall (L1 Cache active)
+### With ToolRecall (Cache active)
 
 ```
 Agent thoughts -> "I should read file X"

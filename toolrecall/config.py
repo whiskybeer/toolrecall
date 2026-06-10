@@ -221,7 +221,25 @@ class Config:
 
     @property
     def mcp_allowed_paths(self) -> list:
-        """Paths allowed for cached_read. Empty list = all paths (DANGEROUS)."""
+        """Paths allowed for cached_read.
+
+        Default-deny security: when this list is empty, NO paths are readable
+        through ToolRecall's MCP file-caching tools. The user MUST explicitly
+        add directories here — there is no fallback to "allow everything".
+
+        Consequences of allowing a path:
+          - Any file under that path becomes readable through ToolRecall's MCP
+            file-caching tools (cached_read, cached_mcp tools)
+          - If the agent is prompt-injected, an attacker can read files under
+            allowed paths via the MCP layer
+          - The sensitive file blocklist (.env, .ssh/, .pem, etc.) still
+            applies within allowed paths as a secondary safety net
+          - Files outside allowed paths are always rejected — even with
+            a direct cache lookup
+
+        Example safe defaults:
+            allowed_paths = ["~/projects", "~/.hermes/skills"]
+        """
         raw = self.get("mcp", "allowed_paths", default=[])
         if raw is None:
             return []
@@ -246,18 +264,29 @@ class Config:
         return self.get("mcp", "allow_invalidate", default=False)
 
     @property
-    def mcp_read_only_sandbox(self) -> bool:
-        """Keyword-based access control for MCP tools (not an OS sandbox).
+    def mcp_cognitive_check_enabled(self) -> bool:
+        """Enable cognitive semantic scan on tool arguments (default: True)."""
+        return bool(self.get("security", "cognitive_check_enabled", default=True))
+
+    @property
+    def mcp_ast_check_enabled(self) -> bool:
+        """Enable AST structural validation on tool arguments (default: True)."""
+        return bool(self.get("security", "ast_check_enabled", default=True))
+
+    @property
+    def mcp_tool_access_control(self) -> bool:
+        """Keyword-based access control for MCP tools.
 
         Blocks tools whose names contain dangerous substrings (write, delete, etc.).
-        This is a STRING MATCH — not process isolation. Combine with Docker/gVisor
-        for real sandboxing.
+        This is a STRING MATCH on tool names — not process isolation, not an OS sandbox.
+        A tool named 'post_message' passes through even if it modifies state.
+        For real isolation, pair with Docker/gVisor.
         """
-        return bool(self.get("security", "read_only_sandbox", default=False))
+        return bool(self.get("security", "tool_access_control", default=False))
 
     @property
     def mcp_dangerous_tool_keywords(self) -> list:
-        """Keywords that indicate a tool modifies state. Used by read_only_sandbox."""
+        """Keywords that indicate a tool modifies state. Used by tool_access_control."""
         default_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
         val = self.get("security", "dangerous_tool_keywords", default=default_keywords)
         return val if isinstance(val, list) else default_keywords

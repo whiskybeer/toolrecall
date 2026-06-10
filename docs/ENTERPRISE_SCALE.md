@@ -6,8 +6,10 @@ Modern computing relies on caching layers to mitigate physical latency:
 * **Web servers** use Redis to avoid querying slower SQL databases.
 * **Autonomous AI Agents**, however, default to a naive execution model. They repeatedly hit local file systems, execute OS commands, and query network APIs for data that has not changed within the context window.
 
-**ToolRecall acts as the L1 Cache for AI Agents.** 
+**ToolRecall acts as an in-memory cache for AI Agents.**
 It sits directly between the LLM client (e.g., Claude Code, Hermes) and the operating system/MCP servers. By caching exact byte-responses of deterministic tool calls in a local SQLite database, it drops tool execution time from ~1.5 seconds down to <0.6 milliseconds via Unix Domain Sockets (UDS) in the hot path.
+
+> **Note on the "L1" metaphor:** This document refers to ToolRecall's in-memory cache as an "L1 Cache" — a metaphor for its position as the fastest tier in the caching topology. CPU L1 cache is physically limited to ~32 KB per core. ToolRecall's in-memory LRU cache lives in userspace heap (default: 20 MB). See [the main README](../README.md#physical-limitations-the-l1-cache-metaphor) for the full hardware limitations.
 
 ## 2. The "Forced Cache Hit" Theory (Why Determinism Prints Money)
 A common misconception is that provider-side features like Anthropic's Prompt Caching or OpenAI's API caching solve the context bloat problem natively. They offer up to a **90% discount** on input tokens—*but only if the payload is byte-for-byte identical to a previous request.*

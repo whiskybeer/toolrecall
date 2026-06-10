@@ -13,10 +13,21 @@ All tool arguments and state-hashes are stored in the local SQLite database.
 - **Mitigation:** ToolRecall strictly utilizes parameterized queries (`?` placeholders) via the Python `sqlite3` library (e.g., `conn.execute("SELECT ... WHERE command_hash = ?", (cmd_hash,))`).
 - **Result:** It is mathematically impossible for an agent to inject executable SQL commands, drop tables, or manipulate the cache logic via chat payloads.
 
-### B. Directory Traversal (Path Canonicalization)
+### B. Directory Traversal (Default-Deny Path Allowlist + Sensitive File Blocklist)
 A compromised agent might attempt to read sensitive host files outside its working directory using relative paths (e.g., `read_file("../../../etc/shadow")` or `~/.ssh/id_rsa`).
-- **Mitigation:** ToolRecall resolves every requested path through a strict cryptographic canonicalization process (`os.path.realpath()`). It computes the absolute, symlink-free target path and compares it against the user-defined `allowed_paths` array in `config.toml`.
-- **Result:** If the resolved path falls outside the allowed tree, the Daemon drops the payload immediately with an `Access Denied` error before the OS filesystem is touched.
+
+#### B1. Default-Deny Path Allowlist (Primary Control)
+- ToolRecall uses a **default-deny** allowlist: when `mcp.allowed_paths` is empty, NO paths are readable.
+- The user MUST explicitly add directories to `allowed_paths` in `config.toml`.
+- Every file read is checked against the allowlist via `os.path.realpath()` canonicalization — the resolved absolute path must start with one of the allowed directory prefixes.
+- **Consequences of adding a path:** Every file under that directory becomes accessible through ToolRecall's MCP layer. If the agent is prompt-injected, an attacker could read files under allowed paths. For best security, list only directories the agent needs to read.
+- Setup: `toolrecall init` walks the user through an interactive security banner explaining these consequences before creating the config.
+
+#### B2. Sensitive File Blocklist (Secondary Safety Net)
+- Even within allowed paths, a built-in blocklist prevents access to known credential files: `.env`, `.ssh/` directories, `.pem`/`.key`/`.cert` files, `.gitconfig`, `.npmrc`, `.netrc`, cloud CLI configs (`.aws/`, `.azure/`, `.config/gcloud/`, `.config/gh/`), and others.
+- The blocklist is a **path-name regex check** — renaming a file bypasses it. It is a safety net, not a primary security control. Real protection comes from keeping the `allowed_paths` allowlist tightly scoped.
+- Both mechanisms compose: the allowlist defines trust (what the agent *may* touch), the blocklist prevents accidental credential disclosure within trusted directories.
+- **Design rationale:** The allowlist is the trust boundary (deny by default). The blocklist catches slips — a user who adds `~/` to `allowed_paths` still cannot have their `.env` or `.ssh` read through ToolRecall.
 
 ### C. Buffer Overflows & OOM (Out-of-Memory) Attacks
 A malicious payload might attempt to crash the ToolRecall Daemon by streaming gigabytes of data into the context or asking the tool to read a 10GB log file, exhausting RAM.
@@ -34,7 +45,7 @@ If terminal execution is enabled (`allow_terminal = true`), an injected agent mi
 
 ## 2. MCP Keyword Access Control
 
-The **Read-Only Sandbox** (`read_only_sandbox`) is a **keyword-based access control on MCP tool names**, not an OS sandbox.
+The **MCP Keyword Access Control** (`tool_access_control`) is a **keyword-based access control on MCP tool names**, not an OS sandbox.
 
 **What it is:** A string-substring filter on tool names passing through the MCP multiplexer.
 
@@ -44,7 +55,7 @@ The **Read-Only Sandbox** (`read_only_sandbox`) is a **keyword-based access cont
 - ❌ NOT a guarantee against all state-modifying operations
 
 **How it works:**
-- Enabled via `[security] read_only_sandbox = true` in `config.toml`.
+- Enabled via `[security] tool_access_control = true` in `config.toml`.
 - It intercepts every MCP tool call targeting any multiplexed server.
 - If the tool name contains a substring from `dangerous_tool_keywords` (e.g. `write`, `delete`, `push`, `commit`), the call is dropped.
 - Tools whose names do NOT contain any keyword (e.g. `post_to_slack`, `run_migration`, `execute_query`) pass through — even if they modify state.
@@ -68,3 +79,40 @@ ToolRecall manages MCP servers internally as isolated subprocesses. The daemon a
 
 ### Unix Domain Sockets (IPC)
 The Daemon does not open any TCP ports. All communication happens over Unix Domain Sockets (`/run/user/1000/toolrecall.sock`). This renders ToolRecall completely immune to Server-Side Request Forgery (SSRF) and remote port-scanning attacks.
+
+---
+
+## 4. Trust Boundary
+
+| Layer | Trusted | Untrusted |
+|---|---|---|
+| Daemon process | ✅ Runs on your machine, under your user | ❌ Not audited by third party |
+| MCP subprocesses | ✅ Isolated stdio, no network exposure to daemon | ❌ Downstream MCP servers (GitHub API, etc.) |
+| LLM agent | ❌ Assumed compromised (prompt injection) | — |
+| SQLite cache DB | ✅ Local file, no remote access | ❌ Readable by any process under your user |
+| Install path | `pip install toolrecall` — standard PyPI | `bash <(curl ...)` — NOT recommended, not advertised |
+
+**Install security recommendation:** Use `pip install toolrecall`. The repo no longer advertises curl-pipe install. The `scripts/setup.sh` script is intended for use after a `git clone` — verify the source before running it locally.
+
+**Author trust:** The project is authored by Robin Schultka (whiskybeer) as a solo open-source project. There is no third-party security audit, no CVE history, and no formal verification. Apply standard open-source risk assessment before deploying in production.
+
+**Auditability:** The entire codebase is MIT-licensed and readable. The daemon has 176+ unit tests covering cache logic, security gates, and injection vectors. The cognitive-scan and AST-validation test suites are standalone and reproducible (`tests/test_cognitive_scan.py`, `tests/test_ast_security.py`).
+
+---
+
+## 5. Known Limitations
+
+| Claim/Feature | Honest Assessment |
+|---|---|
+| `allowed_paths` security | **Default-deny:** empty list = NO readable paths. The blocklist (.env, .ssh, .pem) applies even within allowed paths as a secondary safety net. The allowlist is the primary trust boundary — the blocklist catches slips. |
+| `tool_access_control = true` | **Substring match on tool names** — not an OS sandbox. A tool named `post_message` passes through even if it modifies state. The keyword list (`write`, `delete`, `push`, etc.) is a best-effort allowlist. For real OS isolation, pair with Docker/gVisor. |
+| Deterministic injection detection | **Regex + AST scan, not ML.** Covers ~86% of patterns in the labeled test corpus (70 injection, 50 legitimate). Remaining 14% are encoding-evasion variants, fabricated URLs, and zero-day patterns. The ONNX classifier (cold path fallback) is optional and unverified. |
+| Token reduction | **81% fewer input tokens** is measured on a specific workload (13-file project, 3-10x re-reads). Your mileage varies with project structure and agent behavior. |
+| Server-side prompt caching | **Requires same-temperature, same-model runs** across turns. Agent-imposed randomness (sampling params, multi-turn conversation drift) busts this. The daemon freezes OS output, but cannot control the LLM API's internal cache policy. |
+| Micro-RAG | **Agent must actively drop and re-fetch cache entries.** ToolRecall provides the cache backend — it doesn't enforce eviction. The agent (or its system prompt) decides when to re-fetch. |
+
+---
+
+## 6. Reporting Vulnerabilities
+
+This project is maintained by a solo developer. For security issues, open a GitHub issue with the `security` label or contact the author directly. There is no bug bounty program.

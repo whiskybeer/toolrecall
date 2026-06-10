@@ -1,6 +1,6 @@
 # ToolRecall Documentation Directory
 
-Welcome to the ToolRecall technical library. This directory contains the architectural, financial, and strategic documentation required to understand, scale, and pitch the ToolRecall L1-Cache infrastructure.
+Welcome to the ToolRecall technical library. This directory contains the architectural, financial, and strategic documentation required to understand, scale, and pitch the ToolRecall in-memory cache infrastructure.
 
 ## 1. Hard Data & Benchmarks
 - **[`BENCHMARK.md`](BENCHMARK.md)**: The raw $O(N^2)$ mitigation data. Hit rates, latency, and timing from a real 13-hour session. *(Token count corrected for double-counting bug, see file for details.)*
@@ -20,3 +20,6 @@ Welcome to the ToolRecall technical library. This directory contains the archite
 ## 4. Emergent Capabilities (The Future)
 - **[`BYPRODUCTS.md`](BYPRODUCTS.md)**: Documents accidental architectural wins, such as Zero-Penalty Context Switching, Agent Attention Profiling, and Air-Gapped execution.
 - **[`STEALTH_VISION.md`](STEALTH_VISION.md)**: The end-game vision. Discusses the transition to a "Swarm OS" (shared cache across multiple agents) and passive generation of high-fidelity RLHF/DPO trajectories to train local L0 models.
+
+## 5. Operations & Security
+- **[`SERVER_SECURITY_NONROOT_NGINX.md`](server-security-nonroot-nginx.md)**: How ToolRecall's production web server runs entirely with user privileges — no root required. Covers authbind architecture, nginx as a user service, SSL certificate renewal pipeline, and the ki-game-api shutdown that eliminated its last remaining service dependency.

@@ -1,6 +1,8 @@
 # Cursor IDE Integration
 
-Cursor supports MCP (Model Context Protocol) natively. ToolRecall works perfectly as an L1 Cache & Multiplexer for Cursor's agentic features (like "Composer").
+Cursor supports MCP (Model Context Protocol) natively. ToolRecall works perfectly as an in-memory cache & MCP Multiplexer for Cursor's agentic features (like "Composer").
+
+*The term "L1 Cache" is used as a metaphor for the fastest caching tier — see the [physical limitations note](../README.md#physical-limitations-the-l1-cache-metaphor).*
 
 ## Setup
 

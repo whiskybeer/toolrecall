@@ -24,13 +24,120 @@ Secondary caches (terminal, script, code) use SQLite directly.
 Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 (English ~4 chars/token, code ~2 char/token → weighted average ~3)
 """
-import os, sqlite3, time, hashlib, warnings
+import os, re, sqlite3, time, hashlib, warnings
 from pathlib import Path
 from threading import Lock
 from collections import OrderedDict
 from toolrecall.config import load_config
 
 config = load_config()
+
+# ─── Sensitive File Blocklist ───────────────────────────────
+#
+# These patterns block file paths from being cached or read through
+# the ToolRecall cache layer.  The blocklist applies at EVERY entry
+# point: cached_read() (direct), SecurityGate.check_read_path() (daemon),
+# and cache invalidations.
+#
+# Why not just rely on allowed_paths?
+#   - allowed_paths is an allowlist — it requires explicit configuration
+#   - When empty, it means "allow everything" (common in dev/single-user)
+#   - A blocklist catches the obvious sensitive files EVEN when the
+#     user hasn't configured an allowlist yet
+#   - Both mechanisms compose: allowlist narrows scope FIRST,
+#     blocklist catches slips SECOND
+#
+# Each pattern is compiled lazily on first use.  A path matching ANY
+# entry is rejected from caching/reading.
+
+# Compiled lazily on first call to _is_sensitive_path()
+_SENSITIVE_PATTERNS = None
+
+# Pattern definitions (raw strings — compiled on first use)
+SENSITIVE_FILE_PATTERNS = [
+    # Shell configs / credentials
+    r"(^|/)\.bashrc($|/)",                        # .bashrc
+    r"(^|/)\.zshrc($|/)",
+    r"(^|/)\.profile($|/)",                       # .profile
+    r"(^|/)\.env(\.[a-zA-Z]+)?$",                 # .env, .env.local, .env.production
+    r"(^|/)\.gitconfig$",                         # git config (may hold tokens)
+    r"(^|/)\.netrc$",                             # machine credentials
+    r"(^|/)\.npmrc$",                             # npm registry tokens
+    r"(^|/)\.dockercfg$",                         # Docker registry auth
+    r"(^|/)\.docker/config\.json$",               # Docker config (may hold creds)
+
+    # SSH
+    r"(^|/)\.ssh/",                               # SSH keys, config, authorized_keys
+
+    # Token / key files
+    r"(^|/)\.token$",                             # Generic token file
+    r"(^|/)\.secret$",                            # Generic secret file
+    r"(^|/)credentials\.json$",                   # GCP / service account keys
+    r"(^|/)credentials\.ini$",                    # AWS / generic
+    r"(^|/)(id_rsa|id_ecdsa|id_ed25519)($|/|\.)",  # SSH private keys by name
+
+    # Common config dirs that hold secrets
+    r"(^|/)\.config/gcloud/",                     # GCP service account keys
+    r"(^|/)\.config/gh/",                         # GitHub CLI tokens
+    r"(^|/)\.aws/",                               # AWS credentials + config
+    r"(^|/)\.azure/",                             # Azure CLI credentials
+
+    # Session/cookies
+    r"(^|/)cookie\.txt$",                         # session cookies
+]
+
+# Sensitive file extensions (checked on splitext basename)
+SENSITIVE_FILE_EXTENSIONS = {".pem", ".key", ".cert", ".p12", ".pfx"}
+
+# Sensitive basenames — checked on os.path.basename only
+SENSITIVE_BASENAMES = frozenset({
+    ".env", ".token", ".secret",
+    "credentials.json", "credentials.ini",
+    ".netrc", ".gitconfig", ".npmrc", ".dockercfg",
+})
+
+
+def _compile_sensitive_patterns():
+    """Compile regex patterns lazily (avoids import-time cost)."""
+    global _SENSITIVE_PATTERNS
+    if _SENSITIVE_PATTERNS is None:
+        _SENSITIVE_PATTERNS = [re.compile(p) for p in SENSITIVE_FILE_PATTERNS]
+    return _SENSITIVE_PATTERNS
+
+
+def _is_sensitive_path(path: str) -> bool:
+    """Check if a file path matches any sensitive-file pattern.
+
+    Returns True if the path SHOULD BE BLOCKED from caching/reading.
+    Used by cached_read() and SecurityGate.check_read_path().
+
+    Note: This is a path-name check, not a content scan.  Renaming a
+    sensitive file to 'my-config.txt' bypasses it — but that's an
+    intentional choice by the user (they removed the protection by
+    moving the file). For stronger guarantees, combine with
+    allowed_paths allowlisting.
+    """
+    # Normalize: expand ~, resolve symlinks, collapse /./ and ///
+    expanded = os.path.realpath(os.path.expanduser(path))
+
+    # Check regex patterns
+    patterns = _compile_sensitive_patterns()
+    for pat in patterns:
+        if pat.search(expanded):
+            return True
+
+    # Check sensitive extensions
+    _, ext = os.path.splitext(expanded)
+    if ext.lower() in SENSITIVE_FILE_EXTENSIONS:
+        return True
+
+    # Check basename for known sensitive filenames
+    basename = os.path.basename(expanded)
+    if basename in SENSITIVE_BASENAMES:
+        return True
+
+    return False
+
 
 # ─── In-memory file cache with LRU ──────────────────────────
 
@@ -275,6 +382,11 @@ def cached_read(path: str) -> dict:
     Lookup order: in-memory LRU (fast) → SQLite (persistent) → disk.
     """
     path = os.path.expanduser(path)
+
+    # Security: reject sensitive paths BEFORE any cache access
+    if _is_sensitive_path(path):
+        return {"error": "Security: path matches sensitive file pattern, refusing to read."}
+
     if not os.path.exists(path):
         return {"error": f"File not found: {path}"}
 
