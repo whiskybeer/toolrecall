@@ -113,6 +113,65 @@ The Daemon does not open any TCP ports. All communication happens over Unix Doma
 
 ---
 
-## 6. Reporting Vulnerabilities
+## 7. Interface Exposure & Default Transport Security
+
+ToolRecall's security depends not just on what it *blocks*, but on what it *exposes*. A caching layer that opens ports or sockets is itself an attack surface.
+
+### Default Transport: UDS (POSIX) / TCP Loopback (Windows)
+
+| Platform | Default Transport | Path/Address | Accessible from |
+|----------|-----------------|-------------|-----------------|
+| Linux | Unix Domain Socket | `~/.toolrecall/toolrecall.sock` (or `$XDG_RUNTIME_DIR/toolrecall.sock`) | Same user, same machine only. Socket file permissions: `600`. |
+| macOS | Unix Domain Socket | `~/.toolrecall/toolrecall.sock` | Same as Linux. |
+| Windows | TCP loopback | `127.0.0.1:8568` | Localhost only — no remote access. |
+
+### Agent Connection Path — Never Direct Socket Access
+
+External agents (Claude Code, Cursor, Cline, Hermes) do **not** connect to the socket directly:
+
+```
+Agent ──stdio──► toolrecall mcp (bridge) ──TransportClient──► Daemon
+                                                                    │
+                                                          SecurityGate prüft:
+                                                           • allowed_paths
+                                                           • _is_sensitive_path()
+                                                           • tool_access_control
+                                                           • cognitive scan
+                                                           • API key air-gap
+```
+
+The `toolrecall mcp` bridge process authenticates via UDS to the daemon and applies ALL security checks. An attacker who compromises only the MCP bridge (a stdio subprocess) has no way to bypass the SecurityGate — all commands pass through the daemon's validation loop.
+
+### Shared Memory (SHM) — Not Exposed to Agents
+
+A common concern: "If agents use shared memory, a swarm of compromised agents could read each other's state."
+
+**ToolRecall's architecture does not expose SHM to agents.** The `demo_shm/` proof-of-concept was a latency micro-benchmark (daemon-internal, between process threads) and has been deleted. The actual implementation:
+
+- **Agents → UDS only** (validated, slow path)
+- **Daemon internal → SQLite + LRU** (no SHM)
+
+There is no SHM transport in any deployed version of ToolRecall. The architecture never exposed it.
+
+### Multi-User Systems
+
+On a multi-user Linux machine, the UDS socket file is created in the user's home directory (`~/.toolrecall/toolrecall.sock`) with `600` permissions. Only the owning user can connect. A different user on the same machine cannot access the socket even if they know its path — the OS enforces file permissions on AF_UNIX sockets.
+
+### Swarm / Fleet Risk
+
+For deployments at scale (100+ agents on one machine, or agents across machines):
+
+| Risk | Mitigation | Status |
+|------|-----------|--------|
+| Another process connects to UDS | Socket in `$HOME` with `600` perms | ✅ OS-enforced |
+| Cross-machine socket access | UDS is machine-local. TCP bound to `127.0.0.1`. | ✅ Network-isolated |
+| Agent reads another agent's cache | Cache entries are process-visible. Cache DB is single-user. | ⚠️ Single-user assumption |
+| MCP bridge bypasses SecurityGate | All commands pass through daemon validation. Bridge is a thin proxy. | ✅ Validated per call |
+
+**Summary:** ToolRecall exposes no network ports, no SHM, and no cross-user sockets. The only transport is a user-scoped UDS file (POSIX) or localhost TCP (Windows). Every command passes through SecurityGate validation — no bypass path exists from any agent interface.
+
+---
+
+## 8. Reporting Vulnerabilities
 
 This project is maintained by a solo developer. For security issues, open a GitHub issue with the `security` label or contact the author directly. There is no bug bounty program.
