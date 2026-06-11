@@ -9,48 +9,63 @@ Token is loaded from the ToolRecall daemon environment (never exposed to subproc
 """
 import base64, json, os, sys, time, logging, urllib.request, urllib.error
 
-# Local-only request logger — one line per API call
-_log = logging.getLogger("toolrecall.github")
-_log.setLevel(logging.DEBUG)
-_fh = logging.FileHandler(os.path.expanduser(
-    os.environ.get("TOOLRECALL_GITHUB_LOG", "~/.toolrecall/github_api.log")
-))
-_fh.setFormatter(logging.Formatter(
-    "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-))
-_log.addHandler(_fh)
-
-TOKEN = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
-
-if not TOKEN:
-    sys.stderr.write("ERROR: No GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN in environment.\n")
-    sys.stderr.write("  Set the token in ~/.toolrecall/.env and restart the daemon.\n")
-    sys.stderr.flush()
-
+# Lazy logger + token — init only when main() runs, not on import.
+# Module-level IO at import time is an anti-pattern (every import opens
+# a log file handle and prints to stderr).
+_LOG: logging.Logger | None = None
+_TOKEN: str = ""
+_HEADERS: dict = {}
 API_BASE = "https://api.github.com"
 
-HEADERS = {
-    "Authorization": f"token {TOKEN}",
-    "Accept": "application/vnd.github.v3+json",
-    "User-Agent": "toolrecall-github-mcp",
-}
+
+def _setup():
+    """Load token + init logging. Called once from main()."""
+    global _TOKEN, _HEADERS, _LOG
+
+    # Token
+    _TOKEN = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+    _HEADERS = {
+        "Authorization": f"token {_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "toolrecall-github-mcp",
+    }
+
+    # Logger
+    _LOG = logging.getLogger("toolrecall.github")
+    _LOG.setLevel(logging.DEBUG)
+    _fh = logging.FileHandler(os.path.expanduser(
+        os.environ.get("TOOLRECALL_GITHUB_LOG", "~/.toolrecall/github_api.log")
+    ))
+    _fh.setFormatter(logging.Formatter(
+        "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+    _LOG.addHandler(_fh)
+    assert _LOG is not None
+
+    # Startup message (token status only, never the actual value)
+    if not _TOKEN:
+        sys.stderr.write("ERROR: No GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN in environment.\n")
+        sys.stderr.write("  Set the token in ~/.toolrecall/.env and restart the daemon.\n")
+        sys.stderr.flush()
+
 
 def _api(method, path, data=None):
     url = f"{API_BASE}/{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, headers=HEADERS, method=method)
+    req = urllib.request.Request(url, data=body, headers=_HEADERS, method=method)
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req) as r:
             resp = json.loads(r.read())
         elapsed = (time.perf_counter() - t0) * 1000
-        _log.info(f"{method:>6} /{path} → {r.status}  {elapsed:.0f}ms")
+        _LOG.info(f"{method:>6} /{path} → {r.status}  {elapsed:.0f}ms")
         return resp
     except urllib.error.HTTPError as e:
         elapsed = (time.perf_counter() - t0) * 1000
         body_preview = e.read().decode()[:200]
-        _log.warning(f"{method:>6} /{path} → {e.code}  {elapsed:.0f}ms  {body_preview}")
+        _LOG.warning(f"{method:>6} /{path} → {e.code}  {elapsed:.0f}ms  {body_preview}")
         return {"error": e.code, "message": body_preview}
+
 
 def _handle(method, params):
     if method == "create_repository":
@@ -68,7 +83,6 @@ def _handle(method, params):
         return _api("PUT", f"repos/{owner}/{repo}/contents/{path}", data)
     elif method == "push_files":
         owner, repo, branch = params["owner"], params["repo"], params["branch"]
-        # Create tree from files
         files = params.get("files", params.get("changes", []))
         tree = []
         for f in files:
@@ -78,7 +92,6 @@ def _handle(method, params):
                 "type": "blob",
                 "content": base64.b64decode(f["content"]).decode("utf-8", errors="replace"),
             })
-        # Get last commit SHA
         ref = _api("GET", f"repos/{owner}/{repo}/git/ref/heads/{branch}")
         if "error" in ref:
             return ref
@@ -87,14 +100,12 @@ def _handle(method, params):
         if "error" in commit_data:
             return commit_data
         base_tree = commit_data["tree"]["sha"]
-        # Create tree
         new_tree = _api("POST", f"repos/{owner}/{repo}/git/trees", {
             "base_tree": base_tree,
             "tree": tree,
         })
         if "error" in new_tree:
             return new_tree
-        # Create commit
         new_commit = _api("POST", f"repos/{owner}/{repo}/git/commits", {
             "message": params.get("message", "Update via ToolRecall"),
             "tree": new_tree["sha"],
@@ -102,7 +113,6 @@ def _handle(method, params):
         })
         if "error" in new_commit:
             return new_commit
-        # Update ref
         return _api("PATCH", f"repos/{owner}/{repo}/git/refs/heads/{branch}", {
             "sha": new_commit["sha"],
             "force": False,
@@ -114,13 +124,16 @@ def _handle(method, params):
         return _api("GET", "user/repos?per_page=30")
     return None
 
+
 _api_calls = 0
+
 
 def main():
     """Minimal stdio MCP server loop."""
-    import sys
-    sys.stderr.write(f"ToolRecall GitHub MCP Server (Python stdlib)\n")
-    sys.stderr.write(f"  Token: {TOKEN[:8]}... ({len(TOKEN)} chars)\n" if TOKEN else "  No token!\n")
+    _setup()
+    sys.stderr.write("ToolRecall GitHub MCP Server (Python stdlib)\n")
+    token_status = "configured" if _TOKEN else "not set"
+    sys.stderr.write(f"  Token: {token_status}\n")
     sys.stderr.flush()
 
     tools = [
@@ -167,8 +180,7 @@ def main():
             resp["result"] = {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "toolrecall-github", "version": "0.1.0",
-                               "security": {"token_local": True}},
+                "serverInfo": {"name": "toolrecall-github", "version": "0.1.0"},
             }
         elif method == "tools/list":
             resp["result"] = {"tools": tools}
@@ -188,6 +200,7 @@ def main():
         out = json.dumps(resp) + "\n"
         sys.stdout.write(out)
         sys.stdout.flush()
+
 
 if __name__ == "__main__":
     main()

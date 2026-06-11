@@ -109,7 +109,12 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(500)
 
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # CORS header bewusst weggelassen: der Proxy bindet nur auf
+        # localhost (127.0.0.1). Access-Control-Allow-Origin: * wäre
+        # auf einem lokalen Service sinnlos und riskant bei versehentlichem
+        # Netzwerk-Binding (CSRF auf /cache/invalidate, /cached_terminal).
+        # Nur wieder aktivieren wenn ein konkreter CORS-Client existiert.
+        # self.send_header("Access-Control-Allow-Origin", "null")
         self.end_headers()
         self.wfile.write(json.dumps(result).encode())
 

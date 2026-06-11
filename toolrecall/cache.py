@@ -383,6 +383,10 @@ def cached_read(path: str) -> dict:
     """
     path = os.path.expanduser(path)
 
+    # Reject null bytes — prevents path traversal tricks on some systems
+    if "\x00" in path:
+        return {"error": "Path not allowed: contains null byte"}
+
     # Security: reject sensitive paths BEFORE any cache access
     if _is_sensitive_path(path):
         return {"error": "Security: path matches sensitive file pattern, refusing to read."}

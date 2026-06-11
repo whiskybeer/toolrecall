@@ -149,7 +149,7 @@ class TestMCPGithubProtocol(unittest.TestCase):
 
         stderr_text = stderr_buf.getvalue()
         # Server warns on stderr when no token is set
-        self.assertIn("No token", stderr_text)
+        self.assertIn("Token: not set", stderr_text)
 
     def test_tools_list_available_even_without_token(self):
         """Prove tools/list still works when no token is set."""
