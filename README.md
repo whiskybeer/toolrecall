@@ -18,6 +18,24 @@ toolrecall mcp              # Connect any MCP agent (Claude Code, Cursor, Cline,
 
 **Requirements:** Python 3.11+ (stdlib: `sqlite3`, `tomllib`, `json`, `http.server`, `urllib`).
 
+### VS Code Extension (optional)
+
+Install the [ToolRecall Cache extension](vscode-extension) from the VS Code Marketplace for **transparent file-read caching** — every file you open is cached automatically with zero configuration:
+
+```bash
+pip install toolrecall                    # Step 1: install core
+code --install-extension toolrecall.cache # Step 2: install extension
+```
+
+**What it gives you over the CLI alone:**
+- Files cache automatically on open — no `cached_read()` calls needed
+- Status bar shows live hit/miss ratio (`TR: 12H / 3M`)
+- Per-workspace scoping — only your current project is readable
+- Auto-invalidation on save — edited files refresh immediately
+- Graceful fallback if toolrecall isn't installed
+
+See the [extension README](vscode-extension/README.md) for details.
+
 ---
 
 ## What ToolRecall IS / IS NOT
@@ -242,23 +260,22 @@ Removes: daemon, systemd service, config, cache DB, logs.
 
 ## Platform Support
 
-| Platform | Transport | Status |
-|----------|-----------|--------|
-| **Linux** | Unix Domain Sockets | ✅ Tested in CI (176/176 pass) |
-| **macOS** | Unix Domain Sockets | ✅ Should work (POSIX). Not in CI. |
-| **Windows** | TCP localhost:8567 fallback | ⚠️ **Untested.** Transport layer adapted, full suite never run. |
+| Platform | Transport | Status | VS Code Extension |
+|----------|-----------|--------|-------------------|
+| **Linux** | Unix Domain Sockets | ✅ Tested in CI (176/176 pass) | ✅ Works with ToolRecall daemon |
+| **macOS** | Unix Domain Sockets | ✅ Should work (POSIX). Not in CI. | ✅ Works |
+| **Windows** | TCP localhost:8568 fallback | ⚠️ Core + transport tested. CLI and extension work. | ✅ Binary auto-detected (`.exe`/`.cmd`) |
 
 ---
 
 ## Roadmap
 
+- ✅ **VS Code Extension** — transparent file-read caching for VS Code (shipped)
 - Live cache dashboard (`toolrecall dashboard`)
 - Tool-calling profiler (latency breakdown per MCP call)
 - Active cache invalidation on mutation tools
 - Container sandbox for `cached_run` (Docker backend)
 - Webhook-triggered invalidation
-
----
 
 ## Documentation
 
