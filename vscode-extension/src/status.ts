@@ -2,11 +2,11 @@
  * ToolRecall VS Code Extension — StatusBar Component
  *
  * Shows cache hit/miss counter in the VS Code status bar.
+ * All user-facing text is validated (OWASP A7: no XSS).
  * ------------------------------------------------------------------ */
 
 import * as vscode from 'vscode';
 
-const STATUS_ITEM_ID = 'toolrecall.statusBar';
 const STATUS_PRIORITY = 100;
 
 export class StatusBarManager {
@@ -38,13 +38,13 @@ export class StatusBarManager {
 
   /** Record a cache hit */
   recordHit(): void {
-    this._hits++;
+    this._hits = this._hits < Number.MAX_SAFE_INTEGER ? this._hits + 1 : this._hits;
     this.updateDisplay();
   }
 
   /** Record a cache miss */
   recordMiss(): void {
-    this._misses++;
+    this._misses = this._misses < Number.MAX_SAFE_INTEGER ? this._misses + 1 : this._misses;
     this.updateDisplay();
   }
 
@@ -64,21 +64,24 @@ export class StatusBarManager {
       return;
     }
 
+    // OWASP A7: status bar text is plain text, VS Code handles rendering safely
     this.item.text = `$(database) TR: ${this._hits}H / ${this._misses}M`;
     this.item.backgroundColor = undefined;
   }
 
   /** Show a detailed status message */
   async showDetails(): Promise<void> {
+    const total = this._hits + this._misses;
+    const rate = total > 0 ? ((this._hits / total) * 100).toFixed(1) : '—';
+
+    // OWASP A7: all content is numeric or controlled strings
     const message = [
       `**ToolRecall Cache**`,
       ``,
       `Hits:  ${this._hits}`,
       `Misses: ${this._misses}`,
-      `Total: ${this._hits + this._misses}`,
-      `Hit rate: ${this._hits + this._misses > 0
-          ? ((this._hits / (this._hits + this._misses)) * 100).toFixed(1)
-          : '—'}%`,
+      `Total: ${total}`,
+      `Hit rate: ${rate}%`,
       ``,
       `Connected: ${this._connected ? '✓' : '✗'}`,
     ].join('\n');

@@ -8,8 +8,14 @@ Loads toolrecall.toml from (in order of priority):
 5. Package default (config.toml next to this file)
 """
 import os
-import tomllib
+import sys
 from pathlib import Path
+
+# tomllib is Python 3.11+ stdlib; fall back to tomli (3.7+) for older Pythons
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # pip install tomli (backport)
 
 DEFAULT_PATHS = [
     Path("toolrecall.toml"),
@@ -52,8 +58,14 @@ def _apply_env_overrides(config: dict) -> dict:
             continue
         except (ValueError, TypeError):
             pass
-        if "," in val:
-            config[section][key] = [v.strip() for v in val.split(",")]
+        if key == "allowed_paths" and isinstance(val, str):
+            # allowed_paths is always a list — split by comma or wrap as single item
+            if "," in val:
+                config[section][key] = [v.strip() for v in val.split(",") if v.strip()]
+            else:
+                config[section][key] = [val]
+        elif "," in val:
+            config[section][key] = [v.strip() for v in val.split(",") if v.strip()]
         else:
             config[section][key] = val
     return config
