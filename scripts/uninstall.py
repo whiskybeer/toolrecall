@@ -73,7 +73,7 @@ def summary():
 
 def step_stop_daemon():
     global REMOVED
-    print("\n[1/7] Stopping running processes...")
+    print("\n[1/9] Stopping running processes...")
     stopped = False
 
     # Try CLI stop via toolrecall command
@@ -88,15 +88,15 @@ def step_stop_daemon():
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
 
-    # Kill by PID file
-    pid_file = os.path.join(TR_DIR, "tc.pid")
-    if os.path.isfile(pid_file):
-        try:
-            pid = int(open(pid_file).read().strip())
-            os.kill(pid, 15)
-            stopped = True
-        except (ValueError, OSError, ProcessLookupError):
-            pass
+    # Kill by PID file (try both old and new path)
+    for pid_path in [os.path.join(TR_DIR, "tc.pid"), os.path.join(TR_DIR, "daemon.pid")]:
+        if os.path.isfile(pid_path):
+            try:
+                pid = int(open(pid_path).read().strip())
+                os.kill(pid, 15)
+                stopped = True
+            except (ValueError, OSError, ProcessLookupError):
+                pass
 
     # Kill any remaining daemon processes
     try:
@@ -117,7 +117,7 @@ def step_stop_daemon():
 
 def step_systemd():
     global REMOVED, SKIPPED
-    print("\n[2/7] Systemd user service...")
+    print("\n[2/9] Systemd user service...")
     if not os.path.isfile(SYSTEMD_SERVICE):
         log("No systemd service found", "−")
         return
@@ -145,7 +145,7 @@ def step_systemd():
 
 def step_data_dir():
     global REMOVED, SKIPPED
-    print(f"\n[3/7] Data directory ({TR_DIR})...")
+    print(f"\n[3/9] Data directory ({TR_DIR})...")
     if not os.path.isdir(TR_DIR):
         log("No data directory found", "−")
         return
@@ -197,7 +197,7 @@ def edit_config_file(path: str, label: str):
 
 def step_hermes_config():
     global REMOVED, SKIPPED
-    print(f"\n[4/7] Hermes config ({HERMES_CONFIG})...")
+    print(f"\n[4/9] Hermes config ({HERMES_CONFIG})...")
 
     if not os.path.isfile(HERMES_CONFIG):
         log("Config file not found", "−")
@@ -227,7 +227,7 @@ def step_hermes_config():
 
 def step_sandbox():
     global REMOVED, SKIPPED
-    print("\n[5/7] Sandbox config...")
+    print("\n[5/9] Sandbox config...")
 
     if not os.path.isfile(SANDBOX_CONFIG):
         log("No sandbox.yaml found", "−")
@@ -257,7 +257,7 @@ def step_sandbox():
 
 def step_cron():
     global REMOVED, SKIPPED
-    print("\n[6/7] Hermes cron jobs...")
+    print("\n[6/9] Hermes cron jobs...")
 
     print("  ! Cron jobs referencing toolrecall still exist:")
     print("    - toolrecall-watchdog (runs every 10m)")
@@ -284,7 +284,7 @@ def step_cron():
 
 def step_skills():
     global REMOVED, SKIPPED
-    print("\n[7/7] Hermes skills...")
+    print("\n[7/9] Hermes skills...")
 
     for skill_dir in SKILL_DIRS:
         if not os.path.isdir(skill_dir):
@@ -300,11 +300,38 @@ def step_skills():
             SKIPPED += 1
 
 
-# ── 8. Pip package ─────────────────────────────────────────────
+# ── 8. VS Code Extension ──────────────────────────────────────
+
+def step_vscode():
+    global REMOVED, SKIPPED
+    print("\n[8/9] VS Code Extension...")
+
+    # Check for installed extension
+    result = subprocess.run(
+        ["code", "--list-extensions"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode != 0 or "toolrecall" not in result.stdout:
+        log("ToolRecall VS Code extension not installed", "−")
+        return
+
+    if confirm("Uninstall ToolRecall VS Code extension?"):
+        subprocess.run(
+            ["code", "--uninstall-extension", "whiskybeer.toolrecall-cache"],
+            capture_output=True, timeout=10,
+        )
+        log("Uninstalled VS Code extension", "✓")
+        REMOVED += 1
+    else:
+        log("Skipped", "−")
+        SKIPPED += 1
+
+
+# ── 9. Pip package ─────────────────────────────────────────────
 
 def step_pip():
     global REMOVED, SKIPPED
-    print("\n[8/8] Pip package...")
+    print("\n[9/9] Pip package...")
 
     # Check if installed
     result = subprocess.run(
@@ -348,6 +375,7 @@ def main():
     step_sandbox()
     step_cron()
     step_skills()
+    step_vscode()
     step_pip()
 
     summary()
