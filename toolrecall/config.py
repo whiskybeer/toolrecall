@@ -43,6 +43,8 @@ ENV_MAP = {
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
     "TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL": ("mcp_multiplex", "default_ttl"),
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
+    "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
+    "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
 }
 
 

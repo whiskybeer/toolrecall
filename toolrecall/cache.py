@@ -32,6 +32,25 @@ from toolrecall.config import load_config
 
 config = load_config()
 
+
+# ─── Hash Helper (pluggable algorithm) ─────────────────────
+# Controlled by [cache].hash_algorithm in config.toml.
+# "md5" (default) — fast, backward-compatible, fine for cache keying.
+# "sha256" — slightly slower, better cryptographic hygiene.
+_HASH_ALGORITHM = str(config.get("cache", "hash_algorithm", default="md5") or "md5").lower()
+
+
+def _hash(value: str) -> str:
+    """Hash a string for cache keying using the configured algorithm.
+    Algorithm is set via [cache].hash_algorithm in config.toml.
+    MD5 is the default — fast, non-cryptographic here, keeps cache keys valid.
+    SHA256 is available for stricter environments.
+    """
+    if _HASH_ALGORITHM == "sha256":
+        return hashlib.sha256(value.encode()).hexdigest()
+    return hashlib.md5(value.encode()).hexdigest()
+
+
 # ─── Sensitive File Blocklist ───────────────────────────────
 #
 # These patterns block file paths from being cached or read through
@@ -363,7 +382,7 @@ def _record_tokens_saved(category: str, tokens: int):
 
 def _persist_file_to_sqlite(path: str, content: str, stat_result):
     """Write file to SQLite for cross-session persistence."""
-    path_hash = hashlib.md5(path.encode()).hexdigest()
+    path_hash = _hash(path)
     try:
         conn = _get_db()
         conn.execute("""
@@ -403,7 +422,7 @@ def cached_read(path: str) -> dict:
         return {"cached": True, "content": entry["content"], "path": path}
 
     # ── 2. SQLite cache (warm from previous session) ──
-    path_hash = hashlib.md5(path.encode()).hexdigest()
+    path_hash = _hash(path)
     try:
         conn = _get_db()
         row = conn.execute(
@@ -568,6 +587,17 @@ def _match_terminal(cmd: str, pattern: str) -> bool:
     return cmd_norm == pattern_norm
 
 
+_LOG_SHELL_FALLBACK = str(config.get("cache", "log_shell_fallback", default="true") or "true").lower() == "true"
+
+
+def _log_shell_fallback(cmd: str, fallback_type: str = "shell"):
+    """Log when shell=True fallback is used (security audit signal)."""
+    import logging
+    logging.getLogger("toolrecall.cache").warning(
+        "shell=True fallback (%s): %.200s", fallback_type, cmd
+    )
+
+
 def cached_terminal(command: str, ttl: int = None) -> dict:
     """Run command OR return cached result (TTL-based, SQLite-backed).
 
@@ -597,7 +627,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
-    cmd_hash = hashlib.md5(cmd.encode()).hexdigest()
+    cmd_hash = _hash(cmd)
     now = time.time()
 
     try:
@@ -625,6 +655,8 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
         result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
     except Exception:
         # Fallback to shell=True for complex commands
+        if _LOG_SHELL_FALLBACK:
+            _log_shell_fallback(cmd, "shlex split failed (terminal)")
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
 
     expires = now + (cacheable_ttl or 300)
@@ -670,10 +702,12 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
     is_cacheable = ext in SCRIPT_CACHEABLE_EXTENSIONS
 
     if not is_cacheable:
+        if _LOG_SHELL_FALLBACK:
+            _log_shell_fallback(f"{path} {args}", "non-cacheable script")
         result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
-    path_hash = hashlib.md5(f"{path}:{args}".encode()).hexdigest()
+    path_hash = _hash(f"{path}:{args}")
     now = time.time()
 
     try:
@@ -704,6 +738,8 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
         cmd = [path] + script_args
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except Exception:
+        if _LOG_SHELL_FALLBACK:
+            _log_shell_fallback(f"{path} {args}", "shlex split failed (script)")
         result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
 
     try:
@@ -735,7 +771,7 @@ def cached_exec(code: str, ttl: int = 0) -> dict:
         )
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
-    code_hash = hashlib.md5(code.encode()).hexdigest()
+    code_hash = _hash(code)
     now = time.time()
 
     try:
@@ -949,13 +985,13 @@ def cached_mcp_check(server: str, tool: str, arguments: dict = None, ttl: int = 
         _record("mcp_cache", hit=False)
         args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
         request_str = f"{server}://{tool}?{args_json}"
-        request_hash = hashlib.md5(request_str.encode()).hexdigest()
+        request_hash = _hash(request_str)
         return {"cached": False, "key": request_hash, "bypassed": True, "server": server, "tool": tool}
 
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
     args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
     request_str = f"{server}://{tool}?{args_json}"
-    request_hash = hashlib.md5(request_str.encode()).hexdigest()
+    request_hash = _hash(request_str)
     now = time.time()
 
     try:
@@ -1098,7 +1134,7 @@ def invalidate_file(path: str):
     path = os.path.expanduser(path)
     _file_cache.remove(path)
 
-    h = hashlib.md5(path.encode()).hexdigest()
+    h = _hash(path)
     conn = _get_db()
     try:
         conn.execute("DELETE FROM file_cache WHERE path_hash = ?", (h,))

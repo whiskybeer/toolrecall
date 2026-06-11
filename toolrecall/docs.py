@@ -5,6 +5,7 @@ No embedding, no GPU, no API call -- pure SQLite FTS5 + BM25.
 """
 import os, time, sqlite3, hashlib, subprocess
 from pathlib import Path
+from toolrecall.cache import _hash
 from toolrecall.config import load_config
 
 # Lazy config — the Config class in config.py always creates a fresh
@@ -247,7 +248,7 @@ def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -
                 entries = [raw.strip()]
 
         for idx, entry in enumerate(entries):
-            content_hash = hashlib.md5(entry.encode()).hexdigest()[:12]
+            content_hash = _hash(entry)[:12]
             path_key = f"{fname}#{content_hash}"
 
             title = entry.split("\n")[0][:80].strip()

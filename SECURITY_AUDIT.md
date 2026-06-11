@@ -197,3 +197,15 @@ Legend: ✅ = pass, ⚠️ = partial, 🟡 = informational, 🔴 = critical
 - **176+ security tests** — `test_security_waf.py`, `test_security_injection.py`, `test_ast_security.py`, `test_cognitive_scan.py`, `test_cache_safety.py`
 - **No `curl | bash` install** — pip install only, setup.sh is for git clone users
 - **SECURITY.md documents limitations** — honest assessment of what the tool does and doesn't protect against
+
+## Optional Hardening Features (plug-and-play)
+
+These are configured via `config.toml` or environment variables — enable as needed:
+
+| Feature | Config Key | Env Var | Values | Default | Effect |
+|---------|-----------|---------|--------|---------|--------|
+| Cache hash algorithm | `[cache].hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM` | `"md5"` or `"sha256"` | `"md5"` | SHA256 for cache keys (better cryptographic hygiene) |
+| Shell fallback logging | `[cache].log_shell_fallback` | `TOOLRECALL_LOG_SHELL_FALLBACK` | `true` or `false` | `true` | Logs WARNING when `shlex.split()` fails and `shell=True` is used |
+| MD5 → SHA256 migration | — | — | — | — | ⚠️ Switching invalidates all existing cache (different key hashes) |
+
+These features are **zero-risk** to enable: they don't change behavior, only add logging or use a stricter hash.

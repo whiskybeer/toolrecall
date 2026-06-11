@@ -19,6 +19,20 @@ file_ttl = -1          # read_file: until file modification (mtime)
 skill_ttl = -1         # skill_view: until skill update
 terminal_default_ttl = 300  # 5 minutes for unknown commands
 
+# Optional: use SHA256 instead of MD5 for cache key hashing.
+# MD5 is fine for non-cryptographic cache keying (default).
+# SHA256 is stricter — enables in environments that audit hash strength.
+# ⚠️ Switching algorithm invalidates ALL existing cache entries
+#    (cache keys differ, old entries stay in DB as orphans).
+# Values: "md5" (default) or "sha256"
+# hash_algorithm = "md5"
+
+# When true, log a WARNING when shell=True fallback is used
+# (occurs when shlex.split() fails on a complex command).
+# Default: true — helps detect if the agent is being tricked
+# into using unsafe shell execution paths.
+log_shell_fallback = true
+
 [cache.terminal_ttls]
 "hostname" = 3600
 "whoami" = 3600
