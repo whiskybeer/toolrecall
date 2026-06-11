@@ -724,8 +724,10 @@ class DaemonServer:
         self.multiplexer = MCPMultiplexer(self.cfg)
         self._server = None
         self._running = False
-        # Limit worker pool to prevent thread starvation under concurrent agent workflows
-        self._executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="TRWorker")
+        # ⚠ ThreadPoolExecutor is NOT created here — it must be created AFTER
+        # fork() to avoid corrupted locks in the child process.
+        # See _init_post_fork() which is called from start().
+        self._executor = None
 
     def _run_periodic_gc(self):
         """Runs garbage collection every 4 hours in a background thread."""
@@ -742,42 +744,52 @@ class DaemonServer:
                 pass
 
     def start(self):
-        """Start the IPC server (blocking)."""
-        self._server = create_socket(self.socket_path)
-        bind_socket(self._server, self.socket_path)
-        self._server.listen(10)
+        """Start the IPC server (blocking). Must be called AFTER fork()."""
+        # Lazy-init ThreadPoolExecutor AFTER fork — avoids corrupted locks
+        self._executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="TRWorker")
 
-        self._running = True
+        try:
+            self._server = create_socket(self.socket_path)
+            bind_socket(self._server, self.socket_path)
+            self._server.listen(10)
 
-        transport_type = "TCP" if IS_WINDOWS else "UDS"
-        print(f"ToolRecall Daemon v0.3.0")
-        print(f"  Transport: {transport_type} at {self.socket_path}")
-        print(f"  PID: {os.getpid()}")
-        print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
-        print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
-        print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}")
+            self._running = True
 
-        # Start MCP Multiplexer (lazy — no servers started yet)
-        if self.cfg.mcp_multiplex_enabled:
-            print(f"\nMCP Multiplexer:")
-            self.multiplexer.start()
-        print("")
+            transport_type = "TCP" if IS_WINDOWS else "UDS"
+            print(f"ToolRecall Daemon v0.3.0")
+            print(f"  Transport: {transport_type} at {self.socket_path}")
+            print(f"  PID: {os.getpid()}")
+            print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
+            print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
+            print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}")
 
-        # Start periodic GC background thread
-        self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
-        self._gc_thread.start()
+            # Start MCP Multiplexer (lazy — no servers started yet)
+            if self.cfg.mcp_multiplex_enabled:
+                print(f"\nMCP Multiplexer:")
+                self.multiplexer.start()
+            print("")
 
-        while self._running:
-            try:
-                conn, addr = self._server.accept()
-                self._executor.submit(self._handle, conn)
-            except OSError:
-                break  # Server closed
+            # Start periodic GC background thread
+            self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
+            self._gc_thread.start()
+
+            while self._running:
+                try:
+                    conn, addr = self._server.accept()
+                    self._executor.submit(self._handle, conn)
+                except OSError:
+                    break  # Server closed
+
+        except BaseException:
+            # Ensure cleanup on any crash so we don't leave stale socket
+            self.stop()
+            raise
 
     def stop(self):
         """Graceful shutdown."""
         self._running = False
-        self._executor.shutdown(wait=False)
+        if self._executor:
+            self._executor.shutdown(wait=False)
         self.multiplexer.shutdown()
         try:
             self._server.close()
@@ -1083,6 +1095,10 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     """Start the ToolRecall daemon."""
     global _server_instance
 
+    # Enable faulthandler so segfaults/aborts produce tracebacks
+    import faulthandler
+    faulthandler.enable()
+
     # Prevent starting multiple daemons (concurrency / socket-stealing guard)
     if os.path.exists(PID_FILE):
         try:
@@ -1135,7 +1151,14 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         print(f"  Transport: {_server_instance.socket_path}")
         sys.exit(0)
 
-    _server_instance.start()
+    try:
+        _server_instance.start()
+    except BaseException:
+        # If start() crashes (e.g. socket bind failure, executor init failure),
+        # print a traceback BEFORE exiting so logs show the root cause.
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 def stop_daemon():

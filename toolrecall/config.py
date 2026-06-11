@@ -399,54 +399,63 @@ class Config:
               command: npx
               args: ["-y", "@modelcontextprotocol/server-github"]
               env: {KEY: value}
+
+        Returns dict on success, or {} on any parse error (never throws).
         """
         servers = {}
-        with open(path, "r") as f:
-            lines = f.readlines()
+        try:
+            with open(path, "r") as f:
+                lines = f.readlines()
+        except (FileNotFoundError, PermissionError, OSError):
+            return {}
 
         in_mcp_servers = False
         current_server = None
         current_config = {}
-        indent_level = 0
 
         for line in lines:
             stripped = line.rstrip()
             if not stripped or stripped.strip().startswith("#"):
                 continue
 
-            # Detect mcp_servers block
+            # Detect mcp_servers block (top-level key)
             if stripped.strip() == "mcp_servers:" and not stripped.startswith(" "):
                 in_mcp_servers = True
-                indent_level = 0
                 continue
 
             if not in_mcp_servers:
                 continue
 
-            # Check if we've left the mcp_servers block
-            cur_indent = len(line) - len(line.lstrip())
-            if cur_indent == 0 and line.strip() and ":" in line:
+            # Detect end of mcp_servers block: top-level key that doesn't
+            # start with space (i.e. indent 0, has content, ends with ':')
+            try:
+                cur_indent = len(line) - len(line.lstrip())
+            except Exception:
+                cur_indent = 0
+            if cur_indent == 0 and line.strip() and line.strip().endswith(":") and " " not in line.strip().rstrip(":"):
                 in_mcp_servers = False
                 break
 
             # Server name (e.g., "  github:")
-            if cur_indent == 2 and stripped.strip().endswith(":"):
+            text = stripped.strip()
+            if cur_indent in (2, 4) and text.endswith(":") and " " not in text.rstrip(":"):
                 if current_server and current_config:
                     servers[current_server] = current_config
-                current_server = stripped.strip().rstrip(":")
+                current_server = text.rstrip(":")
                 current_config = {"command": "", "args": [], "env": {}}
-                indent_level = 2
                 continue
 
-            # Properties like command, args
-            if current_server:
-                key_val = stripped.strip()
-                if ": " in key_val:
-                    key, val = key_val.split(": ", 1)
-                    key = key.strip()
+            # Properties under a server
+            if current_server is None:
+                continue
+
+            if ": " in text:
+                key, val = text.split(": ", 1)
+                key = key.strip()
+
+                try:
                     if key == "command":
                         current_config["command"] = val.strip().strip('"').strip("'")
-                        # Handle multi-word commands like "uv run"
                         cmd_parts = current_config["command"].split()
                         if len(cmd_parts) > 1:
                             current_config["command"] = cmd_parts[0]
@@ -454,15 +463,15 @@ class Config:
                             current_config.setdefault("args", [])
                             current_config["args"] = extra_args + current_config["args"]
                     elif key == "args":
-                        # Parse inline list like "[-y, @modelcontextprotocol/...]"
-                        # or it might be on next lines with "- item"
                         val = val.strip()
-                        if val.startswith("["):
+                        if val.startswith("[") and val.endswith("]"):
                             args = []
-                            for item in val.strip("[]").split(","):
-                                item = item.strip().strip('"').strip("'")
-                                if item:
-                                    args.append(item)
+                            inner = val[1:-1]  # strip [ and ] properly
+                            if inner.strip():
+                                for item in inner.split(","):
+                                    item = item.strip().strip('"').strip("'")
+                                    if item:
+                                        args.append(item)
                             current_config["args"] = args
                         else:
                             current_config["args"] = []
@@ -471,11 +480,20 @@ class Config:
                             current_config["timeout"] = int(val)
                         except ValueError:
                             pass
-                elif stripped.strip().startswith("- "):
-                    # Array items on separate lines
-                    item = stripped.strip()[2:].strip().strip('"').strip("'")
-                    if key_val.count('"') <= 2:  # simple string item
+                    elif key in ("env", "disabled", "alwaysAllow", "ttl", "transport"):
+                        # Store other known keys safely as-is
+                        current_config[key] = val.strip()
+                except Exception:
+                    continue  # skip malformed key-value, don't crash
+
+            elif text.startswith("- ") and current_config.get("args") is not None:
+                # Array items on separate lines (continuation of args list)
+                try:
+                    item = text[2:].strip().strip('"').strip("'")
+                    if item:
                         current_config.setdefault("args", []).append(item)
+                except Exception:
+                    continue
 
         # Don't forget the last server
         if current_server and current_config:
