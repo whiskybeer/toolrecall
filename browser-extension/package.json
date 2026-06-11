@@ -4,31 +4,6 @@
   "description": "Cache browser page content before sending to LLM agents. Saves tokens, reduces latency.",
   "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "wxt",
-    "dev:firefox": "wxt --browser firefox",
-    "dev:safari": "wxt --browser safari",
-    "build": "wxt build",
-    "build:chrome": "wxt build --browser chrome",
-    "build:firefox": "wxt build --browser firefox",
-    "build:safari": "wxt build --browser safari",
-    "build:edge": "wxt build --browser chrome",
-    "build:brave": "wxt build --browser chrome",
-    "build:opera": "wxt build --browser chrome",
-    "zip": "wxt zip",
-    "zip:chrome": "wxt zip --browser chrome",
-    "zip:firefox": "wxt zip --browser firefox",
-    "lint": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "devDependencies": {
-    "@types/webextension-polyfill": "^0.10.0",
-    "happy-dom": "^20.10.2",
-    "typescript": "^5.4.0",
-    "vitest": "^4.1.8",
-    "wxt": "^0.20.26"
-  },
   "dependencies": {
     "webextension-polyfill": "^0.12.0"
   }
