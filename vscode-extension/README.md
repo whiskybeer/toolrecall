@@ -1,5 +1,7 @@
 # ToolRecall Cache — VS Code Extension
 
+> ⚠️ **Experimental.** Works in testing — not yet battle-tested in production. You may encounter edge cases with large workspaces or concurrent file changes.
+
 **Transparent file-read caching for VS Code.** Zero config. Works on Windows, macOS, and Linux.
 
 ## How it works

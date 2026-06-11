@@ -23,3 +23,7 @@ Welcome to the ToolRecall technical library. This directory contains the archite
 
 ## 5. Operations & Security
 - **[`SERVER_SECURITY_NONROOT_NGINX.md`](server-security-nonroot-nginx.md)**: How ToolRecall's production web server runs entirely with user privileges — no root required. Covers authbind architecture, nginx as a user service, SSL certificate renewal pipeline, and the ki-game-api shutdown that eliminated its last remaining service dependency.
+
+## 6. Integrations
+- **[`BROWSER_CACHE.md`](BROWSER_CACHE.md)**: How the ToolRecall Browser Cache Extension integrates with LLM agents that use browser tools (browser_navigate, browser_snapshot). Covers data flow, change detection, proxy port discovery, and troubleshooting.
+- **[`BROWSER_CACHE_SECURITY.md`](BROWSER_CACHE_SECURITY.md)**: Security analysis of the browser extension — threat model, permissions, network isolation, content size limits, OWASP LLM Top 10 audit, and unmitigated risks.

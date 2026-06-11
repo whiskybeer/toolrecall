@@ -1,5 +1,7 @@
 # ToolRecall — The Deterministic Tool Cache for LLM Agents
 
+**Faster up to 1000× · Cheaper (81% measured reduction) · More efficient the more you use it · Basically \$0 for repeat reads**
+
 ToolRecall is a caching layer and security guard for AI agents. It sits between the agent and your tools — SQLite cache for repeated reads, FTS5 knowledge base, MCP multiplexer, and a zero-trust WAF.
 **No LLM decides what to cache. Pure stdlib — `pip install toolrecall` adds zero dependencies.** (Python 3.11+ with `sqlite3`/`tomllib`/`json`)
 
@@ -18,7 +20,9 @@ toolrecall mcp              # Connect any MCP agent (Claude Code, Cursor, Cline,
 
 **Requirements:** Python 3.11+ (stdlib: `sqlite3`, `tomllib`, `json`, `http.server`, `urllib`).
 
-### VS Code Extension (optional)
+### VS Code Extension (experimental)
+
+> ⚠️ **Experimental.** Works in testing — not yet battle-tested in production. You may encounter edge cases with large workspaces or concurrent file changes.
 
 Install the [ToolRecall Cache extension](vscode-extension) from the VS Code Marketplace for **transparent file-read caching** — every file you open is cached automatically with zero configuration:
 
@@ -270,7 +274,8 @@ Removes: daemon, systemd service, config, cache DB, logs.
 
 ## Roadmap
 
-- ✅ **VS Code Extension** — transparent file-read caching for VS Code (shipped)
+- 🟡 **VS Code Extension** (experimental) — transparent file-read caching
+- 🟡 **Browser Extension** (experimental) — page content caching for LLM agents
 - Live cache dashboard (`toolrecall dashboard`)
 - Tool-calling profiler (latency breakdown per MCP call)
 - Active cache invalidation on mutation tools

@@ -359,8 +359,9 @@ def cmd_config_set():
 
 def cmd_serve():
     """Start HTTP proxy (via Daemon)."""
-    # Parse --port from argv (before any other parsing, so it overrides config)
+    # Parse --port from argv
     port_override = None
+    forward_mode = "--forward" in sys.argv
     clean_argv = []
     i = 0
     while i < len(sys.argv):
@@ -370,34 +371,41 @@ def cmd_serve():
         elif sys.argv[i].startswith("--port="):
             port_override = int(sys.argv[i].split("=", 1)[1])
             i += 1
+        elif sys.argv[i] == "--forward":
+            i += 1
         else:
             clean_argv.append(sys.argv[i])
             i += 1
     sys.argv = clean_argv
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        print("Usage: toolrecall serve [--port PORT]")
+        print("Usage: toolrecall serve [--port PORT] [--forward]")
         print()
         print("Start the ToolRecall HTTP proxy server.")
         print()
+        print("Modes:")
+        print("  default (bridge)    API endpoints for cached_read, cached_terminal, etc.")
+        print("  --forward           Forward proxy that caches LLM API responses.")
+        print("                       Use with browser extension DNR redirect.")
+        print()
         print("Options:")
-        print("  --help, -h    Show this help message")
-        print("  --port PORT   Override proxy port (default: from config.toml)")
+        print("  --help, -h          Show this help message")
+        print("  --port PORT         Override proxy port")
         print()
-        print("Configuration:")
-        print("  Port:    proxy.port in config.toml (default: 8567)")
-        print("  Bind:    proxy.bind in config.toml (default: 0.0.0.0)")
-        print()
-        print("Endpoints:")
-        print("  GET /cached_read?path=...")
-        print("  GET /cached_skill?name=...")
-        print("  GET /cached_terminal?cmd=...&ttl=...")
-        print("  GET /docs_search?query=...")
-        print("  GET /health")
-        print()
-        print("Recommended: put nginx in front for SSL + auth.")
-        print("  toolrecall nginx  ->  generates nginx config")
+        print("Examples:")
+        print("  toolrecall serve                          # Bridge mode on :8567")
+        print("  toolrecall serve --forward                # Forward proxy on :8080")
+        print("  toolrecall serve --forward --port 9090    # Forward proxy on :9090")
         return
+
+    if forward_mode:
+        from toolrecall.proxy import run_forward_proxy
+        from toolrecall.config import load_config
+        cfg = load_config()
+        port = port_override if port_override is not None else cfg.get("proxy", "forward_port", default=8080)
+        run_forward_proxy(port=port)
+        return
+
     from toolrecall.proxy import run_server
     from toolrecall.config import load_config
     cfg = load_config()

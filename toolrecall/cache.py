@@ -143,6 +143,7 @@ def _is_sensitive_path(path: str) -> bool:
     patterns = _compile_sensitive_patterns()
     for pat in patterns:
         if pat.search(expanded):
+            print(f"[ToolRecall] Blocked read of sensitive file: {path} (matched pattern: {pat.pattern})")
             return True
 
     # Check sensitive extensions
@@ -280,6 +281,31 @@ CREATE TABLE IF NOT EXISTS mcp_cache (
     hits INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_expires ON mcp_cache(expires_at);
+CREATE TABLE IF NOT EXISTS browser_cache (
+    cache_key TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'snapshot',
+    content TEXT NOT NULL,
+    title TEXT,
+    content_hash TEXT,
+    cached_at REAL NOT NULL,
+    hits INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS api_cache (
+request_hash TEXT PRIMARY KEY,
+method TEXT NOT NULL DEFAULT 'POST',
+host TEXT NOT NULL,
+path TEXT NOT NULL,
+request_body_hash TEXT NOT NULL,
+request_body_preview TEXT,
+response_status INTEGER,
+response_headers TEXT,
+response_body TEXT NOT NULL,
+cached_at REAL NOT NULL,
+expires_at REAL NOT NULL,
+hits INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_api_expires ON api_cache(expires_at);
 """
 
 
@@ -1080,7 +1106,7 @@ def get_stats() -> dict:
                 "tokens_intercepted": row["tokens_intercepted"],
                 "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
             }
-        for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache"]:
+        for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache", "browser_cache"]:
             r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
             stats[f"{t}_entries"] = r[0]
         conn.close()
@@ -1122,6 +1148,7 @@ def invalidate_all():
         conn.execute("DELETE FROM script_cache")
         conn.execute("DELETE FROM code_cache")
         conn.execute("DELETE FROM mcp_cache")
+        conn.execute("DELETE FROM browser_cache")
         conn.commit()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite invalidate failed: {e}")
@@ -1177,4 +1204,222 @@ def garbage_collect() -> int:
     except Exception as e:
         warnings.warn(f"ToolRecall GC failed: {e}")
         return -1
+
+
+# ─── BROWSER PAGE CACHE (SQLite, key-value) ──────────────
+
+BROWSER_CACHE_TTL = 3600  # 1 hour default for browser page cache
+
+
+def cached_browser_check(
+    cache_key: str,
+) -> dict:
+    """Check if browser page content is cached by key.
+
+    Args:
+        cache_key: e.g. ``browser:page:https_example_com:snapshot``
+
+    Returns:
+        ``{"cached": True, "content": "...", "tokens_saved": N}`` on hit,
+        ``{"cached": False}`` on miss.
+    """
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT content, hits FROM browser_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE browser_cache SET hits = hits + 1 WHERE cache_key = ?",
+                (cache_key,),
+            )
+            conn.commit()
+            conn.close()
+            _record("browser_cache", True)
+            tokens_saved = _estimate_tokens(row["content"])
+            return {
+                "cached": True,
+                "content": row["content"],
+                "tokens_saved": tokens_saved,
+            }
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: browser_cache check failed: {e}")
+
+    _record("browser_cache", False)
+    return {"cached": False}
+
+
+def cached_browser_store(
+    cache_key: str,
+    content: str,
+    url: str = "",
+    content_type: str = "snapshot",
+    title: str = "",
+    content_hash: str = "",
+) -> dict:
+    """Store browser page content in the cache.
+
+    Args:
+        cache_key: unique cache key (e.g. ``browser:page:https_example_com:snapshot``)
+        content: page content (HTML, text, or snapshot)
+        url: original URL for metadata
+        content_type: ``html``, ``text``, or ``snapshot``
+        title: page title for metadata
+        content_hash: for change detection
+
+    Returns:
+        ``{"stored": True}`` on success, ``{"stored": False, "error": "..."}`` on failure.
+    """
+    import time
+
+    # Defense in depth: limit content size at the cache layer.
+    # The HTTP proxy also enforces this, but UDS/MCP paths bypass the proxy.
+    MAX_CONTENT_BYTES = 5 * 1024 * 1024  # 5 MB
+    if len(content) > MAX_CONTENT_BYTES:
+        return {
+            "stored": False,
+            "error": f"Content too large ({len(content)} bytes, max {MAX_CONTENT_BYTES})",
+        }
+    try:
+        conn = _get_db()
+        now = time.time()
+        conn.execute(
+            """INSERT OR REPLACE INTO browser_cache
+               (cache_key, url, content_type, content, title, content_hash, cached_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (cache_key, url, content_type, content, title, content_hash, now),
+        )
+        conn.commit()
+        conn.close()
+        _record_tokens_saved("browser_cache", _estimate_tokens(content))
+        return {"stored": True}
+    except Exception as e:
+        warnings.warn(f"ToolRecall: browser_cache store failed: {e}")
+        return {"stored": False, "error": str(e)}
+
+
+def invalidate_browser_url(url: str):
+    """Invalidate all cached entries for a specific URL."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM browser_cache WHERE url = ?", (url,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: browser_cache invalidate failed: {e}")
+
+
+# ─── API CACHE (forward-proxy responses, keyed by request hash) ─────
+
+API_CACHE_TTL = 300  # 5 minutes default for API responses
+
+
+def cached_api_check(request_hash: str) -> dict:
+    """Check if an API response is cached by request hash.
+
+    Args:
+        request_hash: SHA256 hash of ``method:host:path:body``
+
+    Returns:
+        ``{"cached": True, "status": 200, "headers": {...}, "body": "..."}`` on hit,
+        ``{"cached": False}`` on miss.
+    """
+    import time
+    try:
+        conn = _get_db()
+        now = time.time()
+        row = conn.execute(
+            "SELECT response_status, response_headers, response_body, expires_at "
+            "FROM api_cache WHERE request_hash = ?",
+            (request_hash,),
+        ).fetchone()
+        if row and row["expires_at"] > now:
+            conn.execute(
+                "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
+                (request_hash,),
+            )
+            conn.commit()
+            conn.close()
+            _record("api_cache", True)
+            import json as _json
+            headers = _json.loads(row["response_headers"]) if row["response_headers"] else {}
+            tokens_saved = _estimate_tokens(row["response_body"])
+            return {
+                "cached": True,
+                "status": row["response_status"],
+                "headers": headers,
+                "body": row["response_body"],
+                "tokens_saved": tokens_saved,
+            }
+        conn.close()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: api_cache check failed: {e}")
+
+    _record("api_cache", False)
+    return {"cached": False}
+
+
+def cached_api_store(request_hash: str, method: str, host: str, path: str,
+                     request_body_hash: str, response_status: int,
+                     response_headers: dict, response_body: str,
+                     ttl: int = None) -> dict:
+    """Store an API response in the cache.
+
+    Args:
+        request_hash: SHA256 of ``method:host:path:body``
+        method: HTTP method
+        host: upstream host (e.g. ``api.openai.com``)
+        path: request path (e.g. ``/v1/chat/completions``)
+        request_body_hash: SHA256 of just the body (for debugging)
+        response_status: HTTP status code
+        response_headers: response headers dict
+        response_body: response body string
+        ttl: TTL in seconds (default: API_CACHE_TTL = 300)
+
+    Returns:
+        ``{"stored": True}`` on success
+    """
+    import json as _json
+    import time
+    ttl = ttl if ttl is not None else API_CACHE_TTL
+    now = time.time()
+    expires = now + ttl
+
+    try:
+        conn = _get_db()
+        conn.execute(
+            """INSERT OR REPLACE INTO api_cache
+               (request_hash, method, host, path, request_body_hash,
+                request_body_preview, response_status, response_headers,
+                response_body, cached_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (request_hash, method, host, path, request_body_hash,
+             response_body[:200], response_status,
+             _json.dumps(response_headers), response_body, now, expires),
+        )
+        conn.commit()
+        conn.close()
+        _record_tokens_saved("api_cache", _estimate_tokens(response_body))
+        return {"stored": True}
+    except Exception as e:
+        warnings.warn(f"ToolRecall: api_cache store failed: {e}")
+        return {"stored": False, "error": str(e)}
+
+
+def invalidate_api_host(host: str) -> int:
+    """Invalidate all cached entries for an API host.
+
+    Returns number of deleted rows.
+    """
+    try:
+        conn = _get_db()
+        deleted = conn.execute("DELETE FROM api_cache WHERE host = ?", (host,)).rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        warnings.warn(f"ToolRecall: api_cache invalidate failed: {e}")
+        return 0
 

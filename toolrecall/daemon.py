@@ -50,6 +50,10 @@ from toolrecall.cache import (
     cached_patch as _cache_patch,
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_store as _cache_mcp_store,
+    cached_browser_check as _cache_browser_check,
+    cached_browser_store as _cache_browser_store,
+    cached_api_check as _cache_api_check,
+    cached_api_store as _cache_api_store,
     _is_sensitive_path,
     invalidate_all,
     invalidate_file as _invalidate_file,
@@ -134,6 +138,7 @@ class SecurityGate:
                 break
         else:
             # Generic error — never leak the real resolved path to the caller
+            print(f"[ToolRecall] Blocked path not in allowed_paths: {path}")
             return "Path not allowed: access denied"
 
         # ═══ Layer 2: Sensitive file blocklist ═══
@@ -142,12 +147,14 @@ class SecurityGate:
         # The allowlist defines trust; the blocklist prevents accidental
         # disclosure of credential files within trusted directories.
         if _is_sensitive_path(path):
+            print(f"[ToolRecall] Blocked read of sensitive file: {path} (Layer 2: sensitive file blocklist)")
             return "Path not allowed: path matches a sensitive file pattern"
 
         return None
 
     def check_terminal(self, cmd: str) -> str | None:
         if not self.allow_terminal:
+            print(f"[ToolRecall] Blocked terminal command: {cmd[:80]} (terminal disabled in config)")
             return "cached_terminal is disabled. Set mcp.allow_terminal=true in config."
             
         if not self.allowed_terminal_commands:
@@ -171,8 +178,10 @@ class SecurityGate:
 
     def check_mcp_server(self, server: str) -> str | None:
         if not self.allow_multiplex:
+            print(f"[ToolRecall] MCP multiplexer is disabled, server '{server}' blocked")
             return "MCP multiplexer is disabled."
         if self.allowed_servers and server.lower() not in self.allowed_servers:
+            print(f"[ToolRecall] Blocked MCP server '{server}' not in allowed_servers list")
             return f"MCP server '{server}' not in allowed_servers."
         return None
 
@@ -190,6 +199,7 @@ class SecurityGate:
         t_lower = tool_name.lower()
         for kw in self.dangerous_tool_keywords:
             if kw.lower() in t_lower:
+                print(f"[ToolRecall] Blocked MCP tool access: {tool_name} (matches keyword '{kw}')")
                 return f"ToolRecall MCP Access Control: tool '{tool_name}' blocked (matches keyword '{kw}')."
         return None
 
@@ -273,34 +283,42 @@ class SecurityGate:
 
             # Override instructions
             if ovrd.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches override instruction pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches override instruction pattern."
 
             # Role hijacking
             if role.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches role hijack pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches role hijack pattern."
 
             # Credential fishing
             if fish.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches credential fishing pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches credential fishing pattern."
 
             # Jailbreak tags
             if jail.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches jailbreak tag pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches jailbreak tag pattern."
 
             # Context overflow
             if overf.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches context overflow pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches context overflow pattern."
 
             # Encoding evasion
             if enc.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches encoding evasion pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches encoding evasion pattern."
 
             # Exfiltration URL (domain-based)
             if exf_dom.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches exfiltration url pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches exfiltration url pattern."
 
             # Exfiltration URL (raw IP + exfil path)
             if exf_ip.search(val):
+                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches exfiltration url pattern")
                 return f"Cognitive scan blocked: argument '{key}' matches exfiltration url pattern."
 
         return None
@@ -856,6 +874,18 @@ class DaemonServer:
                 return self._handle_mcp_call(request)
             elif cmd == "mcp_list_servers":
                 return self._handle_mcp_list_servers(request)
+            elif cmd == "cached_mcp_check":
+                return self._handle_mcp_check(request)
+            elif cmd == "cached_mcp_store":
+                return self._handle_mcp_store(request)
+            elif cmd == "cached_browser_check":
+                return self._handle_browser_check(request)
+            elif cmd == "cached_browser_store":
+                return self._handle_browser_store(request)
+            elif cmd == "cached_api_check":
+                return self._handle_api_check(request)
+            elif cmd == "cached_api_store":
+                return self._handle_api_store(request)
             elif cmd == "ping":
                 return self._handle_ping(request)
             elif cmd == "shutdown":
@@ -1077,6 +1107,100 @@ class DaemonServer:
             return {"error": err}
         servers = self.multiplexer.list_servers()
         return {"result": servers}
+
+    # ─── MCP Cache IPCs (key-value check/store) ──────────
+
+    def _handle_mcp_check(self, req: dict) -> dict:
+        """Generic MCP cache check by key.
+
+        Args in request:
+            key (str): cache key to look up
+
+        Returns cached content or miss indicator.
+        """
+        key = req.get("key", "")
+        if not key:
+            return {"error": "Missing 'key' parameter"}
+        return _cache_mcp_check("_generic", "_lookup", {"key": key})
+
+    def _handle_mcp_store(self, req: dict) -> dict:
+        """Generic MCP cache store by key.
+
+        Args in request:
+            key (str): cache key
+            content (str): data to store
+            url (str, optional): source URL
+            contentType (str, optional): content type
+        """
+        key = req.get("key", "")
+        content = req.get("content", "")
+        if not key:
+            return {"error": "Missing 'key' parameter"}
+        _cache_mcp_store(key, "_generic", "_store", {"key": key}, content)
+        return {"stored": True}
+
+    # ─── Browser Cache IPCs ────────────────────────────────
+
+    def _handle_browser_check(self, req: dict) -> dict:
+        """Check if browser page content is cached.
+
+        Args:
+            cache_key (str): e.g. ``browser:page:https_example_com:snapshot``
+        """
+        cache_key = req.get("cache_key", req.get("key", ""))
+        if not cache_key:
+            return {"error": "Missing 'cache_key' parameter"}
+        return _cache_browser_check(cache_key)
+
+    def _handle_browser_store(self, req: dict) -> dict:
+        """Store browser page content in cache.
+
+        Args:
+            cache_key (str): unique key
+            content (str): page content
+            url (str): original URL
+            content_type (str): ``html``, ``text``, or ``snapshot``
+            title (str, optional): page title
+            content_hash (str, optional): for change detection
+        """
+        cache_key = req.get("cache_key", req.get("key", ""))
+        content = req.get("content", "")
+        if not cache_key:
+            return {"error": "Missing 'cache_key' parameter"}
+        return _cache_browser_store(
+            cache_key=cache_key,
+            content=content,
+            url=req.get("url", ""),
+            content_type=req.get("content_type", req.get("contentType", "snapshot")),
+            title=req.get("title", ""),
+            content_hash=req.get("content_hash", ""),
+        )
+
+    # ─── API Cache IPCs ────────────────────────────────────
+
+    def _handle_api_check(self, req: dict) -> dict:
+        """Check if an API response is cached by request hash."""
+        request_hash = req.get("request_hash", req.get("key", ""))
+        if not request_hash:
+            return {"error": "Missing 'request_hash' parameter"}
+        return _cache_api_check(request_hash)
+
+    def _handle_api_store(self, req: dict) -> dict:
+        """Store an API response in cache."""
+        request_hash = req.get("request_hash", req.get("key", ""))
+        if not request_hash:
+            return {"error": "Missing 'request_hash' parameter"}
+        return _cache_api_store(
+            request_hash=request_hash,
+            method=req.get("method", "POST"),
+            host=req.get("host", ""),
+            path=req.get("path", ""),
+            request_body_hash=req.get("request_body_hash", ""),
+            response_status=req.get("response_status", 200),
+            response_headers=req.get("response_headers", {}),
+            response_body=req.get("response_body", ""),
+            ttl=req.get("ttl", None),
+        )
 
 
 # ─── Entry Points ─────────────────────────────────────────
