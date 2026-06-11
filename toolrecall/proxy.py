@@ -19,6 +19,7 @@ Endpoints:
 import http.server
 import json
 import logging
+import sys
 import urllib.parse
 
 from toolrecall.transport import TransportClient
@@ -133,13 +134,18 @@ def run_server(bind: str = "127.0.0.1", port: int = 8567):
     """
     try:
         server = http.server.HTTPServer(("127.0.0.1", port), ToolRecallHandler)
+        actual_port = server.server_port
     except OSError as e:
         if e.errno == 98:  # Address already in use
             log.error("Port %d already in use — is another proxy running?", port)
             return
         raise
 
-    log.info("ToolRecall HTTP Proxy running on http://%s:%d", bind, port)
+    log.info("ToolRecall HTTP Proxy running on http://%s:%d", bind, actual_port)
+    # Print the actual port to stdout so the VS Code extension can detect it
+    # Format: "http://127.0.0.1:PORT" — parsed by proxy.ts regex match
+    print(f"http://127.0.0.1:{actual_port}")
+    sys.stdout.flush()
 
     # Check daemon
     client = TransportClient()
