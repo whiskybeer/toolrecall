@@ -279,6 +279,7 @@ Removes: daemon, systemd service, config, cache DB, logs.
 
 ## Documentation
 
+- [ToolRecall vs Claude Code](docs/VS_CLAUDE_CODE.md) — detailed caching comparison
 - [The Bottleneck Solved](docs/BOTTLENECK_SOLVED.md) — O(N²) context theory
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide
 - [Docker Deployment](docs/DOCKER.md) — containerized stack
