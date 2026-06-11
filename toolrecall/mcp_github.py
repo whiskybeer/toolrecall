@@ -9,9 +9,7 @@ Token is loaded from the ToolRecall daemon environment (never exposed to subproc
 """
 import base64, json, os, sys, time, logging, urllib.request, urllib.error
 
-# Lazy logger + token — init only when main() runs, not on import.
-# Module-level IO at import time is an anti-pattern (every import opens
-# a log file handle and prints to stderr).
+# Lazy init — token + logger only when main() runs, not on import
 _LOG: logging.Logger | None = None
 _TOKEN: str = ""
 _HEADERS: dict = {}
@@ -21,8 +19,9 @@ API_BASE = "https://api.github.com"
 def _setup():
     """Load token + init logging. Called once from main()."""
     global _TOKEN, _HEADERS, _LOG
+    if _LOG is not None:
+        return
 
-    # Token
     _TOKEN = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     _HEADERS = {
         "Authorization": f"token {_TOKEN}",
@@ -30,7 +29,6 @@ def _setup():
         "User-Agent": "toolrecall-github-mcp",
     }
 
-    # Logger
     _LOG = logging.getLogger("toolrecall.github")
     _LOG.setLevel(logging.DEBUG)
     _fh = logging.FileHandler(os.path.expanduser(
@@ -40,9 +38,7 @@ def _setup():
         "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     ))
     _LOG.addHandler(_fh)
-    assert _LOG is not None
 
-    # Startup message (token status only, never the actual value)
     if not _TOKEN:
         sys.stderr.write("ERROR: No GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN in environment.\n")
         sys.stderr.write("  Set the token in ~/.toolrecall/.env and restart the daemon.\n")
@@ -50,6 +46,7 @@ def _setup():
 
 
 def _api(method, path, data=None):
+    assert _LOG is not None
     url = f"{API_BASE}/{path}"
     body = json.dumps(data).encode() if data else None
     req = urllib.request.Request(url, data=body, headers=_HEADERS, method=method)
@@ -58,12 +55,12 @@ def _api(method, path, data=None):
         with urllib.request.urlopen(req) as r:
             resp = json.loads(r.read())
         elapsed = (time.perf_counter() - t0) * 1000
-        _LOG.info(f"{method:>6} /{path} → {r.status}  {elapsed:.0f}ms")
+        _LOG.info(f"{method:>6} /{path} => {r.status}  {elapsed:.0f}ms")
         return resp
     except urllib.error.HTTPError as e:
         elapsed = (time.perf_counter() - t0) * 1000
         body_preview = e.read().decode()[:200]
-        _LOG.warning(f"{method:>6} /{path} → {e.code}  {elapsed:.0f}ms  {body_preview}")
+        _LOG.warning(f"{method:>6} /{path} => {e.code}  {elapsed:.0f}ms  {body_preview}")
         return {"error": e.code, "message": body_preview}
 
 
@@ -101,21 +98,18 @@ def _handle(method, params):
             return commit_data
         base_tree = commit_data["tree"]["sha"]
         new_tree = _api("POST", f"repos/{owner}/{repo}/git/trees", {
-            "base_tree": base_tree,
-            "tree": tree,
+            "base_tree": base_tree, "tree": tree,
         })
         if "error" in new_tree:
             return new_tree
         new_commit = _api("POST", f"repos/{owner}/{repo}/git/commits", {
             "message": params.get("message", "Update via ToolRecall"),
-            "tree": new_tree["sha"],
-            "parents": [last_sha],
+            "tree": new_tree["sha"], "parents": [last_sha],
         })
         if "error" in new_commit:
             return new_commit
         return _api("PATCH", f"repos/{owner}/{repo}/git/refs/heads/{branch}", {
-            "sha": new_commit["sha"],
-            "force": False,
+            "sha": new_commit["sha"], "force": False,
         })
     elif method == "list_commits":
         owner, repo = params["owner"], params["repo"]

@@ -188,16 +188,6 @@ def cmd_stats():
         from toolrecall.cache import get_stats
         print(json.dumps(get_stats(), indent=2))
 
-def cmd_gc():
-    """Run Garbage Collection to free SQLite space."""
-    from toolrecall.cache import garbage_collect
-    print("Running Garbage Collection...")
-    cleaned = garbage_collect()
-    if cleaned >= 0:
-        print(f"✅ GC complete. Removed {cleaned} expired items and vacuumed SQLite WAL.")
-    else:
-        print("❌ GC failed. Check daemon logs.")
-
 def cmd_invalidate():
     """Clear cache via Daemon or direct SQLite fallback."""
     try:

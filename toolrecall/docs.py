@@ -266,20 +266,6 @@ def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -
     return total
 
 
-def index_hermes_memory(memory_dir: str = None, source: str = "hermes-memory") -> int:
-    """Backward-compat wrapper around index_agent_memory.
-
-    DEPRECATED: Use index_agent_memory() instead. The 'hermes-memory'
-    source label is kept for existing indexed data.
-    """
-    import warnings
-    warnings.warn(
-        "index_hermes_memory is deprecated, use index_agent_memory",
-        DeprecationWarning, stacklevel=2,
-    )
-    return index_agent_memory(memories_dir=memory_dir, source=source)
-
-
 def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
                     ignore_dirs: set = None, max_bytes: int = 100000) -> int:
     """
