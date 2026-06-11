@@ -369,13 +369,30 @@ def cmd_config_set():
 
 def cmd_serve():
     """Start HTTP proxy (via Daemon)."""
+    # Parse --port from argv (before any other parsing, so it overrides config)
+    port_override = None
+    clean_argv = []
+    i = 0
+    while i < len(sys.argv):
+        if sys.argv[i] == "--port" and i + 1 < len(sys.argv):
+            port_override = int(sys.argv[i + 1])
+            i += 2
+        elif sys.argv[i].startswith("--port="):
+            port_override = int(sys.argv[i].split("=", 1)[1])
+            i += 1
+        else:
+            clean_argv.append(sys.argv[i])
+            i += 1
+    sys.argv = clean_argv
+
     if "--help" in sys.argv or "-h" in sys.argv:
-        print("Usage: toolrecall serve")
+        print("Usage: toolrecall serve [--port PORT]")
         print()
         print("Start the ToolRecall HTTP proxy server.")
         print()
         print("Options:")
         print("  --help, -h    Show this help message")
+        print("  --port PORT   Override proxy port (default: from config.toml)")
         print()
         print("Configuration:")
         print("  Port:    proxy.port in config.toml (default: 8567)")
@@ -394,7 +411,8 @@ def cmd_serve():
     from toolrecall.proxy import run_server
     from toolrecall.config import load_config
     cfg = load_config()
-    run_server(bind=cfg.proxy_bind, port=cfg.proxy_port)
+    port = port_override if port_override is not None else cfg.proxy_port
+    run_server(bind=cfg.proxy_bind, port=port)
 
 def cmd_mcp():
     """Start MCP Bridge (stdio → Daemon)."""

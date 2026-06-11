@@ -80,6 +80,19 @@ class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
                     result = {"status": "ok", "daemon": "connected", "version": "0.2.0"}
                     self.send_response(200)
 
+            elif path == "/cache/stats":
+                result = self._client.send({"cmd": "cache_status"})
+
+            elif path == "/cache/invalidate":
+                result = self._client.send({"cmd": "cache_invalidate"})
+
+            elif path == "/cache/invalidate_file":
+                p = q.get("path", "")
+                if not p:
+                    result = {"error": "Missing 'path' query parameter"}
+                else:
+                    result = self._client.send({"cmd": "cache_refresh_file", "path": p})
+
             else:
                 result = {"error": f"Unknown endpoint: {path}"}
                 self.send_response(404)
