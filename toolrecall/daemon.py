@@ -846,6 +846,13 @@ class DaemonServer:
                 return self._handle_mcp_list_servers(request)
             elif cmd == "ping":
                 return self._handle_ping(request)
+            elif cmd == "shutdown":
+                # Graceful shutdown — clean up PID, socket, then exit
+                self._handle_shutdown()
+                return {"result": "Shutting down"}
+            elif cmd == "restart":
+                # Restart — forks a new daemon, then exits
+                return self._handle_restart(request)
             else:
                 return {"error": f"Unknown command: {cmd}"}
 
@@ -862,6 +869,52 @@ class DaemonServer:
             "multiplex_enabled": self.security.allow_multiplex,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
         }
+
+    def _handle_shutdown(self) -> None:
+        """Graceful shutdown: clean PID, socket, then exit."""
+        # Clean up PID file
+        if os.path.exists(PID_FILE):
+            try:
+                os.remove(PID_FILE)
+            except Exception:
+                pass
+        # Clean up socket
+        if hasattr(self, 'socket_path') and self.socket_path:
+            try:
+                os.unlink(self.socket_path)
+            except Exception:
+                pass
+        # Stop multiplexer
+        if hasattr(self, 'multiplexer'):
+            try:
+                self.multiplexer.shutdown()
+            except Exception:
+                pass
+        # Exit in a thread-safe way
+        threading.Thread(target=self._do_exit, daemon=True).start()
+
+    def _do_exit(self) -> None:
+        time.sleep(0.5)
+        os._exit(0)
+
+    def _handle_restart(self, req: dict) -> dict:
+        """Restart: spawn a new daemon, then shut down."""
+        foreground = req.get("foreground", False)
+        # Spawn new daemon process
+        python = sys.executable
+        args = [python, "-m", "toolrecall", "daemon"]
+        if foreground:
+            args.append("--foreground")
+        subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        # Clean up and exit
+        self._handle_shutdown()
+        return {"result": "Restarting"}
 
     def _handle_read(self, req: dict) -> dict:
         path = req.get("path", "")
