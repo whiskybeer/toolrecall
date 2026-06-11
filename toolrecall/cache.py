@@ -130,12 +130,18 @@ def _is_sensitive_path(path: str) -> bool:
     Returns True if the path SHOULD BE BLOCKED from caching/reading.
     Used by cached_read() and SecurityGate.check_read_path().
 
+    Can be overridden per-task via the environment variable:
+        TOOLRECALL_ALLOW_SENSITIVE=true  # disables this block for one command
+
     Note: This is a path-name check, not a content scan.  Renaming a
     sensitive file to 'my-config.txt' bypasses it — but that's an
     intentional choice by the user (they removed the protection by
     moving the file). For stronger guarantees, combine with
     allowed_paths allowlisting.
     """
+    # Allow override — user explicitly wants to pass a secret
+    if os.environ.get("TOOLRECALL_ALLOW_SENSITIVE", "").lower() in ("1", "true", "yes"):
+        return False
     # Normalize: expand ~, resolve symlinks, collapse /./ and ///
     expanded = os.path.realpath(os.path.expanduser(path))
 
