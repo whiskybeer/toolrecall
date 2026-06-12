@@ -241,7 +241,7 @@ def step_sandbox():
         return
 
     if confirm("Remove toolrecall path references from sandbox.yaml?"):
-        content = content.replace("/home/hermes/toolrecall", "")
+        content = content.replace(REPO_DIR, "")
         # Clean up empty list items left behind
         content = re.sub(r'\n\s*-\s*""\s*', '', content)
         with open(SANDBOX_CONFIG, "w") as f:

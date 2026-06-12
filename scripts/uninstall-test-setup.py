@@ -18,21 +18,25 @@ ToolRecall Uninstaller Test — Hermes-specific test environment setup.
 """
 
 import os
+import tempfile
 
-os.makedirs("/root/.toolrecall/logs")
+TEST_HOME = os.path.join(tempfile.gettempdir(), "toolrecall_uninstall_test")
+os.environ["HOME"] = TEST_HOME
+
+os.makedirs(os.path.join(TEST_HOME, ".toolrecall", "logs"))
 for f in ["cache.db", "knowledge.db", "daemon.log", "watchdog-status.json", "nginx-toolrecall.conf"]:
-    open(f"/root/.toolrecall/{f}", "w").close()
-with open("/root/.toolrecall/config.toml", "w") as f:
-    f.write('[paths]\ncache_db = "/root/.toolrecall/cache.db"\n')
-with open("/root/.toolrecall/hermes_init.py", "w") as f:
+    open(os.path.join(TEST_HOME, ".toolrecall", f), "w").close()
+with open(os.path.join(TEST_HOME, ".toolrecall", "config.toml"), "w") as f:
+    f.write(f'[paths]\ncache_db = "{TEST_HOME}/.toolrecall/cache.db"\n')
+with open(os.path.join(TEST_HOME, ".toolrecall", "hermes_init.py"), "w") as f:
     f.write("print('hermes_init loaded')\n")
 
-os.makedirs("/root/.config/systemd/user")
-with open("/root/.config/systemd/user/toolrecall-daemon.service", "w") as f:
+os.makedirs(os.path.join(TEST_HOME, ".config", "systemd", "user"))
+with open(os.path.join(TEST_HOME, ".config", "systemd", "user", "toolrecall-daemon.service"), "w") as f:
     f.write("[Unit]\nDescription=ToolRecall Daemon\n[Service]\nExecStart=/usr/bin/python3 -m toolrecall daemon --foreground\n")
 
-os.makedirs("/root/.hermes")
-with open("/root/.hermes/config.yaml", "w") as f:
+os.makedirs(os.path.join(TEST_HOME, ".hermes"))
+with open(os.path.join(TEST_HOME, ".hermes", "config.yaml"), "w") as f:
     f.write("""agent:
   init_scripts: '["~/.toolrecall/hermes_init.py"]'
   max_turns: 100
@@ -48,15 +52,16 @@ display:
   personality: ''
 """)
 
-with open("/root/.hermes/sandbox.yaml", "w") as f:
-    f.write('sandbox:\n  allowed_paths:\n  - "/home/hermes/toolrecall"\n')
+REAL_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(TEST_HOME, ".hermes", "sandbox.yaml"), "w") as f:
+    f.write(f'sandbox:\n  allowed_paths:\n  - "{REAL_REPO}"\n')
 
-os.makedirs("/root/.hermes/skills/cache/toolrecall")
-with open("/root/.hermes/skills/cache/toolrecall/SKILL.md", "w") as f:
+os.makedirs(os.path.join(TEST_HOME, ".hermes", "skills", "cache", "toolrecall"))
+with open(os.path.join(TEST_HOME, ".hermes", "skills", "cache", "toolrecall", "SKILL.md"), "w") as f:
     f.write("# toolrecall skill\n")
 
-os.makedirs("/root/.hermes/skills/software-development/tool-recall")
-with open("/root/.hermes/skills/software-development/tool-recall/SKILL.md", "w") as f:
+os.makedirs(os.path.join(TEST_HOME, ".hermes", "skills", "software-development", "tool-recall"))
+with open(os.path.join(TEST_HOME, ".hermes", "skills", "software-development", "tool-recall", "SKILL.md"), "w") as f:
     f.write("# tool-recall skill\n")
 
-print("Test environment setup complete")
+print(f"Test environment setup complete at {TEST_HOME}")
