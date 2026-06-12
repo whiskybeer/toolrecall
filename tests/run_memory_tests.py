@@ -18,7 +18,8 @@ def main():
     test_file = os.path.join(os.path.dirname(__file__), "test_memory_index.py")
     
     env = os.environ.copy()
-    env["TOOLRECALL_KNOWLEDGE_DB"] = "/tmp/test_memory_knowledge_isolated.db"
+    import tempfile
+    env["TOOLRECALL_KNOWLEDGE_DB"] = tempfile.mktemp(suffix=".db", prefix="toolrecall_memory_")
     
     result = subprocess.run(
         [sys.executable, "-m", "pytest", test_file, "-v", "--tb=short"],
