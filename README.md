@@ -1,6 +1,6 @@
 # ToolRecall — The Deterministic Tool Cache for LLM Agents
 
-**Faster up to 1000× · Cheaper (81% measured reduction) · More efficient the more you use it · Basically \$0 for repeat reads**
+**ToolRecall makes agents local-first, cutting OS execution latency by ~1000× on repeat calls and unlocking the 90% server-side prompt caching discount through deterministic byte-identical outputs. Result: ~81% fewer input tokens and ~20 min less waiting per session.**
 
 ToolRecall is a caching layer and security guard for AI agents. It sits between the agent and your tools — SQLite cache for repeated reads, FTS5 knowledge base, MCP multiplexer, and a zero-trust WAF.
 **No LLM decides what to cache. Pure stdlib — `pip install toolrecall` adds zero dependencies.** (Python 3.11+ with `sqlite3`/`tomllib`/`json`)
@@ -139,6 +139,22 @@ ToolRecall does **3 things in one daemon**: cache, WAF, MCP multiplex. Each piec
 ---
 
 ## How It Saves Cost — Two Mechanisms
+
+### The Flow
+
+```
+Before ToolRecall:
+  Agent → LLM says "read main.py" → subprocess fork → disk I/O → ~1.5s → result returned
+  (Repeat call: same 1.5s again — every single time)
+
+With ToolRecall (cache hit):
+  Agent → LLM says "read main.py" → SQLite lookup → ~0.6ms → same result returned
+  (Skip the OS entirely for repeat reads)
+
+With ToolRecall (cache miss):
+  Agent → LLM says "read main.py" → SQLite miss → subprocess fork → disk I/O → caches result → returns it
+  (First call pays full price, every identical call after is ~1000× faster)
+```
 
 ### 1. Local Token Reduction (~81% fewer input tokens)
 Repeated tool calls served from local SQLite. In a 13-file project with 3–10× re-reads, this removes ~55–77K tokens per session. Measured hit rate: 67–97%.
