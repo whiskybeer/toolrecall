@@ -232,24 +232,49 @@ echo "  → Scanning: $SCAN_DIRS"
 echo "  (Change with --scan or edit $CONFIG_FILE)"
 echo ""
 
-# --- 5. Agent init ---
+# --- 5. Agent integration ---
 echo "[5/5] Agent integration"
 echo ""
 
-# Check what agents are available
-if command -v hermes &>/dev/null && [ -z "$NO_RC" ]; then
+# Detect available agents
+HERMES_FOUND=false
+CLAUDE_FOUND=false
+CURSOR_FOUND=false
+CLINE_FOUND=false
+OPENCODE_FOUND=false
+
+command -v hermes &>/dev/null && HERMES_FOUND=true
+command -v claude &>/dev/null && CLAUDE_FOUND=true
+command -v cursor &>/dev/null && CURSOR_FOUND=true
+test -f ~/.config/opencode/opencode.json && OPENCODE_FOUND=true
+# Cline: check for common config locations
+test -f ~/.clinerules && CLINE_FOUND=true
+
+if [ "$HERMES_FOUND" = true ] && [ -z "$NO_RC" ]; then
     echo "  ✓ Hermes Agent detected"
     echo ""
-    echo "  ToolRecall runs at 3 levels with Hermes. Recommend:"
+    echo "  ToolRecall supports 3 integration levels for Hermes:"
     echo ""
-    echo "   🥇 Level 1 — Python import (BEST)"
-    echo "      → Zero network, full API, 0ms overhead"
-    echo "      → Register auto-cache init script..."
+    echo "   🥇 Level 1 — Python import + transparent mode (RECOMMENDED)"
+    echo "      → Monkey-patches native read_file/terminal to auto-cache"
+    echo "      → Agent never notices — just works"
+    echo ""
     mkdir -p ~/.toolrecall
     curl -sL https://raw.githubusercontent.com/whiskybeer/toolrecall/main/toolrecall/hermes_init.py \
         -o ~/.toolrecall/hermes_init.py 2>/dev/null || true
     hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]' 2>/dev/null || true
-    echo "      → Restart Hermes or run /reset"
+    echo "  → Init script registered ✓"
+
+    # Enable transparent mode by default for Hermes
+    cat >> "$CONFIG_FILE" << TOML
+
+[hermes]
+transparent_cache = "transparent"
+
+TOML
+    echo "  → Transparent cache mode enabled ✓"
+    echo ""
+    echo "  → Restart Hermes or run /reset"
     echo ""
 
     echo "   🥈 Level 2 — MCP server (via mcp_servers)"
@@ -259,9 +284,7 @@ if command -v hermes &>/dev/null && [ -z "$NO_RC" ]; then
     echo "  Add to ~/.hermes/config.yaml ?"
     read -p "  [y/N] " ADD_MCP
     if [ "$ADD_MCP" = "y" ] || [ "$ADD_MCP" = "Y" ]; then
-        # Check if mcp_servers section exists
         if grep -q "mcp_servers:" ~/.hermes/config.yaml 2>/dev/null; then
-            # Append toolrecall entry after mcp_servers: line
             sed -i '/^mcp_servers:/a\  toolrecall:\n    command: python\n    args:\n    - -m\n    - toolrecall.mcp_server\n    timeout: 30' ~/.hermes/config.yaml
         else
             cat >> ~/.hermes/config.yaml << 'YAML'
@@ -286,36 +309,139 @@ YAML
     fi
     echo ""
 
-    echo "   🥉 Level 3 — HTTP proxy (for non-Python agents)"
-    if [ "$PROXY_PORT" != "0" ]; then
-        echo "      → Already configured on port $PROXY_PORT"
-    else
-        echo "      → Not configured (--proxy 0)"
-    fi
-    echo ""
-
     echo "  ────────────────────────────────────────────"
     echo "  SECURITY: MCP server is locked down by default"
-    echo "    • cached_read → restricted to ~/.hermes/skills, ~/.hermes/scripts, ~/.toolrecall"
+    echo "    • cached_read → restricted to configured paths"
     echo "    • cached_terminal → DISABLED (set mcp.allow_terminal=true to enable)"
     echo "    • cache_invalidate → DISABLED (set mcp.allow_invalidate=true to enable)"
     echo ""
-    echo "  To customize: edit ~/.toolrecall/toolrecall.toml [mcp] section"
+    echo "  To customize: edit $CONFIG_FILE [mcp] section"
     echo "  ────────────────────────────────────────────"
     echo ""
 fi
 
-if command -v claude &>/dev/null; then
+# --- Non-Hermes agents: ask for config snippets ---
+echo ""
+echo "  ────────────────────────────────────────────"
+echo "  Other AI agents"
+echo "  ────────────────────────────────────────────"
+echo ""
+echo "  Non-Hermes agents (Claude Code, Cursor, Cline, OpenCode)"
+echo "  use ToolRecall via MCP. The tools are named"
+echo "  'cached_read', 'cached_terminal', etc."
+echo ""
+echo "  These agents default to native 'read_file', which"
+echo "  BYPASSES the cache. You must tell them to use"
+echo "  'cached_read' instead."
+echo ""
+echo "  ToolRecall can write a config snippet for each"
+echo "  detected agent. No performance loss — same stdio,"
+echo "  same daemon, zero network overhead."
+echo ""
+
+if [ "$CLAUDE_FOUND" = true ] && [ -z "$NO_RC" ]; then
     echo "  ✓ Claude Code detected"
-    if [ "$PROXY_PORT" != "0" ]; then
-        echo "    → Use: toolrecall serve (then configure tool_server in claude.json)"
+    echo "  Write agent instruction to ~/.claude/claude_dotfiles/claude.md?"
+    read -p "  [y/N] " ADD_CLAUDE
+    if [ "$ADD_CLAUDE" = "y" ] || [ "$ADD_CLAUDE" = "Y" ]; then
+        mkdir -p ~/.claude/claude_dotfiles
+        cat >> ~/.claude/claude_dotfiles/claude.md << 'EOF'
+
+## ToolRecall Cache
+ToolRecall is installed. When reading files, use `cached_read` via MCP instead of `read_file`.
+When running terminal commands, use `cached_terminal` instead of `terminal`.
+EOF
+        echo "  ✓ Written to ~/.claude/claude_dotfiles/claude.md"
+    else
+        echo "  → Skipped."
     fi
+    echo ""
 fi
 
-if [ "$PROXY_PORT" = "0" ]; then
+if [ "$CURSOR_FOUND" = true ] && [ -z "$NO_RC" ]; then
+    echo "  ✓ Cursor detected"
+    # Find project root (best-effort)
+    CURSOR_RULES=""
+    if [ -f ".cursorrules" ]; then
+        CURSOR_RULES=".cursorrules (project root)"
+    elif [ -f "../.cursorrules" ]; then
+        CURSOR_RULES="../.cursorrules"
+    fi
+
+    if [ -n "$CURSOR_RULES" ]; then
+        echo "  Append ToolRecall instructions to $CURSOR_RULES?"
+        read -p "  [y/N] " ADD_CURSOR
+        if [ "$ADD_CURSOR" = "y" ] || [ "$ADD_CURSOR" = "Y" ]; then
+            cat >> "$CURSOR_RULES" << 'EOF'
+
+## ToolRecall Cache
+Use cached_read for file reads (MCP tool, faster on repeats).
+Use cached_terminal for terminal commands (MCP tool, TTL-cached).
+EOF
+            echo "  ✓ Appended to $CURSOR_RULES"
+        fi
+    else
+        echo "  No .cursorrules found. Create one?"
+        read -p "  [y/N] " ADD_CURSOR_RULES
+        if [ "$ADD_CURSOR_RULES" = "y" ] || [ "$ADD_CURSOR_RULES" = "Y" ]; then
+            cat > .cursorrules << 'EOF'
+## ToolRecall Cache
+Use cached_read for file reads (MCP tool, faster on repeats).
+Use cached_terminal for terminal commands (MCP tool, TTL-cached).
+EOF
+            echo "  ✓ Created .cursorrules"
+        fi
+    fi
     echo ""
-    echo "  No HTTP proxy — import ToolRecall directly:"
-    echo "    from toolrecall import cached_read, cached_terminal"
+fi
+
+if [ "$OPENCODE_FOUND" = true ] && [ -z "$NO_RC" ]; then
+    echo "  ✓ OpenCode detected"
+    echo "  Write agent instruction to OpenCode config?"
+    read -p "  [y/N] " ADD_OPENCODE
+    if [ "$ADD_OPENCODE" = "y" ] || [ "$ADD_OPENCODE" = "Y" ]; then
+        OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+        if [ -f "$OPENCODE_CONFIG" ]; then
+            # Try to add system prompt instruction
+            python3 -c "
+import json
+with open('$OPENCODE_CONFIG') as f:
+    cfg = json.load(f)
+instructions = cfg.get('instructions', '')
+recall_note = '\n\n## ToolRecall Cache\nToolRecall is installed. When reading files, use cached_read via MCP instead of read_file. When running terminal commands, use cached_terminal instead of terminal.'
+if 'ToolRecall' not in instructions:
+    cfg['instructions'] = instructions + recall_note
+    with open('$OPENCODE_CONFIG', 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print('✓ Updated OpenCode config with ToolRecall instructions')
+else:
+    print('→ ToolRecall already in OpenCode config')
+" 2>/dev/null || echo "  ⚠ Could not update OpenCode config automatically"
+        else
+            echo "  ⚠ Config file not found at $OPENCODE_CONFIG"
+            echo "  Add manually to your OpenCode instructions:"
+            echo '    "use cached_read for file reads, cached_terminal for terminal commands"'
+        fi
+    else
+        echo "  → Skipped."
+    fi
+    echo ""
+fi
+
+if [ "$CLINE_FOUND" = true ] && [ -z "$NO_RC" ]; then
+    echo "  ✓ Cline detected (via .clinerules)"
+    echo "  Append to .clinerules?"
+    read -p "  [y/N] " ADD_CLINE
+    if [ "$ADD_CLINE" = "y" ] || [ "$ADD_CLINE" = "Y" ]; then
+        cat >> .clinerules << 'EOF'
+
+## ToolRecall Cache
+When reading files, always use cached_read instead of read_file.
+When running terminal commands, use cached_terminal.
+EOF
+        echo "  ✓ Appended to .clinerules"
+    fi
+    echo ""
 fi
 
 echo ""

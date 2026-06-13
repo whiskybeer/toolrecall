@@ -105,6 +105,55 @@ claude mcp add toolrecall toolrecall mcp
 
 No custom plugins. No SDK changes.
 
+### ⚠️ Important: Agents need to use the right tool names
+
+ToolRecall registers its tools under the names `cached_read`, `cached_terminal`, `cached_write`.
+**Agents default to `read_file`** — the native tool — which bypasses the cache entirely.
+
+This is **not a MCP limitation** — MCP calls are stdio to the same daemon, same latency.
+It's a **training/data bias**: models see `read_file` more often in their training data.
+
+**Fix:** Tell your agent once to prefer `cached_read` / `cached_terminal`.
+
+### Agent config snippets (copy-paste)
+
+**Claude Code** — add to `~/.claude/claude_dotfiles/claude.md`:
+```markdown
+ToolRecall is installed. When reading files, use `cached_read` via MCP instead of `read_file`.
+When running terminal commands, use `cached_terminal` instead of `terminal`.
+```
+
+**Cursor** — add to `.cursorrules` at project root:
+```
+Use cached_read for file reads (MCP tool, faster on repeats).
+Use cached_terminal for terminal commands (MCP tool, TTL-cached).
+```
+
+**Cline** — add to `.clinerules` or mention in the initial prompt:
+```
+When reading files, always use cached_read instead of read_file.
+When running terminal commands, use cached_terminal.
+```
+
+**Hermes Agent** — transparent mode (recommended, monkey-patches native tools):
+```toml
+# ~/.toolrecall/config.toml
+[hermes]
+transparent_cache = "transparent"
+```
+Then restart Hermes or type `/reset`.
+
+### Why this is necessary
+
+| Tool | Native name | ToolRecall name | Same latency? |
+|------|------------|----------------|:---:|
+| File read | `read_file` | `cached_read` | ✅ same stdio, same daemon |
+| Terminal | `terminal` | `cached_terminal` | ✅ same stdio, same daemon |
+| File write | `write_file` | `cached_write` | ✅ same stdio, same daemon |
+| Find & replace | `patch` | `cached_patch` | ✅ same stdio, same daemon |
+
+**No HTTP, no proxy, no network overhead.** MCP tools run as stdio subprocesses — same pipe, same latency as native tools.
+
 ---
 
 ## Security Architecture (The WAF)
