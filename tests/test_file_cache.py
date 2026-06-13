@@ -16,6 +16,12 @@ from toolrecall.cache import cached_read, _init
 
 class TestFileCache(unittest.TestCase):
     def setUp(self):
+        # Re-assert our DB path (other test modules may have changed it)
+        os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
+        # Reset persistent stats connection so it points to our DB
+        from toolrecall.cache import _stats_conn
+        import toolrecall.cache as _c
+        _c._stats_conn = None
         if os.path.exists(test_db_path):
             os.remove(test_db_path)
         _init()
@@ -101,10 +107,11 @@ class TestFileCache(unittest.TestCase):
         self.assertFalse(r1.get("cached"))
 
         stats_after_first = get_stats().get("file_cache", {})
+        tokens_intercepted = stats_after_first.get("tokens_intercepted", 0)
         self.assertEqual(
-            stats_after_first["tokens_intercepted"],
+            tokens_intercepted,
             expected_tokens,
-            "First disk-read should count tokens exactly once"
+            f"First disk-read should count tokens exactly once (got {tokens_intercepted}, expected {expected_tokens})"
         )
 
         # 2nd read: in-memory hit → NO new tokens
@@ -118,10 +125,11 @@ class TestFileCache(unittest.TestCase):
         self.assertTrue(r3.get("cached"))
 
         stats_after_three = get_stats().get("file_cache", {})
+        tokens_after_three = stats_after_three.get("tokens_intercepted", 0)
         self.assertEqual(
-            stats_after_three["tokens_intercepted"],
+            tokens_after_three,
             expected_tokens,
-            "Tokens should NOT increase on cache hits (in-memory or SQLite)"
+            f"Tokens should NOT increase on cache hits (got {tokens_after_three}, expected {expected_tokens})"
         )
         self.assertEqual(stats_after_three["hits"], 2, "Should have 2 hits (2nd read + 3rd read)")
 

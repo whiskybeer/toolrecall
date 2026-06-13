@@ -220,9 +220,15 @@ def daemon_running() -> bool:
 
 def set_socket_path(path: str):
     """Override the default transport path (UDS file or tcp://host:port)."""
-    from toolrecall.transport import DEFAULT_PATH as _DP
     global _client
-    # Swap DEFAULT_PATH
     import toolrecall.transport as _tp
     _tp.DEFAULT_PATH = path
+    # Also update the local reference imported at top of client.py
+    _reimport_default_path()
     _client = None  # Force reconnect
+
+
+def _reimport_default_path():
+    """Re-read DEFAULT_PATH from transport module into this module's namespace."""
+    import toolrecall.transport as _tp
+    globals()["DEFAULT_PATH"] = _tp.DEFAULT_PATH
