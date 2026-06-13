@@ -100,47 +100,47 @@ docker run -v toolrecall_data:/data -p 8567:8567 toolrecall:full
 
 ## 🔒 Security Gate in Docker & Kubernetes
 
-### Problem: WAF-Konfiguration im Container
+### Problem: WAF Configuration in Containers
 
-ToolRecalls Security Gate (`SecurityGate` / WAF) kontrolliert, welche Pfade,
-Tools und Terminal-Kommandos ein LLM-Agent ausführen darf. In einem Container
-sind **default paths und Berechtigungen anders** als auf dem Host:
+ToolRecall's Security Gate (`SecurityGate` / WAF) controls which paths,
+tools, and terminal commands an LLM agent can execute. Inside a container
+**default paths and permissions differ** from the host:
 
 ```toml
-# ~/.toolrecall/config.toml — Wichtig für Docker!
+# ~/.toolrecall/config.toml — Important for Docker!
 [mcp]
-# Container-Pfade statt ~/.hermes/...:
+# Container paths instead of ~/.hermes/...
 allowed_paths = [
     "/data",        # Persistent Volume
-    "/projects",    # Read-only Projekt-Mount
+    "/projects",    # Read-only project mount
 ]
-allow_terminal = false   # ❌ Im Container besonders kritisch!
+allow_terminal = false   # ❌ Especially critical in containers!
 allow_invalidate = false
 
 [security]
 tool_access_control = false  # MCP keyword access control (not OS sandbox)
 ```
 
-### Typische Fallstricke (Docker)
+### Common Pitfalls (Docker)
 
-| Symptom | Ursache | Fix |
-|---------|---------|-----|
-| `Access Denied: Path not allowed` | `allowed_paths` zeigt auf Host-Pfade (`~/.hermes/`) die im Container nicht existieren | Auf Container-Pfade umstellen (`/data`, `/projects`) |
-| Terminal-Kommandos hängen | `allow_terminal=true` startet Subprozesse ohne TTY im Container | `allow_terminal=false` setzen; nur lesende MCP-Tools nutzen |
-| Daemon startet nicht | UDS-Socket-Pfad existiert nicht (Volume nicht gemountet) | `TOOLRECALL_UDS_PATH=/data/tc.sock` setzen, `/data` als Volume |
-| Cache wird bei Neustart gelöscht | Kein persistent Volume | `volumes: toolrecall_data:/data` im Compose |
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Access Denied: Path not allowed` | `allowed_paths` points to host paths (`~/.hermes/`) that don't exist inside the container | Use container paths (`/data`, `/projects`) |
+| Terminal commands hang | `allow_terminal=true` spawns subprocesses without TTY inside container | Set `allow_terminal=false`; use read-only MCP tools |
+| Daemon won't start | UDS socket path doesn't exist (volume not mounted) | Set `TOOLRECALL_UDS_PATH=/data/tc.sock`, mount `/data` as volume |
+| Cache lost on restart | No persistent volume | `volumes: toolrecall_data:/data` in compose |
 
 ### Kubernetes (Pod Security)
 
 ```yaml
-# Security Context für ToolRecall Pod
+# Security Context for ToolRecall Pod
 apiVersion: v1
 kind: Pod
 spec:
   containers:
   - name: toolrecall-daemon
     securityContext:
-      readOnlyRootFilesystem: true    # 🛡️ WAF-Ebene
+      readOnlyRootFilesystem: true    # 🛡️ WAF layer
       runAsNonRoot: true
       capabilities:
         drop: ["ALL"]
@@ -159,23 +159,23 @@ spec:
       readOnly: true
 ```
 
-### Security Gate ist auch im Container aktiv
+### Security Gate is Active Inside Containers
 
-Das WAF (`SecurityGate`) läuft **innerhalb des Daemon-Prozesses** und wird
-nicht vom Host-OS beeinflusst. Wichtig für Docker/K8s:
+The WAF (`SecurityGate`) runs **inside the daemon process** and is not
+affected by the host OS. Important for Docker/K8s:
 
-| Gate | Wirkung | Docker-Implikation |
-|------|---------|-------------------|
-| **Path Canonicalization** (`os.path.realpath`) | Blockiert Directory Traversal | Funktioniert **innerhalb des Container-FS** — relative Pfade zum Host sind unmöglich |
-| **Null Byte Poisoning** | `valid.png%00/etc/shadow` wird erkannt | Container hat kein Zugriff auf Host-`/etc/shadow` — zusätzliche Sicherheit |
-|| **MCP Keyword Access Control** | Blockiert Tools deren Name `write`, `delete`, `exec` etc. enthält (substring match) | Empfohlen (default off): `security.tool_access_control = true` — **kein OS-Sandbox** |
-| **Terminal Block** | `allow_terminal=false` (default) | Besonders wichtig: Container-Shell-Zugriff via Agent verhindern |
-| **Dangerous Tool Detection** | Blockiert Tools mit `write`, `delete`, `exec` im Namen | Kompiliert mit Read-Only-Sandbox für K8s-Deployments |
+| Gate | Effect | Docker Implication |
+|------|--------|-------------------|
+| **Path Canonicalization** (`os.path.realpath`) | Blocks directory traversal | Works **inside container FS** — relative paths to host are impossible |
+| **Null Byte Poisoning** | Catches `valid.png%00/etc/shadow` | Container has no access to host `/etc/shadow` — additional safety |
+| **MCP Keyword Access Control** | Blocks tools named `write`, `delete`, `exec` (substring match) | Recommended (default off): `security.tool_access_control = true` — **not OS sandbox** |
+| **Terminal Block** | `allow_terminal=false` (default) | Especially important: prevent container shell access via agent |
+| **Dangerous Tool Detection** | Blocks tools with `write`, `delete`, `exec` in name | Compiles with read-only sandbox for K8s deployments |
 
-### Empfohlene Config für Kubernetes
+### Recommended Config for Kubernetes
 
 ```toml
-# ~/.toolrecall/config.toml — K8s-optimiert
+# ~/.toolrecall/config.toml — K8s-optimized
 [security]
 tool_access_control = true
 
@@ -185,7 +185,7 @@ allow_terminal = false
 allow_invalidate = false
 
 [sources.memory]
-enabled = false  # Hermes memory existiert nicht im Container
+enabled = false  # Hermes memory doesn't exist inside the container
 ```
 
 ---

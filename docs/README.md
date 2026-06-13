@@ -8,21 +8,18 @@ Welcome to the ToolRecall technical library. This directory contains the archite
 
 ## 2. Business & Enterprise Value
 - **[`ROI_AND_SAVINGS.md`](ROI_AND_SAVINGS.md)**: CFO-friendly financial projections. Breaks down exact dollar savings across API tokens (forcing the 90% cloud discount), engineering salaries, and AWS RAM reductions.
-- **[`DATA_CENTER_SCALE.md`](DATA_CENTER_SCALE.md)**: The macro-economic view. Explains why forcing deterministic OS payloads locally saves hyperscalers (OpenAI/Anthropic) massive amounts of GPU VRAM and physical megawatt grid power.
-- **[`ENTERPRISE_SCALE.md`](ENTERPRISE_SCALE.md)**: The "Iron Triangle" pitch, the "gzip for AI context" metaphor (Jevons Paradox), and the Zero-Trust WAF security model that cages prompt-injected agents.
 - **[`PITCH_SUMMARY.md`](PITCH_SUMMARY.md)**: A one-page executive summary of the framework's value proposition.
 
 ## 3. Engineering & Architecture
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)**: Deep dive into the Daemon (IPC), SQLite FTS5 Micro-RAG, and the exact Unix Domain Socket routing mechanisms.
-- **[`AUDIT_AND_ROADMAP.md`](AUDIT_AND_ROADMAP.md)**: A brutally honest systems-engineering audit. Details current systemic limits (Phantom Bugs, Real-Time Blindness) and the technical roadmap for v0.6.0.
+- **[`OSI_LAYERS.md`](OSI_LAYERS.md)**: Where ToolRecall sits in the agent tool execution stack — and why layers 1-3 are entirely bypassed on cache hits.
 - **[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)**: A developer FAQ for fixing common issues (e.g., Access Denied errors, Node.js zombie processes).
 
-## 4. Emergent Capabilities (The Future)
-- **[`BYPRODUCTS.md`](BYPRODUCTS.md)**: Documents accidental architectural wins, such as Zero-Penalty Context Switching, Agent Attention Profiling, and Air-Gapped execution.
-- **[`STEALTH_VISION.md`](STEALTH_VISION.md)**: The end-game vision. Discusses the transition to a "Swarm OS" (shared cache across multiple agents) and passive generation of high-fidelity RLHF/DPO trajectories to train local L0 models.
+## 4. Vision & Roadmap
+- **[`VISION.md`](VISION.md)**: Use cases beyond agent caching, emergent architectural wins (air-gapped agents, attention profiling, zero-cost SFT datasets), roadmap to v0.6.0, and long-term vision (multi-tenant gateway, synthetic data flywheel, A2A swarm multiplier).
 
 ## 5. Operations & Security
-- **[`SERVER_SECURITY_NONROOT_NGINX.md`](server-security-nonroot-nginx.md)**: How ToolRecall's production web server runs entirely with user privileges — no root required. Covers authbind architecture, nginx as a user service, SSL certificate renewal pipeline, and the ki-game-api shutdown that eliminated its last remaining service dependency.
+- **[`SECURITY_AUDIT.md`](SECURITY_AUDIT.md)**: Detailed security audit covering WAF, path canonicalization, sensitive file blocklist, and OWASP coverage.
 
 ## 6. Integrations
 - **[`BROWSER_CACHE.md`](BROWSER_CACHE.md)**: How the ToolRecall Browser Cache Extension integrates with LLM agents that use browser tools (browser_navigate, browser_snapshot). Covers data flow, change detection, proxy port discovery, and troubleshooting.

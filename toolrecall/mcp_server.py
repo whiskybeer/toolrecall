@@ -197,7 +197,7 @@ RECOMMENDATION:
 
         Args:
             query: Search terms (Porter stemming included automatically)
-            source: Optional namespace filter (e.g. 'hermes', 'ki-game')
+            source: Optional namespace filter (e.g. 'hermes', 'my-project')
         """
         result = _docs_search(query, source=source)
         return result if result else "No results found."
@@ -212,7 +212,7 @@ RECOMMENDATION:
         """Get a specific indexed page.
 
         Args:
-            source: Document source/namespace (e.g. 'hermes', 'ki-game')
+            source: Document source/namespace (e.g. 'hermes', 'my-project')
             path: Document path within that namespace
         """
         result = _docs_get_page(source, path)

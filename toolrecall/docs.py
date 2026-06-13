@@ -87,7 +87,7 @@ def docs_search(query: str, source: str = None) -> str:
 
     Args:
         query: Search term(s) — Porter stemming included
-        source: Optional namespace (e.g. 'hermes', 'ki-game')
+        source: Optional namespace (e.g. 'hermes', 'my-project')
     """
     import re
 

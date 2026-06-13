@@ -46,20 +46,20 @@ toolrecall invalidate
 **Cause:** You recently queried multiple heavy Node.js MCP servers. 
 **Fix:** Do nothing. The MCP Multiplexer uses Lazy Loading. It keeps servers alive for 15 minutes to serve subsequent requests instantly. After 15 minutes of idle time, it will automatically kill the Node processes, and RAM usage will drop back to ~11MB.
 
-## 6. Docker: "Access Denied" obwohl Pfad erlaubt ist
-**Symptom:** Der Agent bekommt `Access Denied: Path not allowed` beim Lesen von `/projects/mein-code`, obwohl der Pfad in `allowed_paths` steht.
-**Ursache:** `allowed_paths` zeigt auf Host-Pfade (`~/.hermes/`, `/home/user/projects`), die **im Container nicht existieren**. Der Container hat ein eigenes Filesystem.
-**Fix:** Config auf Container-Pfade umstellen (siehe `docs/DOCKER.md`):
+## 6. Docker: "Access Denied" despite allowed path
+**Symptom:** Agent receives `Access Denied: Path not allowed` when reading `/projects/my-code`, even though the path is listed in `allowed_paths`.
+**Cause:** `allowed_paths` points to host paths (`~/.hermes/`, `/home/user/projects`) that **do not exist inside the container**. The container has its own filesystem.
+**Fix:** Point config to container paths (see `docs/DOCKER.md`):
 ```toml
 [mcp]
 allowed_paths = ["/data", "/projects"]
 ```
-**Vorsorge:** Immer `docker compose config` oder `docker inspect` nutzen, um die tatsächlichen Mount-Pfade zu prüfen.
+**Best practice:** Always use `docker compose config` or `docker inspect` to verify actual mount paths.
 
-## 7. Docker: Container startet nicht — "socket file not found"
-**Symptom:** `docker compose logs daemon` zeigt: `OSError: [Errno 2] No such file or directory` beim UDS-Socket.
-**Ursache:** Der Daemon versucht, den Socket in einem Pfad zu erstellen, der nicht als Volume gemounted ist. Standardmäßig erwartet ToolRecall `~/.toolrecall/` auf dem Host.
-**Fix:** TOOLRECALL_UDS_PATH auf das Data-Volume setzen:
+## 7. Docker: Container won't start — "socket file not found"
+**Symptom:** `docker compose logs daemon` shows: `OSError: [Errno 2] No such file or directory` for the UDS socket.
+**Cause:** The daemon tries to create the socket in a path that isn't mounted as a volume. By default, ToolRecall expects `~/.toolrecall/` on the host.
+**Fix:** Set `TOOLRECALL_UDS_PATH` to the data volume:
 ```yaml
 environment:
   - TOOLRECALL_UDS_PATH=/data/tc.sock
@@ -67,24 +67,24 @@ volumes:
   - toolrecall_data:/data
 ```
 
-## 8. Docker: allow_terminal=true hängt (kein TTY)
-**Symptom:** Terminal-Kommandos im Docker-Container hängen oder Timeout.
-**Ursache:** `allow_terminal=true` startet Shell-Prozesse, die ein TTY erwarten. Im Container gibt es kein TTY — weder STDIN noch eine echte Shell-Umgebung.
-**Fix:** 
-- `allow_terminal=false` (default) — Terminal über MCP vermeiden
-- Oder Container mit `tty: true` starten:
+## 8. Docker: allow_terminal=true hangs (no TTY)
+**Symptom:** Terminal commands in Docker container hang or timeout.
+**Cause:** `allow_terminal=true` spawns shell processes that expect a TTY. Inside a container there is no TTY — no STDIN or real shell environment.
+**Fix:**
+- `allow_terminal=false` (default) — avoid terminal via MCP
+- Or start container with `tty: true`:
 ```yaml
 services:
   daemon:
     tty: true
     stdin_open: true
 ```
-**⚠️ Sicherheitsrisiko:** Terminal-Zugriff im Container = potenzieller Container-Breakout. Nur in Dev-Umgebungen aktivieren.
+**⚠️ Security risk:** Terminal access inside container = potential container breakout. Only enable in dev environments.
 
-## 9. Kubernetes: Pod wird wegen Security Context neugestartet
-**Symptom:** ToolRecall Pod crash-loopt mit `readOnlyRootFilesystem: true`.
-**Ursache:** ToolRecall schreibt Cache + Knowledge DB + UDS Socket. Bei `readOnlyRootFilesystem: true` darf nur in gemountete Volumes geschrieben werden.
-**Fix:** Alle Schreibpfade explizit als Volumes mounten:
+## 9. Kubernetes: Pod restarts due to security context
+**Symptom:** ToolRecall Pod crash-loops with `readOnlyRootFilesystem: true`.
+**Cause:** ToolRecall writes cache + knowledge DB + UDS socket. With `readOnlyRootFilesystem: true`, only mounted volumes are writable.
+**Fix:** Mount all write paths as volumes:
 ```yaml
 env:
 - name: TOOLRECALL_CACHE_DB
@@ -98,18 +98,18 @@ volumeMounts:
   mountPath: /data
 ```
 
-## 10. Security Gate: Woher weiß ich, ob es aktiv ist?
-**Symptom:** Ich bin unsicher, ob die WAF im Docker-Container greift.
+## 10. Security Gate: How to verify it's active
+**Symptom:** Unsure whether the WAF is active inside the Docker container.
 **Check:**
 ```bash
-# 1. Logs prüfen
-docker compose logs daemon | grep -i 'security\|waf\|gate\|sandbox\|allowed'
+# 1. Check logs
+docker compose logs daemon | grep -i 'security\\|waf\\|gate\\|sandbox\\|allowed'
 
-# 2. Daemon-Status (zeigt Config an)
+# 2. Daemon status (shows config)
 toolrecall daemon --status
 
-# 3. Test: Directory Traversal blockiert?
+# 3. Test: Directory traversal blocked?
 curl -s 'http://localhost:8567/cached_read?path=../../etc/shadow'
-# → Sollte "Access Denied" zurückgeben, nicht den Host-Inhalt
+# → Should return "Access Denied", not host content
 ```
-**Erklärung:** Security Gate läuft **im Daemon-Prozess**, unabhängig vom Host-OS. Solange der Daemon im Container läuft, ist die WAF aktiv. Die Host-`/etc/shadow` ist ohnehin unsichtbar — Container-Isolation + WAF = Defence in Depth.
+**Explanation:** Security Gate runs **inside the daemon process**, independent of the host OS. As long as the daemon runs in the container, the WAF is active. The host's `/etc/shadow` is invisible anyway — container isolation + WAF = defense in depth.
