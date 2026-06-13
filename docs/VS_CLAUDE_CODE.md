@@ -41,7 +41,7 @@ Session 2: agent reads file.py → HIT  → 0 tokens   ← ToolRecall
 | Data type | Claude Code | ToolRecall | ToolRecall TTL |
 |-----------|-------------|------------|----------------|
 | File reads (`read_file`) | ✅ In-memory per session | ✅ SQLite + LRU | Until mtime changes |
-| Terminal output (`git status`, `hostname`) | ❌ | ✅ | Configurable (30s–1h) |
+| Terminal output (`hostname`) | ❌ | ✅ | Until mtime or TTL |
 | MCP server responses (GitHub issues, etc.) | ❌ | ✅ | Per-server TTL (default 60s) |
 | Skill content | ❌ | ✅ | Until mtime changes |
 | Docs / FTS5 search | ❌ | ✅ | BM25 indexed, no TTL needed |

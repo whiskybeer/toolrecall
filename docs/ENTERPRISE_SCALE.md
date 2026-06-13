@@ -15,7 +15,7 @@ It sits directly between the LLM client (e.g., Claude Code, Hermes) and the oper
 A common misconception is that provider-side features like Anthropic's Prompt Caching or OpenAI's API caching solve the context bloat problem natively. They offer up to a **90% discount** on input tokens—*but only if the payload is byte-for-byte identical to a previous request.*
 
 The problem: **Operating systems and external APIs are not deterministic.**
-* A simple `ls -la` returns different timestamps on subsequent runs.
+* A simple `ls -la` returns different timestamps on subsequent runs (and is therefore NEVER cached by default).
 * A log file append adds a single new line at the bottom.
 * An external API (like GitHub or Stripe) includes a new request ID.
 

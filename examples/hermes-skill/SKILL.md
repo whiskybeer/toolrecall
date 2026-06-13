@@ -44,13 +44,14 @@ result = cached_read('/path/to/file')
 ```python
 from toolrecall import cached_terminal
 
-# Cache common commands with appropriate TTL
-result = cached_terminal('git status', ttl=30)
+# Cache only known-static commands
 result = cached_terminal('hostname', ttl=3600)
 result = cached_terminal('free -h', ttl=300)
+result = cached_terminal('whoami', ttl=3600)
 ```
 
-- Use TTL=30 for git status, TTL=3600 for hostname/uname
+- Only static commands are cached by default (`hostname`, `whoami`, `pwd`, `uname -a`, `uptime`, `free -h`, `df -h /`, `crontab -l`)
+- Dynamic commands (`git`, `ls`, `curl`, `docker`, `psql`) always execute live
 - Non-cacheable commands (unique commands) bypass cache automatically
 
 ### 3. Skills → `cached_skill()`

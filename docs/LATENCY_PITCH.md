@@ -11,7 +11,7 @@ Here is the hard math behind how ToolRecall saved **1 hour and 25 minutes of pur
 When an AI agent (like Claude Code or Hermes) executes a tool (reading a file, running a shell command, or calling an MCP server), the operating system has to spawn a subprocess, execute the task, and return the `stdout`.
 
 **The Unoptimized Agent (end-to-end, including LLM overhead):**
-- `read_file` or `git status`: **~1.5 seconds** (includes tool dispatch, JSON serialization, LLM context injection)
+- `read_file` (mtime-cached) or `hostname` (TTL-cached): **~1.5 seconds** (includes tool dispatch, JSON serialization, LLM context injection)
 - Subprocess-only: **~3 ms** (raw `cat` or `hostname`)
 - MCP Server execution (e.g., Node.js GitHub MCP via `npx`): **~2.0 to 3.0 seconds**
 

@@ -160,7 +160,7 @@ With ToolRecall (cache miss):
 Repeated tool calls served from local SQLite. In a 13-file project with 3–10× re-reads, this removes ~55–77K tokens per session. Measured hit rate: 67–97%.
 
 ### 2. Server-Side Prompt Caching Discount (up to 90%)
-Anthropic and OpenAI offer up to 90% discount on input tokens that match a previous request's prefix. ToolRecall freezes OS tool outputs — every `read_file`, `git status`, `hostname` returns the exact same byte string until the file changes. This makes the server-side discount **reliably available** instead of randomly busted by OS noise.
+Anthropic and OpenAI offer up to 90% discount on input tokens that match a previous request's prefix. ToolRecall freezes OS tool outputs — every `read_file`, `hostname` returns the exact same byte string until the file changes. This makes the server-side discount **reliably available** instead of randomly busted by OS noise.
 
 ### 3. Deterministic
 Byte-identical cache hits = 100% reproducible agent runs. No OS flakiness.
@@ -208,7 +208,7 @@ Zero-Trust WAF: cryptographic path resolution, `.env` air-gapping, `allow_termin
 
 ### Byte-Exact Tool Caching
 - **File Cache:** Invalidates on file modification (`mtime`) — no stale reads.
-- **Terminal Cache:** Caches read-only commands by TTL (`git status` for 30s, `hostname` for 1h).
+- **Terminal Cache:** Caches only known-static commands by TTL (hostname, whoami, pwd, uname, uptime, df, free, crontab). Dynamic commands (`git`, `ls`, `curl`) always execute live.
 - **Script & Code Cache:** `cached_run`, `cached_exec` with `ttl=0` bypass for state-changing ops.
 - **MCP Cache:** TTL-based caching for external MCP tool responses (~12× speedup).
 

@@ -13,7 +13,7 @@ Turn 50: 50,000 tokens →   2.5B attention pairs
 ```
 
 This isn't just slow — it's **economically destructive**. Every repeated
-`read_file`, every redundant `git status`, every cached terminal command
+`read_file`, every redundant `hostname`, every cached terminal command
 inflates the context window linearly and the cost quadratically.
 
 ## Why Agents Hit This Wall
