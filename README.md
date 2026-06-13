@@ -111,7 +111,9 @@ ToolRecall registers its tools under the names `cached_read`, `cached_terminal`,
 **Agents default to `read_file`** — the native tool — which bypasses the cache entirely.
 
 This is **not a MCP limitation** — MCP calls are stdio to the same daemon, same latency.
-It's a **training/data bias**: models see `read_file` more often in their training data.
+The reason agents pick `read_file` is that models are trained on millions of examples
+where `read_file` is the only file-reading tool. `cached_read` is new — training data
+doesn't contain it. The model simply doesn't know to choose it.
 
 **Fix:** Tell your agent once to prefer `cached_read` / `cached_terminal`.
 
