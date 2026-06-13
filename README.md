@@ -259,11 +259,50 @@ dangerous_tool_keywords = []
 
 ## Hermes Auto-Cache (Hermes Agent only)
 
+ToolRecall integrates with Hermes Agent via an **init script** (`hermes_init.py`) that registers
+`cached_read`, `cached_terminal`, `cached_write`, and `cached_patch` as additional tools.
+
 ```bash
 git clone https://github.com/whiskybeer/toolrecall.git
 cd toolrecall
 bash scripts/setup.sh
 ```
+
+### ⚡ Two Modes: "separate" (default) vs "transparent"
+
+| Mode | What happens | Agent-aware? | When to use |
+|------|-------------|-------------|-------------|
+| `"separate"` **(default)** | `cached_read`, `cached_terminal` are registered as **extra tools** alongside native `read_file`, `terminal` | Yes — agent must explicitly choose `cached_read` | Testing, debugging, manual control |
+| `"transparent"` | ToolRecall **monkey-patches** Hermes' native `read_file` and `terminal` tools so every call automatically goes through the cache | No — agent calls `read_file` as usual, caching is invisible | **Recommended for production** — max cache utilization |
+
+**The problem with "separate" mode:** AI agents almost never call `cached_read` — they prefer the familiar `read_file` tool. This means **ToolRecall shows 0–2 cache hits** in a normal session even though it's installed and running. The cache exists, but the agent doesn't use it.
+
+**"transparent" mode fixes this** by patching Hermes' tool registry at session start so `read_file` and `terminal` route through ToolRecall automatically. The agent never notices the difference.
+
+### Configure transparent mode
+
+```toml
+# ~/.toolrecall/config.toml
+[hermes]
+transparent_cache = "transparent"   # default: "separate"
+```
+
+Then restart Hermes or type `/reset`.
+
+### Env override (per-session, no config change)
+
+```bash
+TOOLRECALL_HERMES_MODE=transparent hermes
+```
+
+### ⚠️ Risks of transparent mode
+
+1. **Cache bugs crash native tools.** If the cache corrupts, `read_file` breaks — not just `cached_read`. Recovery: delete `~/.toolrecall/cache.db` and restart.
+2. **Stale data edge case.** If your daemon process is stale (not tracking file mtime changes correctly), transparent mode means `read_file` returns stale data silently. Recovery: `toolrecall invalidate` or restart the daemon.
+3. **Hermes version coupling.** The patch targets Hermes' `tools.registry` internal API. A Hermes update could change this API and break the patch. If that happens, `read_file` returns errors — disable transparent mode and run in `"separate"` until the fix lands.
+4. **No Hermes → cross-agent.** Transparent mode only works with Hermes Agent (it patches Hermes' internal Python tool registry). Other agents (Claude Code, Cursor, Cline) always use explicit `toolrecall mcp` tools.
+
+**Safe fallback:** If transparent mode breaks, remove `[hermes]` from your config (reverts to `"separate"`) and restart Hermes.
 
 ---
 
