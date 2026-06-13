@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.4-dev
+
+- **Tests:** 275 tests, all passing (was 176). Added coverage for 5 previously untested modules:
+  - `test_transport.py` — UDS/TCP IPC, socket lifecycle, framed protocol (transport.py)
+  - `test_mcp_bridge.py` — MCP JSON-RPC protocol, security gate filtering (mcp_bridge.py)
+  - `test_client.py` — daemon-first routing with direct SQLite fallback (client.py)
+  - `test_dataset.py` — JSONL dataset export from cache (dataset.py)
+  - `test_cli.py` — CLI dispatch for all 16 subcommands (cli.py)
+- **Fix:** `set_socket_path()` now correctly updates the local `DEFAULT_PATH` reference, not just the transport module's copy
+- **Fix:** cross-test DB isolation — `_stats_conn` reset on env change prevents stats pollution
+
 ## v0.5.3 (2026-06-13)
 
 - **Hermes:** transparent_cache=transparent now default in setup.sh
