@@ -96,3 +96,26 @@
 - HTTP proxy (forward + bridge)
 - Security audit: WAF, path canonicalization, sensitive file blocklist
 - 155 tests
+
+## v0.3.0 (2026-06-08)
+
+- **MCP Multiplexer:** persistent subprocess manager for external MCP servers (github, time, fetch, sequential-thinking)
+- **MCP Server:** security-gated tools with AST injection check, cognitive scan, keyword access control
+- **Daemon:** systemd service, config.toml servers_config, .env loader
+- **Perf:** lazy MCP server start + idle timeout
+- **Benchmarks:** 141M tokens saved, 89% hit rate in production session
+
+## v0.2.0 (2026-06-07)
+
+- **Hybrid LRU + SQLite:** two-tier cache (in-memory for speed, SQLite for persistence across sessions)
+- **MCP Cache:** transparent caching for MCP tool calls with TTL per server
+- **Windows compatibility:** TCP fallback for platforms without AF_UNIX
+- **Hermes integration:** init_script hooks for transparent_mode
+- **Benchmarks:** detailed latency/cost analysis
+
+## v0.1.0 (2026-06-06)
+
+- **Initial prototype:** SQLite-backed file read cache with mtime invalidation
+- **Unix Domain Socket transport:** fast IPC between daemon and client
+- **Basic CLI:** toolrecall status, invalidate
+- **Proxy:** simple HTTP caching proxy
