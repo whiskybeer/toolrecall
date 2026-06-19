@@ -413,7 +413,12 @@ def _record_tokens_saved(category: str, tokens: int):
 # ─── FILE CACHE (hybrid: in-memory LRU + SQLite) ────────────
 
 def _persist_file_to_sqlite(path: str, content: str, stat_result):
-    """Write file to SQLite for cross-session persistence."""
+    """Write file to SQLite for cross-session persistence.
+
+    Files larger than ~10 MB are excluded from SQLite to keep the DB small.
+    They remain in the in-memory LRU only, so they're cached per-session
+    but not persisted across daemon restarts.
+    """
     path_hash = _hash(path)
     try:
         conn = _get_db()
@@ -468,8 +473,10 @@ def cached_read(path: str) -> dict:
     if row and row["mtime"] == stat.st_mtime:
         _file_cache.put(path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size})
         _record("file_cache", hit=True)
-        return {"cached": True, "content": row["content"], "path": path}    # ── 3. Cache miss — read from disk ──
+        return {"cached": True, "content": row["content"], "path": path}  # ── 2. SQLite hit ──
     _record("file_cache", hit=False)
+
+    # ── 3. Cache miss — read from disk ──
 
     # Security: Hard limit to prevent OOM on huge files (e.g. logs/binaries)
     # 5MB max ~ 1.2M tokens (exceeds most context windows anyway)

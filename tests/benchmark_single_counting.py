@@ -4,7 +4,7 @@ Benchmark: Verify Single-Counting Fix Across All 6 Cache Layers.
 Simulates a realistic multi-session workload and validates:
   1. tokens_intercepted counts only on first disk-read (not on cache hits)
   2. reset_stats preserves cache entries
-  3. The 141M-inflated-number scenario no longer reproduces
+  3. Unique token counting prevents inflated numbers
 """
 
 import os, sys, tempfile, time, json, hashlib
@@ -101,9 +101,9 @@ check("misses = 2 (A 1st + B 1st)",
 cleanup(fa, fb)
 
 # ════════════════════════════════════════
-# TEST 2: Simulate 141M Inflation Scenario
+# TEST 2: Simulate Token Counting (Verify unique, not inflated)
 # ════════════════════════════════════════
-print("\n═══ TEST 2: 141M Inflation Reproduce ═══")
+print("\n═══ TEST 2: Token Counting (Verify Unique) ═══")
 reset_stats()
 _init()
 

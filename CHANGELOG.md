@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.4-dev
+
+- **Tests:** 275 tests, all passing (was 176). Added coverage for:
+  - `test_transport.py` — UDS/TCP IPC, socket lifecycle, framed protocol (transport.py)
+  - `test_mcp_bridge.py` — MCP JSON-RPC protocol, security gate filtering (mcp_bridge.py)
+  - `test_client.py` — daemon-first routing with direct SQLite fallback (client.py)
+  - `test_cli.py` — CLI dispatch for all 16 subcommands (cli.py)
+- **Fix:** `set_socket_path()` now correctly updates the local `DEFAULT_PATH` reference, not just the transport module's copy
+- **Fix:** cross-test DB isolation — `_stats_conn` reset on env change prevents stats pollution
+
 ## v0.5.3 (2026-06-13)
 
 - **Hermes:** transparent_cache=transparent now default in setup.sh
@@ -15,7 +25,7 @@
 - **Security:** SECURITY.md — Interface Exposure & Default Transport Security
 - **Cleanup:** vitest + happy-dom removed from experimental browser extension (CVE fix applied first)
 - **Cleanup:** uv.lock untracked, hardcoded paths in tests/uninstallers replaced
-- **Docs:** README flow diagram, elevator pitch, HOW_IT_WORKS.md, CTO_QUESTIONS.md
+- **Docs:** README flow diagram, elevator pitch, HOW_IT_WORKS.md, APPENDIX.md
 - **Docs:** stale terminal-cache claims fixed across README and doc files
 
 ## v0.5.1 (2026-06-11)
@@ -85,3 +95,26 @@
 - HTTP proxy (forward + bridge)
 - Security audit: WAF, path canonicalization, sensitive file blocklist
 - 155 tests
+
+## v0.3.0 (2026-06-08)
+
+- **MCP Multiplexer:** persistent subprocess manager for external MCP servers (github, time, fetch, sequential-thinking)
+- **MCP Server:** security-gated tools with AST injection check, cognitive scan, keyword access control
+- **Daemon:** systemd service, config.toml servers_config, .env loader
+- **Perf:** lazy MCP server start + idle timeout
+- **Benchmarks:** 55K tokens cached, 89% hit rate in production session
+
+## v0.2.0 (2026-06-07)
+
+- **Hybrid LRU + SQLite:** two-tier cache (in-memory for speed, SQLite for persistence across sessions)
+- **MCP Cache:** transparent caching for MCP tool calls with TTL per server
+- **Windows compatibility:** TCP fallback for platforms without AF_UNIX
+- **Hermes integration:** init_script hooks for transparent_mode
+- **Benchmarks:** detailed latency/cost analysis
+
+## v0.1.0 (2026-06-06)
+
+- **Initial prototype:** SQLite-backed file read cache with mtime invalidation
+- **Unix Domain Socket transport:** fast IPC between daemon and client
+- **Basic CLI:** toolrecall status, invalidate
+- **Proxy:** simple HTTP caching proxy

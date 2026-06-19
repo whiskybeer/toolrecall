@@ -115,14 +115,9 @@ dangerous_tool_keywords = []
 #
 # For best security: list only directories the agent needs to read.
 allowed_paths = [
-    "~/.toolrecall",              # ToolRecall's own data dir only
+    "/home/hermes",
 ]
-
-# Allow cached_terminal tool (OFF by default — security risk!)
-# Terminal execution over MCP bypasses local prompt guards
 allow_terminal = false
-
-# Allow cache_invalidate tool (OFF by default — destructive!)
 allow_invalidate = false
 
 # ─── MCP Multiplexer — Security-sensitive servers are opt-in ──
@@ -163,4 +158,4 @@ enabled = true
 
 # ─── Hermes Auto-Cache (agent-specific) ──
 [hermes]
-transparent_cache = "separate"
+transparent_cache = "transparent"

@@ -40,6 +40,15 @@ def _default_socket_path() -> str:
     
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     if xdg:
+        # Verify that XDG_RUNTIME_DIR matches the actual user UID.
+        # Hermes sessions may inherit a wrong XDG_RUNTIME_DIR (e.g.
+        # from a container/gateway at UID 1000 while the real user
+        # is UID 1004). When the env var doesn't match os.getuid(),
+        # prefer the correct path to avoid talking to a different
+        # daemon's socket.
+        expected_dir = f"/run/user/{os.getuid()}"
+        if xdg != expected_dir and os.path.exists(expected_dir):
+            return os.path.join(expected_dir, "toolrecall.sock")
         return os.path.join(xdg, "toolrecall.sock")
     home = Path.home() / ".toolrecall"
     home.mkdir(parents=True, exist_ok=True)

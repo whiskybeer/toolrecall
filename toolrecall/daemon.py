@@ -42,6 +42,7 @@ import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+from toolrecall import __version__
 from toolrecall.cache import (
     cached_read as _cache_read,
     cached_terminal as _cache_terminal,
@@ -639,7 +640,7 @@ class MCPMultiplexer:
     # ─── Public API ───────────────────────────────────
 
     def start(self):
-        """Initialisiert Konfiguration. Startet KEINE Server (lazy)."""
+        """Initialize configuration. Starts NO servers (lazy — first call starts each)."""
         self._discover_configs()
         self._start_reaper()
         n = len(self._configs)
@@ -774,7 +775,7 @@ class DaemonServer:
             self._running = True
 
             transport_type = "TCP" if IS_WINDOWS else "UDS"
-            print(f"ToolRecall Daemon v0.3.0")
+            print(f"ToolRecall Daemon v{__version__}")
             print(f"  Transport: {transport_type} at {self.socket_path}")
             print(f"  PID: {os.getpid()}")
             print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")

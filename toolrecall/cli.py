@@ -417,11 +417,6 @@ def cmd_mcp():
     from toolrecall.mcp_bridge import main as bridge_main
     bridge_main()
 
-def cmd_mcp_legacy():
-    """Start standalone MCP Server (no Daemon needed, legacy)."""
-    from toolrecall.mcp_server import main as legacy_main
-    legacy_main()
-
 def cmd_daemon():
     """Manage the ToolRecall Cache Daemon."""
     from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
@@ -493,20 +488,6 @@ server {
     print("  sudo ln -s /etc/nginx/sites-available/toolrecall /etc/nginx/sites-enabled/")
     print("  sudo nginx -t && sudo systemctl reload nginx")
 
-def cmd_export_dataset():
-    """Export local cache to a JSONL dataset for AI Fine-Tuning."""
-    import sys
-    out_path = "toolrecall_dataset.jsonl"
-    if len(sys.argv) > 2:
-        out_path = sys.argv[2]
-        
-    try:
-        from toolrecall.dataset import export_trajectories
-        count, path = export_trajectories(out_path)
-        print(f"✅ Exported {count} tool trajectories to {path}")
-        print("Format: JSONL (Ready for HuggingFace / Supervised Fine-Tuning)")
-    except Exception as e:
-        print(f"Error exporting dataset: {e}")
 
 def main():
     if len(sys.argv) < 2:
@@ -522,11 +503,9 @@ def main():
         print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
         print("  config-set      Set a config value (section.key = value)")
-        print("  export-dataset")
         print("  serve           Start HTTP proxy")
         print("  nginx           Generate nginx config")
         print("  mcp             Start MCP Bridge (requires daemon)")
-        print("  mcp-legacy      Start standalone MCP Server (no daemon)")
         print("  daemon          Start/stop/manage cache daemon")
         return
 
@@ -541,11 +520,9 @@ def main():
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,
         "config-set": cmd_config_set,
-        "export-dataset": cmd_export_dataset,
         "serve": cmd_serve,
         "nginx": cmd_nginx,
         "mcp": cmd_mcp,
-        "mcp-legacy": cmd_mcp_legacy,
         "daemon": cmd_daemon,
     }
 
@@ -553,4 +530,4 @@ def main():
         commands[cmd]()
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: status, stats, invalidate, index, serve, nginx, mcp, mcp-legacy, daemon")
+        print("Available: status, stats, invalidate, index, serve, nginx, mcp, daemon")

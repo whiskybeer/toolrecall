@@ -107,7 +107,7 @@ The Daemon does not open any TCP ports. All communication happens over Unix Doma
 | `allowed_paths` security | **Default-deny:** empty list = NO readable paths. The blocklist (.env, .ssh, .pem) applies even within allowed paths as a secondary safety net. The allowlist is the primary trust boundary — the blocklist catches slips. |
 | `tool_access_control = true` | **Substring match on tool names** — not an OS sandbox. A tool named `post_message` passes through even if it modifies state. The keyword list (`write`, `delete`, `push`, etc.) is a best-effort allowlist. For real OS isolation, pair with Docker/gVisor. |
 | Deterministic injection detection | **Regex + AST scan, not ML.** Covers ~86% of patterns in the labeled test corpus (70 injection, 50 legitimate). Remaining 14% are encoding-evasion variants, fabricated URLs, and zero-day patterns. The ONNX classifier (cold path fallback) is optional and unverified. |
-| Token reduction | **81% fewer input tokens** is measured on a specific workload (13-file project, 3-10x re-reads). Your mileage varies with project structure and agent behavior. |
+| Token reduction | **73-81% fewer input tokens** is measured on a specific workload (13-file project, 3-10x re-reads). At 3× re-read: 73% measured. At 10+ re-reads: ~81%. Your mileage varies with project structure and agent behavior. |
 | Server-side prompt caching | **Requires same-temperature, same-model runs** across turns. Agent-imposed randomness (sampling params, multi-turn conversation drift) busts this. The daemon freezes OS output, but cannot control the LLM API's internal cache policy. |
 | Micro-RAG | **Agent must actively drop and re-fetch cache entries.** ToolRecall provides the cache backend — it doesn't enforce eviction. The agent (or its system prompt) decides when to re-fetch. |
 
@@ -127,7 +127,7 @@ ToolRecall's security depends not just on what it *blocks*, but on what it *expo
 
 ### Agent Connection Path — Never Direct Socket Access
 
-External agents (Claude Code, Cursor, Cline, Hermes) do **not** connect to the socket directly:
+External agents (Claude Code, Cursor, Cline, Hermes[^notall]) do **not** connect to the socket directly:
 
 ```
 Agent ──stdio──► toolrecall mcp (bridge) ──TransportClient──► Daemon
@@ -175,3 +175,4 @@ For deployments at scale (100+ agents on one machine, or agents across machines)
 ## 8. Reporting Vulnerabilities
 
 This project is maintained by a solo developer. For security issues, open a GitHub issue with the `security` label or contact the author directly. There is no bug bounty program.
+[^notall]: Not all agents tested yet — please report bugs at https://github.com/whiskybeer/toolrecall/issues

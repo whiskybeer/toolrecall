@@ -238,7 +238,7 @@ old_bug_file = sum(max(1, r['b'] // 3) * r['hits']
 _conn.close()
 old_bug = old_bug_file + total_tokens - (final.get("file_cache", {}).get("tokens_intercepted", 0))
 print(f"     Alter Bug (alle hits):{old_bug:>10,} tokens = ${old_bug/1_000_000 * 2:.4f} (×{old_bug/max(total_tokens,1):.0f})")
-print(f"     Alte Doku-Behauptung: 141,112,165 tokens = $282.22")
+print(f"     Echte unique Tokens: ~55K (13 files)")
 
 print(f"\n  {'='*65}")
 print(f"  CHECKS: {TOTAL_PASS} passed, {TOTAL_FAIL} failed (of {TOTAL_CHECKS})")

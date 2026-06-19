@@ -1,4 +1,12 @@
-# ToolRecall Daemon Architecture — Proposal
+# ToolRecall Daemon Architecture
+
+> **Note:** This document is a proposal from the v0.3.0 era. The daemon architecture
+> is **implemented**, but some details (UDS paths, LOC counts, module names) may
+> have drifted. See [ARCHITECTURE.md](../../README.md#architecture) for the current
+> state and `git ls-tree HEAD` for the actual file tree.
+>
+> What's accurate: one daemon + three bridge pattern, UDS IPC, lazy MCP multiplexer,
+> SecurityGate, SQLite + LRU hybrid cache.
 
 ## 1. The Problem
 
@@ -48,7 +56,7 @@ ToolRecall previously had **three independent access paths** — each with its o
                     ║   ┌────────▼─────────┐     ║
                     ║   │  IPC Server      │     ║
                     ║   │  UDS Socket      │     ║
-                    ║   │  /tmp/tc.sock    │     ║
+                    ║   │  /run/user/$UID/tc.sock  │     ║
                     ║   └──────────────────┘     ║
                     ╚════════════════════════════╝
                               │ UDS

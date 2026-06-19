@@ -24,10 +24,4 @@ vscode-extension/node_modules/
 vscode-extension/out/
 vscode-extension/*.vsix
 vscode-extension/package-lock.json
-
-# Browser Extension
-browser-extension/node_modules/
-browser-extension/dist/
-browser-extension/package-lock.json
-browser-extension/*.zip
-browser-extension/.wxt/
+vscode-extension/

@@ -251,7 +251,7 @@ def run_server(bind: str = "127.0.0.1", port: int = 8567):
     Hermes uses UDS natively — no proxy needed.
     """
     try:
-        server = http.server.HTTPServer(("127.0.0.1", port), ToolRecallHandler)
+        server = http.server.HTTPServer((bind, port), ToolRecallHandler)
         actual_port = server.server_port
     except OSError as e:
         if e.errno == 98:  # Address already in use
@@ -260,8 +260,8 @@ def run_server(bind: str = "127.0.0.1", port: int = 8567):
         raise
 
     log.info("ToolRecall HTTP Proxy running on http://%s:%d", bind, actual_port)
-    # Print the actual port to stdout so the VS Code extension can detect it
-    # Format: "http://127.0.0.1:PORT" — parsed by proxy.ts regex match
+    # Print the actual port to stdout for detection by external tools
+    # Format: "http://127.0.0.1:PORT" — only meaningful when bind==127.0.0.1
     print(f"http://127.0.0.1:{actual_port}")
     sys.stdout.flush()
 

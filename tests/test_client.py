@@ -38,14 +38,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 def _patch_transport(path):
-    """Patch DEFAULT_PATH in ALL modules that import it, and reset singleton."""
-    import toolrecall.transport as tp
+    """Patch DEFAULT_PATH in ALL modules that import it, and reset singleton.
+
+    Uses set_socket_path() which properly updates the transport module +
+    client module internal state + forces a reconnect.
+    """
     import toolrecall.client as cl
+    cl.set_socket_path(path)
     import toolrecall.mcp_bridge as mb
-    tp.DEFAULT_PATH = path
-    cl.DEFAULT_PATH = path  # client.py has its own import of DEFAULT_PATH
-    # mb doesn't import DEFAULT_PATH directly, it reads it from transport
-    cl._client = None
+    import toolrecall.transport as tp
+    tp.DEFAULT_PATH = path  # mb reads from transport module directly
 
 
 def _fresh_client_module():

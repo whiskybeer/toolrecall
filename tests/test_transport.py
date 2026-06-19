@@ -48,12 +48,42 @@ class TestSocketPath(unittest.TestCase):
                 os.environ["XDG_RUNTIME_DIR"] = old_xdg
 
     def test_posix_default_with_xdg(self):
-        """With XDG_RUNTIME_DIR set, socket sits under that dir."""
+        """With XDG_RUNTIME_DIR matching UID, socket sits under that dir."""
+        uid = os.getuid()
+        expected = f"/run/user/{uid}/toolrecall.sock"
         old_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
-        os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
+        os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
         try:
             path = _default_socket_path()
-            self.assertIn("/run/user/1000/toolrecall.sock", path)
+            self.assertIn(expected, path)
+        finally:
+            if old_xdg:
+                os.environ["XDG_RUNTIME_DIR"] = old_xdg
+            else:
+                os.environ.pop("XDG_RUNTIME_DIR", None)
+
+    def test_xdg_mismatch_uses_uid(self):
+        """When XDG_RUNTIME_DIR differs from os.getuid(), prefer the UID path.
+
+        Hermes sessions may inherit XDG_RUNTIME_DIR=/run/user/1000 from a
+        container/gateway while the real user has a different UID (e.g. 1004).
+        The socket path should use the real UID's dir so daemon and client
+        agree on the socket location.
+        """
+        uid = os.getuid()
+        old_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
+        wrong_xdg = f"/run/user/{uid + 1}"  # deliberately wrong UID
+        os.environ["XDG_RUNTIME_DIR"] = wrong_xdg
+        try:
+            path = _default_socket_path()
+            expected = f"/run/user/{uid}/toolrecall.sock"
+            # Only checks the mismatch logic when the correct dir exists
+            if os.path.exists(f"/run/user/{uid}"):
+                self.assertIn(expected, path,
+                              f"Should prefer real UID {uid} over XDG {wrong_xdg}")
+            else:
+                # If the correct dir doesn't exist (e.g. in CI), fall through
+                self.assertIn(wrong_xdg, path)
         finally:
             if old_xdg:
                 os.environ["XDG_RUNTIME_DIR"] = old_xdg

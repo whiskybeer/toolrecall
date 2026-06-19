@@ -6,7 +6,7 @@
 # 1. Build and start the daemon + proxy
 docker compose up -d daemon proxy
 
-# 2. Check health
+# 2. Check health (proxy exposes HTTP on port 8567; daemon itself speaks UDS only)
 docker compose ps
 curl http://localhost:8567/health
 
@@ -207,7 +207,7 @@ s.close()
 "
 # → {"status": "pong"}
 
-# Via HTTP
+# Via HTTP (only works if proxy container is running and port 8567 is exposed)
 curl http://localhost:8567/health
 # → {"status": "ok", ...}
 ```
