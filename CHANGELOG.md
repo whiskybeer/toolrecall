@@ -1,14 +1,21 @@
 # Changelog
 
-## v0.5.4-dev
+## v0.6.0 (2026-06-19)
 
-- **Tests:** 275 tests, all passing (was 176). Added coverage for:
-  - `test_transport.py` — UDS/TCP IPC, socket lifecycle, framed protocol (transport.py)
-  - `test_mcp_bridge.py` — MCP JSON-RPC protocol, security gate filtering (mcp_bridge.py)
-  - `test_client.py` — daemon-first routing with direct SQLite fallback (client.py)
-  - `test_cli.py` — CLI dispatch for all 16 subcommands (cli.py)
-- **Fix:** `set_socket_path()` now correctly updates the local `DEFAULT_PATH` reference, not just the transport module's copy
-- **Fix:** cross-test DB isolation — `_stats_conn` reset on env change prevents stats pollution
+- **Cleanup:** removed `vscode-extension/`, `mcp_server.py`, `dataset.py`, `examples/` — legacy/experimental code never used in production
+- **Docs:** restructured 27→12 files. Added APPENDIX.md, MCP_MULTIPLEXER.md. Deleted stale/duplicate docs
+- **Docs:** Architecture disclaimer, fixed UDS path, fixed dead link (CTO_QUESTIONS→APPENDIX), fixed ASCII table in ARCHITECTURE.md
+- **Docs:** ALL docstrings translated German→English (client.py, daemon.py)
+- **Docs:** dead comment in cache.py fixed (`# ── 3. Cache miss ──` → `# 2. SQLite hit`)
+- **README:** rewritten — agent-agnostic, "1 Tick Instead of 4" hero, required vs optional marked, integration table (Hermes, Claude Code, Cursor, Cline), nginx labeled optional
+- **Fix:** XDG_RUNTIME_DIR vs real UID mismatch — `_default_socket_path()` validates against `os.getuid()`
+- **Fix:** cache blocked — `allowed_paths` package default changed from `~/.toolrecall` to `/home/hermes`
+- **Fix:** `proxy.py` — `run_server()` now binds to passed `bind` arg, not hardcoded `127.0.0.1`
+- **Fix:** `daemon.py` — hardcoded `v0.3.0` replaced with `from toolrecall import __version__`
+- **Fix:** config.toml — `[REDACTED]` IPs replaced with `127.0.0.1`
+- **Fix:** test helper `_patch_transport()` uses `set_socket_path()` instead of direct attribute patching
+- **Chore:** `.gitignore` — added `vscode-extension/`
+- **Tests:** 258 tests, all passing (was 275, after removing legacy code paths and their tests)
 
 ## v0.5.3 (2026-06-13)
 
