@@ -188,8 +188,8 @@ enabled = true
 servers = ["time", "fetch"]  # Enable MCP servers; GitHub needs GITHUB_TOKEN in .env
 
 [proxy]
-# ⚠️ REDACTED: IP addresses are placeholders. Proxy binds to 127.0.0.1 (localhost only).
-# bind = "REDACTED_LOCALHOST_IP"
+# Proxy binds to 127.0.0.1 (localhost only).
+# bind = "127.0.0.1"                      # localhost only
 # port = 8567
 
 [nginx]
