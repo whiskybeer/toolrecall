@@ -6,9 +6,9 @@
 # 1. Build and start the daemon + proxy
 docker compose up -d daemon proxy
 
-# 2. Check health (proxy exposes HTTP on port 8567; daemon itself speaks UDS only)
+# 2. Check health (proxy exposes HTTP on port 8569; daemon itself speaks UDS only)
 docker compose ps
-curl http://localhost:8567/health
+curl http://localhost:8569/health
 
 # 3. Mount your Hermes skills/projects as knowledge sources
 # Edit docker-compose.yml or set PROJECTS_DIR:
@@ -19,11 +19,11 @@ PROJECTS_DIR=/home/user/projects docker compose up -d daemon
 
 | Service | Image Target | Port | Description |
 |---------|-------------|------|-------------|
-| `daemon` | `daemon` | 8567 | Cache + MCP multiplexer (UDS) |
-| `proxy` | `proxy` | 8567 | HTTP proxy (standalone) |
+| `daemon` | `daemon` | — | Cache + MCP multiplexer (UDS only) |
+| `proxy` | `proxy` | 8569 | HTTP proxy (standalone) |
 | `mcp-bridge` | `mcp-bridge` | — | MCP stdio bridge (stdin/stdout) |
-| `with-ollama` | `with-ollama` | 8567+11434 | Full stack + local LLM |
-| `full` | `full` | 8567 | Daemon + proxy via supervisor |
+| `with-ollama` | `with-ollama` | 8569+11434 | Full stack + local LLM |
+| `full` | `full` | 8569 | Daemon + proxy via supervisor |
 
 ## Configuration
 
@@ -82,7 +82,7 @@ docker compose up -d daemon
 ```bash
 docker compose up -d proxy
 ```
-→ Auto-starts daemon dependency. HTTP on :8567.
+→ Auto-starts daemon dependency. HTTP on :8569.
 
 ### Offline Dev Stack (ToolRecall + Ollama)
 ```bash
@@ -93,7 +93,7 @@ OLLAMA_MODEL=llama3.2:1b docker compose --profile ollama up -d with-ollama
 ### Supervisor (all-in-one process)
 ```bash
 docker build --target full -t toolrecall:full .
-docker run -v toolrecall_data:/data -p 8567:8567 toolrecall:full
+docker run -v toolrecall_data:/data -p 8569:8569 toolrecall:full
 ```
 
 ---
@@ -207,8 +207,8 @@ s.close()
 "
 # → {"status": "pong"}
 
-# Via HTTP (only works if proxy container is running and port 8567 is exposed)
-curl http://localhost:8567/health
+# Via HTTP (only works if proxy container is running and port 8569 is exposed)
+curl http://localhost:8569/health
 # → {"status": "ok", ...}
 ```
 
@@ -224,7 +224,7 @@ docker build --target full -t toolrecall:full .
 docker run -d \
   -v toolrecall_data:/data \
   -v ./projects:/projects:ro \
-  -p 8567:8567 \
+  -p 8569:8569 \
   toolrecall:full
 
 # With Ollama (for offline inference)
@@ -232,7 +232,7 @@ docker build --target with-ollama -t toolrecall:ollama .
 docker run -d \
   -v toolrecall_data:/data \
   -v ollama_models:/root/.ollama \
-  -p 8567:8567 \
+  -p 8569:8569 \
   -p 11434:11434 \
   -e ENABLE_OLLAMA=true \
   -e OLLAMA_MODEL=llama3.2:1b \

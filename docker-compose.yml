@@ -6,12 +6,11 @@ services:
     volumes:
       - toolrecall_data:/data
       - ${PROJECTS_DIR:-./projects}:/projects:ro
-    ports:
-      - "8567:8567"
     environment:
       - TOOLRECALL_SCAN_DIRS=/projects
       - INDEX_MEMORY=true
     restart: unless-stopped
+    # Daemon uses UDS only — no HTTP port needed
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import os,socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/data/tc.sock'); s.sendall(json.dumps({'action':'ping'}).encode()); r=json.loads(s.recv(4096).decode()); exit(0 if r.get('status')=='pong' else 1)\""]
       interval: 30s
@@ -37,7 +36,7 @@ services:
     volumes:
       - toolrecall_data:/data
     ports:
-      - "8567:8567"
+      - "8569:8569"
     depends_on:
       daemon:
         condition: service_healthy
@@ -55,7 +54,7 @@ services:
       - toolrecall_data:/data
       - ollama_models:/root/.ollama
     ports:
-      - "8567:8567"
+      - "8569:8569"
       - "11434:11434"
     environment:
       - ENABLE_OLLAMA=true

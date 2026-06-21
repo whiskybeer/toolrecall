@@ -788,6 +788,19 @@ class DaemonServer:
                 self.multiplexer.start()
             print("")
 
+            # Start forward proxy (caches API responses) in daemon thread
+            try:
+                from toolrecall.proxy import run_forward_proxy
+                fp_thread = threading.Thread(
+                    target=run_forward_proxy,
+                    daemon=True,
+                    name="ForwardProxy",
+                )
+                fp_thread.start()
+                print("  Forward proxy: http://127.0.0.1:8569 (caches API responses)")
+            except Exception:
+                pass  # Forward proxy is best-effort
+
             # Start periodic GC background thread
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
             self._gc_thread.start()

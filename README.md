@@ -1,6 +1,6 @@
 # ToolRecall — Deterministic Tool Cache for LLM Agents
 
-ToolRecall sits between your agent and the OS. On repeat calls it serves cached results from local SQLite instead of re-executing system commands. Caching is deterministic — byte-identical until mtime/TTL expiry — which qualifies every API call for provider prefix-caching discounts (up to 90% at Anthropic/OpenAI).
+ToolRecall sits between your agent and the OS (or your API provider). On repeat calls it serves cached results from local SQLite instead of re-executing system commands or re-sending requests to the LLM. Caching is deterministic — byte-identical until mtime/TTL expiry — which qualifies every API call for provider prefix-caching discounts (up to 90% at Anthropic/OpenAI).
 
 **1 tick instead of 4:** A file read normally needs `stat → open → read → close`. ToolRecall needs only `stat` (mtime check) — on cache hit the bytes come from memory, bypassing disk entirely.
 
@@ -10,8 +10,14 @@ ToolRecall sits between your agent and the OS. On repeat calls it serves cached 
 pip install toolrecall    # Installs nothing but ToolRecall itself
 toolrecall init            # Interactive security setup (default-deny paths)
 toolrecall daemon &         # Start cache daemon
-toolrecall mcp              # Connect any MCP agent (Claude Code, Cursor, Cline, Hermes...)
 ```
+
+**Two ways to use (both on by default — no extra command needed):**
+
+| Path | What it does | How to connect | Default |
+|------|-------------|---------------|---------|
+| **Forward proxy** | Intercepts HTTP requests to API providers (OpenAI, Anthropic, etc.) — caches full responses by body hash. **Zero tokens consumed on cache hit.** | `export OPENAI_BASE_URL=http://localhost:8569` — or set any SDK's base URL | ✅ On (`:8569`) |
+| **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client | Add to `~/.claude/.mcp.json` or run `toolrecall mcp` | ✅ On (stdio) |
 
 **Requirements:** Python 3.11+ (`sqlite3`, `tomllib`, `json`, `http.server`, `urllib` from stdlib).
 
@@ -21,12 +27,13 @@ toolrecall mcp              # Connect any MCP agent (Claude Code, Cursor, Cline,
 
 ToolRecall intercepts tool calls at the daemon level and returns cached results when inputs haven't changed:
 
-| Mechanism | What gets cached | Invalidation |
-|---|---|---|
-| **File cache** | First disk read per file | `mtime` changes → fresh read |
-| **Terminal cache** | Static commands (hostname, whoami, pwd, uname, uptime, df, free, crontab) | TTL-based (default 300s) |
-| **MCP cache** | External MCP server responses (GitHub, time, fetch...) | TTL-based (default 60s, per-server override) |
-| **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching |
+| Mechanism | What gets cached | Invalidation | Token saving |
+|-----------|----------------|-------------|-----------|
+| **File cache** | First disk read per file | `mtime` changes → fresh read | Smaller context → provider prefix-cache discounts |
+| **Terminal cache** | Static commands (hostname, whoami, pwd, uname, uptime, df, free, crontab) | TTL-based (default 300s) | Same output never re-sent to LLM |
+| **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (default 60s, per-server override) | Repeated tool results served from local cache |
+| **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Same as file cache |
+| **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
 
 Dynamic commands (`git`, `ls`, `curl`) and state-changing operations always execute live.
 
@@ -47,33 +54,38 @@ Source: [Benchmark](docs/BENCHMARK.md)
 ## Architecture
 
 ```
-  [ Claude Code ]   [ Cursor IDE ]   [ Hermes Agent ]
-         \                |                /
-          \               |               /
-        +───────────────────────────────────+
-        │  Standard stdio Protocol (Bridge) │  <- Client Layer
-        +─────────────────┬─────────────────+
+  [ Claude Code ]   [ Cursor IDE ]   [ Hermes Agent ]   [ Any LLM Client ]
+         \\                |                |               /
+          \\               |               |              /
+           \\              |               |             /
+        +──────────────────────────────────────────────────────────+
+        │  Standard stdio MCP   OR   HTTP (OPENAI_BASE_URL proxy) │
+        +──────────────────────────────────────────────────────────+
                           │ Unix Domain Socket (Linux/Mac)
                           │ TCP localhost:8568 (Windows)
-        +─────────────────▼─────────────────+
-        │         ToolRecall Daemon         │  <- Gateway Layer
-        │  ┌─────────────────────────────┐  │
-        │  │   In-Memory LRU (Cache)     │  │
-        │  └──────────────┬──────────────┘  │
-        │  ┌──────────────▼──────────────┐  │
-        │  │   SQLite WAL (Persistent)   │  │
-        │  └─────────────────────────────┘  │
-        │  ┌─────────────────────────────┐  │
-        │  │   MCP Server Multiplexer    │  │
-        │  └──────────────┬──────────────┘  │
-        +─────────────────┼─────────────────+
+        +────────────────▼──────────────────────────────────+
+        │         ToolRecall Daemon                         │
+        │  ┌─────────────────────────────┐                   │
+        │  │   In-Memory LRU (Cache)     │                   │
+        │  └──────────────┬──────────────┘                   │
+        │  ┌──────────────▼──────────────┐                   │
+        │  │   SQLite WAL (Persistent)   │                   │
+        │  └─────────────────────────────┘                   │
+        │  ┌─────────────────────────────┐                   │
+        │  │   MCP Server Multiplexer    │                   │
+        │  └──────────────┬──────────────┘                   │
+        +─────────────────┼──────────────────+
                           │ Lazy-Loaded stdio Subprocesses
-        +─────────────────▼─────────────────+
-        │ [ Downstream MCP: GitHub / Time ] │  <- Execution Layer
-        +───────────────────────────────────+
+        +─────────────────▼──────────────────+
+        │ [ Downstream MCP: GitHub / Time ]  │
+        +────────────────────────────────────+
 ```
 
-The daemon holds everything: the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), and the Security Gate (path allowlist, sensitive file blocklist, cognitive scan). All agents share one daemon via Unix Domain Sockets.
+The daemon holds everything: the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), the Forward Proxy (caches full API responses via body hash), and the Security Gate (path allowlist, sensitive file blocklist, cognitive scan).
+
+All agents share one daemon via either:
+- **MCP Bridge** (`toolrecall mcp`) — the agent connects as an MCP client and uses `cached_read`, `cached_terminal` etc.
+- **Forward proxy** (auto-started on `:8569`) — the agent's API calls go to `localhost:8569` instead of `api.anthropic.com`. The proxy hashes the request body, checks the cache, and on a hit returns the cached response without ever contacting the provider.
 
 See [Architecture](docs/ARCHITECTURE.md) for the full design.
 
@@ -81,16 +93,21 @@ See [Architecture](docs/ARCHITECTURE.md) for the full design.
 
 ## MCP Multiplexer
 
-Instead of each agent spawning separate subprocesses for every MCP server (GitHub, Postgres, time, fetch...), the daemon manages them:
+When running multiple agents on the same machine (5 Claude Code sessions + 3 Cursor instances), each one normally spawns its own subprocess for every MCP server (GitHub, Postgres, time…). That's 10× the RAM for the same tool.
+
+The daemon's multiplexer shares one subprocess per server across **all** agents:
 
 - **Lazy loading:** servers boot on first call, not at daemon start (~0.01s vs ~1.7s per server)
 - **Idle timeout:** inactive subprocesses killed after 15 min (configurable)
 - **Failure isolation:** one server crash doesn't affect others (auto-reconnect, max 3 attempts)
 - **Secrets:** API tokens loaded from `~/.toolrecall/.env`, never exposed to the LLM
 
-Agents connect to **one** MCP server in their config: `toolrecall mcp`.
+All agents connect to **one** MCP server in their config: `toolrecall mcp`.
 
-See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for details.
+See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for configuration details.
+
+**When to use:** You run 3+ agents simultaneously on the same machine and they share the same MCP tools.
+**When to skip:** Single agent setup — each agent manages its own MCP servers fine.
 
 ---
 
@@ -102,7 +119,7 @@ ToolRecall doesn't prevent prompt injection — it cages the consequences:
 - **Sensitive file blocklist:** `.env`, `.ssh/`, `.pem`, `.aws/`, etc. are blocked even inside allowed paths.
 - **`allow_terminal=false`** (default): drops all `cached_terminal` calls into a void.
 - **`os.path.realpath()`:** catches `../../../etc/shadow` traversal before OS is touched.
-- **Cognitive Pre-Flight:** Deterministic regex scan on MCP tool arguments for override instructions, jailbreak tags, exfiltration URLs. Zero LLM, ~0.001ms hot path.
+- **Cognitive Pre-Fight:** Deterministic regex scan on MCP tool arguments for override instructions, jailbreak tags, exfiltration URLs. Zero LLM, ~0.001ms hot path.
 - **AST injection check:** Parses tool arguments as Python AST — blocks `exec()`, `eval()`, `__import__()` calls.
 - **Daemon IPC via UDS:** No open ports, immune to SSRF.
 
@@ -110,17 +127,18 @@ See [Security Architecture](SECURITY.md) for the full trust boundary.
 
 ---
 
-## Quick Reference — CLI (defaults marked, optional marked)
+## Quick Reference — CLI
 
 ```
 toolrecall init            Create default config.toml and .env  [required once]
-toolrecall daemon          Start cache daemon                   [required]
-toolrecall mcp             Start MCP Bridge                     [required — connects your agent]
+toolrecall daemon          Start cache daemon (also starts MCP + forward proxy) [required]
+toolrecall mcp             Start MCP Bridge                     [connect any MCP agent]
+toolrecall serve           Forward proxy (cache API responses)  [auto-started with daemon; use for custom port]
+toolrecall debug           Start debug/demo server (test cached_read/term via curl)
 toolrecall status          Cache status and stats               [optional]
 toolrecall invalidate      Clear all caches                     [optional]
 toolrecall reset-stats     Reset statistics counters            [optional]
-toolrecall serve           Start HTTP proxy                     [optional — only for agents that can't speak MCP]
-toolrecall nginx           Generate nginx config                [optional — only if you want HTTPS in front of the proxy]
+toolrecall nginx           Generate nginx config                [optional]
 toolrecall index           Build/update FTS5 knowledge database [optional]
 toolrecall index-dir       Index a directory (e.g. Obsidian)    [optional]
 toolrecall config-set      Set a config value                   [optional]
@@ -130,10 +148,26 @@ toolrecall config-set      Set a config value                   [optional]
 
 ## Agent Integration
 
-ToolRecall registers its MCP tools under names like `cached_read`, `cached_terminal`, `cached_write`, `cached_patch`. How you connect depends on your agent:
+### Forward proxy (API-level caching)
 
-| Agent | How to connect | Cache mode |
-|---|---|---|
+Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
+
+```bash
+toolrecall daemon &                  # also starts forward proxy on :8569
+export OPENAI_BASE_URL=http://localhost:8569
+```
+
+| Agent | How to connect | Token savings |
+|-------|---------------|---------------|
+| **Any LLM client** | `export OPENAI_BASE_URL=http://localhost:8569` | **Zero tokens consumed** — cache hit never reaches the provider |
+| **Custom port** | `toolrecall serve --port 9090` if you need a different port | same |
+
+### MCP Bridge (tool-level caching)
+
+ToolRecall registers MCP tools like `cached_read`, `cached_terminal`, `cached_write`, `cached_patch`. The agent *chooses* to use them.
+
+| Agent | How to connect | Token savings |
+|-------|---------------|---------------|
 | **Hermes** (`hermes_init.py`) | Transparent cache patches `read_file` → `cached_read` automatically | ✅ Zero config |
 | **Claude Code** | `claude mcp add toolrecall -- toolrecall mcp` then config snippet | ⚡ Config snippet |
 | **Cursor** | Add to `.cursorrules` | ⚡ Config snippet |
@@ -187,15 +221,8 @@ default_ttl = 60
 enabled = true
 servers = ["time", "fetch"]  # Enable MCP servers; GitHub needs GITHUB_TOKEN in .env
 
-[proxy]
-# Proxy binds to 127.0.0.1 (localhost only).
-# bind = "127.0.0.1"                      # localhost only
-# port = 8567
-
 [nginx]
 # nginx is OPTIONAL — only needed if you want HTTPS/SSL in front of the proxy.
-# Example: you host and code on the same machine; the proxy listens on localhost
-# and nginx terminates SSL + forwards to it. Most users never need this.
 # site_name = "toolrecall"
 # domain = "example.com"
 # ssl = false

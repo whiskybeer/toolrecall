@@ -1,4 +1,4 @@
-"""ToolRecall CLI -- toolrecall status, stats, invalidate, index, serve, nginx, mcp, daemon.
+"""ToolRecall CLI -- toolrecall status, stats, invalidate, index, serve, debug, nginx, mcp, daemon.
 
 Usage:
     toolrecall status          # Show cache status
@@ -6,7 +6,8 @@ Usage:
     toolrecall invalidate      # Clear cache
     toolrecall reset-stats     # Reset statistics counters
     toolrecall index           # Index knowledge base
-    toolrecall serve           # Start HTTP proxy (via Daemon)
+    toolrecall serve           # Start forward proxy (cache API responses)
+    toolrecall debug           # Start debug/demo server (test cached_read via curl)
     toolrecall nginx           # Generate nginx config
     toolrecall mcp             # Start MCP Bridge (stdio → Daemon)
     toolrecall mcp-legacy      # Start standalone MCP Server (no Daemon needed)
@@ -93,10 +94,6 @@ file_ttl = -1          # read_file: until file modification
 skill_ttl = -1         # skill_view: until skill update
 terminal_default_ttl = 300
 
-[proxy]
-port = 8567
-bind = "127.0.0.1"
-
 [security]
 tool_access_control = false
 dangerous_tool_keywords = []
@@ -124,6 +121,11 @@ time = {{ command = "python3", args = ["-m", "toolrecall.mcp_time"] }}
 "sequential-thinking" = {{ command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }}
 fetch = {{ command = "uvx", args = ["mcp-server-fetch"] }}
 # github = {{ command = "python3", args = ["-m", "toolrecall.mcp_github"] }}  # opt-in, needs GITHUB_TOKEN
+
+[forward_proxy]
+# ToolRecall Daemon starts the forward proxy on :8569 automatically.
+# Set TOOLRECALL_FORWARD_PORT to change the default port.
+# Point your API client at http://localhost:8569 to get cached API responses.
 """
 
     env_content = """# ToolRecall Secrets
@@ -358,10 +360,9 @@ def cmd_config_set():
         print(f"❌ Failed to write {cfg_path}")
 
 def cmd_serve():
-    """Start HTTP proxy (via Daemon)."""
+    """Start the forward proxy (caches LLM API responses)."""
     # Parse --port from argv
     port_override = None
-    forward_mode = "--forward" in sys.argv
     clean_argv = []
     i = 0
     while i < len(sys.argv):
@@ -371,55 +372,87 @@ def cmd_serve():
         elif sys.argv[i].startswith("--port="):
             port_override = int(sys.argv[i].split("=", 1)[1])
             i += 1
-        elif sys.argv[i] == "--forward":
-            i += 1
         else:
             clean_argv.append(sys.argv[i])
             i += 1
     sys.argv = clean_argv
 
     if "--help" in sys.argv or "-h" in sys.argv:
-        print("Usage: toolrecall serve [--port PORT] [--forward]")
+        print("Usage: toolrecall serve [--port PORT]")
         print()
-        print("Start the ToolRecall HTTP proxy server.")
+        print("Start the forward proxy — caches LLM API responses (OpenAI, Anthropic, etc.)")
+        print("before they leave your machine. On cache hit, returns cached response")
+        print("without contacting the provider.")
         print()
-        print("Modes:")
-        print("  default (bridge)    API endpoints for cached_read, cached_terminal, etc.")
-        print("  --forward           Forward proxy that caches LLM API responses.")
-        print("                       Use with browser extension DNR redirect.")
+        print("Note: The forward proxy also starts automatically with `toolrecall daemon`.")
+        print("Use `toolrecall serve` only if you need a standalone instance on a different port.")
         print()
         print("Options:")
         print("  --help, -h          Show this help message")
-        print("  --port PORT         Override proxy port")
+        print("  --port PORT         Override forward proxy port")
+        print()
+        print(f"Default port: {int(os.environ.get('TOOLRECALL_FORWARD_PORT', '8569'))}")
         print()
         print("Examples:")
-        print("  toolrecall serve                          # Bridge mode on :8567")
-        print("  toolrecall serve --forward                # Forward proxy on :8080")
-        print("  toolrecall serve --forward --port 9090    # Forward proxy on :9090")
+        print("  toolrecall serve                    # Forward proxy on :8569")
+        print("  toolrecall serve --port 9090        # Forward proxy on :9090")
+        print()
+        print("Use with:")
+        print("  export OPENAI_BASE_URL=http://localhost:8569")
+        print("  export ANTHROPIC_BASE_URL=http://localhost:8569")
         return
 
-    if forward_mode:
-        from toolrecall.proxy import run_forward_proxy
-        from toolrecall.config import load_config
-        cfg = load_config()
-        port = port_override if port_override is not None else cfg.get("proxy", "forward_port", default=8080)
-        run_forward_proxy(port=port)
-        return
-
-    from toolrecall.proxy import run_server
-    from toolrecall.config import load_config
-    cfg = load_config()
-    port = port_override if port_override is not None else cfg.proxy_port
-    run_server(bind=cfg.proxy_bind, port=port)
+    from toolrecall.proxy import run_forward_proxy
+    port = port_override if port_override is not None else int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
+    run_forward_proxy(port=port)
 
 def cmd_mcp():
     """Start MCP Bridge (stdio → Daemon)."""
     from toolrecall.mcp_bridge import main as bridge_main
     bridge_main()
 
+def cmd_debug():
+    """Start minimal debug/demo server on :8570."""
+    from toolrecall.proxy import run_debug_server
+    port_override = None
+    for i, arg in enumerate(sys.argv[2:], 2):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            port_override = int(sys.argv[i + 1])
+        elif arg.startswith("--port="):
+            port_override = int(arg.split("=", 1)[1])
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: toolrecall debug [--port PORT]")
+        print()
+        print("Start minimal debug/demo server.")
+        print("Endpoints:")
+        print("  GET /read?path=X   cached_read demo")
+        print("  GET /term?cmd=X    cached_terminal demo")
+        print("  GET /stats         cache statistics")
+        print("  GET /health        daemon status")
+        print()
+        print("Example:")
+        print("  time curl http://localhost:8570/read?path=README.md")
+        return
+
+    run_debug_server(port=port_override or 8570)
+
 def cmd_daemon():
-    """Manage the ToolRecall Cache Daemon."""
+    """Manage the ToolRecall Cache Daemon.
+    
+    Starts cache daemon + MCP bridge + forward proxy (:8569)."""
     from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: toolrecall daemon [--foreground] [--stop] [--status]")
+        print()
+        print("Start the ToolRecall cache daemon.")
+        print("  • MCP bridge: agents connect via stdio MCP")
+        print("  • Forward proxy: http://127.0.0.1:8569 (caches API responses)")
+        print("  • Use --foreground to run in terminal (not daemonized)")
+        print()
+        print("Then point agents OPENAI_BASE_URL to http://localhost:8569")
+        return
 
     if "--stop" in sys.argv:
         stop_daemon()
@@ -451,7 +484,7 @@ server {
     proxy_cache_bypass 1;
 
     location /toolrecall/ {
-        proxy_pass http://127.0.0.1:8567/;
+        proxy_pass http://127.0.0.1:8569/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -464,7 +497,7 @@ server {
     # location /toolrecall/ {
     #     auth_basic "ToolRecall";
     #     auth_basic_user_file /etc/nginx/.htpasswd_toolrecall;
-    #     proxy_pass http://127.0.0.1:8567/;
+    #     proxy_pass http://127.0.0.1:8569/;
     # }
 }
 
@@ -474,8 +507,8 @@ server {
 #     server_name toolrecall.dev;
 #     ssl_certificate /etc/letsencrypt/live/toolrecall.dev/fullchain.pem;
 #     ssl_certificate_key /etc/letsencrypt/live/toolrecall.dev/privkey.pem;
-#     location /toolrecall/ {
-#         proxy_pass http://127.0.0.1:8567/;
+#     location / {
+#         proxy_pass http://127.0.0.1:8569/;
 #     }
 # }
 """
@@ -503,7 +536,8 @@ def main():
         print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
         print("  config-set      Set a config value (section.key = value)")
-        print("  serve           Start HTTP proxy")
+        print("  serve           Start forward proxy (cache API responses)")
+        print("  debug           Start debug/demo server (test cached_read via curl)")
         print("  nginx           Generate nginx config")
         print("  mcp             Start MCP Bridge (requires daemon)")
         print("  daemon          Start/stop/manage cache daemon")
@@ -521,6 +555,7 @@ def main():
         "index-dir": cmd_index_dir,
         "config-set": cmd_config_set,
         "serve": cmd_serve,
+        "debug": cmd_debug,
         "nginx": cmd_nginx,
         "mcp": cmd_mcp,
         "daemon": cmd_daemon,

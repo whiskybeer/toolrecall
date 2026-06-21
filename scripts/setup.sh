@@ -10,7 +10,7 @@
 # Options:
 #   --db PATH        Cache database path (default: ~/.toolrecall/cache.db)
 #   --knowledge PATH Knowledge database path (default: ~/.toolrecall/knowledge.db)
-#   --proxy PORT     HTTP proxy port (default: 8567, 0 = disable)
+#   --proxy PORT     HTTP proxy port (default: 8569, 0 = disable)
 #   --bind ADDR      HTTP proxy bind address (default: 127.0.0.1)
 #   --nginx          Generate nginx config in addition
 #   --scan DIRS      Comma-separated dirs to index for knowledge search
@@ -24,7 +24,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  Default (Hermes-style):    bash setup.sh"
-    echo "  Claude Code:                bash setup.sh --proxy 8567 --scan /projects"
+    echo "  Claude Code:                bash setup.sh --proxy 8569 --scan /projects"
     echo "  Codex (no HTTP proxy):      bash setup.sh --proxy 0"
     echo "  Custom paths:               bash setup.sh --db /data/cache.db --proxy 0"
     exit 0
@@ -138,13 +138,13 @@ echo "  The HTTP proxy allows agents that cannot import Python"
 echo "  (Claude Code, Codex, Cursor) to use ToolRecall."
 echo ""
 echo "  Options:"
-echo "    • Port 8567 (default) — lightweight, no dependencies"
+echo "    • Port 8569 (default) — lightweight, no dependencies"
 echo "    • Port 0              — disable HTTP proxy entirely"
 echo "    • Nginx in front      — for SSL + password protection"
 echo ""
 
 if [ -z "$PROXY_PORT" ]; then
-    PROXY_PORT="8567"
+    PROXY_PORT="8569"
     echo "  → Proxy enabled on port $PROXY_PORT"
 fi
 
@@ -173,7 +173,7 @@ if [ "$PROXY_PORT" != "0" ]; then
     fi
 
     cat >> "$CONFIG_FILE" << TOML
-[proxy]
+[forward_proxy]
 port = $PROXY_PORT
 bind = "$BIND_ADDR"
 

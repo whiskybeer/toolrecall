@@ -29,8 +29,6 @@ ENV_MAP = {
     "TOOLRECALL_SKILL_DIRS": ("paths", "skill_dirs"),
     "TOOLRECALL_FILE_TTL": ("cache", "file_ttl"),
     "TOOLRECALL_TERMINAL_TTL": ("cache", "terminal_default_ttl"),
-    "TOOLRECALL_PROXY_PORT": ("proxy", "port"),
-    "TOOLRECALL_PROXY_BIND": ("proxy", "bind"),
     "TOOLRECALL_SCAN_DIRS": ("sources", "scan_dirs"),
     "TOOLRECALL_NGINX_DOMAIN": ("nginx", "domain"),
     "TOOLRECALL_MCP_ALLOWED_PATHS": ("mcp", "allowed_paths"),
@@ -214,22 +212,6 @@ class Config:
                 if command.strip() == cmd.strip():
                     return ttl
         return self.terminal_default_ttl
-
-    @property
-    def proxy_port(self) -> int:
-        return self.get("proxy", "port", default=8567)
-
-    @property
-    def proxy_bind(self) -> str:
-        return self.get("proxy", "bind", default="127.0.0.1")
-
-    @property
-    def nginx_recommended(self) -> bool:
-        return self.get("proxy", "nginx_recommended", default=True)
-
-    @property
-    def nginx_auto_site(self) -> bool:
-        return self.get("proxy", "nginx_auto_site", default=False)
 
     # ─── MCP Security Properties ──────────────────────
 

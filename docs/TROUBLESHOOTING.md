@@ -109,7 +109,7 @@ docker compose logs daemon | grep -i 'security\\|waf\\|gate\\|sandbox\\|allowed'
 toolrecall daemon --status
 
 # 3. Test: Directory traversal blocked?
-curl -s 'http://localhost:8567/cached_read?path=../../etc/shadow'
+curl -s 'http://localhost:8569/cached_read?path=../../etc/shadow'
 # → Should return "Access Denied", not host content
 ```
 **Explanation:** Security Gate runs **inside the daemon process**, independent of the host OS. As long as the daemon runs in the container, the WAF is active. The host's `/etc/shadow` is invisible anyway — container isolation + WAF = defense in depth.

@@ -40,16 +40,8 @@ log_shell_fallback = true
 "uname -a" = 3600
 "crontab -l" = 3600
 
-# ─── HTTP Proxy (standalone, no deps) ─────
-# The proxy is an HTTP ↔ UDS bridge for agents that only speak HTTP
-# (Claude Code, Codex, Cursor, etc.). Hermes talks UDS natively —
-# you don't need this running unless you hook up an HTTP-only agent.
-[proxy]
-port = 8567
-bind = "127.0.0.1"                       # localhost only
-nginx_recommended = true    # Show "nginx recommended" in docs
+# ─── File Indexing ────────────────────────
 
-# ─── Nginx Config (for SSL + auth) ────────
 [nginx]
 site_name = "toolrecall"
 domain = "localhost"

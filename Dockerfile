@@ -36,7 +36,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=3s --retries=3 \
 # ============================================================
 FROM base AS daemon
 USER toolrecall
-EXPOSE 8567
+EXPOSE 8569
 CMD ["toolrecall", "daemon", "--foreground"]
 
 # ============================================================
@@ -51,7 +51,7 @@ CMD ["toolrecall", "mcp"]
 # ============================================================
 FROM base AS proxy
 USER toolrecall
-EXPOSE 8567
+EXPOSE 8569
 CMD ["toolrecall", "serve"]
 
 # ============================================================
@@ -67,8 +67,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Expose toolrecall proxy + ollama API
-EXPOSE 8567 11434
+# Expose toolrecall proxy + ollama API\nEXPOSE 8569 11434
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -83,7 +82,7 @@ CMD ["all"]
 # ============================================================
 FROM base AS full
 USER toolrecall
-EXPOSE 8567
+EXPOSE 8569
 COPY docker/supervisord.conf /etc/supervisord.conf
 RUN pip install --no-cache-dir supervisor
 CMD ["supervisord", "-c", "/etc/supervisord.conf"]

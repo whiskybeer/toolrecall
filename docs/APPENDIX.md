@@ -135,7 +135,7 @@ Two distinct mechanisms:
 | 🟡 Medium | 5 |
 | 🟢 Low | 4 |
 
-**🔴 C1 — HTTP proxy CORS:** `Access-Control-Allow-Origin: *` on ALL endpoints (including `/cache/invalidate`). Default bind is `127.0.0.1` (safe) but port 8567 is unauthenticated. **Fix:** Remove CORS entirely for localhost-only service.
+**🔴 C1 — HTTP proxy CORS:** `Access-Control-Allow-Origin: *` on ALL endpoints (including `/cache/invalidate`). Default bind is `127.0.0.1` (safe) but port 8569 is unauthenticated. **Fix:** Remove CORS entirely for localhost-only service.
 
 **🟡 H1 — Shell injection:** 5 `shell=True` calls in `cache.py`, 3 with variable `args` → `shlex.split()` primary path, `shell=True` fallback. **Fix:** Remove `shell=True` fallbacks in `cached_run()`; log WARNING on fallback.
 

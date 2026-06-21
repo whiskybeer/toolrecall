@@ -1,9 +1,20 @@
 # How ToolRecall Works — The Deterministic Cache
 
-ToolRecall doesn't ask the OS "does this file still exist?" on repeat reads.
+ToolRecall doesn't ask "does this file still exist?" on repeat reads.
 **It only asks the cache: "have I seen this before?"**
 
-## The Core Loop
+## Two Cache Paths, One Daemon
+
+ToolRecall has two independent cache layers, both served by the same daemon:
+
+| Path | What it caches | Cache key | Invalidation | Speedup |
+|------|---------------|-----------|-------------|---------|
+| **MCP bridge** (tool-level) | File reads, terminal output, MCP server responses | Tool name + arguments | File mtime, TTL | **1 tick statt 4** (stat-only) |
+| **Forward proxy** (API-level) | Full HTTP responses from API providers | Request body SHA256 hash | Body hash — same request = same response | **Zero tokens consumed**, provider never contacted |
+
+Both start automatically with `toolrecall daemon`. The MCP bridge is stdio-based (agent connects as MCP client). The forward proxy listens on `:8569` — point `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` at it.
+
+## The Core Loop (MCP bridge — tool caching)
 
 ```
 Agent: "read main.py"

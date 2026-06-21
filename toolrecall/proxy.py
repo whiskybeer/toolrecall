@@ -1,36 +1,18 @@
-"""ToolRecall HTTP Proxy — HTTP ↔ UDS Bridge + Forward Proxy Mode.
+"""ToolRecall Forward Proxy — cache API responses without touching the provider.
 
-The HTTP Proxy forwards requests to the ToolRecall Daemon over UDS.
-It contains no caching logic — everything is routed through the Daemon.
+Intercepts HTTP requests to LLM providers (OpenAI, Anthropic, Google, DeepSeek, etc.)
+by matching the Host header. On repeat requests with identical bodies, returns the
+cached response — no API call, no token cost.
 
-Purpose: agents that only speak HTTP (Claude Code, Codex, Cursor, etc.)
-can talk to ToolRecall via this bridge instead of UDS.
-
-Hermes users: you don't need this — Hermes uses UDS/MCP directly.
-
-Browser extension: uses this proxy to check/store cached page content.
-
-Forward Proxy Mode (--forward):
-  Runs on a configurable upstream-facing port (default 8080).
-  Intercepts API calls to LLM providers (OpenAI, Anthropic, Google, etc.)
-  by matching the Host header. On repeat requests with identical bodies,
-  returns the cached response — no API call, no token cost.
-
-  Architecture:
-    Browser Extension (DNR redirect) → Forward Proxy (port 8080)
+Architecture:
+    Browser Extension (DNR redirect) → Forward Proxy (port 8569)
       → Cache HIT: respond from api_cache table
       → Cache MISS: forward to real API, store response, return
 
-Endpoints (bridge mode):
-    GET /cached_read?path=               → cached_read via Daemon
-    GET /cached_terminal?cmd=            → cached_terminal via Daemon
-    GET /cached_skill?name=              → cached_skill via Daemon
-    GET /cached_mcp_check?key=           → cached_mcp_check via Daemon
-    POST /cached_mcp_store               → cached_mcp_store via Daemon
-    GET /cached_browser_check?key=       → cached_browser_check via Daemon
-    POST /cached_browser_store           → cached_browser_store via Daemon
-    GET /docs_search?query=              → docs_search via Daemon
-    GET /health                          → {"status": "ok"}
+No MITM needed — the browser extension redirects the URL, preserving
+all original headers (Authorization, Content-Type) and body intact.
+
+For agent use, point OPENAI_BASE_URL / ANTHROPIC_BASE_URL to localhost:8569.
 """
 
 import hashlib
@@ -40,7 +22,6 @@ import json
 import logging
 import os
 import sys
-import urllib.parse
 
 from toolrecall.transport import TransportClient
 
@@ -65,244 +46,16 @@ FORWARD_HOSTS = {
 }
 
 
-class ToolRecallHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP request handler — forwards to Daemon via UDS."""
-
-    def __init__(self, *args, **kwargs):
-        self._client = TransportClient()
-        super().__init__(*args, **kwargs)
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        params = urllib.parse.parse_qs(parsed.query)
-        q = {k: v[0] if v else "" for k, v in params.items()}
-
-        try:
-            if path == "/cached_read":
-                p = q.get("path", "")
-                if not p:
-                    result = {"error": "Missing 'path' query parameter"}
-                else:
-                    result = self._client.send({"cmd": "cached_read", "path": p})
-
-            elif path == "/cached_terminal":
-                c = q.get("cmd", "")
-                if not c:
-                    result = {"error": "Missing 'cmd' query parameter"}
-                else:
-                    ttl_str = q.get("ttl", "0")
-                    ttl = int(ttl_str) if ttl_str else None
-                    result = self._client.send({"cmd": "cached_terminal", "command": c, "ttl": ttl})
-
-            elif path == "/cached_skill":
-                s = q.get("name", "")
-                if not s:
-                    result = {"error": "Missing 'name' query parameter"}
-                else:
-                    result = self._client.send({"cmd": "cached_skill", "name": s})
-
-            elif path == "/cached_mcp_check":
-                key = q.get("key", "")
-                if not key:
-                    result = {"error": "Missing 'key' query parameter"}
-                else:
-                    result = self._client.send({"cmd": "cached_mcp_check", "key": key})
-
-            elif path == "/cached_browser_check":
-                key = q.get("key", "")
-                if not key:
-                    result = {"error": "Missing 'key' query parameter"}
-                else:
-                    result = self._client.send({"cmd": "cached_browser_check", "cache_key": key})
-
-            elif path == "/docs_search":
-                query = q.get("query", "")
-                if not query:
-                    result = {"error": "Missing 'query' query parameter"}
-                else:
-                    src = q.get("source", None)
-                    result = self._client.send({"cmd": "docs_search", "query": query, "source": src})
-
-            elif path == "/health":
-                ping = self._client.send({"cmd": "ping"})
-                if ping.get("error") == "daemon_unavailable":
-                    result = {"status": "error", "daemon": "not running"}
-                    self.send_response(503)
-                else:
-                    result = {"status": "ok", "daemon": "connected", "version": "0.2.0"}
-                    self.send_response(200)
-
-            elif path == "/cache/stats":
-                result = self._client.send({"cmd": "cache_status"})
-
-            elif path == "/cache/invalidate":
-                result = self._client.send({"cmd": "cache_invalidate"})
-
-            elif path == "/cache/invalidate_file":
-                p = q.get("path", "")
-                if not p:
-                    result = {"error": "Missing 'path' query parameter"}
-                else:
-                    result = self._client.send({"cmd": "cache_refresh_file", "path": p})
-
-            else:
-                result = {"error": f"Unknown endpoint: {path}"}
-                self.send_response(404)
-
-            if "error" in result and path != "/health":
-                self.send_response(500 if result["error"] != "daemon_unavailable" else 503)
-            elif path == "/health":
-                pass  # Already set
-            else:
-                self.send_response(200)
-
-        except Exception as e:
-            result = {"error": str(e)}
-            self.send_response(500)
-
-        self._send_json(result)
-
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        content_length = int(self.headers.get("Content-Length", 0))
-
-        # Enforce max body size BEFORE reading
-        if content_length > MAX_BODY_SIZE:
-            self.send_response(413)
-            self._send_json({"error": f"Request body too large (max {MAX_BODY_SIZE} bytes)"})
-            return
-
-        body = self.rfile.read(content_length)
-        try:
-            data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            self.send_response(400)
-            self._send_json({"error": "Invalid JSON body"})
-            return
-
-        try:
-            if path == "/cached_mcp_store":
-                key = data.get("key", "")
-                content = data.get("content", "")
-                if not key:
-                    result = {"error": "Missing 'key' in body"}
-                else:
-                    result = self._client.send({
-                        "cmd": "cached_mcp_store",
-                        "key": key,
-                        "content": content,
-                        "url": data.get("url", ""),
-                        "contentType": data.get("contentType", ""),
-                    })
-
-            elif path == "/cached_browser_store":
-                cache_key = data.get("key", data.get("cache_key", ""))
-                content = data.get("content", "")
-                if not cache_key or not content:
-                    result = {"error": "Missing 'key'/'content' in body"}
-                else:
-                    result = self._client.send({
-                        "cmd": "cached_browser_store",
-                        "cache_key": cache_key,
-                        "content": content,
-                        "url": data.get("url", ""),
-                        "content_type": data.get("contentType", data.get("content_type", "snapshot")),
-                        "title": data.get("title", ""),
-                        "content_hash": data.get("content_hash", ""),
-                    })
-
-            else:
-                result = {"error": f"Unknown POST endpoint: {path}"}
-                self.send_response(404)
-
-            if "error" in result:
-                self.send_response(500)
-            else:
-                self.send_response(200)
-
-        except Exception as e:
-            result = {"error": str(e)}
-            self.send_response(500)
-
-        self._send_json(result)
-
-    def _send_json(self, data: dict):
-        """Send JSON response with appropriate headers."""
-        self.send_header("Content-Type", "application/json")
-        # No CORS header: proxy binds only to localhost (127.0.0.1).
-        # Access-Control-Allow-Origin: * is pointless on a local service
-        # and risky if accidentally bound to network (CSRF on /cache/invalidate).
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
-
-    def log_message(self, format, *args):
-        """Suppress default request logging."""
-        pass
-
-
-def run_server(bind: str = "127.0.0.1", port: int = 8567):
-    """Start the ToolRecall HTTP proxy bridge.
-
-    Binds to localhost only (safe default). No network exposure.
-    The proxy is a bridge for agents that only speak HTTP
-    (Claude Code, Codex, Cursor, etc).
-    Hermes uses UDS natively — no proxy needed.
-    """
-    try:
-        server = http.server.HTTPServer((bind, port), ToolRecallHandler)
-        actual_port = server.server_port
-    except OSError as e:
-        if e.errno == 98:  # Address already in use
-            log.error("Port %d already in use — is another proxy running?", port)
-            return
-        raise
-
-    log.info("ToolRecall HTTP Proxy running on http://%s:%d", bind, actual_port)
-    # Print the actual port to stdout for detection by external tools
-    # Format: "http://127.0.0.1:PORT" — only meaningful when bind==127.0.0.1
-    print(f"http://127.0.0.1:{actual_port}")
-    sys.stdout.flush()
-
-    # Check daemon
-    client = TransportClient()
-    ping = client.send({"cmd": "ping"})
-    if ping.get("error") == "daemon_unavailable":
-        log.warning("ToolRecall daemon not running! Start with: toolrecall daemon &")
-        log.info("Proxy started — will connect when daemon becomes available")
-    else:
-        log.info("Connected to ToolRecall daemon")
-
-    log.info("Endpoints:")
-    log.info("  GET  /cached_read?path=/path/to/file")
-    log.info("  GET  /cached_terminal?cmd=<command>&ttl=<seconds>")
-    log.info("  GET  /cached_skill?name=skill-name")
-    log.info("  GET  /cached_mcp_check?key=<cache-key>")
-    log.info("  POST /cached_mcp_store")
-    log.info("  GET  /cached_browser_check?key=<cache-key>")
-    log.info("  POST /cached_browser_store")
-    log.info("  GET  /docs_search?query=<search terms>")
-    log.info("  GET  /health")
-    log.info("Recommended: put nginx in front for SSL + auth.")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        log.info("Shutting down.")
-
-
-# ─── Forward Proxy Mode ──────────────────────────────────
-
-
 class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
     """Forward proxy that caches API responses via ToolRecall daemon.
 
-    Receives requests redirected by the browser extension (DNR).
+    Receives requests redirected by the browser extension (DNR) or pointed
+    at this proxy via OPENAI_BASE_URL / ANTHROPIC_BASE_URL.
     Matches the Host header against FORWARD_HOSTS, hashes the request
     body, checks the api_cache, and either returns cached responses
     or forwards to the real API and caches the result.
 
-    No MITM needed — the browser extension redirects the URL, preserving
+    No MITM needed — works by URL redirection, preserving
     all original headers (Authorization, Content-Type) and body intact.
     """
 
@@ -454,21 +207,24 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         log.debug("ForwardProxy: " + format, *args)
 
 
-def run_forward_proxy(bind: str = "127.0.0.1", port: int = 8080):
+def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
     """Start the ToolRecall forward proxy (caching API responses).
 
-    This proxy intercepts API calls to LLM providers (OpenAI, Anthropic, etc.)
-    redirected by the browser extension. On cache hit, returns the cached
-    response directly — no API call, no token cost.
+    Port priority:
+      1. --port CLI argument
+      2. TOOLRECALL_FORWARD_PORT env var
+      3. 8569 (default)
 
     Binds to localhost only (safe default). No network exposure.
-    The forward proxy is intended for local use with the browser extension.
+    On cache hit, returns the cached response directly — no API call, no token cost.
     """
+    if port is None:
+        port = int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
     try:
         server = http.server.HTTPServer((bind, port), ForwardProxyHandler)
         actual_port = server.server_port
     except OSError as e:
-        if e.errno == 98:
+        if e.errno == 98:  # Address already in use
             log.error("Port %d already in use", port)
             return
         raise
@@ -489,6 +245,103 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int = 8080):
     log.info("Forwarding for %d known API hosts:", len(FORWARD_HOSTS))
     for h in sorted(FORWARD_HOSTS):
         log.info("  • %s", h)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        log.info("Shutting down.")
+
+
+# ─── Debug/Demo Server ──────────────────────────────
+# Minimal HTTP server for quick speed demos and debugging.
+# 4 endpoints: /read, /term, /stats, /health
+# Not a full bridge — just curl-friendly cache access.
+
+
+class DebugHandler(http.server.BaseHTTPRequestHandler):
+    """Minimal HTTP handler for debugging and demos — 4 endpoints."""
+
+    def __init__(self, *args, **kwargs):
+        self._client = TransportClient()
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        from urllib.parse import urlparse, parse_qs
+
+        parsed = urlparse(self.path)
+        path = parsed.path
+        params = parse_qs(parsed.query)
+        q = {k: v[0] if v else "" for k, v in params.items()}
+
+        try:
+            if path == "/read":
+                p = q.get("path", "")
+                if not p:
+                    result = {"error": "Missing 'path' param"}
+                else:
+                    result = self._client.send({"cmd": "cached_read", "path": p})
+
+            elif path == "/term":
+                c = q.get("cmd", "")
+                if not c:
+                    result = {"error": "Missing 'cmd' param"}
+                else:
+                    result = self._client.send({"cmd": "cached_terminal", "command": c})
+
+            elif path == "/stats":
+                result = self._client.send({"cmd": "cache_status"})
+
+            elif path == "/health":
+                ping = self._client.send({"cmd": "ping"})
+                if ping.get("error") == "daemon_unavailable":
+                    self.send_response(503)
+                    result = {"status": "error", "daemon": "not running"}
+                else:
+                    self.send_response(200)
+                    result = {"status": "ok"}
+
+            else:
+                self.send_response(404)
+                result = {"error": f"Unknown: {path}"}
+
+            if "error" in result and path != "/health":
+                self.send_response(500 if result["error"] != "daemon_unavailable" else 503)
+
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def log_message(self, format, *args):
+        log.debug("DebugServer: " + format, *args)
+
+
+def run_debug_server(bind: str = "127.0.0.1", port: int = 8570):
+    """Start minimal debug/demo server on localhost (:8570).
+
+    Endpoints:
+      GET /read?path=X   → cached_read
+      GET /term?cmd=X    → cached_terminal
+      GET /stats         → cache statistics
+      GET /health        → daemon status
+    """
+    try:
+        server = http.server.HTTPServer((bind, port), DebugHandler)
+        actual_port = server.server_port
+    except OSError as e:
+        if e.errno == 98:
+            log.error("Port %d already in use", port)
+            return
+        raise
+
+    print(f"ToolRecall Debug Server on http://{bind}:{actual_port}")
+    log.info("Endpoints: GET /read?path=  GET /term?cmd=  GET /stats  GET /health")
+    sys.stdout.flush()
 
     try:
         server.serve_forever()

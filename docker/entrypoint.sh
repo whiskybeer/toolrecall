@@ -50,7 +50,7 @@ fi
 
 # Optionally start HTTP proxy
 if [ "${ENABLE_PROXY:-true}" = "true" ]; then
-    echo "[toolrecall] Starting HTTP proxy on port 8567..."
+    echo "[toolrecall] Starting HTTP proxy on port 8569..."
     _run "toolrecall serve" &
 fi
 
