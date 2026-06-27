@@ -156,6 +156,15 @@ def docs_search(query: str, source: str = None) -> str:
         return f"No results for: '{query}'."
     except Exception as e:
         conn.close()
+        estr = str(e)
+        if "malformed" in estr.lower():
+            try:
+                rebuild = sqlite3.connect(_get_db_path(), timeout=30.0)
+                rebuild.execute("INSERT INTO pages_fts(pages_fts) VALUES('rebuild')")
+                rebuild.close()
+            except Exception:
+                pass
+            return docs_search(query, source=source)
         return f"Search error: {e}"
 
 
@@ -189,6 +198,15 @@ def docs_get_page(path: str, source: str = "") -> str:
         return f"Page not found: '{path}' in source '{source}'."
     except Exception as e:
         conn.close()
+        estr = str(e)
+        if "malformed" in estr.lower():
+            try:
+                rebuild = sqlite3.connect(_get_db_path(), timeout=30.0)
+                rebuild.execute("INSERT INTO pages_fts(pages_fts) VALUES('rebuild')")
+                rebuild.close()
+            except Exception:
+                pass
+            return docs_get_page(path, source)
         return f"Error: {e}"
 
 
