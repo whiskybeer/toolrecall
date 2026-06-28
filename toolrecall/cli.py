@@ -522,6 +522,63 @@ server {
     print("  sudo nginx -t && sudo systemctl reload nginx")
 
 
+def cmd_shim():
+    """Install or uninstall the transparent OS-level cache shim (.pth file)."""
+    action = sys.argv[2] if len(sys.argv) > 2 else "status"
+    
+    if action == "--install" or action == "install":
+        import shutil
+        site_pkgs = None
+        for p in sys.path:
+            if p.endswith("site-packages") and os.path.isdir(p):
+                site_pkgs = p
+                break
+        if not site_pkgs:
+            print("Error: could not find site-packages directory")
+            return
+        
+        pth_src = os.path.join(os.path.dirname(__file__), "tr_shim.pth")
+        pth_dst = os.path.join(site_pkgs, "tr_shim.pth")
+        shutil.copy2(pth_src, pth_dst)
+        print(f"✅ Shim installed: {pth_dst}")
+        print("   Every Python process will now auto-cache open() and subprocess.run()")
+        print("   via the ToolRecall daemon.")
+        print("   Disable with: TOOLRECALL_SHIM_DISABLE=1")
+        
+    elif action == "--uninstall" or action == "uninstall":
+        site_pkgs = None
+        for p in sys.path:
+            if p.endswith("site-packages") and os.path.isdir(p):
+                site_pkgs = p
+                break
+        if not site_pkgs:
+            print("Error: could not find site-packages directory")
+            return
+        
+        pth_path = os.path.join(site_pkgs, "tr_shim.pth")
+        if os.path.exists(pth_path):
+            os.remove(pth_path)
+            print(f"✅ Shim removed: {pth_path}")
+        else:
+            print("Shim not installed.")
+            
+    elif action == "--status" or action == "status":
+        for p in sys.path:
+            if p.endswith("site-packages"):
+                pth = os.path.join(p, "tr_shim.pth")
+                if os.path.exists(pth):
+                    print(f"✅ Shim installed: {pth}")
+                    return
+        print("❌ Shim not installed")
+        
+    else:
+        print("Usage: toolrecall shim [--install|--uninstall|--status]")
+        print()
+        print("  --install     Install .pth file -> every Python process auto-caches")
+        print("  --uninstall   Remove .pth file")
+        print("  --status      Check if shim is installed")
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: toolrecall <command>")
@@ -541,6 +598,7 @@ def main():
         print("  nginx           Generate nginx config")
         print("  mcp             Start MCP Bridge (requires daemon)")
         print("  daemon          Start/stop/manage cache daemon")
+        print("  shim            Install/uninstall transparent cache shim (.pth)")
         return
 
     cmd = sys.argv[1]
@@ -559,6 +617,7 @@ def main():
         "nginx": cmd_nginx,
         "mcp": cmd_mcp,
         "daemon": cmd_daemon,
+        "shim": cmd_shim,
     }
 
     if cmd in commands:

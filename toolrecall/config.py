@@ -37,7 +37,6 @@ ENV_MAP = {
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
     "TOOLRECALL_MCP_MULTIPLEX_CONFIG_PATH": ("mcp_multiplex", "config_path"),
-    "TOOLRECALL_MCP_MULTIPLEX_HERMES_CONFIG": ("mcp_multiplex", "hermes_config"),  # deprecated
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
     "TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL": ("mcp_multiplex", "default_ttl"),
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
@@ -154,14 +153,14 @@ class Config:
 
         Priority:
           1. AGENT_HOME env var
-          2. HERMES_HOME env var (backward compat)
+          2. TOOLRECALL_AGENT_HOME env var
           3. config [paths].agent_home setting
-          4. ~/.hermes (legacy default)
+          4. ~/.hermes (backward compat, generic fallback)
 
-        Other agents (Claude Code, Codex, etc.) should set AGENT_HOME
-        so ToolRecall finds skills, configs, and memories correctly.
+        Agents should set AGENT_HOME so ToolRecall finds skills,
+        configs, and memories correctly.
         """
-        env = os.environ.get("AGENT_HOME") or os.environ.get("HERMES_HOME")
+        env = os.environ.get("AGENT_HOME") or os.environ.get("TOOLRECALL_AGENT_HOME")
         if env:
             return os.path.expanduser(env)
         cfg = self.get("paths", "agent_home", default=None)
@@ -306,28 +305,12 @@ class Config:
         Priority:
           1. TOOLRECALL_MCP_MULTIPLEX_CONFIG_PATH env var
           2. config [mcp_multiplex].config_path
-          3. TOOLRECALL_MCP_MULTIPLEX_HERMES_CONFIG env var (deprecated)
-          4. config [mcp_multiplex].hermes_config (deprecated)
-          5. agent_home/config.yaml (auto-detect)
+          3. agent_home/config.yaml (auto-detect)
         """
         path = self.get("mcp_multiplex", "config_path", default="")
         if path:
             return path
-        # Fallback to deprecated hermes_config key
-        path = self.get("mcp_multiplex", "hermes_config", default="")
-        if path:
-            return path
         return os.path.join(self.agent_home, "config.yaml")
-
-    @property
-    def mcp_multiplex_hermes_config(self) -> str:
-        """Deprecated. Use mcp_multiplex_config_path instead."""
-        import warnings
-        warnings.warn(
-            "mcp_multiplex_hermes_config is deprecated, use mcp_multiplex_config_path",
-            DeprecationWarning, stacklevel=2,
-        )
-        return self.mcp_multiplex_config_path
 
     @property
     def mcp_multiplex_idle_minutes(self) -> int:
@@ -366,13 +349,13 @@ class Config:
         if os.path.exists(agent_cfg_path):
             try:
                 # Simple YAML-free parser for mcp_servers section
-                return self._parse_hermes_mcp_servers(agent_cfg_path)
+                return self._parse_agent_mcp_servers(agent_cfg_path)
             except Exception:
                 pass
 
         return {}
 
-    def _parse_hermes_mcp_servers(self, path: str) -> dict:
+    def _parse_agent_mcp_servers(self, path: str) -> dict:
         """Minimal YAML parser to extract mcp_servers from agent config.yaml.
 
         Handles the known structure:

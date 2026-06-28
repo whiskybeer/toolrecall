@@ -148,6 +148,6 @@ max_file_kb = 100
 [sources.memory]
 enabled = true
 
-# ─── Hermes Auto-Cache (agent-specific) ──
-[hermes]
-transparent_cache = "transparent"
+# ─── Shim Cache (transparent OS-level monkey-patch) ──
+# Installed via toolrecall shim install
+# See: pip install toolrecall[shim] or toolrecall shim --install
