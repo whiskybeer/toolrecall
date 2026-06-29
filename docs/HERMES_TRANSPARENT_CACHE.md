@@ -69,8 +69,25 @@ that changes this API, transparent mode breaks and `read_file` returns errors.
 
 **Fix:** Remove the `[hermes]` section from config → falls back to "separate" → works again.
 
-### 4. Hermes-only
+### 4. Hermes-only (without shim)
 
 Transparent mode patches Hermes' Python-internal tool registry. Other agents
 (Claude Code, Cursor, Cline) use MCP — they don't have this mechanism.
 They always use explicit `toolrecall mcp` tools.
+
+### Alternative: OS-level Shim (v0.7.0+)
+
+Instead of Hermes transparent mode, you can use the **OS-level shim** which works with *any* agent:
+
+```bash
+toolrecall shim --install
+```
+
+The shim patches `open()` and `subprocess.run()` at the Python interpreter level — every Python process on the machine auto-caches. This includes Aider, Codex CLI, Claude Code, Cursor, Cline, Hermes, scripts.
+
+**Tradeoff:**
+
+| Approach | Scope | Config | Risk |
+|----------|-------|--------|------|
+| Hermes transparent mode | Hermes only | `[hermes] transparent_cache = "transparent"` | Hermes API coupling |
+| OS-level Shim | All Python processes | `toolrecall shim --install` | Global — affects every script |

@@ -170,7 +170,40 @@ The Daemon architecture sacrifices 0.1ms UDS overhead for a Shared Cache. In pra
 | Multi Process (Hermes + MCP + HTTP) | Daemon — otherwise 3× RAM + 3× cold |
 | CI/CD / Microservices | Daemon — otherwise never a warm cache |
 
-## 5. Open Questions (Resolved in v0.3.0)
+## 6. OS-level Shim (4th Bridge, added in v0.7.0)
+
+In addition to the three bridged paths, v0.7.0 introduces a **4th access path**: the OS-level shim.
+
+```bash
+toolrecall shim --install
+```
+
+This installs `tr_shim.pth` into site-packages. Every Python process that starts afterwards auto-imports `toolrecall.shim`, which monkey-patches:
+
+- `builtins.open` → checks `cached_read` before touching disk
+- `subprocess.run` → checks `cached_terminal` before forking
+
+**Key difference from the three bridges:** The shim works at the Python interpreter level — zero agent-side configuration. Aider, Codex CLI, scripts, even Hermes itself benefit immediately after `toolrecall shim --install`.
+
+```python
+# tr_shim.pth contains one line:
+import toolrecall.shim
+
+# shim.py then:
+#   builtins.open = _shim_open       # routes through cache
+#   subprocess.run = _shim_run       # routes through cache
+#   TOOLRECALL_SHIM_DISABLE=1  → skip shim per-process
+```
+
+### Comparison: 3 Bridges vs Shim
+
+| Aspect | MCP / HTTP Bridge | OS-level Shim |
+|--------|------------------|---------------|
+| **Scope** | Agent connects explicitly | All Python processes worldwide |
+| **Config** | MCP config per agent | One `toolrecall shim --install` |
+| **Control** | Agent chooses to use cached tools | Transparent — agent never knows |
+| **Fallback** | Native tools always available | Shim bypasses native tools |
+| **Disable** | Remove from MCP config | `TOOLRECALL_SHIM_DISABLE=1` env |
 
 1. **systemd unit** — who manages the Daemon? A: Managed via user systemd (`systemctl --user`).
 2. **Fallback behavior** — if Daemon dies, should cached_read fall back to direct SQLite? A: Yes, implemented in `client.py`.

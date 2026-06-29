@@ -150,59 +150,41 @@ toolrecall config-set      Set a config value                   [optional]
 
 ### Forward proxy (API-level caching)
 
-Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
+Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed. Works with **any** OpenAI-compatible provider (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.).
 
 ```bash
 toolrecall daemon &                  # also starts forward proxy on :8569
-export OPENAI_BASE_URL=http://localhost:8569
+export OPENAI_BASE_URL=http://localhost:8569/v1   # Any OpenAI-compatible SDK
+# or override the base URL in your provider config / client init
 ```
 
-| Agent | How to connect | Token savings |
-|-------|---------------|---------------|
-| **Any LLM client** | `export OPENAI_BASE_URL=http://localhost:8569` | **Zero tokens consumed** — cache hit never reaches the provider |
+| Provider SDK | How to connect | Token savings |
+|-------------|---------------|---------------|
+| **Any OpenAI-compatible client** | `export OPENAI_BASE_URL=http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
 | **Custom port** | `toolrecall serve --port 9090` if you need a different port | same |
 
 ### MCP Bridge (tool-level caching)
 
-ToolRecall registers MCP tools like `cached_read`, `cached_terminal`, `cached_write`, `cached_patch`. The agent *chooses* to use them.
+ToolRecall registers MCP tools like `cached_read`, `cached_terminal`, `cached_write`, `cached_patch`. Connect **any MCP agent** by adding one server:
+
+```json
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+This single snippet works for **Claude Desktop, Claude Code, Cursor, Cline, Windsurf, Continue, and any MCP-compatible agent** with zero per-agent variations.
 
 | Agent | How to connect | Token savings |
 |-------|---------------|---------------|
-| **Hermes** (`hermes_init.py`) | Transparent cache patches `read_file` → `cached_read` automatically | ✅ Zero config |
-| **Claude Code** | `claude mcp add toolrecall -- toolrecall mcp` then config snippet | ⚡ Config snippet |
-| **Cursor** | Add to `.cursorrules` | ⚡ Config snippet |
-| **Cline** | Add to `.clinerules` or `cline_mcp_settings.json` | ⚡ Config snippet |
-| **Any MCP agent** | Add server `toolrecall: toolrecall mcp` to your MCP config | ⚡ Universal |
-
-### Config snippets
-
-**Claude Code** — add to `~/.claude/claude_dotfiles/claude.md`:
-```markdown
-ToolRecall is installed. When reading files, use `cached_read` via MCP instead of `read_file`.
-When running terminal commands, use `cached_terminal` instead of `terminal`.
-```
-
-**Cursor** — add to `.cursorrules` at project root:
-```
-Use cached_read for file reads (MCP tool, faster on repeats).
-Use cached_terminal for terminal commands (MCP tool, TTL-cached).
-```
-
-**Cline** — add to `.clinerules` or mention in the initial prompt:
-```
-When reading files, always use cached_read instead of read_file.
-When running terminal commands, use cached_terminal.
-```
-
-**Hermes Agent** — transparent mode (monkey-patches native tools automatically):
-
-```toml
-# ~/.toolrecall/config.toml
-[hermes]
-transparent_cache = "transparent"   # default: "separate"
-```
-
-Then restart Hermes or type `/reset`. See [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) for details and risks.
+| **Any MCP agent** | Add the `toolrecall` server to your MCP config (see above) | ✅ Universal |
+| **Hermes** | Set `[hermes] transparent_cache = "transparent"` in `~/.toolrecall/config.toml` | ✅ Zero config |
+| **Shim (agent-agnostic)** | `toolrecall shim --install` patches `open()`/`subprocess.run()` at the OS level | ✅ Works with any agent binary |
 
 ---
 

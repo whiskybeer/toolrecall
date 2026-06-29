@@ -3,16 +3,40 @@
 ToolRecall doesn't ask "does this file still exist?" on repeat reads.
 **It only asks the cache: "have I seen this before?"**
 
-## Two Cache Paths, One Daemon
+## Three Cache Paths, One Daemon
 
-ToolRecall has two independent cache layers, both served by the same daemon:
+ToolRecall has **three** independent cache layers, all served by the same daemon:
 
 | Path | What it caches | Cache key | Invalidation | Speedup |
 |------|---------------|-----------|-------------|---------|
 | **MCP bridge** (tool-level) | File reads, terminal output, MCP server responses | Tool name + arguments | File mtime, TTL | **1 tick statt 4** (stat-only) |
 | **Forward proxy** (API-level) | Full HTTP responses from API providers | Request body SHA256 hash | Body hash — same request = same response | **Zero tokens consumed**, provider never contacted |
+| **OS-level shim** (`.pth` patch) | Every `open()` + `subprocess.run()` in every Python process | File path + mode, command string | File mtime (open), TTL (subprocess) | **Agent-agnostic** — no config needed per tool |
 
-Both start automatically with `toolrecall daemon`. The MCP bridge is stdio-based (agent connects as MCP client). The forward proxy listens on `:8569` — point `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` at it.
+All three start automatically with `toolrecall daemon`. The MCP bridge is stdio-based (agent connects as MCP client). The forward proxy listens on `:8569` — point any OpenAI-compatible SDK at it. The shim patches Python globally via a `.pth` file in site-packages.
+
+### OS-level shim
+
+The shim (`toolrecall shim --install`) installs a `.pth` file that auto-imports `toolrecall.shim` on every Python process startup:
+
+```bash
+toolrecall shim --install
+# Every Python process now transparently caches open() and subprocess.run()
+# Disable per-process: TOOLRECALL_SHIM_DISABLE=1 python my_script.py
+```
+
+This works with **any** agent binary — Aider, Codex CLI, Claude Code, Cursor, Cline, Hermes, scripts — zero imports, zero config per tool. The shim monkey-patches `builtins.open` and `subprocess.run` to check the cache before touching the OS.
+
+```python
+# Equivalent of what the .pth file does:
+import toolrecall.shim  # auto-patches open() + subprocess.run()
+toolrecall.shim.apply()
+```
+
+| Env | Effect |
+|-----|--------|
+| `TOOLRECALL_SHIM_DISABLE=1` | Disable shim for a specific process |
+| `TOOLRECALL_SHIM_DISABLE=1 python -c "..."` | Run without caching |
 
 ## The Core Loop (MCP bridge — tool caching)
 
