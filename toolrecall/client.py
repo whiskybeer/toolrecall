@@ -291,6 +291,89 @@ def _reimport_default_path():
     DEFAULT_PATH = _DEFAULT_PATH
 
 
+# ─── Context Tracker API ────────────────────────────────
+
+
+def context_set_checkpoint(name: str = "") -> dict:
+    """Set a checkpoint — mark current state as clean.
+
+    The agent calls this after reading all necessary files for a task phase.
+    Everything read before this point is "clean" and safe to drop.
+    Files written/patched after this point will be tracked as "dirty".
+
+    Args:
+        name: Optional human-readable label for the checkpoint.
+
+    Returns:
+        {"checkpoint": int, "name": str, "dirty_before": int}
+    """
+    client = _get_client()
+    payload = {"cmd": "context_set_checkpoint", "name": name}
+    resp = client.send(payload)
+    return resp
+
+
+def context_get_dirty(checkpoint: int = None) -> dict:
+    """Get dirty and clean files since a checkpoint.
+
+    Dirty = files that were written/patched since the checkpoint.
+    Clean = files that were read but NOT written since the checkpoint.
+    The agent should KEEP dirty files and may DROP clean ones.
+
+    Args:
+        checkpoint: Checkpoint ID to diff against. None = use current.
+
+    Returns:
+        {
+            "dirty": ["/abs/path", ...],
+            "clean": ["/abs/path", ...],
+            "checkpoint": int,
+            "total_dirty": int,
+            "total_clean": int,
+        }
+    """
+    client = _get_client()
+    payload = {"cmd": "context_get_dirty"}
+    if checkpoint is not None:
+        payload["checkpoint"] = checkpoint
+    resp = client.send(payload)
+    return resp
+
+
+def context_get_stats() -> dict:
+    """Full status of the context tracker.
+
+    Returns:
+        {
+            "dirty": [...],
+            "clean": [...],
+            "checkpoint": int,
+            "total_dirty": int,
+            "total_clean": int,
+            "total_read": int,
+        }
+    """
+    client = _get_client()
+    payload = {"cmd": "context_get_stats"}
+    resp = client.send(payload)
+    return resp
+
+
+def context_reset() -> dict:
+    """Clear all checkpoints and dirty state.
+
+    After reset, the tracker behaves as if freshly initialized.
+    Call context_set_checkpoint() again before starting work.
+
+    Returns:
+        {"reset": True, "checkpoint": 0}
+    """
+    client = _get_client()
+    payload = {"cmd": "context_reset"}
+    resp = client.send(payload)
+    return resp
+
+
 # Direct fallbacks are imported at the top of this module from cache.py and docs.py.
 # These aliases (e.g. _direct_read, _direct_stats) are called when the daemon is
 # unreachable. No inline imports needed.

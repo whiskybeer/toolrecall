@@ -68,6 +68,7 @@ from toolrecall.transport import (
 )
 from toolrecall.docs import docs_search as _docs_search, docs_get_page as _docs_get_page
 from toolrecall.config import load_config
+from toolrecall.context_tracker import ContextTracker
 
 # ─── Defaults ─────────────────────────────────────────────
 
@@ -139,7 +140,7 @@ class SecurityGate:
                 break
         else:
             # Generic error — never leak the real resolved path to the caller
-            print(f"[ToolRecall] Blocked path not in allowed_paths: {path}")
+            self.logger.warning("Blocked path not in allowed_paths: %s", path)
             return "Path not allowed: access denied"
 
         # ═══ Layer 2: Sensitive file blocklist ═══
@@ -741,6 +742,7 @@ class DaemonServer:
         self.cfg = load_config()
         self.security = SecurityGate(self.cfg)
         self.multiplexer = MCPMultiplexer(self.cfg)
+        self._context = ContextTracker()
         self._server = None
         self._running = False
         # ⚠ ThreadPoolExecutor is NOT created here — it must be created AFTER
@@ -909,6 +911,14 @@ class DaemonServer:
             elif cmd == "restart":
                 # Restart — forks a new daemon, then exits
                 return self._handle_restart(request)
+            elif cmd == "context_set_checkpoint":
+                return self._handle_context_set_checkpoint(request)
+            elif cmd == "context_get_dirty":
+                return self._handle_context_get_dirty(request)
+            elif cmd == "context_get_stats":
+                return self._handle_context_get_stats(request)
+            elif cmd == "context_reset":
+                return self._handle_context_reset(request)
             else:
                 return {"error": f"Unknown command: {cmd}"}
 
@@ -980,9 +990,11 @@ class DaemonServer:
         if err:
             return {"error": err}
         bypass = req.get("bypass_cache", False)
-        if bypass:
-            return _refresh_file(path)
-        return _cache_read(path)
+        result = _refresh_file(path) if bypass else _cache_read(path)
+        # Track read for context tracker (mark_read is no-op if path empty)
+        if result and not result.get("error"):
+            self._context.mark_read(path)
+        return result
 
     def _handle_terminal(self, req: dict) -> dict:
         command = req.get("command", "")
@@ -1010,7 +1022,11 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
-        return _cache_write(path, content)
+        result = _cache_write(path, content)
+        # Track write as dirty for context tracker
+        if result and not result.get("error"):
+            self._context.mark_dirty(path)
+        return result
 
     def _handle_patch(self, req: dict) -> dict:
         path = req.get("path", "")
@@ -1023,7 +1039,11 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
-        return _cache_patch(path, old_string, new_string)
+        result = _cache_patch(path, old_string, new_string)
+        # Track patch as dirty for context tracker
+        if result and not result.get("error"):
+            self._context.mark_dirty(path)
+        return result
 
     def _handle_docs_search(self, req: dict) -> dict:
         query = req.get("query", "")
@@ -1215,6 +1235,48 @@ class DaemonServer:
             response_body=req.get("response_body", ""),
             ttl=req.get("ttl", None),
         )
+
+    # ─── Context Tracker IPCs ───────────────────────────────
+
+    def _handle_context_set_checkpoint(self, req: dict) -> dict:
+        """Set a checkpoint — mark current state as clean.
+
+        Args in request:
+            name (str, optional): human-readable label
+
+        Returns:
+            {"checkpoint": int, "name": str, "dirty_before": int}
+        """
+        name = req.get("name", "")
+        return self._context.set_checkpoint(name=name)
+
+    def _handle_context_get_dirty(self, req: dict) -> dict:
+        """Get dirty and clean files since a checkpoint.
+
+        Args in request:
+            checkpoint (int, optional): Checkpoint ID. None = current.
+
+        Returns:
+            {dirty: [...], clean: [...], checkpoint: int, ...}
+        """
+        checkpoint = req.get("checkpoint")
+        return self._context.get_dirty(checkpoint=checkpoint)
+
+    def _handle_context_get_stats(self, req: dict) -> dict:
+        """Full status of the context tracker.
+
+        Returns:
+            {dirty: [...], clean: [...], checkpoint: int, total_read: int, ...}
+        """
+        return self._context.get_stats()
+
+    def _handle_context_reset(self, req: dict) -> dict:
+        """Clear all checkpoints and dirty state.
+
+        Returns:
+            {reset: True, checkpoint: 0}
+        """
+        return self._context.reset()
 
 
 # ─── Entry Points ─────────────────────────────────────────
