@@ -1,6 +1,31 @@
 # Changelog
 
-## v0.6.0 (2026-06-19)
+## v0.7.1 (2026-06-29)
+
+- **Feature:** Context Tracker — checkpoint-based dirty-file tracking to break O(n²) context growth (docs/CONTEXT_TRACKER.md)
+- **Daemon:** +4 new IPC commands: context_set_checkpoint, context_get_dirty, context_get_stats, context_reset
+- **Client:** +4 Python API functions: context_set_checkpoint(), context_get_dirty(), context_get_stats(), context_reset()
+- **Daemon:** cached_write/cached_patch auto-mark files as dirty; cached_read auto-marks as read
+- **Benchmark:** 93.3% O(n²) reduction confirmed — 19 tests, 277 total (0 regressions)
+- **Chore:** bump v0.7.0 → v0.7.1
+
+## v0.7.0 (2026-06-22)
+
+- **Refactor:** Remove all Hermes-specific code — fully agent-agnostic
+- **Feature:** Transparent OS-level cache shim via `.pth` file (`toolrecall shim --install`)
+- **Shim:** Auto-patches `builtins.open()` + `subprocess.run()` in every Python process
+- **Shim:** Zero imports needed — `.pth` loads on interpreter startup
+- **Shim:** Per-process disable via `TOOLRECALL_SHIM_DISABLE=1`
+- **Config:** agent_home resolution chain: `AGENT_HOME` → `HERMES_HOME` → `~/.hermes`
+- **Config:** `[hermes]` section removed, `[mcp_multiplex]` is the universal config
+- **Config:** Skill dirs via `TOOLRECALL_SKILL_DIRS` env or `[paths].skill_dirs` config
+- **Fix:** FTS5 auto-repair — `docs_search()` detects malformed index, transparently rebuilds, retries
+- **Fix:** Multi-threaded DB guard — race condition on concurrent FTS5 index rebuilds
+- **Docs:** ARCHITECTURE_DIAGRAM.md — Mermaid sequence diagram (read/write cache flow)
+- **Docs:** Universal MCP config snippet works with any SDK (not just OPENAI_BASE_URL)
+- **Docs:** OS-level shim documented across all architecture docs
+
+## v0.6.1 (2026-06-19)
 
 - **Cleanup:** removed `vscode-extension/`, `mcp_server.py`, `dataset.py`, `examples/` — legacy/experimental code never used in production
 - **Docs:** restructured 27→12 files. Added APPENDIX.md, MCP_MULTIPLEXER.md. Deleted stale/duplicate docs

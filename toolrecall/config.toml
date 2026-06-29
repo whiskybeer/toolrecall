@@ -130,7 +130,7 @@ servers = []
 idle_minutes = 15
 
 [mcp_multiplex.servers_config]
-# github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
+github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
 time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
 "sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
 fetch = { command = "uvx", args = ["mcp-server-fetch"] }
