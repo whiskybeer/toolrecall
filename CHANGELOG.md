@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.7.2 (2026-06-30)
+
+- **Docs:** Full architecture diagram — system (flowchart) + sequence (read/write/cache) diagrams
+- **Docs:** Transport Layer section — UDS vs TCP, framed JSON protocol, TOOLRECALL_TRANSPORT override
+- **Docs:** Context Tracker section in architecture diagram + feature table in README
+- **Docs:** Removed duplicate deployment section, clean split: Installation vs Deployment (Production)
+- **Docs:** README CLI reference — added missing `stats`, `index-memory`, `shim` commands
+- **Refactor:** Removed all dashboard/proxy_router/llama_server references from docs
+- **Fix:** `start_services.sh` — stale PID cleanup, port check before `--status`
+
 ## v0.7.1 (2026-06-29)
 
 - **Feature:** Context Tracker — checkpoint-based dirty-file tracking to break O(n²) context growth (docs/CONTEXT_TRACKER.md)
