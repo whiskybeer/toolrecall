@@ -124,11 +124,11 @@ sequenceDiagram
 
 **Man-in-the-Middle** for file I/O:
 
-| Operation | Path | Effect |
-|-----------|---|--------|
-| Read (Hit) | Agent → Shim → SQLite → Agent | No disk I/O, 0 tokens |
-| Read (Miss) | Agent → Shim → OS → SQLite → Agent | Disk I/O, then cached |
-| Write | Agent → Shim → OS → SQLite(Invalidate) → Agent | Disk written, cache cleared |
+| Operation | Path | What happens | Token/Latency |
+|-----------|---|---|:---:|
+| **Read (Hit)** | Agent → Shim → SQLite → Agent | SQLite returns cached content. No OS call. | **0 tokens, ~0.6ms** |
+| **Read (Miss)** | Agent → Shim → OS → SQLite → Agent | OS reads from disk. Result stored in SQLite for next time. | file_size × ~0.25 tokens, file I/O time |
+| **Write** | Agent → Shim → OS → SQLite(Invalidate) → Agent | OS writes to disk. SQLite entry deleted — next read is forced Miss. | file_size × ~0.25 tokens, write I/O time |
 
 The contract: **after every write, the cached entry for that file is invalidated** — never stale, never inconsistent.
 
