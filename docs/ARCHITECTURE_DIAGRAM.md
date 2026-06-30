@@ -174,17 +174,35 @@ TOOLRECALL_SHIM_DISABLE=1 python my_uncached_script.py
 
 ## Installation
 
+Install ToolRecall and start the daemon:
+
 ```bash
-# MCP bridge (any agent)
-toolrecall daemon &                  # Start daemon
-# Add to MCP config:
-# { "mcpServers": { "toolrecall": { "command": "toolrecall", "args": ["mcp"] } } }
+pip install toolrecall
+toolrecall init                     # Interactive security setup (default-deny paths)
+toolrecall daemon --foreground &    # Start cache daemon
+```
 
-# Forward proxy (API-level, auto-started with daemon)
-export OPENAI_BASE_URL=http://localhost:8569/v1   # Any OpenAI-compatible SDK
+### Optional: OS-level shim
 
-# OS-level shim (patches every Python process system-wide)
+Every Python process auto-caches `open()` and `subprocess.run()` system-wide:
+
+```bash
 toolrecall shim --install
+```
+
+### Optional: MCP bridge
+
+Connect any MCP agent (Aider, Codex, Hermes, Cline, Cursor, Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
 ## Env Overrides
@@ -193,3 +211,64 @@ toolrecall shim --install
 |-----|---------|--------|
 | `TOOLRECALL_SHIM_DISABLE=1` | *(not set)* | Disable the OS-level shim at runtime — skip caching for a specific process |
 | `TOOLRECALL_HERMES_MODE=transparent` | *(not set)* | Enable Hermes transparent mode (hermes_init.py bypass) |
+
+---
+
+## Context Tracker
+
+ToolRecall includes a **Context Tracker** — an in-memory checkpoint-based dirty-file tracker that lets agents safely drop clean file content from their context window. This breaks O(n²) attention cost growth.
+
+| Feature | Benefit |
+|---------|--------|
+| **Set checkpoint** | Mark current state as "clean" |
+| **Get dirty/clean** | List files written vs. read since checkpoint |
+| **Reset** | Clear all tracking for a fresh cycle |
+| **93.8% O(n²) reduction** | Context stays bounded across turns |
+
+See [Context Tracker](docs/CONTEXT_TRACKER.md) for the full workflow.
+
+---
+
+## Transport Layer
+
+ToolRecall's transport layer (`toolrecall/transport.py`) provides platform-agnostic IPC between the daemon and all clients (MCP bridge, forward proxy, Python client, OS-level shim). It auto-selects the transport based on the operating system:
+
+| Platform | Transport | Path | Latency |
+|----------|-----------|------|---------|
+| **Linux / macOS** | Unix Domain Socket (AF_UNIX) | `~/.toolrecall/toolrecall.sock` (or `$XDG_RUNTIME_DIR`) | ~4µs round-trip |
+| **Windows** | TCP (AF_INET) | `tcp://127.0.0.1:8568` | ~0.5ms |
+
+All messages use a length-prefixed JSON protocol (4-byte big-endian header + UTF‑8 payload, max 1 MB). The `TransportClient` handles connection, framing, timeouts, and graceful degradation — if the daemon is unreachable it returns `{"error": "daemon_unavailable"}` instead of crashing.
+
+Override the transport path at runtime:
+
+```bash
+export TOOLRECALL_TRANSPORT=/custom/path/tc.sock    # Custom UDS path
+export TOOLRECALL_TRANSPORT=tcp://127.0.0.1:9090     # Custom TCP endpoint
+```
+
+---
+
+## Deployment (Production)
+
+Minimal startup — only the ToolRecall Daemon runs. No other services needed.
+
+### Persist across reboots
+
+```bash
+crontab -e
+@reboot /home/yourname/start_services.sh start
+```
+
+### Forward proxy (auto-started with daemon)
+
+Point any OpenAI-compatible SDK at the daemon to cache API responses:
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8569/v1
+```
+
+### Persist across agent sessions
+
+The daemon is an OS process — it survives `/new`, IDE reloads, connection drops. The cache stays warm.
+>>>>>>> 1190e72 (docs: full architecture diagram (system + sequence), Context Tracker section, transport layer, deduplicated deployment, clean CLI reference)

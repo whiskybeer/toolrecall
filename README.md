@@ -34,6 +34,7 @@ ToolRecall intercepts tool calls at the daemon level and returns cached results 
 | **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (default 60s, per-server override) | Repeated tool results served from local cache |
 | **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Same as file cache |
 | **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
+| **Context Tracker** | Tracks dirty/clean files via checkpoints | In-memory (resets on daemon restart) | **93.8% O(n²) reduction** — drop clean files from context |
 
 Dynamic commands (`git`, `ls`, `curl`) and state-changing operations always execute live.
 
@@ -136,12 +137,15 @@ toolrecall mcp             Start MCP Bridge                     [connect any MCP
 toolrecall serve           Forward proxy (cache API responses)  [auto-started with daemon; use for custom port]
 toolrecall debug           Start debug/demo server (test cached_read/term via curl)
 toolrecall status          Cache status and stats               [optional]
+toolrecall stats           Detailed cache statistics (JSON)     [optional]
 toolrecall invalidate      Clear all caches                     [optional]
 toolrecall reset-stats     Reset statistics counters            [optional]
 toolrecall nginx           Generate nginx config                [optional]
 toolrecall index           Build/update FTS5 knowledge database [optional]
+toolrecall index-memory    Index agent memory stores (MEMORY.md, USER.md) [optional]
 toolrecall index-dir       Index a directory (e.g. Obsidian)    [optional]
 toolrecall config-set      Set a config value                   [optional]
+toolrecall shim            Install/uninstall OS-level cache shim (.pth file) [optional]
 ```
 
 ---
@@ -238,6 +242,8 @@ Removes: daemon, systemd service, config, cache DB, logs.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — daemon design, layers, IPC
+- [Architecture Diagram](docs/ARCHITECTURE_DIAGRAM.md) — system and sequence diagrams, token costs, Context Tracker
+- [Context Tracker](docs/CONTEXT_TRACKER.md) — checkpoint-based dirty-file tracking, O(n²) breakdown
 - [How It Works](docs/HOW_IT_WORKS.md) — quick technical overview
 - [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) — single-daemon MCP management
 - [Benchmark](docs/BENCHMARK.md) — measured performance, token savings
