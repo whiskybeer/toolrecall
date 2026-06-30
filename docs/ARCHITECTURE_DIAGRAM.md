@@ -42,7 +42,7 @@ flowchart TB
     A -->|Inference| M
     M -->|Generated Output| A
     A -->|Can I drop file?| CT
-    CT -->|Yes(clean) · No(dirty)| A
+    CT -->|Yes (clean) - No (dirty)| A
     A -->|open · read · write| S
     S -->|Lookup · Store · Invalidate| SQ
     S -->|Native I-O| O
@@ -67,7 +67,7 @@ sequenceDiagram
     Note over User, OS: 📖 SCENARIO 1a — Read (Cache Hit) — 0 tokens for file
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
-    Shim->>SQLite: Hash(path) → Lookup
+    Shim->>SQLite: Hash(path) -> Lookup
     SQLite-->>Shim: Return Cached Content
     Shim-->>Agent: Return Content (zero tokens, no disk I/O)
     Agent->>Model: LLM Inference (file already in prompt context)
@@ -79,7 +79,7 @@ sequenceDiagram
     Note over User, OS: 📖 SCENARIO 1b — Read (Cache Miss) — file size in tokens
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
-    Shim->>SQLite: Hash(path) → Lookup
+    Shim->>SQLite: Hash(path) -> Lookup
     SQLite-->>Shim: Cache Miss
     Shim->>OS: Execute native open()
     OS-->>Shim: Return File Content
