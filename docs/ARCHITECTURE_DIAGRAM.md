@@ -15,49 +15,163 @@ ToolRecall is an OS-level transparent cache. It intercepts file I/O at two level
 
 All three paths share one daemon with one LRU + one SQLite store.
 
-## Mermaid Sequence Diagram
+---
+
+## System Architecture
+
+```mermaid
+block-beta
+    columns 5
+
+    User["👤 End User"]:1
+    space:1
+    Agent["🤖 LLM Agent<br/>(Aider · Codex · Hermes)"]:1
+    space:1
+    Model["🧠 LLM Model"]:1
+
+    space:1
+    space:1
+    block:Middleware:3
+        columns 1
+        CT["📋 Context Tracker<br/>→ tracks dirty/clean files<br/>→ decides what to drop"]
+        Shim["⚡ ToolRecall Shim<br/>→ cached_read / cached_write<br/>→ intercepts file I/O"]
+        SQLite["💾 SQLite Cache<br/>→ LRU hot cache (20MB)<br/>→ SQLite WAL persistent store"]
+    end
+    space:1
+    space:1
+
+    space:1
+    space:1
+    OS["📁 OS / Filesystem<br/>Disk · Network · Terminal"]:1
+    space:1
+    space:1
+
+    User --> Agent : "Prompt"
+    Agent --> User : "Response / Code Edit"
+
+    Agent --> Model : "LLM Inference Call"
+    Model --> Agent : "Generated Output"
+
+    Agent --> CT : "Can I drop file.py?"
+    CT --> Agent : "Yes (clean) / No (dirty)"
+
+    Agent --> Shim : open/read/write
+    Shim --> SQLite : Lookup / Store / Invalidate
+    Shim --> OS : Native I/O (cache miss / write)
+    OS --> Shim : File content / Success
+```
+
+---
+
+## Sequence Diagram
 
 ```mermaid
 sequenceDiagram
+    participant User as End User
     participant Agent as LLM Agent (Aider)
+    participant Model as LLM Model
+    participant CT as Context Tracker
     participant Shim as ToolRecall Shim
-    participant KV as Cache KV-Store
+    participant SQLite as SQLite Cache
     participant OS as Local OS/Disk
 
-    Note over Agent, OS: Scenario: File Read
+    rect rgb(25, 35, 25)
+    Note over User, OS: 📖 SCENARIO 1a — Read (Cache Hit) — 0 tokens for file
+    User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
-    Shim->>KV: Hash(path, mode) → Lookup
-    
-    alt Cache Hit
-        KV-->>Shim: Return Cached Content
-        Shim-->>Agent: Return Content (Zero Token Cost)
-    else Cache Miss
-        KV-->>Shim: Cache Miss
-        Shim->>OS: Execute native open()
-        OS-->>Shim: Return File Content
-        Shim->>KV: Store(hash, content)
-        Shim-->>Agent: Return Content
+    Shim->>SQLite: Hash(path) → Lookup
+    SQLite-->>Shim: Return Cached Content
+    Shim-->>Agent: Return Content (zero tokens, no disk I/O)
+    Agent->>Model: LLM Inference (file already in prompt context)
+    Model-->>Agent: Generated Response
+    Agent-->>User: Final Answer
     end
 
-    Note over Agent, OS: Scenario: File Write
+    rect rgb(35, 25, 25)
+    Note over User, OS: 📖 SCENARIO 1b — Read (Cache Miss) — file size in tokens
+    User->>Agent: Prompt requiring file.py
+    Agent->>Shim: open("file.py", "r")
+    Shim->>SQLite: Hash(path) → Lookup
+    SQLite-->>Shim: Cache Miss
+    Shim->>OS: Execute native open()
+    OS-->>Shim: Return File Content
+    Shim->>SQLite: Store(hash, content)
+    Shim-->>Agent: Return Content
+    Note over Agent, Model: File added to prompt context = file_size × ~0.25 tokens
+    Agent->>Model: LLM Inference (file bytes in context)
+    Model-->>Agent: Generated Response
+    Agent-->>User: Final Answer
+    end
+
+    rect rgb(25, 25, 35)
+    Note over User, OS: ✏️ SCENARIO 2 — File Write — file size in tokens
+    User->>Agent: Prompt to edit file.py
     Agent->>Shim: open("file.py", "w")
-    Shim->>OS: Execute native write
+    Shim->>OS: Execute native write to disk
     OS-->>Shim: Success
-    Shim->>KV: Invalidate(hash)
+    Shim->>SQLite: Invalidate(hash)
     Shim-->>Agent: Return Success
+    Note over Agent, Model: Agent has new file bytes in context = file_size × ~0.25 tokens
+    Agent->>Model: LLM Inference (modified file in context)
+    Model-->>Agent: Generated Response
+    Agent-->>User: Final Answer
+    end
 ```
+
+---
+
+## Token Cost per Scenario
+
+| Scenario | File in Context? | Token Cost | Latency |
+|----------|-----------------|------------|---------|
+| **Read (Cache Hit)** | Already in context from before | **0 tokens** for the file | ~0.6ms (LRU) / ~7ms (SQLite) |
+| **Read (Cache Miss)** | Must be loaded into prompt | **file_size × ~0.25 tokens** | File I/O + inference time |
+| **Write** | New bytes held in prompt | **file_size × ~0.25 tokens** | Write + inference time |
+
+> **Note:** The agent may **drop** clean files from context via the Context Tracker. On re-read those incur a Miss cost again — but the data comes from SQLite (~7ms), not from disk.
+
+---
 
 ## The Core Principle
 
 **Man-in-the-Middle** for file I/O:
 
 | Operation | Path | Effect |
-|---|---|---|
-| Read (Hit) | Agent → Shim → KV → Agent | No disk I/O, 0 tokens |
-| Read (Miss) | Agent → Shim → OS → KV → Agent | Disk I/O, then cached |
-| Write | Agent → Shim → OS → KV(Invalidate) → Agent | Disk written, cache cleared |
+|-----------|---|--------|
+| Read (Hit) | Agent → Shim → SQLite → Agent | No disk I/O, 0 tokens |
+| Read (Miss) | Agent → Shim → OS → SQLite → Agent | Disk I/O, then cached |
+| Write | Agent → Shim → OS → SQLite(Invalidate) → Agent | Disk written, cache cleared |
 
 The contract: **after every write, the cached entry for that file is invalidated** — never stale, never inconsistent.
+
+---
+
+## How the Context Tracker Works
+
+The Context Tracker runs inside the agent's process and tracks which files the agent has read vs. modified:
+
+| File Status | Meaning | Can drop from context? |
+|-------------|---------|----------------------|
+| **Clean** | Agent read the file but never wrote to it | ✅ Yes — re-read from SQLite (~7ms) |
+| **Dirty** | Agent wrote to the file | ❌ No — edits must stay in context |
+| **Unknown** | File not yet tracked | N/A — first read will cache it |
+
+When the agent needs to free context window space, it asks the Context Tracker for candidates. Only **clean** files are dropped — dirty files (the agent's own edits) remain in context to prevent loss.
+
+---
+
+## Shim Override: `TOOLRECALL_SHIM_DISABLE`
+
+| Env Variable | Default | Effect |
+|-------------|---------|--------|
+| `TOOLRECALL_SHIM_DISABLE` | *(not set, shim active)* | When set to `1`, the OS-level shim (`.pth` patch) skips all caching. File operations proceed without interception — useful for debugging, benchmarking without ToolRecall, or processes that should never be cached (e.g. CI runners, build scripts with unique outputs per run). |
+
+Without `TOOLRECALL_SHIM_DISABLE`, every `open()` and `subprocess.run()` in every Python process on the machine is transparently cached. Set it to `1` for a specific process:
+```bash
+TOOLRECALL_SHIM_DISABLE=1 python my_uncached_script.py
+```
+
+---
 
 ## Key Files
 
@@ -66,6 +180,9 @@ The contract: **after every write, the cached entry for that file is invalidated
 - `toolrecall/hooks.py` — hook logic for open/subprocess interception
 - `toolrecall/store.py` — KV-Store (SQLite FTS5 + in-memory LRU)
 - `toolrecall/client.py` — Python client (used by MCP bridge + direct imports)
+- `toolrecall/context_tracker.py` — Context Tracker (tracks dirty/clean file state)
+
+---
 
 ## Installation
 
@@ -84,7 +201,7 @@ toolrecall shim --install
 
 ## Env Overrides
 
-| Env | Effect |
-|-----|--------|
-| `TOOLRECALL_SHIM_DISABLE=1` | Disable the OS-level shim at runtime (skip caching) |
-| `TOOLRECALL_HERMES_MODE=transparent` | Enable Hermes transparent mode (hermes_init.py bypass) |
+| Env | Default | Effect |
+|-----|---------|--------|
+| `TOOLRECALL_SHIM_DISABLE=1` | *(not set)* | Disable the OS-level shim at runtime — skip caching for a specific process |
+| `TOOLRECALL_HERMES_MODE=transparent` | *(not set)* | Enable Hermes transparent mode (hermes_init.py bypass) |
