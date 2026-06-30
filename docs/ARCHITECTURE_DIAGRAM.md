@@ -20,45 +20,33 @@ All three paths share one daemon with one LRU + one SQLite store.
 ## System Architecture
 
 ```mermaid
-block-beta
-    columns 5
-
-    User["👤 End User"]:1
-    space:1
-    Agent["🤖 LLM Agent<br/>(Aider · Codex · Hermes)"]:1
-    space:1
-    Model["🧠 LLM Model"]:1
-
-    space:1
-    space:1
-    block:Middleware:3
-        columns 1
-        CT["📋 Context Tracker<br/>→ tracks dirty/clean files<br/>→ decides what to drop"]
-        Shim["⚡ ToolRecall Shim<br/>→ cached_read / cached_write<br/>→ intercepts file I/O"]
-        SQLite["💾 SQLite Cache<br/>→ LRU hot cache (20MB)<br/>→ SQLite WAL persistent store"]
+flowchart TB
+    subgraph User
+        U["👤 End User"]
     end
-    space:1
-    space:1
+    subgraph AgentSystem
+        A["🤖 LLM Agent<br/>(Aider - Codex - Hermes)"]
+        CT["📋 Context Tracker"]
+        S["⚡ ToolRecall Shim"]
+        SQ["💾 SQLite Cache"]
+    end
+    subgraph ModelSystem
+        M["🧠 LLM Model"]
+    end
+    subgraph OSLayer
+        O["📁 OS / Filesystem<br/>Disk - Network - Terminal"]
+    end
 
-    space:1
-    space:1
-    OS["📁 OS / Filesystem<br/>Disk · Network · Terminal"]:1
-    space:1
-    space:1
-
-    User --> Agent : "Prompt"
-    Agent --> User : "Response / Code Edit"
-
-    Agent --> Model : "LLM Inference Call"
-    Model --> Agent : "Generated Output"
-
-    Agent --> CT : "Can I drop file.py?"
-    CT --> Agent : "Yes (clean) / No (dirty)"
-
-    Agent --> Shim : open/read/write
-    Shim --> SQLite : Lookup / Store / Invalidate
-    Shim --> OS : Native I/O (cache miss / write)
-    OS --> Shim : File content / Success
+    U -->|Prompt| A
+    A -->|Response| U
+    A -->|Inference| M
+    M -->|Generated Output| A
+    A -->|Can I drop file?| CT
+    CT -->|Yes(clean) · No(dirty)| A
+    A -->|open · read · write| S
+    S -->|Lookup · Store · Invalidate| SQ
+    S -->|Native I-O| O
+    O -->|File content| S
 ```
 
 ---
