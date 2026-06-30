@@ -207,10 +207,14 @@ Connect any MCP agent (Aider, Codex, Hermes, Cline, Cursor, Claude Code):
 
 ## Env Overrides
 
-| Env | Default | Effect |
-|-----|---------|--------|
-| `TOOLRECALL_SHIM_DISABLE=1` | *(not set)* | Disable the OS-level shim at runtime — skip caching for a specific process |
-| `TOOLRECALL_HERMES_MODE=transparent` | *(not set)* | Enable Hermes transparent mode (hermes_init.py bypass) |
+Set these **before starting your agent** (not the daemon). Each targets a specific layer of the ToolRecall stack:
+
+| Env | Default | Affects | Effect |
+|-----|---------|---------|--------|
+| `TOOLRECALL_SHIM_DISABLE=1` | *(not set)* | OS-level shim (every Python process) | Disable the shim for a specific process: `TOOLRECALL_SHIM_DISABLE=1 python my_script.py` |
+| `TOOLRECALL_HERMES_MODE=transparent` | *(not set)* | Hermes agent only | Enable transparent mode — `read_file`/`terminal` are auto-cached without explicit `cached_` tools |
+| `TOOLRECALL_TRANSPORT=tcp://127.0.0.1:9090` | *(auto: UDS or TCP)* | Daemon client IPC | Override the transport path (see [Transport Layer](#transport-layer) above) |
+| `TOOLRECALL_FORWARD_PORT=9090` | `8569` | Forward proxy | Change the proxy port (default: `:8569`) |
 
 ---
 
