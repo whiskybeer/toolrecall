@@ -42,7 +42,7 @@ flowchart TB
     A -->|Inference| M
     M -->|Generated Output| A
     A -->|Can I drop file?| CT
-    CT -->|Yes (clean) - No (dirty)| A
+    CT -->|Yes: clean - No: dirty| A
     A -->|open · read · write| S
     S -->|Lookup · Store · Invalidate| SQ
     S -->|Native I-O| O
@@ -127,7 +127,7 @@ sequenceDiagram
 | Operation | Path | What happens | Token/Latency |
 |-----------|---|---|:---:|
 | **Read (Hit)** | Agent → Shim → SQLite → Agent | SQLite returns cached content. No OS call. | **0 tokens, ~0.6ms** |
-| **Read (Miss)** | Agent → Shim → OS → SQLite → Agent | OS reads from disk. Result stored in SQLite for next time. | file_size × ~0.25 tokens, file I/O time |
+| **Read (Miss)** | Agent → Shim → OS → SQLite → Agent | **1.** Shim checks SQLite — no cached entry found. **2.** Shim falls through to real OS: `open()` + `read()` from disk. **3.** Content returned to agent **and** stored in SQLite so the *next* read hits cache. | file_size × ~0.25 tokens, file I/O time (disk read + SQLite write) |
 | **Write** | Agent → Shim → OS → SQLite(Invalidate) → Agent | OS writes to disk. SQLite entry deleted — next read is forced Miss. | file_size × ~0.25 tokens, write I/O time |
 
 The contract: **after every write, the cached entry for that file is invalidated** — never stale, never inconsistent.
@@ -229,7 +229,7 @@ ToolRecall includes a **Context Tracker** — an in-memory checkpoint-based dirt
 | **Reset** | Clear all tracking for a fresh cycle |
 | **93.8% O(n²) reduction** | Context stays bounded across turns |
 
-See [Context Tracker](docs/CONTEXT_TRACKER.md) for the full workflow.
+See [Context Tracker](CONTEXT_TRACKER.md) for the full workflow.
 
 ---
 
@@ -274,5 +274,8 @@ export OPENAI_BASE_URL=http://localhost:8569/v1
 
 ### Persist across agent sessions
 
-The daemon is an OS process — it survives `/new`, IDE reloads, connection drops. The cache stays warm.
->>>>>>> 1190e72 (docs: full architecture diagram (system + sequence), Context Tracker section, transport layer, deduplicated deployment, clean CLI reference)
+The daemon is an OS process — it survives `/new`, IDE reloads, connection drops.
+
+### What "cache stays warm" means
+
+The daemon holds the **in-memory LRU cache** (~20 MB). When the agent session ends (`/new`, IDE restart), the daemon **keeps running** — its LRU isn't cleared. Next session: no cold start, no re-reads from SQLite for hot files. The SQLite WAL cache on disk is always persistent regardless.
