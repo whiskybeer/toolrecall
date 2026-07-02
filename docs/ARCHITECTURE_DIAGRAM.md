@@ -20,6 +20,19 @@ All three paths share one daemon with one LRU + one SQLite store.
 ## System Architecture
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor': '#f59e0b',
+  'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#d97706',
+  'lineColor': '#64748b',
+  'secondaryColor': '#22c55e',
+  'tertiaryColor': '#f8fafc',
+  'background': '#ffffff',
+  'mainBkg': '#ffffff',
+  'nodeBorder': '#cbd5e1',
+  'clusterBkg': '#f1f5f9',
+  'clusterBorder': '#94a3b8'
+}}}%%
 flowchart TB
     subgraph User
         U["👤 End User"]
@@ -49,11 +62,22 @@ flowchart TB
     O -->|File content| S
 ```
 
----
-
 ## Sequence Diagram
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor': '#f59e0b',
+  'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#d97706',
+  'lineColor': '#64748b',
+  'secondaryColor': '#22c55e',
+  'tertiaryColor': '#f8fafc',
+  'background': '#ffffff',
+  'mainBkg': '#ffffff',
+  'nodeBorder': '#cbd5e1',
+  'clusterBkg': '#f1f5f9',
+  'clusterBorder': '#94a3b8'
+}}}%%
 sequenceDiagram
     participant User as End User
     participant Agent as LLM Agent (Aider)
