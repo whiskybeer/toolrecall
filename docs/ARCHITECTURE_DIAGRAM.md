@@ -63,7 +63,7 @@ sequenceDiagram
     participant SQLite as SQLite Cache
     participant OS as Local OS/Disk
 
-    rect rgb(230, 240, 230)
+    rect rgb(60, 80, 60)
     Note over User, OS: 📖 SCENARIO 1a — Read (Cache Hit) — 0 tokens for file
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
@@ -75,7 +75,7 @@ sequenceDiagram
     Agent-->>User: Final Answer
     end
 
-    rect rgb(240, 230, 230)
+    rect rgb(80, 55, 55)
     Note over User, OS: 📖 SCENARIO 1b — Read (Cache Miss) — file size in tokens
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
@@ -91,7 +91,7 @@ sequenceDiagram
     Agent-->>User: Final Answer
     end
 
-    rect rgb(230, 230, 240)
+    rect rgb(55, 55, 80)
     Note over User, OS: ✏️ SCENARIO 2 — File Write — file size in tokens
     User->>Agent: Prompt to edit file.py
     Agent->>Shim: open("file.py", "w")
