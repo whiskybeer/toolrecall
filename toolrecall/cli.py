@@ -113,14 +113,17 @@ allow_invalidate = false
 [mcp_multiplex]
 enabled = true
 default_ttl = 60
-servers = []
+# Server names: auto-resolved via built-in registry.
+# Built-in (stdlib, no deps): time, github, sequential-thinking
+# External (needs uvx): fetch, filesystem, git, memory, brave-search, playwright, slack
+servers = ["time", "sequential-thinking"]
 idle_minutes = 15
 
-[mcp_multiplex.servers_config]
-time = {{ command = "python3", args = ["-m", "toolrecall.mcp_time"] }}
-"sequential-thinking" = {{ command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }}
-fetch = {{ command = "uvx", args = ["mcp-server-fetch"] }}
-# github = {{ command = "python3", args = ["-m", "toolrecall.mcp_github"] }}  # opt-in, needs GITHUB_TOKEN
+# Custom server overrides (optional — auto-resolve is the default).
+# Uncomment to override auto-resolved servers or add custom ones:
+# [mcp_multiplex.servers_config]
+# github = {{ command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }}
+# fetch = {{ command = "uvx", args = ["mcp-server-fetch"] }}
 
 [forward_proxy]
 # ToolRecall Daemon starts the forward proxy on :8569 automatically.
@@ -407,9 +410,52 @@ def cmd_serve():
     run_forward_proxy(port=port)
 
 def cmd_mcp():
-    """Start MCP Bridge (stdio → Daemon)."""
+    """MCP Bridge & Registry commands.
+
+    Subcommands:
+      list    List registered and active MCP servers
+      <none>  Start MCP Bridge (stdio -> Daemon)
+    """
+    if len(sys.argv) >= 3:
+        sub = sys.argv[2]
+        if sub == "list":
+            return cmd_mcp_list()
+        elif sub == "--help" or sub == "-h":
+            pass  # fall through to help
+
+    # Default: start MCP Bridge
     from toolrecall.mcp_bridge import main as bridge_main
     bridge_main()
+
+
+def cmd_mcp_list():
+    """List registered MCP servers with status."""
+    from toolrecall.mcp_registry import list_registered_servers, has_uvx
+
+    servers = list_registered_servers()
+    if not servers:
+        print("No MCP servers registered.")
+        return
+
+    print(f"MCP Server Registry  ({len(servers)} total)")
+    print(f"{'Name':<25} {'Source':<10} {'Command':<30} {'Args'}")
+    print("-" * 100)
+    for srv in servers:
+        source = srv["source"]
+        cmd = srv["command"]
+        args = " ".join(srv["args"])
+        print(f"{srv['name']:<25} {source:<10} {cmd:<30} {args}")
+
+    # Check uvx
+    if not has_uvx():
+        print()
+        print("⚠️  uvx not found on PATH — external servers (fetch, filesystem, git, ...)")
+        print("   will NOT start until uvx is installed.")
+        print("   Install: curl -LsSf https://astral.sh/uv/install.sh | sh")
+
+    print()
+    print("Active via daemon:")
+    print("  Run `toolrecall status` or connect MCP Bridge to see live servers.")
 
 def cmd_debug():
     """Start minimal debug/demo server on :8570."""

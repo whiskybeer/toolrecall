@@ -17,6 +17,9 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # pip install tomli (backport)
 
+# MCP Server Registry for auto-resolution
+from toolrecall.mcp_registry import resolve_server as _resolve_mcp_server
+
 DEFAULT_PATHS = [
     Path("toolrecall.toml"),
     Path.home() / ".config" / "toolrecall" / "toolrecall.toml",
@@ -36,7 +39,6 @@ ENV_MAP = {
     "TOOLRECALL_MCP_ALLOW_INVALIDATE": ("mcp", "allow_invalidate"),
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
-    "TOOLRECALL_MCP_MULTIPLEX_CONFIG_PATH": ("mcp_multiplex", "config_path"),
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
     "TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL": ("mcp_multiplex", "default_ttl"),
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
@@ -299,20 +301,6 @@ class Config:
         return self.get("mcp_multiplex", "servers", default=[])
 
     @property
-    def mcp_multiplex_config_path(self) -> str:
-        """Path to agent config.yaml for discovering MCP servers.
-
-        Priority:
-          1. TOOLRECALL_MCP_MULTIPLEX_CONFIG_PATH env var
-          2. config [mcp_multiplex].config_path
-          3. agent_home/config.yaml (auto-detect)
-        """
-        path = self.get("mcp_multiplex", "config_path", default="")
-        if path:
-            return path
-        return os.path.join(self.agent_home, "config.yaml")
-
-    @property
     def mcp_multiplex_idle_minutes(self) -> int:
         """Minutes of inactivity before an MCP server is shut down (default: 15).
         Set to 0 to keep servers alive forever."""
@@ -333,140 +321,42 @@ class Config:
 
     @property
     def mcp_multiplex_servers_config(self) -> dict:
-        """Parse agent mcp_servers config from toolrecall config or agent config.yaml.
+        """Resolve server configurations from the registry + optional overrides.
 
-        The [mcp_multiplex.servers_config] section follows the same format as
-        mcp_servers in the agent config, but if empty, we auto-detect from
-        the agent config file (via mcp_multiplex_config_path).
+        Resolution priority (highest wins):
+          1. Explicit [mcp_multiplex.servers_config] in config.toml
+          2. Auto-resolved from registry for names in the `servers` list
+             that aren't already explicitly configured
+
+        Returns dict: {name: {command, args, env, ttl, ...}}
         """
-        # First try toolrecall's own config section
-        raw = self.get("mcp_multiplex", "servers_config", default=None)
-        if raw and isinstance(raw, dict):
-            return raw
+        # 1. Explicit config.toml servers_config (user overrides)
+        raw = self.get("mcp_multiplex", "servers_config", default={})
+        result = dict(raw) if isinstance(raw, dict) else {}
 
-        # Fall back to agent config.yaml
-        agent_cfg_path = self.mcp_multiplex_config_path
-        if os.path.exists(agent_cfg_path):
-            try:
-                # Simple YAML-free parser for mcp_servers section
-                return self._parse_agent_mcp_servers(agent_cfg_path)
-            except Exception:
-                pass
-
-        return {}
-
-    def _parse_agent_mcp_servers(self, path: str) -> dict:
-        """Minimal YAML parser to extract mcp_servers from agent config.yaml.
-
-        Handles the known structure:
-          mcp_servers:
-            github:
-              command: npx
-              args: ["-y", "@modelcontextprotocol/server-github"]
-              env: {KEY: value}
-
-        Returns dict on success, or {} on any parse error (never throws).
-        """
-        servers = {}
-        try:
-            with open(path, "r") as f:
-                lines = f.readlines()
-        except (FileNotFoundError, PermissionError, OSError):
-            return {}
-
-        in_mcp_servers = False
-        current_server = None
-        current_config = {}
-
-        for line in lines:
-            stripped = line.rstrip()
-            if not stripped or stripped.strip().startswith("#"):
-                continue
-
-            # Detect mcp_servers block (top-level key)
-            if stripped.strip() == "mcp_servers:" and not stripped.startswith(" "):
-                in_mcp_servers = True
-                continue
-
-            if not in_mcp_servers:
-                continue
-
-            # Detect end of mcp_servers block: top-level key that doesn't
-            # start with space (i.e. indent 0, has content, ends with ':')
-            try:
-                cur_indent = len(line) - len(line.lstrip())
-            except Exception:
-                cur_indent = 0
-            if cur_indent == 0 and line.strip() and line.strip().endswith(":") and " " not in line.strip().rstrip(":"):
-                in_mcp_servers = False
-                break
-
-            # Server name (e.g., "  github:")
-            text = stripped.strip()
-            if cur_indent in (2, 4) and text.endswith(":") and " " not in text.rstrip(":"):
-                if current_server and current_config:
-                    servers[current_server] = current_config
-                current_server = text.rstrip(":")
-                current_config = {"command": "", "args": [], "env": {}}
-                continue
-
-            # Properties under a server
-            if current_server is None:
-                continue
-
-            if ": " in text:
-                key, val = text.split(": ", 1)
-                key = key.strip()
-
-                try:
-                    if key == "command":
-                        current_config["command"] = val.strip().strip('"').strip("'")
-                        cmd_parts = current_config["command"].split()
-                        if len(cmd_parts) > 1:
-                            current_config["command"] = cmd_parts[0]
-                            extra_args = cmd_parts[1:]
-                            current_config.setdefault("args", [])
-                            current_config["args"] = extra_args + current_config["args"]
-                    elif key == "args":
-                        val = val.strip()
-                        if val.startswith("[") and val.endswith("]"):
-                            args = []
-                            inner = val[1:-1]  # strip [ and ] properly
-                            if inner.strip():
-                                for item in inner.split(","):
-                                    item = item.strip().strip('"').strip("'")
-                                    if item:
-                                        args.append(item)
-                            current_config["args"] = args
-                        else:
-                            current_config["args"] = []
-                    elif key == "timeout":
-                        try:
-                            current_config["timeout"] = int(val)
-                        except ValueError:
-                            pass
-                    elif key in ("env", "disabled", "alwaysAllow", "ttl", "transport"):
-                        # Store other known keys safely as-is
-                        current_config[key] = val.strip()
-                except Exception:
-                    continue  # skip malformed key-value, don't crash
-
-            elif text.startswith("- ") and current_config.get("args") is not None:
-                # Array items on separate lines (continuation of args list)
-                try:
-                    item = text[2:].strip().strip('"').strip("'")
-                    if item:
-                        current_config.setdefault("args", []).append(item)
-                except Exception:
+        # 2. Auto-resolve remaining server names from registry
+        allow_servers = self.mcp_multiplex_servers
+        for name in allow_servers:
+            name_lower = name.lower()
+            if name_lower in result:
+                continue  # Already explicitly configured — no override
+            resolved = _resolve_mcp_server(name_lower)
+            if resolved is not None:
+                cmd, args, source = resolved
+                # Skip external servers that require uvx when uvx is not installed
+                from toolrecall.mcp_registry import has_uvx
+                if source == "external" and cmd == "uvx" and not has_uvx():
                     continue
+                result[name_lower] = {
+                    "name": name,
+                    "command": cmd,
+                    "args": list(args),
+                }
+                if source == "builtin":
+                    # Use the active Python interpreter for built-in servers
+                    result[name_lower]["command"] = sys.executable
 
-        # Don't forget the last server
-        if current_server and current_config:
-            servers[current_server] = current_config
-
-        # Filter out toolrecall itself to avoid circular startup
-        servers.pop("toolrecall", None)
-        return servers
+        return result
 
 
 _config = None

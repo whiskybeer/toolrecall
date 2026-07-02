@@ -31,8 +31,9 @@ A compromised agent might attempt to read sensitive host files outside its worki
 
 ### C. Buffer Overflows & OOM (Out-of-Memory) Attacks
 A malicious payload might attempt to crash the ToolRecall Daemon by streaming gigabytes of data into the context or asking the tool to read a 10GB log file, exhausting RAM.
-- **Mitigation (IPC Layer):** The Unix Domain Socket daemon enforces a strict 4-byte header check. If the incoming JSON payload exceeds **1 Megabyte**, the connection is instantly severed (`Request too large`) before the string is decoded into memory.
-- **Mitigation (File Layer):** The `cached_read` tool enforces a hard **5 Megabyte** limit using `os.stat()`. Files larger than 5MB are rejected to protect both the Daemon's RAM and the LLM's context window.
+| **Mitigation (IPC Layer):** The Unix Domain Socket daemon enforces a strict 4-byte header check. If the incoming JSON payload exceeds **1 Megabyte**, the connection is instantly severed (`Request too large`) before the string is decoded into memory.
+| **Mitigation (File Layer):** The `cached_read` tool enforces a hard **5 Megabyte** limit using `os.stat()`. Files larger than 5MB are rejected to protect both the Daemon's RAM and the LLM's context window.
+| **Mitigation (Fetch Layer):** The built-in `fetch` MCP server (`toolrecall.mcp_fetch`) enforces a configurable content size limit (default **500KB**). The user can override via `TOOLRECALL_FETCH_MAX_BYTES` env var (in bytes, set to `0` to disable). This prevents a single HTTP response from consuming all available RAM — the fetch server reads the response body in one chunk and truncates at the limit. The `fetch_url` tool also accepts a `max_bytes` parameter, which is capped at the configured hard limit.
 
 ### D. Shell Command Escapes (`shlex`)
 If terminal execution is enabled (`allow_terminal = true`), an injected agent might attempt to concatenate destructive commands (e.g., `git status; rm -rf /`).

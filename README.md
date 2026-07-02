@@ -17,7 +17,7 @@ toolrecall daemon &         # Start cache daemon
 | Path | What it does | How to connect | Default |
 |------|-------------|---------------|---------|
 | **Forward proxy** | Intercepts HTTP requests to API providers (OpenAI, Anthropic, etc.) — caches full responses by body hash. **Zero tokens consumed on cache hit.** | `export OPENAI_BASE_URL=http://localhost:8569` — or set any SDK's base URL | ✅ On (`:8569`) |
-| **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client | Add to `~/.claude/.mcp.json` or run `toolrecall mcp` | ✅ On (stdio) |
+| **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client. Server names auto-resolve from registry. | Add to `~/.claude/.mcp.json` or run `toolrecall mcp` | ✅ On (stdio) |
 
 **Requirements:** Python 3.11+ (`sqlite3`, `tomllib`, `json`, `http.server`, `urllib` from stdlib).
 
@@ -102,10 +102,42 @@ The daemon's multiplexer shares one subprocess per server across **all** agents:
 - **Idle timeout:** inactive subprocesses killed after 15 min (configurable)
 - **Failure isolation:** one server crash doesn't affect others (auto-reconnect, max 3 attempts)
 - **Secrets:** API tokens loaded from `~/.toolrecall/.env`, never exposed to the LLM
+- **Auto-resolution:** Server names auto-resolve from the built-in registry — no `command`/`args` needed for common servers
 
 All agents connect to **one** MCP server in their config: `toolrecall mcp`.
 
-See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for configuration details.
+### Quick Config Example
+
+```toml
+# ~/.toolrecall/config.toml
+[mcp_multiplex]
+servers = ["time", "github", "fetch"]
+#  ↑ auto-resolved: time=builtin, github=builtin, fetch=uvx
+```
+
+No `[mcp_multiplex.servers_config]` section needed for known servers. Custom servers still use the explicit config.
+
+### Built-in Servers (zero deps)
+
+| Server | What it does |
+|--------|-------------|
+| `time` | Current time in any timezone — stdlib only |
+| `github` | GitHub API (create repo, push files, list commits) — `urllib` only |
+| `sequential-thinking` | Reasoning validation, contradiction detection — no network |
+| `fetch` | Fetch URLs — stdlib only (`urllib.request`), 500KB configurable limit via `TOOLRECALL_FETCH_MAX_BYTES` |
+
+### External Servers (needs `uvx`)
+
+| Server | Package |
+|--------|---------|
+| `filesystem` | `mcp-server-filesystem` — safe file access |
+| `git` | `mcp-server-git` — Git operations |
+| `memory` | `mcp-server-memory` — knowledge graph |
+| `brave-search` | `@anthropic/mcp-server-brave-search` — web search |
+| `playwright` | `@playwright/mcp` — browser automation |
+| `slack` | `mcp-server-slack` — Slack workspace |
+
+See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration details.
 
 **When to use:** You run 3+ agents simultaneously on the same machine and they share the same MCP tools.
 **When to skip:** Single agent setup — each agent manages its own MCP servers fine.
@@ -133,7 +165,7 @@ See [Security Architecture](SECURITY.md) for the full trust boundary.
 ```
 toolrecall init            Create default config.toml and .env  [required once]
 toolrecall daemon          Start cache daemon (also starts MCP + forward proxy) [required]
-toolrecall mcp             Start MCP Bridge                     [connect any MCP agent]
+toolrecall mcp             Start MCP Bridge (or: mcp list to see registry) [connect any MCP agent]
 toolrecall serve           Forward proxy (cache API responses)  [auto-started with daemon; use for custom port]
 toolrecall debug           Start debug/demo server (test cached_read/term via curl)
 toolrecall status          Cache status and stats               [optional]
@@ -205,7 +237,9 @@ default_ttl = 60
 
 [mcp_multiplex]
 enabled = true
-servers = ["time", "fetch"]  # Enable MCP servers; GitHub needs GITHUB_TOKEN in .env
+# Server names auto-resolve: time/github/seqthink/fetch = builtin (no deps),
+# filesystem/git/memory = external (needs uvx), or override via [mcp_multiplex.servers_config]
+servers = ["time", "github", "fetch"]
 
 [nginx]
 # nginx is OPTIONAL — only needed if you want HTTPS/SSL in front of the proxy.
@@ -243,9 +277,12 @@ Removes: daemon, systemd service, config, cache DB, logs.
 
 - [Architecture](docs/ARCHITECTURE.md) — daemon design, layers, IPC
 - [Architecture Diagram](docs/ARCHITECTURE_DIAGRAM.md) — system and sequence diagrams, token costs, Context Tracker
+- [CLI Reference](docs/CLI.md) — all subcommands explained
+- [Configuration Reference](docs/CONFIG_REFERENCE.md) — config.toml, config.py, all env vars
 - [Context Tracker](docs/CONTEXT_TRACKER.md) — checkpoint-based dirty-file tracking, O(n²) breakdown
 - [How It Works](docs/HOW_IT_WORKS.md) — quick technical overview
-- [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) — single-daemon MCP management
+- [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) — single-daemon MCP management, server registry
+- [Testing Guide](docs/TESTING.md) — test philosophy, organization, per-file coverage
 - [Benchmark](docs/BENCHMARK.md) — measured performance, token savings
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide
 - [Docker Deployment](docs/DOCKER.md) — containerized stack

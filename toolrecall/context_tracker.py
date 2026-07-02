@@ -26,6 +26,7 @@ Thread safety:
   is essential.
 """
 
+import os  # noqa: E402 (needed by mark_dirty/mark_read below — see note at file end)
 import time
 from threading import RLock
 
@@ -183,4 +184,4 @@ class ContextTracker:
         return self._checkpoint_counter
 
 
-import os  # noqa: E402 (needed by mark_dirty/mark_read above)
+import os  # noqa: E402 (needed by mark_dirty/mark_read — see note at file end)

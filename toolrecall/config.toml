@@ -126,15 +126,27 @@ allow_invalidate = false
 enabled = true
 transparent_cache = true
 default_ttl = 60
-servers = []
+# Server names: auto-resolved via built-in registry or uvx by default.
+# Built-in (no external deps): time, github, sequential-thinking, fetch
+# External (needs uvx): filesystem, git, memory, brave-search, playwright, slack
+# Custom: define command/args in [mcp_multiplex.servers_config] (overrides auto-resolve)
+servers = ["time", "github", "sequential-thinking"]
 idle_minutes = 15
 
-[mcp_multiplex.servers_config]
-github = { command = "python3", args = ["-m", "toolrecall.mcp_github"] }
-time = { command = "python3", args = ["-m", "toolrecall.mcp_time"] }
-"sequential-thinking" = { command = "python3", args = ["-m", "toolrecall.mcp_seqthink"] }
-fetch = { command = "uvx", args = ["mcp-server-fetch"] }
+# Custom server overrides (optional — auto-resolve is the default).
+# Uncomment and customize to override auto-resolved servers:
+# [mcp_multiplex.servers_config]
+# github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
 # hermes-docs = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
+
+# ─── Hermes Integration ─────────────────────
+[hermes]
+# transparent_cache mode:
+#   "separate"    — register cached_read/cached_terminal etc. as extra tools (default)
+#   "transparent" — monkey-patch Hermes' read_file, terminal, write_file, patch
+#                    so the agent calls native tools but results come from cache.
+#                    The agent never notices.
+transparent_cache = "transparent"
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]

@@ -5,8 +5,10 @@
 # The tools forward requests to the ToolRecall Daemon (UDS) — or use direct
 # SQLite as a fallback.
 #
-# In "write" transparent_cache mode, it also monkey-patches Hermes' built-in
-# write_file and patch tools to skip redundant operations automatically.
+# In "transparent" mode (config: [hermes] transparent_cache = "transparent"),
+# it also monkey-patches Hermes' built-in read_file, terminal, write_file,
+# and patch tools so native tool calls are served from cache automatically.
+# The agent never notices — it calls the same tool names.
 #
 # Installation:
 #   bash <(curl -s https://raw.githubusercontent.com/whiskybeer/toolrecall/main/setup.sh)
@@ -15,7 +17,7 @@
 #   pip install toolrecall
 #   hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]'
 #
-# Then restart Hermes or /reset.
+# Then restart Hermes or run /reset.
 
 import os
 import sys
@@ -162,6 +164,49 @@ def _register_tools():
 
 # ─── 4. Transparent monkey-patching ──────────────────────────
 
+def _patch_read_file():
+    """Monkey-patch read_file to use cached_read (daemon-first, SQLite fallback)."""
+    try:
+        from tools.registry import registry
+        entry = registry.get_entry("read_file")
+        if entry and cached_read is not None:
+            original = entry.handler
+            def make_wrapper(orig):
+                def wrapper(args, **kw):
+                    path = args.get("path", "")
+                    if path and cached_read is not None:
+                        abs_path = os.path.abspath(path)
+                        result = cached_read(abs_path)
+                        if result and "error" not in result:
+                            return result
+                    return orig(args, **kw)
+                return wrapper
+            entry.handler = make_wrapper(original)
+    except Exception:
+        pass
+
+
+def _patch_terminal():
+    """Monkey-patch terminal to use cached_terminal (daemon-first, SQLite fallback)."""
+    try:
+        from tools.registry import registry
+        entry = registry.get_entry("terminal")
+        if entry and cached_terminal is not None:
+            original = entry.handler
+            def make_wrapper(orig):
+                def wrapper(args, **kw):
+                    command = args.get("command", "")
+                    if command and cached_terminal is not None:
+                        result = cached_terminal(command)
+                        if result and "error" not in result:
+                            return result
+                    return orig(args, **kw)
+                return wrapper
+            entry.handler = make_wrapper(original)
+    except Exception:
+        pass
+
+
 def _patch_write_file():
     """Monkey-patch Hermes' write_file to use cached_write when content matches."""
     try:
@@ -177,7 +222,8 @@ def _patch_write_file():
                             path = args.get("path", "")
                             content = args.get("content", "")
                             if path and content is not None and cached_write is not None:
-                                result = cached_write(path, content)
+                                abs_path = os.path.abspath(path)
+                                result = cached_write(abs_path, content)
                                 if result.get("unchanged"):
                                     return f"=== unchanged (content identical, write skipped) ==="
                                 if "error" not in result:
@@ -207,7 +253,8 @@ def _patch_patch_tool():
                             old_string = args.get("old_string", "")
                             new_string = args.get("new_string", "")
                             if path and old_string and new_string is not None and cached_patch is not None:
-                                result = cached_patch(path, old_string, new_string)
+                                abs_path = os.path.abspath(path)
+                                result = cached_patch(abs_path, old_string, new_string)
                                 if result.get("unchanged"):
                                     reason = result.get("reason", "skipped")
                                     return f"=== unchanged ({reason}) ==="
@@ -221,6 +268,36 @@ def _patch_patch_tool():
         pass
 
 
+def _patch_search_files():
+    """Monkey-patch search_files to cache file-search results via daemon.
+
+    search_files is a read-only tool (no side effects) that benefits
+    significantly from caching — repeated searches for the same pattern
+    across the same files are common during iterative development.
+    Caching via cached_terminal with a short TTL avoids redundant I/O.
+    """
+    try:
+        from tools.registry import registry
+        entry = registry.get_entry("search_files")
+        if entry and cached_terminal is not None:
+            original = entry.handler
+            def make_wrapper(orig):
+                def wrapper(args, **kw):
+                    pattern = args.get("pattern", "")
+                    search_path = args.get("path", "")
+                    if pattern and cached_terminal is not None:
+                        # Normalise: use relative path from cwd, not full path
+                        cmd = f"search_files pattern={pattern} path={search_path}"
+                        result = cached_terminal(cmd, ttl=60)
+                        if result and "error" not in result:
+                            return result
+                    return orig(args, **kw)
+                return wrapper
+            entry.handler = make_wrapper(original)
+    except Exception:
+        pass
+
+
 # ─── 5. Run on load ──────────────────────────────────────────
 
 if TOOLRECALL_AVAILABLE:
@@ -229,17 +306,20 @@ if TOOLRECALL_AVAILABLE:
 
     _register_tools()
 
-    if mode == "write":
+    if mode in ("transparent", "write"):
+        _patch_read_file()
+        _patch_terminal()
         _patch_write_file()
         _patch_patch_tool()
-        tools_registered.append("+transparent write_file/patch")
+        _patch_search_files()
+        tools_registered.append("+transparent read_file/terminal/write_file/patch/search_files")
 
     daemon_active = daemon_running() if daemon_running else False
 
     print(f"  {'='*48}")
     print(f"  ToolRecall Caching Registered")
     print(f"  Tools: {', '.join(tools_registered)}")
-    print(f"  Mode:  {'Write (monkey-patched)' if mode == 'write' else 'Separate'}")
+    print(f"  Mode:  {'Transparent' if mode in ('transparent', 'write') else 'Separate'}")
     if daemon_active:
         print(f"  Backend: Daemon (UDS) — shared cache")
     else:

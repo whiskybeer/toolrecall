@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.7.5 (2026-07-01)
+
+- **Feature:** `mcp_fetch.py` — built-in stdlib-only HTTP Fetch MCP server (zero deps, replaces `uvx mcp-server-fetch`)
+- **Feature:** `TOOLRECALL_FETCH_MAX_BYTES` env var — configurable content size limit (default 500KB, 0 = no limit)
+- **Feature:** MCP Server Registry (`toolrecall/mcp_registry.py`) — auto-resolve server names to commands, no `servers_config` needed
+- **Feature:** `toolrecall mcp list` — CLI subcommand to list all registered servers with their source and command
+- **Refactor:** `fetch` moved from external (uvx) to built-in server in registry
+- **Refactor:** `config.py` — removed `_parse_agent_mcp_servers()` (-110 LOC), auto-resolution replaces Hermes config.yaml fallback
+- **Config:** `config.toml` — `servers` default changed to `["time", "github", "sequential-thinking"]`
+- **Docs:** MCP_MULTIPLEXER.md — Registry tables updated, fetch is now built-in, env var documented
+- **Docs:** SECURITY.md — Fetch Layer OOM mitigation documented
+- **Docs:** README.md — built-in/external tables updated, config comment fixed
+- **Tests:** +50 new tests (registry, config resolve, fetch env var, PID guard) — 328 total, all passing
+
 ## v0.7.2 (2026-06-30)
 
 - **Docs:** Full architecture diagram — system (flowchart) + sequence (read/write/cache) diagrams
