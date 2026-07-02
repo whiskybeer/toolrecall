@@ -37,7 +37,7 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 ### `toolrecall init`
 
 - **File:** `cli.py : cmd_init()`
-- **Purpose:** Interactive first-time setup. Creates `~/.toolrecall/config.toml` and `~/.toolrecall/.env`.
+- **Purpose:** Interactive first-time setup. Creates `~/.config/toolrecall/toolrecall.toml` and `~/.toolrecall/.env`.
 - **Security:** Shows a default-deny path banner, asks the user which directories the agent may read.
 - **Idempotent:** Does not overwrite existing config files.
 
@@ -83,7 +83,7 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 ### `toolrecall config-set`
 
 - **File:** `cli.py : cmd_config_set()`
-- **Purpose:** Set a config value in `~/.toolrecall/config.toml`.
+- **Purpose:** Set a config value in `~/.config/toolrecall/toolrecall.toml`.
 - **Usage:** `toolrecall config-set <section.key> <value>`
 - **Parsing:** Auto-detects booleans, integers, floats, lists (`[...]`), and strings.
 - **Note:** Requires `pip install toolrecall[toml-write]` (tomli-w).

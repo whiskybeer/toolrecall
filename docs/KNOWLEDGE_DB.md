@@ -76,7 +76,7 @@ and keep different knowledge bases cleanly separated.
 
 ## Configuring Knowledge Sources
 
-In `~/.toolrecall/config.toml`, add your knowledge sources:
+In `~/.config/toolrecall/toolrecall.toml`, add your knowledge sources:
 
 ```toml
 # Indexed on every `toolrecall index`:

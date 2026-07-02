@@ -1,13 +1,5 @@
 # ToolRecall Daemon Architecture
 
-> **Note:** This document is a proposal from the v0.3.0 era. The daemon architecture
-> is **implemented**, but some details (UDS paths, LOC counts, module names) may
-> have drifted. See [ARCHITECTURE.md](../../README.md#architecture) for the current
-> state and `git ls-tree HEAD` for the actual file tree.
->
-> What's accurate: one daemon + three bridge pattern, UDS IPC, lazy MCP multiplexer,
-> SecurityGate, SQLite + LRU hybrid cache.
-
 ## 1. The Problem
 
 ToolRecall previously had **three independent access paths** — each with its own caching process:
@@ -49,8 +41,13 @@ ToolRecall previously had **three independent access paths** — each with its o
                     ║   └────────┬─────────┘     ║
                     ║            │               ║
                     ║   ┌────────▼─────────┐     ║
-                    ║   │  SQLite (WAL)    │     ║
-                    ║   │  cache.db        │     ║
+                    ║   │  Singleton SQLite │     ║
+                    ║   │  Connection       │     ║
+                    ║   │  RLock-guarded    │     ║
+                    ║   │  WAL + cache.db  │     ║
+                    ║   │  .close()=commit │     ║
+                    ║   │  +release; __del │     ║
+                    ║   │  safety for ex.  │     ║
                     ║   └────────┬─────────┘     ║
                     ║            │               ║
                     ║   ┌────────▼─────────┐     ║
@@ -169,6 +166,52 @@ The Daemon architecture sacrifices 0.1ms UDS overhead for a Shared Cache. In pra
 | Single Process (only Hermes) | Direct Import — Daemon adds nothing |
 | Multi Process (Hermes + MCP + HTTP) | Daemon — otherwise 3× RAM + 3× cold |
 | CI/CD / Microservices | Daemon — otherwise never a warm cache |
+
+## 5. Singleton SQLite Connection & Thread Safety
+
+The daemon uses a **singleton SQLite connection** wrapped in a `_DBConnection` class,
+protected by a `threading.RLock()`. This design emerged from a real problem:
+
+### Before (v0.7.0–v0.7.2): Connection-per-call
+
+Each function opened its own SQLite connection via `_get_db()`, did work, and closed it.
+With the daemon's 16-thread `ThreadPoolExecutor`, this caused:
+
+- **"database is locked"** — multiple connections competing for WAL write-locks
+- **Transaction conflicts** — `cannot start a transaction within a transaction`
+- **Stats recording failures** — `_record()` used a separate persistent connection
+  (`_get_stats_conn`) that never released its write-lock
+
+### After (v0.7.3+): Singleton + RLock
+
+```
+  ┌──────────────────────────────────────────┐
+  │  _get_db()                                │
+  │                                           │
+  │  1. Acquire RLock (recursive)             │
+  │  2. Lazy-init singleton _db_real          │
+  │  3. Return _DBConnection(_db_real)        │
+  │  4. Caller does work                      │
+  │  5. .close() → commit + release RLock     │
+  │     __del__  → release on GC (safety net) │
+  └──────────────────────────────────────────┘
+```
+
+**Design decisions:**
+
+| Decision | Why |
+|----------|-----|
+| **Singleton** (`_db_real`) | Eliminates WAL lock contention between connections |
+| **RLock** not `Lock` | `_record()` / `_persist_file_to_sqlite()` are called from within `cached_read()` which already holds the lock — RLock allows re-entry |
+| **`__del__` safety** | If an exception path skips `.close()`, the `_DBConnection` destructor releases the lock. Prevents deadlocked threads |
+| **`close()` = commit** | Every caller pattern was `conn.close()`; we repurpose it to `commit + release` instead of actually closing the handle |
+| **`_stats_conn` removed** | The old persistent stats connection held its own WAL lock. Now `_record()`/`_record_tokens_saved()` use `_get_db()` like everything else |
+
+**Thread safety guarantees:**
+- 16 daemon worker threads → serialized on RLock, no DB-level contention
+- One process = one connection = zero "database is locked"
+- Direct Python CLI calls (`cached_read()` from terminal) still open their own connection
+  and may block — that's by design: the daemon owns the cache
 
 ## 6. OS-level Shim (4th Bridge, added in v0.7.0)
 

@@ -107,7 +107,7 @@ tools, and terminal commands an LLM agent can execute. Inside a container
 **default paths and permissions differ** from the host:
 
 ```toml
-# ~/.toolrecall/config.toml — Important for Docker!
+# ~/.config/toolrecall/toolrecall.toml — Important for Docker!
 [mcp]
 # Container paths instead of ~/.hermes/...
 allowed_paths = [
@@ -175,7 +175,7 @@ affected by the host OS. Important for Docker/K8s:
 ### Recommended Config for Kubernetes
 
 ```toml
-# ~/.toolrecall/config.toml — K8s-optimized
+# ~/.config/toolrecall/toolrecall.toml — K8s-optimized
 [security]
 tool_access_control = true
 

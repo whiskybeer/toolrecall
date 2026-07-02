@@ -377,7 +377,7 @@ def save_config(path: str, config: Config) -> bool:
     Requires: pip install toolrecall[toml-write]  (tomli-w)
 
     Args:
-        path: Output path (e.g. '~/.toolrecall/config.toml')
+        path: Output path (e.g. '~/.config/toolrecall/toolrecall.toml')
         config: Config instance to serialize.
 
     Returns True on success, False if tomli_w is not installed.

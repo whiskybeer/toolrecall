@@ -847,7 +847,7 @@ class DaemonServer:
                 return
             response = self._route(request)
             send_message(conn, response)
-        except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError):
+        except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError) as e:
             pass
         except Exception as e:
             try:
@@ -1299,21 +1299,6 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     import faulthandler
     faulthandler.enable()
 
-    # Prevent starting multiple daemons (concurrency / socket-stealing guard)
-    if os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE) as f:
-                pid = int(f.read().strip())
-            os.kill(pid, 0)  # Signal 0 tests process existence
-            print(f"❌ Error: ToolRecall Daemon is already running (PID: {pid}).")
-            sys.exit(1)
-        except (ValueError, ProcessLookupError, PermissionError):
-            # PID file is stale, clean it up
-            try:
-                os.remove(PID_FILE)
-            except Exception:
-                pass
-
     # Register signal handlers (POSIX only)
     if not IS_WINDOWS:
         signal.signal(signal.SIGTERM, _signal_handler)
@@ -1325,10 +1310,6 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         # Daemonize: fork, exit parent (POSIX only)
         pid = os.fork()
         if pid > 0:
-            # Write PID file
-            os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
-            with open(PID_FILE, "w") as f:
-                f.write(str(pid))
             print(f"ToolRecall Daemon started (PID: {pid})")
             print(f"  Socket: {_server_instance.socket_path}")
             sys.exit(0)
@@ -1344,15 +1325,14 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         ctx = mp.get_context("spawn")
         p = ctx.Process(target=_server_instance.start)
         p.start()
-        os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
-        with open(PID_FILE, "w") as f:
-            f.write(str(p.pid))
         print(f"ToolRecall Daemon started (PID: {p.pid})")
         print(f"  Transport: {_server_instance.socket_path}")
         sys.exit(0)
 
     try:
         _server_instance.start()
+    except SystemExit:
+        raise  # Let SystemExit (incl. SIGTERM handler's sys.exit(0)) propagate cleanly
     except BaseException:
         # If start() crashes (e.g. socket bind failure, executor init failure),
         # print a traceback BEFORE exiting so logs show the root cause.
@@ -1362,18 +1342,26 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
 
 
 def stop_daemon():
-    """Stop the daemon if running."""
+    """Stop the daemon via systemd, or by PID file on Windows."""
+    import subprocess as _sp
+    # Try systemd first (Linux)
+    if not IS_WINDOWS:
+        result = _sp.run(
+            ["systemctl", "--user", "stop", "toolrecall-daemon"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            print("ToolRecall Daemon stopped (via systemd).")
+            return
+        # Fall through to PID file if systemd not available
+    # PID file fallback (Windows / no-systemd)
     if not os.path.exists(PID_FILE):
         print("ToolRecall Daemon is not running.")
         return
-
     with open(PID_FILE) as f:
         pid = int(f.read().strip())
-
     try:
         if IS_WINDOWS:
-            # Windows: use taskkill / PID (SIGTERM equivalent)
-            import subprocess as _sp
             _sp.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
             print(f"Sent kill to Daemon (PID {pid})")
         else:
@@ -1382,7 +1370,8 @@ def stop_daemon():
     except ProcessLookupError:
         print(f"Daemon (PID {pid}) not running. Cleaning up PID file.")
     finally:
-        os.remove(PID_FILE)
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
         socket_path = _default_socket_path()
         if os.path.exists(socket_path) and not IS_WINDOWS:
             try:
@@ -1391,34 +1380,50 @@ def stop_daemon():
                 pass
 
 def daemon_status():
-    """Print daemon status."""
-    if not os.path.exists(PID_FILE):
-        print("ToolRecall Daemon: NOT RUNNING")
-        return
-
-    with open(PID_FILE) as f:
-        pid = int(f.read().strip())
-
-    try:
-        os.kill(pid, 0)  # Test if process exists
-        print(f"ToolRecall Daemon: RUNNING (PID {pid})")
-        print(f"  Transport: {_default_socket_path()}")
-
-        # Try to ping the daemon
-        try:
-            client = TransportClient(_default_socket_path())
-            resp = client.send({"cmd": "ping"})
-            if resp.get("pong"):
-                print(f"  PID from socket: {resp.get('pid')}")
+    """Print daemon status via systemd, or by PID file on Windows."""
+    import subprocess as _sp
+    # Try systemd first (Linux)
+    if not IS_WINDOWS:
+        result = _sp.run(
+            ["systemctl", "--user", "is-active", "toolrecall-daemon"],
+            capture_output=True, text=True, timeout=10,
+        )
+        active = result.stdout.strip()
+        if active == "active":
+            # Get the PID from the daemon socket for details
+            try:
+                client = TransportClient(_default_socket_path())
+                resp = client.send({"cmd": "ping"})
+                pid = resp.get("pid", "?")
+                print(f"ToolRecall Daemon: RUNNING (PID {pid})")
+                print(f"  Transport: {_default_socket_path()}")
                 print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
                 print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
                 print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
                 servers = resp.get('multiplex_servers', [])
                 if servers:
                     print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
-        except Exception:
-            print("  Status: Unresponsive (Socket error)")
-
+                status = _sp.run(["systemctl", "--user", "show", "-P", "ActiveEnterTimestamp", "toolrecall-daemon"],
+                                 capture_output=True, text=True, timeout=5)
+                if status.returncode == 0 and status.stdout.strip():
+                    print(f"  Since: {status.stdout.strip()}")
+            except Exception:
+                print(f"ToolRecall Daemon: RUNNING (via systemctl)")
+                print(f"  Transport: {_default_socket_path()}")
+            return
+        elif active == "inactive":
+            print("ToolRecall Daemon: NOT RUNNING")
+            return
+        # fall through to PID file check
+    # PID file fallback (Windows / no-systemd)
+    if not os.path.exists(PID_FILE):
+        print("ToolRecall Daemon: NOT RUNNING")
+        return
+    with open(PID_FILE) as f:
+        pid = int(f.read().strip())
+    try:
+        os.kill(pid, 0)
+        print(f"ToolRecall Daemon: RUNNING (PID {pid})")
+        print(f"  Transport: {_default_socket_path()}")
     except ProcessLookupError:
         print("ToolRecall Daemon: DEAD (Stale PID file)")
-        print("  → Run 'toolrecall daemon --stop' to clean up")

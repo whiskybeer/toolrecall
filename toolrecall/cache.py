@@ -14,9 +14,11 @@ Architecture:
                    │ on miss / write-back
                    ▼
   ┌──────────────────────────────────────┐
-  │  SQLite (file_cache table)           │  ← ~7ms, once per file
+  │  Singleton SQLite Connection          │  ← RLock-guarded, thread-safe
   │  Persists across sessions            │
   │  Serves HTTP proxy mode              │
+  │  .close() = commit + release lock   │
+  │  __del__ safety for exception paths │
   └──────────────────────────────────────┘
 
 Secondary caches (terminal, script, code) use SQLite directly.
@@ -26,7 +28,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 """
 import os, re, sqlite3, time, hashlib, warnings
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from collections import OrderedDict
 from toolrecall.config import load_config
 
@@ -315,24 +317,93 @@ CREATE INDEX IF NOT EXISTS idx_api_expires ON api_cache(expires_at);
 """
 
 
-def _get_db():
-    cfg = load_config()
-    if cfg.storage_backend != "sqlite":
-        warnings.warn(f"ToolRecall: Backend '{cfg.storage_backend}' not yet implemented. Falling back to 'sqlite'.")
+class _DBConnection:
+    """Wrapper around sqlite3.Connection that makes close() a commit + release.
 
-    db_path = os.path.expanduser(cfg.cache_db)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.row_factory = sqlite3.Row
-    return conn
+    All code paths call conn.close() after each operation. With a singleton
+    connection we can't close the real handle; instead we commit and release
+    the thread lock, keeping the connection alive for the next caller.
+
+    Safety: __del__ releases the lock if .close() was never called
+    (exception paths, early returns). This prevents deadlocks even when
+    callers forget to close in a finally block.
+    """
+    __slots__ = ("_real", "_locked")
+
+    def __init__(self, real):
+        self._real = real
+        self._locked = True
+
+    def __del__(self):
+        if self._locked:
+            try:
+                _db_lock.release()
+            except RuntimeError:
+                pass  # lock not held by this thread — ignore
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def close(self):
+        self._real.commit()
+        if self._locked:
+            self._locked = False
+            _db_lock.release()
+
+    def execute(self, sql, params=None):
+        return self._real.execute(sql, params or ())
+
+    def executescript(self, script):
+        return self._real.executescript(script)
+
+    def commit(self):
+        return self._real.commit()
+
+    def rollback(self):
+        return self._real.rollback()
+
+    @property
+    def row_factory(self):
+        return self._real.row_factory
+
+    @row_factory.setter
+    def row_factory(self, val):
+        self._real.row_factory = val
+
+
+_db_lock = RLock()
+_db_real: sqlite3.Connection | None = None
+
+
+def _get_db():
+    """Get a wrapped singleton DB connection.
+
+    Thread-safe via _db_lock. The caller gets exclusive access until
+    they call .close(), which commits and releases the lock. This
+    eliminates "database is locked" errors from concurrent writes.
+    """
+    global _db_real
+    _db_lock.acquire()
+    try:
+        if _db_real is None:
+            cfg = load_config()
+            if cfg.storage_backend != "sqlite":
+                warnings.warn(f"ToolRecall: Backend '{cfg.storage_backend}' not yet implemented. Falling back to 'sqlite'.")
+            db_path = os.path.expanduser(cfg.cache_db)
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            _db_real = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
+            _db_real.execute("PRAGMA journal_mode=WAL;")
+            _db_real.execute("PRAGMA synchronous=NORMAL;")
+            _db_real.row_factory = sqlite3.Row
+        return _DBConnection(_db_real)
+    except:
+        _db_lock.release()
+        raise
 
 
 def _init():
     conn = _get_db()
     conn.executescript(SCHEMA)
-    conn.commit()
     conn.close()
 
 
@@ -345,26 +416,20 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
-_stats_conn: sqlite3.Connection | None = None
-
 def _get_stats_conn():
-    """Get a persistent connection for stats (avoids connect/disconnect per call).
+    """Legacy — kept for backward compatibility.
 
-    ToolRecall's cache operations call _record() on every hit/miss — up to
-    hundreds per session. Opening a fresh sqlite3 connection for each call
-    adds measurable overhead. This cached connection lives for the module
-    lifetime.
+    Modern code uses _get_db() directly (singleton with lock).
+    This function is kept so importers don't break on re-import.
+    Returns a fresh connection via _get_db().
     """
-    global _stats_conn
-    if _stats_conn is None:
-        _stats_conn = _get_db()
-    return _stats_conn
+    return _get_db()
 
 
 def _record(category, hit: bool, tokens_intercepted: int = 0):
     """Track cache statistics."""
-    conn = _get_stats_conn()
     try:
+        conn = _get_db()
         if hit:
             conn.execute("""
                 INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
@@ -383,7 +448,7 @@ def _record(category, hit: bool, tokens_intercepted: int = 0):
                 VALUES (?, 0, 0, ?)
                 ON CONFLICT(category) DO UPDATE SET tokens_intercepted = tokens_intercepted + ?
             """, (category, tokens_intercepted, tokens_intercepted))
-        conn.commit()
+        conn.close()
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
 
@@ -398,14 +463,14 @@ def _record_tokens_saved(category: str, tokens: int):
     """
     if tokens <= 0:
         return
-    conn = _get_stats_conn()
     try:
+        conn = _get_db()
         conn.execute("""
             INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
             VALUES (?, 0, 0, ?)
             ON CONFLICT(category) DO UPDATE SET tokens_intercepted = tokens_intercepted + ?
         """, (category, tokens, tokens))
-        conn.commit()
+        conn.close()
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record tokens saved: {e}")
 
@@ -422,12 +487,14 @@ def _persist_file_to_sqlite(path: str, content: str, stat_result):
     path_hash = _hash(path)
     try:
         conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (path_hash, path, content, stat_result.st_mtime, stat_result.st_size, time.time()))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("""
+                INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (path_hash, path, content, stat_result.st_mtime, stat_result.st_size, time.time()))
+            conn.commit()
+        finally:
+            conn.close()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite persist failed for {path}: {e}")
 
@@ -462,10 +529,12 @@ def cached_read(path: str) -> dict:
     path_hash = _hash(path)
     try:
         conn = _get_db()
-        row = conn.execute(
-            "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
-        ).fetchone()
-        conn.close()
+        try:
+            row = conn.execute(
+                "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
+            ).fetchone()
+        finally:
+            conn.close()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None

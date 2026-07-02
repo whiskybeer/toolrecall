@@ -15,7 +15,7 @@ python -m pytest tests/ -k "registry"
 
 **Requirements:** Python 3.11+ stdlib only — no test dependencies beyond `pytest`.
 
-**Current count:** 328 tests, all passing (as of v0.7.5).
+**Current count:** ~330 tests (as of v0.7.5). Daemon managed by systemd.
 
 ## Test File Organization
 
@@ -32,7 +32,7 @@ Each test file covers a distinct module or feature:
 
 | File | Module Under Test | What It Tests |
 |------|------------------|---------------|
-| `tests/test_daemon_pid_guard.py` | `toolrecall/daemon.py` | PID file lifecycle: create, prevent duplicate daemon, stale PID cleanup, kill on conflict, permission errors |
+| `tests/test_daemon_pid_guard.py` | `toolrecall/daemon.py` | PID file fallback: stop on stale PID, status without PID file |
 | `tests/test_transport.py` | `toolrecall/transport.py` | UDS socket lifecycle, TCP fallback, framed message protocol (large messages, message boundaries, pings, timeouts, daemon-unavailable handling) |
 
 ### Client & Proxy
@@ -91,7 +91,7 @@ Each test file covers a distinct module or feature:
 | `test_mcp_fetch.py` | `toolrecall/mcp_fetch.py` | 120 |
 | `test_mcp_registry.py` | `toolrecall/mcp_registry.py` | 162 |
 | `test_mcp_config_resolve.py` | `toolrecall/config.py` | 200 |
-| `test_daemon_pid_guard.py` | `toolrecall/daemon.py` | 354 |
+| `test_daemon_pid_guard.py` | `toolrecall/daemon.py` | 80 |
 
 ## See Also
 

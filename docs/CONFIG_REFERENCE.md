@@ -5,7 +5,7 @@ All settings have defaults — you only need to override what you want to change
 
 ## File: `toolrecall/config.toml`
 
-The package-default config shipped with ToolRecall. Located at `toolrecall/config.toml` in the package directory. Users can override it via `~/.toolrecall/config.toml` or `toolrecall init`.
+The package-default config shipped with ToolRecall. Located at `toolrecall/config.toml` in the package directory. Users can override it via `~/.config/toolrecall/toolrecall.toml` or `toolrecall init`.
 
 ### Sections
 

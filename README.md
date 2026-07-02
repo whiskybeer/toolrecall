@@ -6,11 +6,15 @@ ToolRecall sits between your agent and the OS (or your API provider). On repeat 
 
 **Zero pip dependencies. Python 3.11+ stdlib only.** 76 KB install. One daemon.
 
-```
-pip install toolrecall    # Installs nothing but ToolRecall itself
+```bash
+# Install — no system deps beyond Python 3.11+ stdlib:
+pip install toolrecall
 toolrecall init            # Interactive security setup (default-deny paths)
-toolrecall daemon &         # Start cache daemon
+toolrecall daemon &         # Start cache daemon (use --foreground for systemd)
 ```
+
+> **Debian/Ubuntu (Python ≥3.11):** If `pip install` hits `externally-managed-environment`, the cleanest fix is:
+> `pip install --break-system-packages toolrecall`  *(ToolRecall has zero deps — safe to override)*
 
 **Two ways to use (both on by default — no extra command needed):**
 
@@ -109,7 +113,7 @@ All agents connect to **one** MCP server in their config: `toolrecall mcp`.
 ### Quick Config Example
 
 ```toml
-# ~/.toolrecall/config.toml
+# ~/.config/toolrecall/toolrecall.toml
 [mcp_multiplex]
 servers = ["time", "github", "fetch"]
 #  ↑ auto-resolved: time=builtin, github=builtin, fetch=uvx
@@ -219,7 +223,8 @@ This single snippet works for **Claude Desktop, Claude Code, Cursor, Cline, Wind
 | Agent | How to connect | Token savings |
 |-------|---------------|---------------|
 | **Any MCP agent** | Add the `toolrecall` server to your MCP config (see above) | ✅ Universal |
-| **Hermes** | Set `[hermes] transparent_cache = "transparent"` in `~/.toolrecall/config.toml` | ✅ Zero config |
+| **Hermes** (option A) | Set `[hermes] transparent_cache = "transparent"` in `~/.config/toolrecall/toolrecall.toml` | ✅ Zero config |
+| **Hermes** (option B) | Add to `~/.hermes/config.yaml`: `mcp_servers: { toolrecall: { command: toolrecall, args: [mcp] } }` | ✅ Agent-agnostic MCP |
 | **Shim (agent-agnostic)** | `toolrecall shim --install` patches `open()`/`subprocess.run()` at the OS level | ✅ Works with any agent binary |
 
 ---
@@ -229,23 +234,21 @@ This single snippet works for **Claude Desktop, Claude Code, Cursor, Cline, Wind
 TOML (stdlib `tomllib`) or YAML (optional, requires `pyyaml`).
 
 ```toml
-# ~/.toolrecall/config.toml (minimal config — toolrecall init creates a full one)
+# ~/.config/toolrecall/toolrecall.toml (created by toolrecall init)
 [mcp]
 allowed_paths = ["/home/user/projects"]  # Add your project dirs — default-deny!
 allow_terminal = false
+allow_invalidate = false
 default_ttl = 60
 
 [mcp_multiplex]
 enabled = true
 # Server names auto-resolve: time/github/seqthink/fetch = builtin (no deps),
 # filesystem/git/memory = external (needs uvx), or override via [mcp_multiplex.servers_config]
-servers = ["time", "github", "fetch"]
+servers = ["time", "sequential-thinking"]
 
-[nginx]
-# nginx is OPTIONAL — only needed if you want HTTPS/SSL in front of the proxy.
-# site_name = "toolrecall"
-# domain = "example.com"
-# ssl = false
+[forward_proxy]
+# Forward proxy starts on :8569 automatically with the daemon
 ```
 
 `TOOLRECALL_*` environment variables override TOML.

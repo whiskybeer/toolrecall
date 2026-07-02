@@ -21,11 +21,11 @@ import os, sys, json
 
 def cmd_init():
     """Create boilerplate config and .env for users with interactive setup."""
-    import os
-    cfg_dir = os.path.expanduser("~/.toolrecall")
+    import os, sys
+    cfg_dir = os.path.expanduser("~/.config/toolrecall")
     os.makedirs(cfg_dir, exist_ok=True)
 
-    cfg_path = os.path.join(cfg_dir, "config.toml")
+    cfg_path = os.path.join(cfg_dir, "toolrecall.toml")
     env_path = os.path.join(cfg_dir, ".env")
 
     # ─── Security banner ───────────────────────────────
@@ -48,37 +48,45 @@ def cmd_init():
     print("╚══════════════════════════════════════════════════════════╝")
     print()
 
-    # ─── Interactive path collection ───────────────────
+    # ─── Interactive path collection (fallback to default if non-TTY) ─
     default_paths = ["~/.toolrecall"]
     paths = []
 
-    print("Enter the directories your agent should be able to read.")
-    print("One path per line. Empty line when done.")
-    print(f"Default (press Enter): {', '.join(default_paths)}")
-    print()
-    print("  ⚠️  Home directory (~/) is NOT in the default allowlist.")
-    print("     Add only what the agent needs — keep everything else off-limits.")
-    print()
+    if not sys.stdin.isatty():
+        # Non-TTY (e.g. CI, Docker, pipe) — use defaults silently
+        paths = list(default_paths)
+        print("📄 Non-interactive shell detected — using default allowed paths.")
+        print(f"   Allowed: {', '.join(default_paths)}")
+        print("   Edit config.toml later to add more paths.")
+        print()
+    else:
+        print("Enter the directories your agent should be able to read.")
+        print("One path per line. Empty line when done.")
+        print(f"Default (press Enter): {', '.join(default_paths)}")
+        print()
+        print("  ⚠️  Home directory (~/) is NOT in the default allowlist.")
+        print("     Add only what the agent needs — keep everything else off-limits.")
+        print()
 
-    first = True
-    while True:
-        prompt = "Path 1: " if first else f"Path {len(paths)+1}: "
-        user_input = input(prompt).strip()
-        first = False
-        if not user_input:
-            if not paths:
-                paths = list(default_paths)
-                print(f"  → Using defaults: {', '.join(default_paths)}")
-            break
-        expanded = os.path.expanduser(user_input)
-        if not os.path.isdir(expanded):
-            print(f"  ⚠️  Directory does not exist: {expanded}")
-            yn = input("  Add anyway? [y/N] ").strip().lower()
-            if yn != "y":
-                continue
-        paths.append(user_input)
+        first = True
+        while True:
+            prompt = "Path 1: " if first else f"Path {len(paths)+1}: "
+            user_input = input(prompt).strip()
+            first = False
+            if not user_input:
+                if not paths:
+                    paths = list(default_paths)
+                    print(f"  → Using defaults: {', '.join(default_paths)}")
+                break
+            expanded = os.path.expanduser(user_input)
+            if not os.path.isdir(expanded):
+                print(f"  ⚠️  Directory does not exist: {expanded}")
+                yn = input("  Add anyway? [y/N] ").strip().lower()
+                if yn != "y":
+                    continue
+            paths.append(user_input)
 
-    print()
+        print()
 
     # ─── Build config content ──────────────────────────
     paths_toml = ",\n    ".join(f'"{p}"' for p in paths)
@@ -326,7 +334,7 @@ def cmd_config_set():
         return
 
     section, name = parts
-    cfg_path = os.path.expanduser("~/.toolrecall/config.toml")
+    cfg_path = os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
     cfg = load_config(cfg_path)
 
     # Parse value
@@ -483,11 +491,52 @@ def cmd_debug():
 
     run_debug_server(port=port_override or 8570)
 
+def _ensure_shim():
+    """Install OS-level shim if not present, then load it into the current process."""
+    import os, shutil, sys
+    try:
+        installed = False
+        # Check if shim is already in site-packages
+        for p in sys.path:
+            if p.endswith("site-packages"):
+                pth = os.path.join(p, "tr_shim.pth")
+                if os.path.exists(pth):
+                    installed = True
+                    break
+        
+        if not installed:
+            # Install the .pth file
+            for p in sys.path:
+                if p.endswith("site-packages") and os.path.isdir(p):
+                    pth_src = os.path.join(os.path.dirname(__file__), "tr_shim.pth")
+                    pth_dst = os.path.join(p, "tr_shim.pth")
+                    if os.path.exists(pth_src):
+                        shutil.copy2(pth_src, pth_dst)
+                        print("  ℹ️  Shim auto-installed (tr_shim.pth)")
+                        installed = True
+                    break
+        
+        # Load the shim into the CURRENT process so existing agents benefit immediately
+        if installed:
+            try:
+                import toolrecall.shim
+                toolrecall.shim.apply()  # Force apply patches (idempotent)
+            except (ImportError, AttributeError):
+                pass
+    except Exception:
+        pass  # Silently ignore — shim is optional
+
+
 def cmd_daemon():
     """Manage the ToolRecall Cache Daemon.
     
-    Starts cache daemon + MCP bridge + forward proxy (:8569)."""
+    Starts cache daemon + MCP bridge + forward proxy (:8569).
+    Auto-installs OS-level shim if not present."""
+    import os, subprocess
     from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
+
+    # Auto-install shim if missing
+    _ensure_shim()
 
     if "--help" in sys.argv or "-h" in sys.argv:
         print("Usage: toolrecall daemon [--foreground] [--stop] [--status]")
@@ -625,11 +674,237 @@ def cmd_shim():
         print("  --status      Check if shim is installed")
 
 
+SYSTEMD_SERVICE_CONTENT = """[Unit]
+Description=ToolRecall Cache Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%s
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def cmd_setup():
+    """One-shot setup: init config → install systemd service → shim → start."""
+    import os, time, subprocess, sys
+
+    print("=" * 56)
+    print("  ToolRecall Setup — one-time installation")
+    print("=" * 56)
+    print()
+
+    errors = []
+    steps_ok = []
+
+    # ─── 1. Config / init ───────────────────────────
+    cfg_path = os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
+    if not os.path.exists(cfg_path):
+        print("📄 No config found — running 'toolrecall init'...")
+        cmd_init()
+        print()
+    else:
+        steps_ok.append("config: found")
+
+    # ─── 2. Systemd user service ────────────────────
+    systemd_dir = os.path.expanduser("~/.config/systemd/user")
+    service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
+    os.makedirs(systemd_dir, exist_ok=True)
+
+    python = sys.executable
+    toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
+    if not os.path.exists(toolrecall_bin):
+        # Fallback: resolve via which
+        import shutil
+        toolrecall_bin = shutil.which("toolrecall") or toolrecall_bin
+    service_content = SYSTEMD_SERVICE_CONTENT % (toolrecall_bin + " daemon --foreground")
+    with open(service_path, "w") as f:
+        f.write(service_content)
+    steps_ok.append("systemd service: written")
+
+    # Reload + enable + start
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["systemctl", "--user", "enable", "toolrecall-daemon"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["systemctl", "--user", "start", "toolrecall-daemon"],
+            capture_output=True, timeout=10,
+        )
+        steps_ok.append("systemd service: enabled + started")
+
+        # Wait for readiness
+        from toolrecall.transport import TransportClient, DEFAULT_PATH
+        for attempt in range(10):
+            time.sleep(0.5)
+            try:
+                tc = TransportClient(DEFAULT_PATH)
+                resp = tc.send({"cmd": "ping"})
+                if resp.get("pong"):
+                    steps_ok.append(f"daemon: running (PID {resp.get('pid')})")
+                    break
+            except Exception:
+                continue
+        else:
+            errors.append("daemon started but not responding — check 'systemctl --user status toolrecall-daemon'")
+    except FileNotFoundError:
+        errors.append("systemctl not found — systemd user services not available on this system")
+        print("  ℹ️  Starting daemon directly instead...")
+        # Fallback: fork daemon directly
+        from toolrecall.daemon import run_daemon
+        pid = os.fork()
+        if pid == 0:
+            run_daemon(foreground=True)
+            os._exit(0)
+        steps_ok.append("daemon: forked directly (no systemd)")
+
+    # ─── 3. Shim ────────────────────────────────────
+    _ensure_shim()
+    steps_ok.append("shim: installed")
+
+    # ─── 4. Summary ────────────────────────────────
+    print()
+    for msg in steps_ok:
+        print(f"  ✅ {msg}")
+    if errors:
+        print()
+        for msg in errors:
+            print(f"  ❌ {msg}")
+    print()
+    print("=" * 56)
+    if errors:
+        print(f"  ⚠️  Setup finished with {len(errors)} issue(s)")
+    else:
+        print("  ✅ Setup complete — ToolRecall is ready")
+    print("=" * 56)
+    print()
+    print("Next: restart your agent so it picks up the MCP bridge.")
+
+
+def cmd_restart():
+    """Health check + restart via systemd: config check → systemctl --user restart → verify.
+    Auto-installs OS-level shim if not present."""
+    import os
+    import subprocess
+    import time
+
+    print("=" * 56)
+    print("  ToolRecall Restart — health check + systemd restart")
+    print("=" * 56)
+    print()
+
+    # Auto-install shim if missing
+    _ensure_shim()
+
+    # ─── 1. Config check ────────────────────────────
+    print("🔍 Checking configuration...")
+    cfg_path = os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
+    found = []
+    errors = []
+
+    if os.path.exists(cfg_path):
+        found.append(f"config: {cfg_path}")
+        from toolrecall.config import load_config
+        cfg = load_config()
+        allowed = cfg.mcp_allowed_paths
+        if allowed:
+            found.append(f"allowed_paths ({len(allowed)} dirs): {', '.join(allowed)}")
+            for p in allowed:
+                expanded = os.path.expanduser(p) if "~" in p else p
+                if not os.path.isdir(expanded):
+                    errors.append(f"allowed_path '{p}' → {expanded} does not exist")
+        else:
+            errors.append("allowed_paths is empty — all file reads blocked!")
+
+        if cfg.mcp_allow_terminal:
+            found.append("terminal: ENABLED")
+        else:
+            found.append("terminal: disabled (default)")
+
+        if cfg.mcp_multiplex_enabled:
+            servers = cfg.mcp_multiplex_servers
+            found.append(f"MCP multiplexer: enabled ({len(servers)} servers)")
+        else:
+            found.append("MCP multiplexer: disabled")
+    else:
+        errors.append(f"config not found at {cfg_path} — run 'toolrecall setup' or 'toolrecall init'")
+
+    for msg in found:
+        print(f"  ✅ {msg}")
+    if errors:
+        print()
+        for msg in errors:
+            print(f"  ❌ {msg}")
+        print()
+
+    # ─── 2. systemd restart ─────────────────────────
+    print("🔄 Restarting via systemd --user...")
+    result = subprocess.run(
+        ["systemctl", "--user", "restart", "toolrecall-daemon"],
+        capture_output=True, text=True, timeout=30
+    )
+
+    if result.returncode != 0:
+        print(f"  ❌ systemctl restart failed (exit {result.returncode})")
+        if result.stderr.strip():
+            for line in result.stderr.strip().split("\n"):
+                print(f"     {line}")
+        print()
+        print("  ℹ️  Daemon may not be running under systemd.")
+        print("     Try 'toolrecall daemon --foreground' or 'toolrecall setup' first.")
+        print()
+        print("=" * 56)
+        return
+
+    print("  ✅ systemd restart issued successfully")
+
+    # ─── 3. Wait for readiness ─────────────────────
+    from toolrecall.transport import TransportClient, DEFAULT_PATH
+
+    print("  Waiting for daemon to accept connections...")
+    for attempt in range(10):
+        time.sleep(0.5)
+        try:
+            tc = TransportClient(DEFAULT_PATH)
+            resp = tc.send({"cmd": "ping"})
+            if resp.get("pong"):
+                print(f"  ✅ Daemon ready (PID {resp.get('pid')}) — connected (attempt {attempt + 1})")
+                break
+        except Exception:
+            continue
+    else:
+        print("  ⚠️  Daemon started but not responding after 5s — check 'toolrecall daemon --status'")
+
+    # ─── 4. Summary ─────────────────────────────
+    print()
+    print("=" * 56)
+    if errors:
+        print(f"  ⚠️  Restarted with {len(errors)} config issue(s) to fix")
+        for msg in errors:
+            print(f"     ❌ {msg}")
+        print()
+        print("  Fix config issues above, then run 'toolrecall restart' again.")
+    else:
+        print("  ✅ Restart complete — everything looks good")
+    print("=" * 56)
+
+
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h"):
         print("Usage: toolrecall <command>")
         print()
         print("Commands:")
+        print("  setup           One-shot setup: config + systemd service + shim + start")
+        print("  restart         Health check + clean daemon restart")
         print("  init            Create default config.toml and .env")
         print("  status          Cache status and stats")
         print("  stats           Detailed stats (JSON)")
@@ -647,9 +922,16 @@ def main():
         print("  shim            Install/uninstall transparent cache shim (.pth)")
         return
 
+    if sys.argv[1] in ("--version", "-V", "-v"):
+        from toolrecall import __version__
+        print(f"ToolRecall {__version__}")
+        return
+
     cmd = sys.argv[1]
     commands = {
         "init": cmd_init,
+        "setup": cmd_setup,
+        "restart": cmd_restart,
         "status": cmd_status,
         "stats": cmd_stats,
         "invalidate": cmd_invalidate,

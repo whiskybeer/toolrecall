@@ -63,7 +63,6 @@ sequenceDiagram
     participant SQLite as SQLite Cache
     participant OS as Local OS/Disk
 
-    rect rgb(25, 35, 25)
     Note over User, OS: 📖 SCENARIO 1a — Read (Cache Hit) — 0 tokens for file
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
@@ -73,9 +72,7 @@ sequenceDiagram
     Agent->>Model: LLM Inference (file already in prompt context)
     Model-->>Agent: Generated Response
     Agent-->>User: Final Answer
-    end
 
-    rect rgb(35, 25, 25)
     Note over User, OS: 📖 SCENARIO 1b — Read (Cache Miss) — file size in tokens
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
@@ -89,9 +86,7 @@ sequenceDiagram
     Agent->>Model: LLM Inference (file bytes in context)
     Model-->>Agent: Generated Response
     Agent-->>User: Final Answer
-    end
 
-    rect rgb(25, 25, 35)
     Note over User, OS: ✏️ SCENARIO 2 — File Write — file size in tokens
     User->>Agent: Prompt to edit file.py
     Agent->>Shim: open("file.py", "w")
@@ -103,7 +98,6 @@ sequenceDiagram
     Agent->>Model: LLM Inference (modified file in context)
     Model-->>Agent: Generated Response
     Agent-->>User: Final Answer
-    end
 ```
 
 ---
