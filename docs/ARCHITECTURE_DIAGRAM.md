@@ -21,11 +21,15 @@ All three paths share one daemon with one LRU + one SQLite store.
 
 ```mermaid
 flowchart TB
+    classDef default fill:#1a1a2e,stroke:#94a3b8,color:#e2e8f0;
+    classDef cluster fill:#0f0f23,stroke:#64748b,color:#e2e8f0;
+    classDef agent fill:#1e293b,stroke:#f59e0b,color:#f59e0b;
+
     subgraph User
         U["👤 End User"]
     end
     subgraph AgentSystem
-        A["🤖 LLM Agent<br/>(Aider - Codex - Hermes)"]
+        A["🤖 LLM Agent<br/>(Aider - Codex - Hermes)"]:::agent
         CT["📋 Context Tracker"]
         S["⚡ ToolRecall Shim"]
         SQ["💾 SQLite Cache"]
@@ -63,7 +67,7 @@ sequenceDiagram
     participant SQLite as SQLite Cache
     participant OS as Local OS/Disk
 
-    rect rgb(25, 35, 25)
+    rect rgb(45, 55, 45)
     Note over User, OS: 📖 SCENARIO 1a — Read (Cache Hit) — 0 tokens for file
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
@@ -75,7 +79,7 @@ sequenceDiagram
     Agent-->>User: Final Answer
     end
 
-    rect rgb(35, 25, 25)
+    rect rgb(55, 45, 45)
     Note over User, OS: 📖 SCENARIO 1b — Read (Cache Miss) — file size in tokens
     User->>Agent: Prompt requiring file.py
     Agent->>Shim: open("file.py", "r")
@@ -91,7 +95,7 @@ sequenceDiagram
     Agent-->>User: Final Answer
     end
 
-    rect rgb(25, 25, 35)
+    rect rgb(45, 45, 55)
     Note over User, OS: ✏️ SCENARIO 2 — File Write — file size in tokens
     User->>Agent: Prompt to edit file.py
     Agent->>Shim: open("file.py", "w")
