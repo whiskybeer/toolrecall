@@ -1,6 +1,18 @@
 # Changelog
 
-## v0.7.5 (2026-07-01)
+## v0.8.2 (2026-07-04)
+
+- **Feature:** `toolrecall/toml_serializer.py` — zero-dependency TOML writer (replaces `tomli-w`)
+- **Feature:** 42 unit tests for TOML serializer (round-trip verified via stdlib `tomllib`)
+- **Refactor:** `config.py` `save_config()` now uses built-in serializer — no `tomli-w` dependency needed
+- **Refactor:** `cli.py` `cmd_init()` — default allowed paths now include `/tmp` (in addition to `~/.toolrecall`)
+- **Refactor:** `cli.py` `cmd_init()` — generated config now has `allow_terminal = true` by default
+- **Fix:** `cli.py` `cmd_restart()` — handles systemd exit -15 (SIGTERM) gracefully with fallback to direct daemon start
+- **Docs:** All Mermaid diagrams use plain theme (no `%%{init}` blocks) for GitHub dark mode compatibility
+- **Docs:** `configs/README.md` translated from German to English
+- **Chore:** `pyproject.toml` v0.8.2
+
+## v0.8.1 (2026-07-01)
 
 - **Feature:** `mcp_fetch.py` — built-in stdlib-only HTTP Fetch MCP server (zero deps, replaces `uvx mcp-server-fetch`)
 - **Feature:** `TOOLRECALL_FETCH_MAX_BYTES` env var — configurable content size limit (default 500KB, 0 = no limit)

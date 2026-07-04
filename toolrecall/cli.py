@@ -49,7 +49,7 @@ def cmd_init():
     print()
 
     # ─── Interactive path collection (fallback to default if non-TTY) ─
-    default_paths = ["~/.toolrecall"]
+    default_paths = ["/tmp", "~/.toolrecall"]
     paths = []
 
     if not sys.stdin.isatty():
@@ -115,7 +115,7 @@ dangerous_tool_keywords = []
 allowed_paths = [
     {paths_toml}
 ]
-allow_terminal = false
+allow_terminal = true
 allow_invalidate = false
 
 [mcp_multiplex]
@@ -322,12 +322,10 @@ def cmd_config_set():
         toolrecall config-set mcp.allow_terminal true
         toolrecall config-set mcp.allowed_paths "['/data', '/projects']"
     """
-    from toolrecall.config import load_config, save_config, _have_tomli_w
+    from toolrecall.config import load_config, save_config
 
-    if not _have_tomli_w():
-        print("❌ tomli-w not installed. Run: pip install toolrecall[toml-write]")
-        return
-
+    # save_config uses built-in TOML serializer — no external deps
+    
     args = sys.argv[2:]
     if len(args) < 2 or "--help" in args or "-h" in args:
         print("Usage: toolrecall config-set <section.key> <value>")
@@ -1002,16 +1000,24 @@ def cmd_restart():
     )
 
     if result.returncode != 0:
-        print(f"  ❌ systemctl restart failed (exit {result.returncode})")
-        if result.stderr.strip():
+        print(f"  ⚠️  systemctl restart returned exit {result.returncode}")
+        print(f"     (exit -15 = SIGTERM = daemon was killed; exit 3 = not running)")
+        if result.stderr.strip() and result.returncode not in (-15, 3):
             for line in result.stderr.strip().split("\n"):
                 print(f"     {line}")
+        print("  → Falling back to direct daemon start...")
         print()
-        print("  ℹ️  Daemon may not be running under systemd.")
-        print("     Try 'toolrecall daemon --foreground' or 'toolrecall setup' first.")
-        print()
-        print("=" * 56)
-        return
+
+        # Fallback: start daemon directly
+        from toolrecall.daemon import stop_daemon
+        stop_daemon()
+        if _ensure_daemon():
+            print("  ✅ Daemon started via fallback")
+        else:
+            print("  ❌ Could not start daemon — try 'toolrecall daemon --foreground'")
+            print()
+            print("=" * 56)
+            return
 
     print("  ✅ systemd restart issued successfully")
 

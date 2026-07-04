@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.8.1"
+version = "0.8.2"
 description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
 readme = "README.md"
 authors = [{name = "Robin Schultka", email = "robin@nousresearch.com"}]
@@ -27,7 +27,7 @@ dependencies = []  # Zero runtime deps — pure Python stdlib
 [project.optional-dependencies]
 mcp-fastmcp = ["mcp>=1.0.0"]
 yaml = ["pyyaml >= 6.0"]
-toml-write = ["tomli-w >= 1.0"]
+toml-write = []  # No longer needed — built-in serializer replaces tomli-w
 dev = [
     "pytest >= 9.0",
     "ruff >= 0.1",

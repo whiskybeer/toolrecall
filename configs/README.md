@@ -1,12 +1,12 @@
 # ToolRecall Agent Configs
 #
-# READY-TO-USE MCP-Konfigurationen für verschiedene Agenten.
-# Kopieren ans Zielverzeichnis (siehe unten).
+# READY-TO-USE MCP configurations for various agents.
+# Copy to the target directory (see below).
 #
-# Voraussetzung: `toolrecall` muss im PATH sein
-# (Symlink via: sudo ln -sf ~/.local/bin/toolrecall /usr/local/bin/)
+# Prerequisite: `toolrecall` must be on PATH
+# (symlink via: sudo ln -sf ~/.local/bin/toolrecall /usr/local/bin/)
 #
-# ── Verzeichnisse ──────────────────────────────────────────
+# ── Directories ──────────────────────────────────────────
 #
 # opencode (Node.js v1.17+):
 #   ~/.opencode/opencode.jsonc
@@ -22,22 +22,23 @@
 #
 # Claude Code:
 #   ~/.claude/settings.json  →  claude-code.json
-#   Inhalt in "mcpServers" einbetten
+#   Embed inside "mcpServers" section
 #
 # Cursor:
 #   ~/.cursor/mcp.json  →  cursor-mcp.json
 #
 # Hermes:
 #   ~/.hermes/config.yaml
-#   mcp_servers Abschnitt (bereits konfiguriert)
+#   mcp_servers section (already configured)
 #
 # Aider:
-#   --mcp-toolrecall oder ~/.aider.mcp.json
+#   --mcp-toolrecall or ~/.aider.mcp.json
 #
 # ── Test ───────────────────────────────────────────────────
 #
 #   echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | toolrecall mcp
-#   → Liste aller verfügbaren Cache-Tools
+#   → Lists all available cache tools
 #
 #   echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cached_read","arguments":{"path":"/etc/os-release"}}}' | toolrecall mcp
-#   → Gecachter Dateiinhalt
+#   → Cached file content
+#

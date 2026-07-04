@@ -357,37 +357,31 @@ class Config:
                     result[name_lower]["command"] = sys.executable
 
         return result
+# ─── save_config / load_config ────────────────────────
 
-
-_config = None
-
-
-def _have_tomli_w():
-    """Check if tomli_w is available for writing config."""
-    try:
-        import tomli_w
-        return True
-    except ImportError:
-        return False
+_CONFIG = None
 
 
 def save_config(path: str, config: Config) -> bool:
     """Write a Config instance back to a TOML file.
 
-    Requires: pip install toolrecall[toml-write]  (tomli-w)
+    Uses the built-in TOML serializer — no external dependencies needed.
 
     Args:
         path: Output path (e.g. '~/.config/toolrecall/toolrecall.toml')
         config: Config instance to serialize.
 
-    Returns True on success, False if tomli_w is not installed.
+    Returns True on success, False on failure.
     """
-    import tomli_w
+    from toolrecall.toml_serializer import dump
     path = os.path.expanduser(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        tomli_w.dump(config._data, f)
-    return True
+    try:
+        with open(path, "w") as f:
+            dump(config._data, f, comment="ToolRecall Configuration")
+        return True
+    except Exception:
+        return False
 
 
 def load_config(path: str = None) -> Config:
