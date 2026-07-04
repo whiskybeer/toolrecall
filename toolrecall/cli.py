@@ -174,22 +174,36 @@ GITHUB_PERSONAL_ACCESS_TOKEN=""
     print(f"  1. Edit {env_path} to add your API keys (if needed)")
 
 def cmd_status():
-    """Show cache status via daemon or directly."""
-    try:
-        from toolrecall.client import cache_status
-        print(cache_status())
-    except Exception:
-        from toolrecall.cache import get_stats
-        stats = get_stats()
-        print("=" * 50)
-        print("  ToolRecall Status (direct)")
-        print("=" * 50)
-        for k, v in stats.items():
-            if isinstance(v, dict):
-                print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
-                      f"hit_rate={v['hit_rate']}, tokens_intercepted={v['tokens_intercepted']:,}")
-            else:
-                print(f"  {k}: {v}")
+    """Show cache status via daemon or directly (always includes recent activity table)."""
+    from toolrecall.cache import get_stats
+    stats = get_stats()
+    print("=" * 50)
+    print("  ToolRecall Cache Status")
+    print("=" * 50)
+    for k, v in stats.items():
+        if k == "recent":
+            continue
+        if isinstance(v, dict):
+            saved = v.get("tokens_saved", 0)
+            saved_str = f", tokens_saved={saved:,}" if saved else ""
+            print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
+                  f"hit_rate={v['hit_rate']}, tokens_read_from_disk={v['tokens_read_from_disk']:,}{saved_str}")
+        else:
+            print(f"  {k}: {v}")
+    # Recent activity
+    recent = stats.get("recent", [])
+    if recent:
+        print()
+        print("  ── Last 20 accesses ──")
+        print(f"  {'ago':>8} {'type':<12} {'tokens':>8} {'path'}")
+        print(f"  {'─'*8} {'─'*12} {'─'*8} {'─'*40}")
+        for r in recent:
+            icon = "✅" if r["hit"] else "⬇️"
+            p = r.get("path", r["category"])
+            if len(p) > 40:
+                p = "..." + p[-37:]
+            tokens_str = f"{r['tokens']:,}" if r.get("tokens", 0) else "-"
+            print(f"  {r['ago']:>8} {icon} {tokens_str:>8} {p}")
 
 def cmd_stats():
     """Detailed statistics as JSON."""
@@ -212,7 +226,7 @@ def cmd_invalidate():
         print("ToolRecall cache cleared (direct).")
 
 def cmd_reset_stats():
-    """Reset cache statistics counters (hits, misses, tokens_intercepted) without clearing cache entries."""
+    """Reset cache statistics counters (hits, misses, tokens_read_from_disk) without clearing cache entries."""
     from toolrecall.cache import reset_stats
     reset_stats()
     print("Cache statistics reset (hits/misses/tokens). Cache entries preserved.")
@@ -491,6 +505,110 @@ def cmd_debug():
 
     run_debug_server(port=port_override or 8570)
 
+def _ensure_daemon():
+    """Auto-start the ToolRecall cache daemon if not running.
+
+    Tries (in order):
+    1. systemd --user (Linux with systemd)
+    2. Direct fork + run_daemon() (Docker, macOS, Codespaces)
+    3. Windows fallback (subprocess.DETACHED_PROCESS)
+
+    Returns True if daemon is running after attempt, False otherwise.
+    """
+    from toolrecall.transport import TransportClient, DEFAULT_PATH
+    import time
+
+    # ── 1. Already running? ──
+    try:
+        tc = TransportClient(DEFAULT_PATH)
+        resp = tc.send({"cmd": "ping"})
+        if resp.get("pong"):
+            return True
+    except Exception:
+        pass
+
+    # ── 2. systemd user service ──
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "start", "toolrecall-daemon"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            for _ in range(10):
+                time.sleep(0.5)
+                try:
+                    tc = TransportClient(DEFAULT_PATH)
+                    resp = tc.send({"cmd": "ping"})
+                    if resp.get("pong"):
+                        return True
+                except Exception:
+                    continue
+    except FileNotFoundError:
+        pass  # No systemd — fall through
+
+    # ── 3. Direct subprocess (no systemd) ──
+    # Use subprocess instead of fork to avoid venv-vs-system conflicts.
+    # start_new_session=True detaches from the parent process group so the
+    # daemon survives the CLI process exiting (e.g. when opencode ends a session).
+    # Important: use the binary (toolrecall daemon --foreground) not python -m,
+    # because toolrecall has no __main__.py and `python -m toolrecall` fails.
+    import sys as _sys
+    import subprocess as _sp
+    import shutil as _shutil
+    try:
+        _toolrecall_bin = _shutil.which("toolrecall")
+        if not _toolrecall_bin:
+            # Fallback: locate the installed package's cli module directly
+            _toolrecall_bin = _sys.executable
+            _sp.Popen(
+                [_toolrecall_bin, "-c", "from toolrecall.cli import cmd_daemon; import sys; sys.argv = ['toolrecall', 'daemon', '--foreground']; cmd_daemon()"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            _sp.Popen(
+                [_toolrecall_bin, "daemon", "--foreground"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                start_new_session=True,
+            )
+        for _ in range(10):
+            time.sleep(0.5)
+            try:
+                tc = TransportClient(DEFAULT_PATH)
+                resp = tc.send({"cmd": "ping"})
+                if resp.get("pong"):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # ── 4. Windows fallback ──
+    import sys as _sys
+    if _sys.platform == "win32":
+        try:
+            import subprocess as _sp
+            _sp.Popen(
+                ["toolrecall", "daemon", "--foreground"],
+                creationflags=_sp.DETACHED_PROCESS,
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            for _ in range(10):
+                time.sleep(0.5)
+                try:
+                    tc = TransportClient(DEFAULT_PATH)
+                    resp = tc.send({"cmd": "ping"})
+                    if resp.get("pong"):
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    return False
+
+
 def _ensure_shim():
     """Install OS-level shim if not present, then load it into the current process."""
     import os, shutil, sys
@@ -530,13 +648,9 @@ def _ensure_shim():
 def cmd_daemon():
     """Manage the ToolRecall Cache Daemon.
     
-    Starts cache daemon + MCP bridge + forward proxy (:8569).
-    Auto-installs OS-level shim if not present."""
+    Starts cache daemon + MCP bridge + forward proxy (:8569)."""
     import os, subprocess
     from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
-
-    # Auto-install shim if missing
-    _ensure_shim()
 
     if "--help" in sys.argv or "-h" in sys.argv:
         print("Usage: toolrecall daemon [--foreground] [--stop] [--status]")
@@ -690,16 +804,15 @@ WantedBy=default.target
 
 
 def cmd_setup():
-    """One-shot setup: init config → install systemd service → shim → start."""
-    import os, time, subprocess, sys
-
+    """One-shot setup: init config → install systemd service → ensure daemon + shim."""
+    import os
     print("=" * 56)
     print("  ToolRecall Setup — one-time installation")
     print("=" * 56)
     print()
 
-    errors = []
     steps_ok = []
+    errors = []
 
     # ─── 1. Config / init ───────────────────────────
     cfg_path = os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
@@ -710,75 +823,42 @@ def cmd_setup():
     else:
         steps_ok.append("config: found")
 
-    # ─── 2. Systemd user service ────────────────────
-    systemd_dir = os.path.expanduser("~/.config/systemd/user")
-    service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
-    os.makedirs(systemd_dir, exist_ok=True)
-
-    python = sys.executable
-    toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
-    if not os.path.exists(toolrecall_bin):
-        # Fallback: resolve via which
-        import shutil
-        toolrecall_bin = shutil.which("toolrecall") or toolrecall_bin
-    service_content = SYSTEMD_SERVICE_CONTENT % (toolrecall_bin + " daemon --foreground")
-    with open(service_path, "w") as f:
-        f.write(service_content)
-    steps_ok.append("systemd service: written")
-
-    # Reload + enable + start
+    # ─── 2. Systemd user service (optional) ─────────
+    import subprocess
     try:
-        subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            capture_output=True, timeout=10,
-        )
-        subprocess.run(
-            ["systemctl", "--user", "enable", "toolrecall-daemon"],
-            capture_output=True, timeout=10,
-        )
-        subprocess.run(
-            ["systemctl", "--user", "start", "toolrecall-daemon"],
-            capture_output=True, timeout=10,
-        )
-        steps_ok.append("systemd service: enabled + started")
+        systemd_dir = os.path.expanduser("~/.config/systemd/user")
+        service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
+        os.makedirs(systemd_dir, exist_ok=True)
 
-        # Wait for readiness
-        from toolrecall.transport import TransportClient, DEFAULT_PATH
-        for attempt in range(10):
-            time.sleep(0.5)
-            try:
-                tc = TransportClient(DEFAULT_PATH)
-                resp = tc.send({"cmd": "ping"})
-                if resp.get("pong"):
-                    steps_ok.append(f"daemon: running (PID {resp.get('pid')})")
-                    break
-            except Exception:
-                continue
-        else:
-            errors.append("daemon started but not responding — check 'systemctl --user status toolrecall-daemon'")
+        import sys
+        toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
+        if not os.path.exists(toolrecall_bin):
+            import shutil
+            toolrecall_bin = shutil.which("toolrecall") or toolrecall_bin
+        service_content = SYSTEMD_SERVICE_CONTENT % (toolrecall_bin + " daemon --foreground")
+        with open(service_path, "w") as f:
+            f.write(service_content)
+
+        subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=10)
+        subprocess.run(["systemctl", "--user", "enable", "toolrecall-daemon"], capture_output=True, timeout=10)
+        steps_ok.append("systemd service: written + enabled")
     except FileNotFoundError:
-        errors.append("systemctl not found — systemd user services not available on this system")
-        print("  ℹ️  Starting daemon directly instead...")
-        # Fallback: fork daemon directly
-        from toolrecall.daemon import run_daemon
-        pid = os.fork()
-        if pid == 0:
-            run_daemon(foreground=True)
-            os._exit(0)
-        steps_ok.append("daemon: forked directly (no systemd)")
+        pass  # No systemd — _ensure_daemon will use fork
 
-    # ─── 3. Shim ────────────────────────────────────
+    # ─── 3. Shim + Daemon (auto-start) ────────────
     _ensure_shim()
     steps_ok.append("shim: installed")
+    if _ensure_daemon():
+        steps_ok.append("daemon: running")
+    else:
+        errors.append("daemon could not be started")
 
-    # ─── 4. Summary ────────────────────────────────
+    # ─── Summary ──────────────────────────────────
     print()
     for msg in steps_ok:
         print(f"  ✅ {msg}")
-    if errors:
-        print()
-        for msg in errors:
-            print(f"  ❌ {msg}")
+    for msg in errors:
+        print(f"  ❌ {msg}")
     print()
     print("=" * 56)
     if errors:
@@ -786,8 +866,6 @@ def cmd_setup():
     else:
         print("  ✅ Setup complete — ToolRecall is ready")
     print("=" * 56)
-    print()
-    print("Next: restart your agent so it picks up the MCP bridge.")
 
 
 def cmd_restart():
@@ -801,9 +879,6 @@ def cmd_restart():
     print("  ToolRecall Restart — health check + systemd restart")
     print("=" * 56)
     print()
-
-    # Auto-install shim if missing
-    _ensure_shim()
 
     # ─── 1. Config check ────────────────────────────
     print("🔍 Checking configuration...")
@@ -928,6 +1003,19 @@ def main():
         return
 
     cmd = sys.argv[1]
+
+    # Commands that need the daemon running
+    _DAEMON_REQUIRED = {
+        "status", "stats", "invalidate", "reset-stats",
+        "serve", "debug", "mcp", "restart", "index",
+        "index-memory", "index-dir",
+    }
+    if cmd in _DAEMON_REQUIRED:
+        # Auto-install shim if missing, then ensure daemon is running
+        _ensure_shim()
+        if not _ensure_daemon():
+            print(f"  ⚠️  Could not start daemon — running '{cmd}' in direct mode.", file=sys.stderr)
+
     commands = {
         "init": cmd_init,
         "setup": cmd_setup,

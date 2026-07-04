@@ -138,6 +138,10 @@ class SecurityGate:
             allowed_abs = os.path.realpath(os.path.expanduser(allowed))
             if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
                 break
+            # Also check the non-resolved path (for symlinks like /etc -> /usr/lib)
+            raw_path = os.path.abspath(os.path.expanduser(path))
+            if raw_path == allowed_abs or raw_path.startswith(allowed_abs + os.sep):
+                break
         else:
             # Generic error — never leak the real resolved path to the caller
             self.logger.warning("Blocked path not in allowed_paths: %s", path)
@@ -1294,6 +1298,20 @@ def _signal_handler(signum, frame):
 def run_daemon(socket_path: str = None, foreground: bool = False):
     """Start the ToolRecall daemon."""
     global _server_instance
+
+    # Strip local source tree from sys.path — ensures we import from
+    # site-packages (pip-installed) when running inside a venv whose
+    # cwd/pyvenv.cfg leaks the project dir ahead of site-packages.
+    import sys as _sys
+    _sys.path = [p for p in _sys.path if '/home/hermes/toolrecall/toolrecall' not in p]
+
+    # Disable file-read shim to prevent infinite recursion:
+    # _shim_open -> client.cached_read -> daemon -> cached_read -> open -> _shim_open -> ...
+    try:
+        from toolrecall.shim import remove as _shim_remove
+        _shim_remove()
+    except ImportError:
+        pass
 
     # Enable faulthandler so segfaults/aborts produce tracebacks
     import faulthandler

@@ -4,22 +4,20 @@ ToolRecall sits between your agent and the OS (or your API provider). On repeat 
 
 **1 tick instead of 4:** A file read normally needs `stat → open → read → close`. ToolRecall needs only `stat` (mtime check) — on cache hit the bytes come from memory, bypassing disk entirely.
 
-**Zero pip dependencies. Python 3.11+ stdlib only.** 76 KB install. One daemon.
+**Zero pip dependencies. Python 3.11+ stdlib only.** 76 KB install. Everything starts automatically.
 
 ```bash
-# Install — no system deps beyond Python 3.11+ stdlib:
 pip install toolrecall
-toolrecall init            # Interactive security setup (default-deny paths)
-toolrecall daemon &         # Start cache daemon (use --foreground for systemd)
+toolrecall setup          # One-shot: config → systemd → shim → daemon start
 ```
 
-> **Debian/Ubuntu (Python ≥3.11):** If `pip install` hits `externally-managed-environment`, the cleanest fix is:
-> `pip install --break-system-packages toolrecall`  *(ToolRecall has zero deps — safe to override)*
+> **Zero config mode:** After `toolrecall setup`, every command like `toolrecall status`, `toolrecall mcp`, or `toolrecall serve` auto-starts the daemon if it isn't running. You never need to think about it.
 
-**Two ways to use (both on by default — no extra command needed):**
+**Three layers of caching (all active by default):**
 
 | Path | What it does | How to connect | Default |
 |------|-------------|---------------|---------|
+| **OS-level Shim** | Patches every Python process — `open()` and `subprocess.run()` are transparently cached. **Zero imports needed. Works with any agent.** | Installed via `toolrecall setup` or auto-installed on first command. | ✅ Installed via `.pth` in site-packages |
 | **Forward proxy** | Intercepts HTTP requests to API providers (OpenAI, Anthropic, etc.) — caches full responses by body hash. **Zero tokens consumed on cache hit.** | `export OPENAI_BASE_URL=http://localhost:8569` — or set any SDK's base URL | ✅ On (`:8569`) |
 | **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client. Server names auto-resolve from registry. | Add to `~/.claude/.mcp.json` or run `toolrecall mcp` | ✅ On (stdio) |
 
@@ -56,43 +54,88 @@ Source: [Benchmark](docs/BENCHMARK.md)
 
 ---
 
+## One-Time Setup
+
+ToolRecall should be installed once per machine, then it works transparently for all agents.
+
+```bash
+pip install toolrecall         # installs CLI + Shim (.pth file activates on next Python start)
+toolrecall setup               # config → systemd service → shim → daemon start
+```
+
+That's it. Now **every** Python process on this machine transparently caches file reads and terminal commands through ToolRecall.
+
+### What `toolrecall setup` does
+
+| Step | Details |
+|------|---------|
+| **Config** | Creates `~/.config/toolrecall/toolrecall.toml` with default-deny security |
+| **Systemd** | Generates `~/.config/systemd/user/toolrecall-daemon.service` (enables auto-restart) |
+| **Shim** | Installs `tr_shim.pth` in your site-packages — every Python process auto-caches |
+| **Daemon** | Starts the cache daemon (background process with LRU + SQLite) |
+
+### What happens on every CLI command
+
+Every `toolrecall` command that needs the daemon (`status`, `mcp`, `serve`, `stats`, etc.) automatically:
+
+1. **Checks if the shim is installed** — auto-installs it if missing
+2. **Checks if the daemon is running** — auto-starts it if not
+
+This means you can run `toolrecall status` on a fresh install and it "just works" — no extra steps.
+
+### Daemon auto-start (fallback chain)
+
+| Try | Method | When |
+|-----|--------|------|
+| 1 | `systemctl --user start toolrecall-daemon` | Linux with systemd |
+| 2 | `os.fork()` + `run_daemon()` | Docker, macOS, Codespaces |
+| 3 | `subprocess.DETACHED_PROCESS` | Windows |
+
+---
+
 ## Architecture
 
 ```
-  [ Claude Code ]   [ Cursor IDE ]   [ Hermes Agent ]   [ Any LLM Client ]
-         \\                |                |               /
-          \\               |               |              /
-           \\              |               |             /
-        +──────────────────────────────────────────────────────────+
-        │  Standard stdio MCP   OR   HTTP (OPENAI_BASE_URL proxy) │
-        +──────────────────────────────────────────────────────────+
-                          │ Unix Domain Socket (Linux/Mac)
-                          │ TCP localhost:8568 (Windows)
-        +────────────────▼──────────────────────────────────+
-        │         ToolRecall Daemon                         │
-        │  ┌─────────────────────────────┐                   │
-        │  │   In-Memory LRU (Cache)     │                   │
-        │  └──────────────┬──────────────┘                   │
-        │  ┌──────────────▼──────────────┐                   │
-        │  │   SQLite WAL (Persistent)   │                   │
-        │  └─────────────────────────────┘                   │
-        │  ┌─────────────────────────────┐                   │
-        │  │   MCP Server Multiplexer    │                   │
-        │  └──────────────┬──────────────┘                   │
-        +─────────────────┼──────────────────+
-                          │ Lazy-Loaded stdio Subprocesses
-        +─────────────────▼──────────────────+
-        │ [ Downstream MCP: GitHub / Time ]  │
-        +────────────────────────────────────+
+[ Any Python process ]     [ Claude Code ]   [ Cursor IDE ]   [ Hermes Agent ]
+       │ (shim .pth)              │                │               │
+       ▼                          │                │               │
++─────────────────────+            │                │               │
+│  Shim (transparent) │            │                │               │
+│  open() → cached    │            │                │               │
+│  subprocess → cache │            │                │               │
++─────────┬───────────┘            │                │               │
+          │                        │                │               │
+          │              +─────────┴────────┬───────┴───────────────┘
+          │              │  Standard stdio MCP   OR   HTTP (:8569)
+          │              +────────────────────┬──────────────────────+
+          │                                  │
++─────────▼──────────────────────────────────▼────────────────────+
+│                  ToolRecall Daemon                                 │
+│  ┌─────────────────────────────┐                                  │
+│  │   In-Memory LRU (Cache)     │                                  │
+│  └──────────────┬──────────────┘                                  │
+│  ┌──────────────▼──────────────┐                                  │
+│  │   SQLite WAL (Persistent)   │                                  │
+│  └─────────────────────────────┘                                  │
+│  ┌─────────────────────────────┐                                  │
+│  │   MCP Server Multiplexer    │                                  │
+│  └──────────────┬──────────────┘                                  │
++─────────────────┼────────────────+
+                  │ Lazy-Loaded stdio Subprocesses
++─────────────────▼────────────────+
+│ [ Downstream MCP: GitHub / Time ]  │
++────────────────────────────────────+
 ```
 
-The daemon holds everything: the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), the Forward Proxy (caches full API responses via body hash), and the Security Gate (path allowlist, sensitive file blocklist, cognitive scan).
+**Shim layer (at the OS level):** When `tr_shim.pth` is in `site-packages`, every Python process on the machine auto-patches `builtins.open()` and `subprocess.run()` — no imports needed. This is the truly agent-agnostic path: any Python agent (Hermes, Claude Code, Cursor, Aider, Cline) transparently benefits without any configuration.
 
-All agents share one daemon via either:
-- **MCP Bridge** (`toolrecall mcp`) — the agent connects as an MCP client and uses `cached_read`, `cached_terminal` etc.
-- **Forward proxy** (auto-started on `:8569`) — the agent's API calls go to `localhost:8569` instead of `api.anthropic.com`. The proxy hashes the request body, checks the cache, and on a hit returns the cached response without ever contacting the provider.
+**Daemon layer (process level):** Holds the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), the Forward Proxy (caches full API responses via body hash), and the Security Gate (path allowlist, sensitive file blocklist, cognitive scan).
 
-See [Architecture](docs/ARCHITECTURE.md) for the full design.
+**How they work together:**
+
+1. **Python process** calls `open("file.py")` → Shim intercepts → `cached_read()` via Daemon UDS → returns cached bytes or reads from disk
+2. **Agent** calls `cached_read()` via MCP → Daemon → same cache (shared with Shim)
+3. **Any SDK** sends API request to `localhost:8569` → Forward Proxy hashes body → checks same SQLite cache
 
 ---
 
@@ -116,10 +159,7 @@ All agents connect to **one** MCP server in their config: `toolrecall mcp`.
 # ~/.config/toolrecall/toolrecall.toml
 [mcp_multiplex]
 servers = ["time", "github", "fetch"]
-#  ↑ auto-resolved: time=builtin, github=builtin, fetch=uvx
 ```
-
-No `[mcp_multiplex.servers_config]` section needed for known servers. Custom servers still use the explicit config.
 
 ### Built-in Servers (zero deps)
 
@@ -143,9 +183,6 @@ No `[mcp_multiplex.servers_config]` section needed for known servers. Custom ser
 
 See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration details.
 
-**When to use:** You run 3+ agents simultaneously on the same machine and they share the same MCP tools.
-**When to skip:** Single agent setup — each agent manages its own MCP servers fine.
-
 ---
 
 ## Security
@@ -167,33 +204,29 @@ See [Security Architecture](SECURITY.md) for the full trust boundary.
 ## Quick Reference — CLI
 
 ```
-toolrecall init            Create default config.toml and .env  [required once]
-toolrecall daemon          Start cache daemon (also starts MCP + forward proxy) [required]
-toolrecall mcp             Start MCP Bridge (or: mcp list to see registry) [connect any MCP agent]
-toolrecall serve           Forward proxy (cache API responses)  [auto-started with daemon; use for custom port]
-toolrecall debug           Start debug/demo server (test cached_read/term via curl)
-toolrecall status          Cache status and stats               [optional]
-toolrecall stats           Detailed cache statistics (JSON)     [optional]
-toolrecall invalidate      Clear all caches                     [optional]
-toolrecall reset-stats     Reset statistics counters            [optional]
-toolrecall nginx           Generate nginx config                [optional]
-toolrecall index           Build/update FTS5 knowledge database [optional]
-toolrecall index-memory    Index agent memory stores (MEMORY.md, USER.md) [optional]
-toolrecall index-dir       Index a directory (e.g. Obsidian)    [optional]
-toolrecall config-set      Set a config value                   [optional]
-toolrecall shim            Install/uninstall OS-level cache shim (.pth file) [optional]
+toolrecall setup          One-shot: config + systemd service + shim + daemon start  [required once]
+toolrecall init           Create default config.toml and .env
+toolrecall status         Cache status and stats               [auto-starts daemon]
+toolrecall stats          Detailed cache statistics (JSON)     [auto-starts daemon]
+toolrecall invalidate     Clear all caches                     [auto-starts daemon]
+toolrecall restart        Health check + clean daemon restart  [auto-starts daemon]
+toolrecall mcp            Start MCP Bridge                     [auto-starts daemon]
+toolrecall serve          Forward proxy (cache API responses)  [auto-starts daemon]
+toolrecall debug          Start debug/demo server              [auto-starts daemon]
+toolrecall index          Build/update FTS5 knowledge database [auto-starts daemon]
+toolrecall config-set     Set a config value
+toolrecall daemon         Start/stop/manage cache daemon
+toolrecall shim           Install/uninstall OS-level cache shim (.pth file)
+toolrecall nginx          Generate nginx config
 ```
-
----
 
 ## Agent Integration
 
 ### Forward proxy (API-level caching)
 
-Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed. Works with **any** OpenAI-compatible provider (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.).
+Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
 
 ```bash
-toolrecall daemon &                  # also starts forward proxy on :8569
 export OPENAI_BASE_URL=http://localhost:8569/v1   # Any OpenAI-compatible SDK
 # or override the base URL in your provider config / client init
 ```
@@ -201,11 +234,11 @@ export OPENAI_BASE_URL=http://localhost:8569/v1   # Any OpenAI-compatible SDK
 | Provider SDK | How to connect | Token savings |
 |-------------|---------------|---------------|
 | **Any OpenAI-compatible client** | `export OPENAI_BASE_URL=http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
-| **Custom port** | `toolrecall serve --port 9090` if you need a different port | same |
+| **Custom port** | `toolrecall serve --port 9090` | Same |
 
 ### MCP Bridge (tool-level caching)
 
-ToolRecall registers MCP tools like `cached_read`, `cached_terminal`, `cached_write`, `cached_patch`. Connect **any MCP agent** by adding one server:
+Connect **any MCP agent** by adding one server:
 
 ```json
 {
@@ -218,14 +251,17 @@ ToolRecall registers MCP tools like `cached_read`, `cached_terminal`, `cached_wr
 }
 ```
 
-This single snippet works for **Claude Desktop, Claude Code, Cursor, Cline, Windsurf, Continue, and any MCP-compatible agent** with zero per-agent variations.
+Works for **Claude Desktop, Claude Code, Cursor, Cline, Windsurf, Continue, and any MCP-compatible agent** with zero per-agent variations.
+
+### OS-level Shim (zero-config caching)
+
+Once `toolrecall setup` is run (or any CLI command auto-installs it), the **shim .pth file** lives in `site-packages/tr_shim.pth`. Every Python process on the machine automatically caches `open()` and `subprocess.run()` through the ToolRecall daemon — **no imports, no agent configuration**.
 
 | Agent | How to connect | Token savings |
 |-------|---------------|---------------|
-| **Any MCP agent** | Add the `toolrecall` server to your MCP config (see above) | ✅ Universal |
-| **Hermes** (option A) | Set `[hermes] transparent_cache = "transparent"` in `~/.config/toolrecall/toolrecall.toml` | ✅ Zero config |
-| **Hermes** (option B) | Add to `~/.hermes/config.yaml`: `mcp_servers: { toolrecall: { command: toolrecall, args: [mcp] } }` | ✅ Agent-agnostic MCP |
-| **Shim (agent-agnostic)** | `toolrecall shim --install` patches `open()`/`subprocess.run()` at the OS level | ✅ Works with any agent binary |
+| **Any Python binary** | Just `pip install toolrecall` — the `.pth` in site-packages auto-patches `open()` / `subprocess.run()` | ✅ Transparent, agent-agnostic |
+| **Any MCP agent** | Add the `toolrecall` server to your MCP config | ✅ Universal |
+| **Forward proxy** | `export OPENAI_BASE_URL=http://localhost:8569` | ✅ Zero-token cache hits |
 
 ---
 
@@ -243,8 +279,6 @@ default_ttl = 60
 
 [mcp_multiplex]
 enabled = true
-# Server names auto-resolve: time/github/seqthink/fetch = builtin (no deps),
-# filesystem/git/memory = external (needs uvx), or override via [mcp_multiplex.servers_config]
 servers = ["time", "sequential-thinking"]
 
 [forward_proxy]
@@ -258,11 +292,12 @@ servers = ["time", "sequential-thinking"]
 ## Uninstall
 
 ```bash
+toolrecall shim --uninstall          # Remove .pth from site-packages
+systemctl --user stop toolrecall-daemon
+systemctl --user disable toolrecall-daemon
 pip uninstall toolrecall
-python3 scripts/uninstall.py --force
+rm -rf ~/.toolrecall ~/.config/toolrecall
 ```
-
-Removes: daemon, systemd service, config, cache DB, logs.
 
 ---
 
@@ -293,5 +328,3 @@ Removes: daemon, systemd service, config, cache DB, logs.
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common fixes
 - [Appendix](docs/APPENDIX.md) — comparison tables, OSI model, ROI, vision, audit
 - [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes Agent
-
-[^notall]: Not all agents tested yet — please [report bugs](https://github.com/whiskybeer/toolrecall/issues).

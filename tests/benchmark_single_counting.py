@@ -2,7 +2,7 @@
 Benchmark: Verify Single-Counting Fix Across All 6 Cache Layers.
 
 Simulates a realistic multi-session workload and validates:
-  1. tokens_intercepted counts only on first disk-read (not on cache hits)
+  1. tokens_read_from_disk counts only on first disk-read (not on cache hits)
   2. reset_stats preserves cache entries
   3. Unique token counting prevents inflated numbers
 """
@@ -39,7 +39,7 @@ def simulate_session(reads, label="session"):
         cached_read(path)
     stats = get_stats()
     fc = stats.get("file_cache", {})
-    print(f"  [{label}] hits={fc.get('hits',0)}, tokens={fc.get('tokens_intercepted',0)}")
+    print(f"  [{label}] hits={fc.get('hits',0)}, tokens={fc.get('tokens_read_from_disk',0)}")
     return stats
 
 def real_file(size_chars, content=None):
@@ -91,8 +91,8 @@ check("B first read is miss", not r4.get("cached"))
 fc = get_stats().get("file_cache", {})
 total_expected = expected_a + expected_b
 check(f"tokens = {total_expected} (A: {expected_a} + B: {expected_b})",
-      fc["tokens_intercepted"] == total_expected,
-      f"got {fc['tokens_intercepted']}")
+      fc["tokens_read_from_disk"] == total_expected,
+      f"got {fc['tokens_read_from_disk']}")
 check("hits = 2 (A 2nd + 3rd read, no B hits yet)",
       fc["hits"] == 2, f"got {fc['hits']}")
 check("misses = 2 (A 1st + B 1st)",
@@ -119,8 +119,8 @@ for i in range(100):
 
 fc = get_stats().get("file_cache", {})
 check(f"100 reads of same file = {big_tokens} tokens (not 100×)",
-      fc["tokens_intercepted"] == big_tokens,
-      f"got {fc['tokens_intercepted']} (should be {big_tokens})")
+      fc["tokens_read_from_disk"] == big_tokens,
+      f"got {fc['tokens_read_from_disk']} (should be {big_tokens})")
 check(f"hits = 99 (100 reads - 1 miss)",
       fc["hits"] == 99, f"got {fc['hits']}")
 check(f"misses = 1",
@@ -130,8 +130,8 @@ check(f"misses = 1",
 old_bug_value = 99 * big_tokens
 savings_factor = old_bug_value / big_tokens
 check(f"Old bug would have counted {old_bug_value} (×{savings_factor:.0f} inflation) — prevented",
-      fc["tokens_intercepted"] < old_bug_value / 10,
-      f"inflation detected: {fc['tokens_intercepted']} vs {old_bug_value}")
+      fc["tokens_read_from_disk"] < old_bug_value / 10,
+      f"inflation detected: {fc['tokens_read_from_disk']} vs {old_bug_value}")
 
 cleanup(big_file)
 
@@ -156,8 +156,8 @@ cached_read(restart_file)
 fc = get_stats().get("file_cache", {})
 expected = _estimate_tokens("X" * 1000)
 check(f"After restart: tokens = {expected} (same file, no re-count)",
-      fc["tokens_intercepted"] == expected,
-      f"got {fc['tokens_intercepted']}")
+      fc["tokens_read_from_disk"] == expected,
+      f"got {fc['tokens_read_from_disk']}")
 check(f"After restart: hits = {hits_1 + 1})",
       fc["hits"] == hits_1 + 1, f"got {fc['hits']}")
 
@@ -166,8 +166,8 @@ _file_cache.clear()
 cached_read(restart_file)
 fc = get_stats().get("file_cache", {})
 check(f"2nd restart: tokens still {expected} (never re-counted)",
-      fc["tokens_intercepted"] == expected,
-      f"got {fc['tokens_intercepted']}")
+      fc["tokens_read_from_disk"] == expected,
+      f"got {fc['tokens_read_from_disk']}")
 
 cleanup(restart_file)
 
@@ -196,8 +196,8 @@ check("Terminal third call = hit", term3.get("cached"))
 
 tc = get_stats().get("terminal_cache", {})
 check(f"Terminal tokens = {expected_term_tokens} (not 3×)",
-      tc["tokens_intercepted"] == expected_term_tokens,
-      f"got {tc['tokens_intercepted']}")
+      tc["tokens_read_from_disk"] == expected_term_tokens,
+      f"got {tc['tokens_read_from_disk']}")
 
 # Code cache
 code = "print('hello world')"
@@ -205,8 +205,8 @@ c1 = cached_exec(code, ttl=60)
 c2 = cached_exec(code, ttl=60)
 cc = get_stats().get("code_cache", {})
 check(f"Code cache tokens counted once",
-      cc["tokens_intercepted"] > 0,
-      f"got {cc['tokens_intercepted']}")
+      cc["tokens_read_from_disk"] > 0,
+      f"got {cc['tokens_read_from_disk']}")
 check("Code cache hit works", c2.get("cached"))
 
 # ════════════════════════════════════════

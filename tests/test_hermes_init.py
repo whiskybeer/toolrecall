@@ -150,7 +150,7 @@ class TestFileCacheEndToEnd(unittest.TestCase):
             s = get_stats()
             fc = s.get('file_cache', {{}})
             print(json.dumps({{'hits': fc.get('hits',0), 'misses': fc.get('misses',0),
-                              'tokens': fc.get('tokens_intercepted',0),
+                              'tokens': fc.get('tokens_read_from_disk',0),
                               'entries': s.get('file_cache_entries',0)}}))
         """)
         out, err, rc = _run_code(code, {"TOOLRECALL_CACHE_DB": self.db})
@@ -166,12 +166,12 @@ class TestFileCacheEndToEnd(unittest.TestCase):
             reset_stats(); _init()
             r = cached_read({json.dumps(self.test_file)})
             s1 = get_stats()
-            t1 = s1['file_cache']['tokens_intercepted']
+            t1 = s1['file_cache']['tokens_read_from_disk']
             for _ in range(10):
                 r = cached_read({json.dumps(self.test_file)})
                 assert r.get('cached'), "should be cached"
             s2 = get_stats()
-            t2 = s2['file_cache']['tokens_intercepted']
+            t2 = s2['file_cache']['tokens_read_from_disk']
             hits = s2['file_cache']['hits']
             print(json.dumps({{'t1': t1, 't2': t2, 'hits': hits}}))
         """)
