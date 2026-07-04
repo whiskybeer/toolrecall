@@ -853,6 +853,9 @@ def cmd_setup():
     else:
         errors.append("daemon could not be started")
 
+    # ─── 4. Agent integration (opencode) ─────────
+    _ensure_agent_integration()
+
     # ─── Summary ──────────────────────────────────
     print()
     for msg in steps_ok:
@@ -866,6 +869,76 @@ def cmd_setup():
     else:
         print("  ✅ Setup complete — ToolRecall is ready")
     print("=" * 56)
+
+
+def _ensure_agent_integration():
+    """Auto-detect opencode and write MCP config.
+
+    Detects opencode by checking for ~/.opencode/ directory and writes
+    the MCP integration config so 'toolrecall mcp' is available as an
+    MCP server in opencode sessions.
+
+    Returns True if config was written, False if no opencode found.
+    """
+    OC_DIR = os.path.expanduser("~/.opencode")
+    if not os.path.isdir(OC_DIR):
+        return False
+
+    oc_config_path = os.path.join(OC_DIR, "opencode.jsonc")
+    config = _prepare_opencode_config(oc_config_path)
+
+    import json
+    with open(oc_config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"  ✅ opencode MCP config written: {oc_config_path}")
+    return True
+
+
+def _prepare_opencode_config(config_path):
+    """Read existing opencode config or create fresh one with Crush format.
+
+    Detects Crush (mcp key) vs classic opencode (mcpServers key) and
+    writes the appropriate format.
+    """
+    import json
+
+    config = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                content = f.read()
+            import re
+            content = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
+            content = re.sub(r",\s*([}\]])$", r"\1", content)
+            config = json.loads(content) if content.strip() else {}
+        except (json.JSONDecodeError, Exception):
+            config = {}
+
+    is_crush = "mcp" in config and isinstance(config["mcp"], dict)
+
+    toolrecall_entry = {
+        "type": "local",
+        "command": "toolrecall",
+        "args": ["mcp"],
+        "enabled": True,
+    }
+
+    if is_crush:
+        config["mcp"]["toolrecall"] = toolrecall_entry
+    else:
+        if "mcpServers" not in config:
+            config["mcpServers"] = {}
+        config["mcpServers"]["toolrecall"] = {
+            "command": "toolrecall",
+            "args": ["mcp"],
+        }
+        config.pop("mcp", None)
+
+    if is_crush:
+        config.pop("$schema", None)
+        config.setdefault("$schema", "https://opencode.ai/config.json")
+
+    return config
 
 
 def cmd_restart():
