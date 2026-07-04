@@ -8,18 +8,31 @@
 
 ## Architecture
 
-```
-            ┌─────────────────────────┐
-   agent 1   │   toolrecall daemon     │
-   agent 2   │   ┌─────────────────┐   │   ┌────────┐
-   agent 3 ──┤──│ MCPMultiplexer  │───┼──→│ github │
-             │   │                 │   │   ├────────┤
-             │   │  lazy start     │───┼──→│  time  │
-             │   │  idle reaper    │   │   ├────────┤
-             │   │  auto-reconnect  │───┼──→│ fetch  │
-             │   └─────────────────┘   │   └────────┘
-             └─────────────────────────┘
-```
+```mermaid
+flowchart LR
+    subgraph Agents["Agents"]
+        A1["agent 1"]
+        A2["agent 2"]
+        A3["agent 3 ···"]
+    end
+
+    subgraph TR["toolrecall daemon"]
+        MUX["MCPMultiplexer<br/>lazy start · idle reaper<br/>auto-reconnect"]
+    end
+
+    subgraph Downstream["Downstream Servers"]
+        G["github"]
+        T["time"]
+        F["fetch"]
+        E["···"]
+    end
+
+    Agents --> MUX
+    MUX --> G
+    MUX --> T
+    MUX --> F
+    MUX --> E
+
 
 - **Single daemon** — all agents share one persistent process
 - **Lazy loading** — servers boot *only* on first call, not at daemon start

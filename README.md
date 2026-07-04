@@ -95,36 +95,45 @@ This means you can run `toolrecall status` on a fresh install and it "just works
 
 ## Architecture
 
-```
-[ Any Python process ]     [ Claude Code ]   [ Cursor IDE ]   [ Hermes Agent ]
-       │ (shim .pth)              │                │               │
-       ▼                          │                │               │
-+─────────────────────+            │                │               │
-│  Shim (transparent) │            │                │               │
-│  open() → cached    │            │                │               │
-│  subprocess → cache │            │                │               │
-+─────────┬───────────┘            │                │               │
-          │                        │                │               │
-          │              +─────────┴────────┬───────┴───────────────┘
-          │              │  Standard stdio MCP   OR   HTTP (:8569)
-          │              +────────────────────┬──────────────────────+
-          │                                  │
-+─────────▼──────────────────────────────────▼────────────────────+
-│                  ToolRecall Daemon                                 │
-│  ┌─────────────────────────────┐                                  │
-│  │   In-Memory LRU (Cache)     │                                  │
-│  └──────────────┬──────────────┘                                  │
-│  ┌──────────────▼──────────────┐                                  │
-│  │   SQLite WAL (Persistent)   │                                  │
-│  └─────────────────────────────┘                                  │
-│  ┌─────────────────────────────┐                                  │
-│  │   MCP Server Multiplexer    │                                  │
-│  └──────────────┬──────────────┘                                  │
-+─────────────────┼────────────────+
-                  │ Lazy-Loaded stdio Subprocesses
-+─────────────────▼────────────────+
-│ [ Downstream MCP: GitHub / Time ]  │
-+────────────────────────────────────+
+```mermaid
+flowchart TB
+    subgraph Agents["Agents"]
+        A1["Any Python Process<br/>(Hermes, Claude Code, Cursor, Aider)"]
+        A2["MCP Agent<br/>(opencode, Claude Code CLI, Cline)"]
+        A3["HTTP Client<br/>(any OpenAI-compatible SDK)"]
+    end
+
+    subgraph Bridges["Bridges"]
+        B1["Python Shim<br/>open() → cached<br/>subprocess → cached"]
+        B2["MCP Bridge<br/>stdio → UDS"]
+        B3["Forward Proxy<br/>HTTP GET/POST → UDS"]
+    end
+
+    subgraph Daemon["ToolRecall Daemon"]
+        D1["In-Memory LRU<br/>20MB, warm"]
+        D2["SQLite WAL<br/>cache.db"]
+        D3["MCP Multiplexer<br/>GitHub · Time · Fetch · …"]
+        D4["Security Gate<br/>Path allowlist · Blocklist<br/>Cognitive Scan"]
+        D5["Context Tracker<br/>Checkpoint-based dirty-file tracking"]
+    end
+
+    A1 -- ".pth auto-patches" --> B1
+    A2 -- "MCP stdio" --> B2
+    A3 -- "HTTP :8569" --> B3
+
+    B1 --> D1
+    B2 --> D1
+    B3 --> D1
+
+    D1 --> D2
+    D1 --> D3
+    D1 --> D4
+    D1 --> D5
+
+    D3 --> M1["GitHub MCP"]
+    D3 --> M2["Time MCP"]
+    D3 --> M3["Fetch MCP"]
+    D3 --> M4["…"]
 ```
 
 **Shim layer (at the OS level):** When `tr_shim.pth` is in `site-packages`, every Python process on the machine auto-patches `builtins.open()` and `subprocess.run()` — no imports needed. This is the truly agent-agnostic path: any Python agent (Hermes, Claude Code, Cursor, Aider, Cline) transparently benefits without any configuration.

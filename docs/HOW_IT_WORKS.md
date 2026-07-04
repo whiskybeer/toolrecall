@@ -40,22 +40,21 @@ toolrecall.shim.apply()
 
 ## The Core Loop (MCP bridge — tool caching)
 
-```
-Agent: "read main.py"
+```mermaid
+flowchart TD
+    Agent["Agent: read main.py"]
+    LRU{"In-Memory LRU hit?"}
+    SQL{"SQLite hit?"}
+    Fresh["Execute real read<br/>Prime LRU + SQLite<br/>Return fresh"]
+    Return["Return cached bytes"]
 
-ToolRecall checks:
-  ┌─ In-Memory LRU hit? ──────────────────┐
-  │  YES ✔️  ~0.001ms  → Return cached    │
-  └────────────────────────────────────────┘
-       │ NO
-  ┌─ SQLite hit? ──────────────────────────┐
-  │  YES ✔️  ~7ms  → Prime LRU, return    │
-  └────────────────────────────────────────┘
-       │ NO (miss)
-  ┌─ Execute real read_file() ─────────────┐
-  │  → Prime LRU + SQLite                  │
-  │  → Return fresh result                 │
-  └────────────────────────────────────────┘
+    Agent --> LRU
+    LRU -- "YES ✔️ ~0.001ms" --> Return
+    LRU -- "NO" --> SQL
+    SQL -- "YES ✔️ ~7ms → Prime LRU" --> Return
+    SQL -- "NO (miss)" --> Fresh
+    Fresh --> Return
+
 ```
 
 **The lookup is always validated against the file's mtime.** If mtime changed,

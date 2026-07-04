@@ -11,13 +11,16 @@ ToolRecall caches **OS-level I/O** (file reads, terminal commands), but it does 
 
 A simple agent workflow demonstrates the problem:
 
-```
-Turn 1:  read_file("cache.py")    →  12,466 tokens enter context
-Turn 2:  read_file("daemon.py")   →  11,528 tokens enter context
-Turn 3:  read_file("cache.py")    →  12,466 tokens enter context AGAIN
-Turn 4:  read_file("config.py")   →   4,301 tokens enter context
-         ...
-Turn 20: context = ~200,000 tokens  →  O(n²) attention cost is HUGE
+```mermaid
+flowchart LR
+    T1["Turn 1: read_file(cache.py) → 12,466 tokens"]
+    T2["Turn 2: read_file(daemon.py) → 11,528 tokens"]
+    T3["Turn 3: read_file(cache.py) → 12,466 tokens AGAIN"]
+    T4["Turn 4: read_file(config.py) → 4,301 tokens"]
+    TN["Turn 20: context = ~200,000 tokens → O(n²) attention cost"]
+
+    T1 --> T2 --> T3 --> T4 --> TN
+
 ```
 
 The file content from turns 1-2 is still in context, even though the agent has long since finished working with it. The agent **already has the data it needs** in its reasoning output — the raw file content is redundant overhead.

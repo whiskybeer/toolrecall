@@ -4,71 +4,41 @@
 
 ToolRecall previously had **three independent access paths** — each with its own caching process:
 
-```
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│  Hermes      │   │  MCP Server  │   │  HTTP Proxy  │
-│  (init)      │   │  (mcp)       │   │  (serve)     │
-├──────────────┤   ├──────────────┤   ├──────────────┤
-│ In-Memory    │   │ In-Memory    │   │ In-Memory    │
-│ LRU (~20MB)  │   │ LRU (~20MB)  │   │ LRU (~20MB)  │
-├──────────────┤   ├──────────────┤   ├──────────────┤
-│ SQLite (WAL) │   │ SQLite (WAL) │   │ SQLite (WAL) │
-│  cache.db    │   │  cache.db    │   │  cache.db    │
-└──────────────┘   └──────────────┘   └──────────────┘
-        ▲                                    
-        │ same DB file, but...
-        │ 
-   Process Boundary ──────────────────────────
-        │ 
-   ❌ Everyone starts cold (empty LRU)
-   ❌ Three processes = ~60MB RAM
-   ❌ ~200ms Startup for MCP/HTTP
-   ❌ Caches compete against each other
+```mermaid
+flowchart LR
+    subgraph Before["Before (v0.7.0–v0.7.2): Three Independent Caches"]
+        H["Hermes<br/>In-Memory LRU<br/>SQLite"]
+        M["MCP Server<br/>In-Memory LRU<br/>SQLite"]
+        P["HTTP Proxy<br/>In-Memory LRU<br/>SQLite"]
+    end
+    H -. "same cache.db" .-> DB1["cache.db"]
+    M -. "same cache.db" .-> DB1
+    P -. "same cache.db" .-> DB1
+
 ```
 
 **Problem:** The three LRUs are *not synchronized*. Hermes caches file A in its LRU. The MCP Server has an empty LRU and reads file A from SQLite (7ms) — even though it could have fetched it in 0.001ms from a shared memory layer.
 
 ## 2. The Solution: One Daemon, Three Bridges
 
-```
-                    ╔════════════════════════════╗
-                    ║   ToolRecall Daemon        ║
-                    ║   (toolrecall daemon)      ║
-                    ║                            ║
-                    ║   ┌──────────────────┐     ║
-                    ║   │  In-Memory LRU   │     ║
-                    ║   │  (20MB, warm)    │     ║
-                    ║   └────────┬─────────┘     ║
-                    ║            │               ║
-                    ║   ┌────────▼─────────┐     ║
-                    ║   │  Singleton SQLite │     ║
-                    ║   │  Connection       │     ║
-                    ║   │  RLock-guarded    │     ║
-                    ║   │  WAL + cache.db  │     ║
-                    ║   │  .close()=commit │     ║
-                    ║   │  +release; __del │     ║
-                    ║   │  safety for ex.  │     ║
-                    ║   └────────┬─────────┘     ║
-                    ║            │               ║
-                    ║   ┌────────▼─────────┐     ║
-                    ║   │  IPC Server      │     ║
-                    ║   │  UDS Socket      │     ║
-                    ║   │  /run/user/$UID/tc.sock  │     ║
-                    ║   └──────────────────┘     ║
-                    ╚════════════════════════════╝
-                              │ UDS
-       ┌──────────────────────┼──────────────────────┐
-       │                      │                      │
-       ▼                      ▼                      ▼
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ Hermes Client│    │  MCP Bridge  │    │  HTTP Bridge │
-│              │    │              │    │              │
-│ from         │    │ toolrecall   │    │ toolrecall   │
-│ toolrecall   │    │ mcp          │    │ serve        │
-│ .client      │    │              │    │              │
-│ import *     │    │ stdin/stdout │    │ HTTP GET/POST│
-│              │    │   → UDS      │    │   → UDS      │
-└──────────────┘    └──────────────┘    └──────────────┘
+```mermaid
+flowchart TB
+    subgraph Daemon["ToolRecall Daemon"]
+        direction TB
+        LRU["In-Memory LRU<br/>20MB, warm"]
+        SQL["Singleton SQLite<br/>RLock-guarded<br/>WAL + cache.db"]
+        IPC["IPC Server<br/>UDS Socket<br/>/run/user/$UID/tc.sock"]
+    end
+
+    subgraph Bridges["Three Bridges"]
+        direction LR
+        C1["Hermes Client<br/>from toolrecall.client<br/>import *"]
+        C2["MCP Bridge<br/>toolrecall mcp<br/>stdio → UDS"]
+        C3["HTTP Bridge<br/>toolrecall serve<br/>HTTP GET/POST → UDS"]
+    end
+
+    Daemon -- "UDS" --> Bridges
+
 ```
 
 ### What exactly happens?
@@ -184,17 +154,20 @@ With the daemon's 16-thread `ThreadPoolExecutor`, this caused:
 
 ### After (v0.7.3+): Singleton + RLock
 
-```
-  ┌──────────────────────────────────────────┐
-  │  _get_db()                                │
-  │                                           │
-  │  1. Acquire RLock (recursive)             │
-  │  2. Lazy-init singleton _db_real          │
-  │  3. Return _DBConnection(_db_real)        │
-  │  4. Caller does work                      │
-  │  5. .close() → commit + release RLock     │
-  │     __del__  → release on GC (safety net) │
-  └──────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    DB["_get_db()"]
+    RLock["Acquire RLock (recursive)"]
+    Init["Lazy-init singleton _db_real"]
+    Return["Return _DBConnection(_db_real)"]
+    Work["Caller does work"]
+    Close[".close() → commit + release RLock"]
+    Del["__del__ → release on GC (safety net)"]
+
+    DB --> RLock --> Init --> Return --> Work --> Close
+    Work -. "on exception" .-> Del
+    Close -. "on forgotten close" .-> Del
+
 ```
 
 **Design decisions:**
