@@ -23,6 +23,7 @@ BUILTIN_SERVERS: dict[str, tuple[str, list[str]]] = {
     "sequential-thinking": (sys.executable, ["-m", "toolrecall.mcp_seqthink"]),
     "github": (sys.executable, ["-m", "toolrecall.mcp_github"]),
     "fetch": (sys.executable, ["-m", "toolrecall.mcp_fetch"]),
+    "cache-fs": (sys.executable, ["-m", "toolrecall.mcp_cache_fs"]),
 }
 
 # ─── External server registry: well-known MCP servers via uvx ───

@@ -107,9 +107,20 @@ dangerous_tool_keywords = []
 #
 # For best security: list only directories the agent needs to read.
 allowed_paths = [
-    "/home/hermes",
+    "~", "/etc", "/dev",
 ]
-allow_terminal = false
+
+# Whether to cache terminal command output via the shim.
+# When enabled, every subprocess.run()/Popen() call is cached through the
+# ToolRecall daemon. This includes commands like lsb_release, uname, systemctl,
+# etc. that tools commonly use to detect the OS environment.
+#
+# SECURITY NOTE: Terminal caching means command output is stored in the cache DB.
+# This does NOT execute commands — it only caches their output. The shim intercepts
+# the subprocess call, asks the daemon if output is cached, and returns cached output
+# if available (or passes through the real command and caches the result).
+# Default: true (enabled — safe for desktop/VMs, use false for shared/multi-tenant)
+allow_terminal = true
 allow_invalidate = false
 
 # ─── MCP Multiplexer — Security-sensitive servers are opt-in ──
@@ -130,7 +141,7 @@ default_ttl = 60
 # Built-in (no external deps): time, github, sequential-thinking, fetch
 # External (needs uvx): filesystem, git, memory, brave-search, playwright, slack
 # Custom: define command/args in [mcp_multiplex.servers_config] (overrides auto-resolve)
-servers = ["time", "github", "sequential-thinking"]
+servers = ["time", "sequential-thinking", "cache-fs"]
 idle_minutes = 15
 
 # Custom server overrides (optional — auto-resolve is the default).

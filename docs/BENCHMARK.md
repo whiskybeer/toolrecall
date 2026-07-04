@@ -6,7 +6,7 @@
 
 In a single 13-hour development session building the ToolRecall MCP Multiplexer, ToolRecall achieved a **91% file cache hit rate**, intercepting **827 tool calls** locally that would have otherwise triggered full OS execution.
 
-> **⚠️ Token Count Correction:** The original benchmark claimed 141.1M tokens saved. This was inflated by a **double-counting bug** in the `tokens_intercepted` counter (fixed in v0.3.2). Tokens were counted on every cache hit (in-memory and SQLite replay), accumulating ~99× the real unique content. The hit rates, timing data, and architecture insights below remain accurate. Real unique content cached: **~55K tokens across 13 project files.**
+> **⚠️ Token Count Correction:** The original benchmark claimed 141.1M tokens saved. This was inflated by a **double-counting bug** in the `tokens_read_from_disk` counter (fixed in v0.3.2). Tokens were counted on every cache hit (in-memory and SQLite replay), accumulating ~99× the real unique content. The hit rates, timing data, and architecture insights below remain accurate. Real unique content cached: **~55K tokens across 13 project files.**
 
 This benchmark explains the math behind this seemingly impossible number and how ToolRecall solves the fundamental scaling problem of LLM context windows.
 

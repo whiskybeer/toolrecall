@@ -18,10 +18,14 @@ class TestFileCache(unittest.TestCase):
     def setUp(self):
         # Re-assert our DB path (other test modules may have changed it)
         os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
-        # Reset persistent stats connection so it points to our DB
-        from toolrecall.cache import _stats_conn
-        import toolrecall.cache as _c
-        _c._stats_conn = None
+        # Reset singleton DB connection so it re-opens with test DB path
+        from toolrecall._db import _db_lock, _db_real
+        import toolrecall._db as _db_mod
+        _db_lock.acquire()
+        if _db_real is not None:
+            _db_real.close()
+            _db_mod._db_real = None
+        _db_lock.release()
         if os.path.exists(test_db_path):
             os.remove(test_db_path)
         _init()
@@ -91,7 +95,7 @@ class TestFileCache(unittest.TestCase):
                 os.remove(large_file)
 
     def test_single_counting_file_cache(self):
-        """Prove tokens_intercepted is counted exactly once per unique file (disk-read), not on cache hits."""
+        """Prove tokens_read_from_disk is counted exactly once per unique file (disk-read), not on cache hits."""
         from toolrecall.cache import get_stats, reset_stats, _estimate_tokens
 
         reset_stats()
@@ -107,11 +111,11 @@ class TestFileCache(unittest.TestCase):
         self.assertFalse(r1.get("cached"))
 
         stats_after_first = get_stats().get("file_cache", {})
-        tokens_intercepted = stats_after_first.get("tokens_intercepted", 0)
+        tokens_read_from_disk = stats_after_first.get("tokens_read_from_disk", 0)
         self.assertEqual(
-            tokens_intercepted,
+            tokens_read_from_disk,
             expected_tokens,
-            f"First disk-read should count tokens exactly once (got {tokens_intercepted}, expected {expected_tokens})"
+            f"First disk-read should count tokens exactly once (got {tokens_read_from_disk}, expected {expected_tokens})"
         )
 
         # 2nd read: in-memory hit → NO new tokens
@@ -125,7 +129,7 @@ class TestFileCache(unittest.TestCase):
         self.assertTrue(r3.get("cached"))
 
         stats_after_three = get_stats().get("file_cache", {})
-        tokens_after_three = stats_after_three.get("tokens_intercepted", 0)
+        tokens_after_three = stats_after_three.get("tokens_read_from_disk", 0)
         self.assertEqual(
             tokens_after_three,
             expected_tokens,

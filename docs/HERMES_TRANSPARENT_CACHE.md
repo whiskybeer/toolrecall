@@ -29,7 +29,7 @@ at session start. The agent still calls native tools — but responses come from
 ### Enable
 
 ```toml
-# ~/.toolrecall/config.toml
+# ~/.config/toolrecall/toolrecall.toml
 [hermes]
 transparent_cache = "transparent"
 ```

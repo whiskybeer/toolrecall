@@ -18,7 +18,7 @@ toolrecall daemon --foreground
 ## 2. "Access Denied" when reading files
 **Symptom:** Your agent tries to read a file but gets an error: `Access Denied: Path not in allowed_paths`.
 **Cause:** ToolRecall's WAF (Security Sandbox) is blocking the read to prevent prompt injection.
-**Fix:** Edit your `~/.toolrecall/config.toml` and add the required directory to `allowed_paths`.
+**Fix:** Edit your `~/.config/toolrecall/toolrecall.toml` and add the required directory to `allowed_paths`.
 ```toml
 [mcp]
 allowed_paths = [
@@ -31,7 +31,7 @@ allowed_paths = [
 ## 3. Terminal commands are not executing
 **Symptom:** The agent tries to run `git status`, but it is blocked.
 **Cause:** By default, shell execution is strictly disabled.
-**Fix:** Set `allow_terminal = true` in `~/.toolrecall/config.toml`.
+**Fix:** Set `allow_terminal = true` in `~/.config/toolrecall/toolrecall.toml`.
 
 ## 4. MCP Server is returning outdated data
 **Symptom:** You merged a PR on GitHub, but the agent still sees it as "Open".
@@ -113,3 +113,66 @@ curl -s 'http://localhost:8569/cached_read?path=../../etc/shadow'
 # → Should return "Access Denied", not host content
 ```
 **Explanation:** Security Gate runs **inside the daemon process**, independent of the host OS. As long as the daemon runs in the container, the WAF is active. The host's `/etc/shadow` is invisible anyway — container isolation + WAF = defense in depth.
+
+## 11. systemd: Daemon active but socket not found
+**Symptom:** `systemctl --user status` shows `active (running)`, but the UDS socket file doesn't appear in `/run/user/$UID/`.
+**Cause:** `PrivateTmp=true` in the systemd service file isolates `/tmp` and `/run/user/$UID/` — the socket is created inside the private namespace, invisible to other processes.
+**Fix:** Set `PrivateTmp=false` in the service file:
+```ini
+[Service]
+PrivateTmp=false
+```
+Then reload + restart:
+```bash
+systemctl --user daemon-reload
+systemctl --user restart toolrecall-daemon
+```
+
+## 12. systemd: Daemon fails on stop with exit code 1
+**Symptom:** `systemctl --user stop` takes >90s, then times out. Journal shows `SystemExit: 0` but systemd reports `FAILURE`.
+**Cause:** The signal handler calls `sys.exit(0)`, which is caught by a bare `except BaseException` and re-raised as `sys.exit(1)`.
+**Fix:** Update to v0.7.3+ or apply this patch in `toolrecall/daemon.py`:
+```python
+try:
+    _server_instance.start()
+except SystemExit:
+    raise  # Let clean exits propagate
+except BaseException:
+    traceback.print_exc()
+    sys.exit(1)
+```
+
+## 13. Stale socket blocking restart
+**Symptom:** After a crash, the daemon won't start — "Address already in use" or socket file exists but is stale.
+**Cause:** A previous daemon process was killed (SIGKILL) without cleaning up the socket.
+**Fix:**
+```bash
+rm -f /run/user/$UID/toolrecall.sock
+pkill -f "toolrecall daemon"
+systemctl --user start toolrecall-daemon
+```
+
+## 14. "database is locked" warnings in daemon logs
+**Symptom:** Journal repeatedly shows `UserWarning: ToolRecall: failed to record stats: database is locked`.
+**Cause (v0.7.0–v0.7.2):** `_record()` used a separate persistent connection (`_get_stats_conn`) that competed
+with `_get_db()` connections for SQLite's WAL lock. Each function opening a fresh connection + transaction
+caused lock contention.
+**Fix:** Upgrade to v0.7.3+. The cache now uses a **singleton SQLite connection protected by a
+`threading.RLock()`**. All DB access goes through `_get_db()` which returns a `_DBConnection` wrapper.
+`.close()` commits and releases the lock. `__del__` releases on GC for exception-path safety.
+
+If you can't upgrade, restart the daemon — it clears temporary lock states:
+```bash
+systemctl --user restart toolrecall-daemon
+```
+
+## 15. `cached_read()` hangs from Python CLI while daemon is running
+**Symptom:** Calling `cached_read()` in a Python script hangs or times out if the daemon is active.
+**Cause:** Both processes use the same SQLite DB. The daemon holds the singleton connection;
+the CLI process opens its own connection. SQLite's WAL lock contention causes the CLI to block.
+**Fix:** Use the daemon's interfaces instead of direct Python calls:
+- Via MCP: `toolrecall mcp`
+- Via HTTP: `curl http://localhost:8569/cached_read?path=/my/file`
+- Only use direct `cached_read()` imports when the daemon is stopped.
+
+This is by design — the daemon is the cache owner, not a shared library.

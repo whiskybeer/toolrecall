@@ -46,7 +46,7 @@ def _get_cache_mode() -> str:
     """
     cfg_path = os.environ.get(
         "TOOLRECALL_CONFIG",
-        os.path.expanduser("~/.toolrecall/config.toml")
+        os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
     )
     if not os.path.exists(cfg_path):
         return "separate"

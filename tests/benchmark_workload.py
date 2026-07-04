@@ -69,7 +69,7 @@ files_read = s1.get("file_cache_entries", 0)
 check(f"All {files_read} unique files read from disk",
       files_read == len(FILES),
       f"read {files_read} of {len(FILES)}")
-print(f"     Tokens saved (unique): {fc.get('tokens_intercepted', 0):,}")
+print(f"     Tokens saved (unique): {fc.get('tokens_read_from_disk', 0):,}")
 print(f"     Hits: {fc.get('hits', 0)}, Misses: {fc.get('misses', 0)}")
 
 # ════════════════════════════════════════════
@@ -85,8 +85,8 @@ for i in range(3):
 
 s2 = get_stats()
 fc2 = s2.get("file_cache", {})
-tokens_after_phase2 = fc2.get("tokens_intercepted", 0)
-tokens_phase1 = fc.get("tokens_intercepted", 0)
+tokens_after_phase2 = fc2.get("tokens_read_from_disk", 0)
+tokens_phase1 = fc.get("tokens_read_from_disk", 0)
 check("Tokens did NOT increase on re-reads",
       tokens_after_phase2 == tokens_phase1,
       f"phase1={tokens_phase1} phase2={tokens_after_phase2}")
@@ -112,7 +112,7 @@ for i in range(3):
 
 s3 = get_stats()
 fc3 = s3.get("file_cache", {})
-new_tokens = fc3.get("tokens_intercepted", 0) - tokens_after_phase2
+new_tokens = fc3.get("tokens_read_from_disk", 0) - tokens_after_phase2
 check(f"Tokens increased by {new_tokens:,} for 3 new files",
       new_tokens > 0,
       f"no increase")
@@ -123,7 +123,7 @@ check(f"Tokens increased by {new_tokens:,} for 3 new files",
 print("\n─── PHASE 4: Cross-session (simulated daemon restart) ───")
 
 from toolrecall.cache import _file_cache
-tokens_before_restart = fc3.get("tokens_intercepted", 0)
+tokens_before_restart = fc3.get("tokens_read_from_disk", 0)
 
 # Clear in-memory LRU (simulates daemon restart)
 _file_cache.clear()
@@ -137,8 +137,8 @@ for f in FILES[:4]:
 s4 = get_stats()
 fc4 = s4.get("file_cache", {})
 check("Tokens unchanged after daemon restart",
-      fc4.get("tokens_intercepted", 0) == tokens_before_restart,
-      f"{tokens_before_restart} → {fc4.get('tokens_intercepted', 0)}")
+      fc4.get("tokens_read_from_disk", 0) == tokens_before_restart,
+      f"{tokens_before_restart} → {fc4.get('tokens_read_from_disk', 0)}")
 check("Hits increased (SQLite promoted to In-Memory)",
       fc4.get("hits", 0) > fc3.get("hits", 0),
       f"before: {fc3.get('hits', 0)}, after: {fc4.get('hits', 0)}")
@@ -164,7 +164,7 @@ for cmd in ["hostname", "pwd"]:
 
 ss = get_stats()
 tc = ss.get("terminal_cache", {})
-print(f"     Terminal: {tc.get('hits',0)} hits, {tc.get('misses',0)} misses, {tc.get('tokens_intercepted',0)} tokens")
+print(f"     Terminal: {tc.get('hits',0)} hits, {tc.get('misses',0)} misses, {tc.get('tokens_read_from_disk',0)} tokens")
 
 # ════════════════════════════════════════════
 # PHASE 6: Code execution cache
@@ -184,7 +184,7 @@ for code in codes:
 
 ss2 = get_stats()
 cc = ss2.get("code_cache", {})
-print(f"     Code: {cc.get('hits',0)} hits, {cc.get('misses',0)} misses, {cc.get('tokens_intercepted',0)} tokens")
+print(f"     Code: {cc.get('hits',0)} hits, {cc.get('misses',0)} misses, {cc.get('tokens_read_from_disk',0)} tokens")
 
 # ════════════════════════════════════════
 # PHASE 7: Final report
@@ -206,7 +206,7 @@ total_tokens = 0
 total_cost = 0
 for emoji, key in layers.items():
     d = final.get(key, {})
-    tokens = d.get("tokens_intercepted", 0)
+    tokens = d.get("tokens_read_from_disk", 0)
     hits = d.get("hits", 0)
     misses = d.get("misses", 0)
     rate = d.get("hit_rate", "0%")
@@ -236,7 +236,7 @@ _conn.row_factory = _s3.Row
 old_bug_file = sum(max(1, r['b'] // 3) * r['hits'] 
                    for r in _conn.execute('SELECT LENGTH(content) as b, hits FROM file_cache').fetchall())
 _conn.close()
-old_bug = old_bug_file + total_tokens - (final.get("file_cache", {}).get("tokens_intercepted", 0))
+old_bug = old_bug_file + total_tokens - (final.get("file_cache", {}).get("tokens_read_from_disk", 0))
 print(f"     Alter Bug (alle hits):{old_bug:>10,} tokens = ${old_bug/1_000_000 * 2:.4f} (×{old_bug/max(total_tokens,1):.0f})")
 print(f"     Echte unique Tokens: ~55K (13 files)")
 

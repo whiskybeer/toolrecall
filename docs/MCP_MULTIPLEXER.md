@@ -30,7 +30,7 @@
 ## Configuration
 
 ```toml
-# ~/.toolrecall/config.toml
+# ~/.config/toolrecall/toolrecall.toml
 [mcp_multiplex]
 enabled = true
 transparent_cache = true

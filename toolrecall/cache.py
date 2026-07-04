@@ -14,9 +14,10 @@ Architecture:
                    │ on miss / write-back
                    ▼
   ┌──────────────────────────────────────┐
-  │  SQLite (file_cache table)           │  ← ~7ms, once per file
+  │  Singleton SQLite (with _db())       │  ← context manager, RLock-guarded
   │  Persists across sessions            │
   │  Serves HTTP proxy mode              │
+  │  Auto commit/release on exit        │
   └──────────────────────────────────────┘
 
 Secondary caches (terminal, script, code) use SQLite directly.
@@ -29,140 +30,27 @@ from pathlib import Path
 from threading import Lock
 from collections import OrderedDict
 from toolrecall.config import load_config
+from toolrecall._db import _db
+from toolrecall._db import _init as _db_init
+from toolrecall._db import _hash
+from toolrecall._db import (
+    SENSITIVE_FILE_PATTERNS,
+    SENSITIVE_FILE_EXTENSIONS,
+    SENSITIVE_BASENAMES,
+)
+
+# Re-export for test compatibility: toolrecall.cache._init() calls _db_init with SCHEMA
+def _init():
+    _db_init(schema=SCHEMA)
 
 config = load_config()
 
 
-# ─── Hash Helper (pluggable algorithm) ─────────────────────
-# Controlled by [cache].hash_algorithm in config.toml.
-# "md5" (default) — fast, backward-compatible, fine for cache keying.
-# "sha256" — slightly slower, better cryptographic hygiene.
-_HASH_ALGORITHM = str(config.get("cache", "hash_algorithm", default="md5") or "md5").lower()
-
-
-def _hash(value: str) -> str:
-    """Hash a string for cache keying using the configured algorithm.
-    Algorithm is set via [cache].hash_algorithm in config.toml.
-    MD5 is the default — fast, non-cryptographic here, keeps cache keys valid.
-    SHA256 is available for stricter environments.
-    """
-    if _HASH_ALGORITHM == "sha256":
-        return hashlib.sha256(value.encode()).hexdigest()
-    return hashlib.md5(value.encode()).hexdigest()
-
-
-# ─── Sensitive File Blocklist ───────────────────────────────
-#
-# These patterns block file paths from being cached or read through
-# the ToolRecall cache layer.  The blocklist applies at EVERY entry
-# point: cached_read() (direct), SecurityGate.check_read_path() (daemon),
-# and cache invalidations.
-#
-# Why not just rely on allowed_paths?
-#   - allowed_paths is an allowlist — it requires explicit configuration
-#   - When empty, it means "allow everything" (common in dev/single-user)
-#   - A blocklist catches the obvious sensitive files EVEN when the
-#     user hasn't configured an allowlist yet
-#   - Both mechanisms compose: allowlist narrows scope FIRST,
-#     blocklist catches slips SECOND
-#
-# Each pattern is compiled lazily on first use.  A path matching ANY
-# entry is rejected from caching/reading.
-
-# Compiled lazily on first call to _is_sensitive_path()
-_SENSITIVE_PATTERNS = None
-
-# Pattern definitions (raw strings — compiled on first use)
-SENSITIVE_FILE_PATTERNS = [
-    # Shell configs / credentials
-    r"(^|/)\.bashrc($|/)",                        # .bashrc
-    r"(^|/)\.zshrc($|/)",
-    r"(^|/)\.profile($|/)",                       # .profile
-    r"(^|/)\.env(\.[a-zA-Z]+)?$",                 # .env, .env.local, .env.production
-    r"(^|/)\.gitconfig$",                         # git config (may hold tokens)
-    r"(^|/)\.netrc$",                             # machine credentials
-    r"(^|/)\.npmrc$",                             # npm registry tokens
-    r"(^|/)\.dockercfg$",                         # Docker registry auth
-    r"(^|/)\.docker/config\.json$",               # Docker config (may hold creds)
-
-    # SSH
-    r"(^|/)\.ssh/",                               # SSH keys, config, authorized_keys
-
-    # Token / key files
-    r"(^|/)\.token$",                             # Generic token file
-    r"(^|/)\.secret$",                            # Generic secret file
-    r"(^|/)credentials\.json$",                   # GCP / service account keys
-    r"(^|/)credentials\.ini$",                    # AWS / generic
-    r"(^|/)(id_rsa|id_ecdsa|id_ed25519)($|/|\.)",  # SSH private keys by name
-
-    # Common config dirs that hold secrets
-    r"(^|/)\.config/gcloud/",                     # GCP service account keys
-    r"(^|/)\.config/gh/",                         # GitHub CLI tokens
-    r"(^|/)\.aws/",                               # AWS credentials + config
-    r"(^|/)\.azure/",                             # Azure CLI credentials
-
-    # Session/cookies
-    r"(^|/)cookie\.txt$",                         # session cookies
-]
-
-# Sensitive file extensions (checked on splitext basename)
-SENSITIVE_FILE_EXTENSIONS = {".pem", ".key", ".cert", ".p12", ".pfx"}
-
-# Sensitive basenames — checked on os.path.basename only
-SENSITIVE_BASENAMES = frozenset({
-    ".env", ".token", ".secret",
-    "credentials.json", "credentials.ini",
-    ".netrc", ".gitconfig", ".npmrc", ".dockercfg",
-})
-
-
-def _compile_sensitive_patterns():
-    """Compile regex patterns lazily (avoids import-time cost)."""
-    global _SENSITIVE_PATTERNS
-    if _SENSITIVE_PATTERNS is None:
-        _SENSITIVE_PATTERNS = [re.compile(p) for p in SENSITIVE_FILE_PATTERNS]
-    return _SENSITIVE_PATTERNS
-
-
-def _is_sensitive_path(path: str) -> bool:
-    """Check if a file path matches any sensitive-file pattern.
-
-    Returns True if the path SHOULD BE BLOCKED from caching/reading.
-    Used by cached_read() and SecurityGate.check_read_path().
-
-    Can be overridden per-task via the environment variable:
-        TOOLRECALL_ALLOW_SENSITIVE=true  # disables this block for one command
-
-    Note: This is a path-name check, not a content scan.  Renaming a
-    sensitive file to 'my-config.txt' bypasses it — but that's an
-    intentional choice by the user (they removed the protection by
-    moving the file). For stronger guarantees, combine with
-    allowed_paths allowlisting.
-    """
-    # Allow override — user explicitly wants to pass a secret
-    if os.environ.get("TOOLRECALL_ALLOW_SENSITIVE", "").lower() in ("1", "true", "yes"):
-        return False
-    # Normalize: expand ~, resolve symlinks, collapse /./ and ///
-    expanded = os.path.realpath(os.path.expanduser(path))
-
-    # Check regex patterns
-    patterns = _compile_sensitive_patterns()
-    for pat in patterns:
-        if pat.search(expanded):
-            print(f"[ToolRecall] Blocked read of sensitive file: {path} (matched pattern: {pat.pattern})")
-            return True
-
-    # Check sensitive extensions
-    _, ext = os.path.splitext(expanded)
-    if ext.lower() in SENSITIVE_FILE_EXTENSIONS:
-        return True
-
-    # Check basename for known sensitive filenames
-    basename = os.path.basename(expanded)
-    if basename in SENSITIVE_BASENAMES:
-        return True
-
-    return False
+# _hash, SENSITIVE_FILE_PATTERNS, SENSITIVE_FILE_EXTENSIONS, SENSITIVE_BASENAMES,
+# _compile_sensitive_patterns, _is_sensitive_path are imported from toolrecall._db.
+# We re-import _is_sensitive_path explicitly below for use within this module.
+from toolrecall._db import _is_sensitive_path as _is_sensitive_path
+from toolrecall._db import _compile_sensitive_patterns as _compile_sensitive_patterns
 
 
 # ─── In-memory file cache with LRU ──────────────────────────
@@ -271,8 +159,19 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     category TEXT PRIMARY KEY,
     hits INTEGER DEFAULT 0,
     misses INTEGER DEFAULT 0,
-    tokens_intercepted INTEGER DEFAULT 0
+    tokens_read_from_disk INTEGER DEFAULT 0,
+    tokens_saved INTEGER DEFAULT 0,
+    updated_at REAL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS access_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    path TEXT,
+    hit INTEGER NOT NULL,
+    tokens INTEGER DEFAULT 0,
+    cached_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_access_log_time ON access_log(cached_at DESC);
 CREATE INDEX IF NOT EXISTS idx_file_mtime ON file_cache(mtime);
 CREATE INDEX IF NOT EXISTS idx_terminal_expires ON terminal_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_file_path ON file_cache(path);
@@ -315,27 +214,6 @@ CREATE INDEX IF NOT EXISTS idx_api_expires ON api_cache(expires_at);
 """
 
 
-def _get_db():
-    cfg = load_config()
-    if cfg.storage_backend != "sqlite":
-        warnings.warn(f"ToolRecall: Backend '{cfg.storage_backend}' not yet implemented. Falling back to 'sqlite'.")
-
-    db_path = os.path.expanduser(cfg.cache_db)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _init():
-    conn = _get_db()
-    conn.executescript(SCHEMA)
-    conn.commit()
-    conn.close()
-
-
 def _estimate_tokens(text: str) -> int:
     """Estimate LLM token count: code-heavy ~2 char/token, English ~4.
     Weighted average ~3 char/token — better than len//4 for agent content.
@@ -345,69 +223,91 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
-_stats_conn: sqlite3.Connection | None = None
+def _record(category, hit: bool, tokens_read: int = 0, path: str = "", tokens_saved: int = 0):
+    """Track cache statistics + log access.
 
-def _get_stats_conn():
-    """Get a persistent connection for stats (avoids connect/disconnect per call).
-
-    ToolRecall's cache operations call _record() on every hit/miss — up to
-    hundreds per session. Opening a fresh sqlite3 connection for each call
-    adds measurable overhead. This cached connection lives for the module
-    lifetime.
+    - hit=True:  increments hit counter and tokens_saved
+    - hit=False: increments miss counter
+    - tokens_read: (only on disk-read miss) records how many tokens
+      were read from disk. NOT set on cache hits.
+    - path: optional file path for access logging
+    - tokens_saved: (only on cache hit) records how many tokens were
+      served from cache without disk I/O
     """
-    global _stats_conn
-    if _stats_conn is None:
-        _stats_conn = _get_db()
-    return _stats_conn
-
-
-def _record(category, hit: bool, tokens_intercepted: int = 0):
-    """Track cache statistics."""
-    conn = _get_stats_conn()
     try:
-        if hit:
-            conn.execute("""
-                INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
-                VALUES (?, 1, 0, 0)
-                ON CONFLICT(category) DO UPDATE SET hits = hits + 1
-            """, (category,))
-        else:
-            conn.execute("""
-                INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
-                VALUES (?, 0, 1, 0)
-                ON CONFLICT(category) DO UPDATE SET misses = misses + 1
-            """, (category,))
-        if tokens_intercepted:
-            conn.execute("""
-                INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
-                VALUES (?, 0, 0, ?)
-                ON CONFLICT(category) DO UPDATE SET tokens_intercepted = tokens_intercepted + ?
-            """, (category, tokens_intercepted, tokens_intercepted))
-        conn.commit()
+        with _db() as conn:
+            if hit:
+                conn.execute("""
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, tokens_saved, updated_at)
+                    VALUES (?, 1, 0, 0, 0, ?)
+                    ON CONFLICT(category) DO UPDATE SET
+                        hits = hits + 1,
+                        tokens_saved = tokens_saved + ?,
+                        updated_at = ?
+                """, (category, time.time(), tokens_saved, time.time()))
+            else:
+                conn.execute("""
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, updated_at)
+                    VALUES (?, 0, 1, 0, ?)
+                    ON CONFLICT(category) DO UPDATE SET
+                        misses = misses + 1,
+                        updated_at = ?
+                """, (category, time.time(), time.time()))
+            if tokens_read:
+                conn.execute("""
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, updated_at)
+                    VALUES (?, 0, 0, ?, ?)
+                    ON CONFLICT(category) DO UPDATE SET
+                        tokens_read_from_disk = tokens_read_from_disk + ?,
+                        updated_at = ?
+                """, (category, tokens_read, time.time(), tokens_read, time.time()))
+            # Access log — only record entries with a meaningful path
+            # (skip noise like terminal, mcp, api, browser cache hits without paths)
+            if path:
+                conn.execute("""
+                    INSERT INTO access_log (category, path, hit, tokens, cached_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (category, path, 1 if hit else 0, tokens_saved if hit else tokens_read, time.time()))
+                conn.execute("""
+                    DELETE FROM access_log WHERE id NOT IN (
+                        SELECT id FROM access_log ORDER BY cached_at DESC LIMIT 1000
+                    )
+                """)
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
 
 
-def _record_tokens_saved(category: str, tokens: int):
-    """Record tokens saved on a cache miss → disk-read (single count).
+def _record_tokens_read_from_disk(category: str, tokens: int, is_new_file: bool = True):
+    """Record tokens read from disk.
 
-    Unlike _record(hit=True, tokens_intercepted=...), this is called
-    exactly once per cache entry — on the first disk read that populates
-    the cache. Subsequent cache hits (SQLite or In-Memory) only increment
-    the hit counter, never re-count the token savings.
+    Args:
+        category: Cache category name
+        tokens: Estimated token count of the content
+        is_new_file: True = content was never in cache or mtime changed
+                      (counts toward tokens_read_from_disk).
+                      False = content was in SQLite but not in-memory
+                      (don't double-count — already counted on first read).
     """
     if tokens <= 0:
         return
-    conn = _get_stats_conn()
     try:
-        conn.execute("""
-            INSERT INTO cache_stats (category, hits, misses, tokens_intercepted)
-            VALUES (?, 0, 0, ?)
-            ON CONFLICT(category) DO UPDATE SET tokens_intercepted = tokens_intercepted + ?
-        """, (category, tokens, tokens))
-        conn.commit()
+        with _db() as conn:
+            if is_new_file:
+                conn.execute("""
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk)
+                    VALUES (?, 0, 0, ?)
+                    ON CONFLICT(category) DO UPDATE SET
+                        tokens_read_from_disk = tokens_read_from_disk + ?,
+                        updated_at = ?
+                """, (category, tokens, tokens, time.time()))
+            else:
+                conn.execute("""
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk)
+                    VALUES (?, 0, 0, 0)
+                    ON CONFLICT(category) DO UPDATE SET updated_at = ?
+                """, (category, time.time()))
     except Exception as e:
-        warnings.warn(f"ToolRecall: failed to record tokens saved: {e}")
+        warnings.warn(f"ToolRecall: failed to record tokens read from disk: {e}")
 
 
 # ─── FILE CACHE (hybrid: in-memory LRU + SQLite) ────────────
@@ -421,13 +321,11 @@ def _persist_file_to_sqlite(path: str, content: str, stat_result):
     """
     path_hash = _hash(path)
     try:
-        conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (path_hash, path, content, stat_result.st_mtime, stat_result.st_size, time.time()))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (path_hash, path, content, stat_result.st_mtime, stat_result.st_size, time.time()))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite persist failed for {path}: {e}")
 
@@ -448,33 +346,52 @@ def cached_read(path: str) -> dict:
         return {"error": "Security: path matches sensitive file pattern, refusing to read."}
 
     if not os.path.exists(path):
-        return {"error": f"File not found: {path}"}
+        hint = ""
+        basename = os.path.basename(path)
+        # Common toolrecall config locations
+        if basename in ("toolrecall.toml", "config.toml"):
+            for candidate in [
+                os.path.expanduser("~/.config/toolrecall/toolrecall.toml"),
+                os.path.expanduser("~/.toolrecall/config.toml"),
+            ]:
+                if os.path.exists(candidate):
+                    hint = f" Did you mean: {candidate}?"
+                    break
+            if not hint:
+                hint = " Run \"toolrecall init\" to create a default config."
+        return {"error": f"File not found: {path}.{hint}"}
 
     stat = os.stat(path)
 
     # ── 1. In-memory cache (fast path) ──
     entry = _file_cache.get(path)
     if entry and entry["mtime"] == stat.st_mtime:
-        _record("file_cache", hit=True)
+        _record("file_cache", hit=True, path=path, tokens_saved=_estimate_tokens(entry["content"]))
         return {"cached": True, "content": entry["content"], "path": path}
 
     # ── 2. SQLite cache (warm from previous session) ──
     path_hash = _hash(path)
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
-        ).fetchone()
-        conn.close()
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
+            ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None
 
     if row and row["mtime"] == stat.st_mtime:
         _file_cache.put(path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size})
-        _record("file_cache", hit=True)
+        _record("file_cache", hit=True, path=path, tokens_saved=_estimate_tokens(row["content"]))
         return {"cached": True, "content": row["content"], "path": path}  # ── 2. SQLite hit ──
-    _record("file_cache", hit=False)
+    _record("file_cache", hit=False, path=path)
+    # Count tokens_read_from_disk only for truly new content:
+    # - brand new file (never in SQLite) → row is None
+    # - file was modified (mtime changed) → row exists but stale
+    # If row exists with SAME mtime → SQLite hit should have caught it above
+    _row_exists = row is not None
+    _mtime_changed = _row_exists and row["mtime"] != stat.st_mtime
+    _is_new_file = row is None or _mtime_changed
 
     # ── 3. Cache miss — read from disk ──
 
@@ -490,7 +407,7 @@ def cached_read(path: str) -> dict:
         return {"error": str(e)}
 
     _file_cache.put(path, {"content": content, "mtime": stat.st_mtime, "size": stat.st_size})
-    _record_tokens_saved("file_cache", _estimate_tokens(content))
+    _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=_is_new_file)
 
     # Large files (>10 MB) go to SQLite only if they're "static data"
     # Small files always persist for cross-session reuse
@@ -550,12 +467,11 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
             return {"cached": True, "content": mem["content"], "skill": skill_name, "files": len(skill_files)}
 
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT content, cached_at FROM skill_cache WHERE skill_name = ?",
-            (skill_name,)
-        ).fetchone()
-        conn.close()
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT content, cached_at FROM skill_cache WHERE skill_name = ?",
+                (skill_name,)
+            ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite skill read failed: {e}")
         row = None
@@ -580,16 +496,14 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
 
     with _skill_cache_lock:
         _skill_cache[skill_name] = {"content": content, "cached_at": now}
-    _record_tokens_saved("skill_cache", _estimate_tokens(content))
+    _record_tokens_read_from_disk("skill_cache", _estimate_tokens(content))
 
     try:
-        conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO skill_cache (skill_name, content, file_count, cached_at)
-            VALUES (?, ?, ?, ?)
-        """, (skill_name, content, len(skill_files), now))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO skill_cache (skill_name, content, file_count, cached_at)
+                VALUES (?, ?, ?, ?)
+            """, (skill_name, content, len(skill_files), now))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite skill persist failed: {e}")
 
@@ -670,19 +584,15 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     now = time.time()
 
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT output, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
-            (cmd_hash,)
-        ).fetchone()
-
-        if row and row["expires_at"] > now:
-            conn.execute("UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,))
-            conn.commit()
-            conn.close()
-            _record("terminal_cache", hit=True)
-            return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
-        conn.close()
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT output, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
+                (cmd_hash,)
+            ).fetchone()
+            if row and row["expires_at"] > now:
+                conn.execute("UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,))
+                _record("terminal_cache", hit=True)
+                return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal read failed: {e}")
 
@@ -700,17 +610,15 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
 
     expires = now + (cacheable_ttl or 300)
     try:
-        conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, cached_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (cmd_hash, cmd, result.stdout, result.returncode, now, expires))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, cached_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (cmd_hash, cmd, result.stdout, result.returncode, now, expires))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal persist failed: {e}")
 
-    _record_tokens_saved("terminal_cache", _estimate_tokens(result.stdout))
+    _record_tokens_read_from_disk("terminal_cache", _estimate_tokens(result.stdout))
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
@@ -750,12 +658,11 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
     now = time.time()
 
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT output, exit_code, cached_at FROM script_cache WHERE script_hash = ?",
-            (path_hash,)
-        ).fetchone()
-        conn.close()
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT output, exit_code, cached_at FROM script_cache WHERE script_hash = ?",
+                (path_hash,)
+            ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite script read failed: {e}")
         row = None
@@ -782,17 +689,15 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
         result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
 
     try:
-        conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO script_cache (script_hash, script_path, args, output, exit_code, cached_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (path_hash, path, args, result.stdout, result.returncode, now))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO script_cache (script_hash, script_path, args, output, exit_code, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (path_hash, path, args, result.stdout, result.returncode, now))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite script persist failed: {e}")
 
-    _record_tokens_saved("script_cache", _estimate_tokens(result.stdout))
+    _record_tokens_read_from_disk("script_cache", _estimate_tokens(result.stdout))
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
@@ -814,12 +719,11 @@ def cached_exec(code: str, ttl: int = 0) -> dict:
     now = time.time()
 
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT output, exit_code, cached_at FROM code_cache WHERE code_hash = ?",
-            (code_hash,)
-        ).fetchone()
-        conn.close()
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT output, exit_code, cached_at FROM code_cache WHERE code_hash = ?",
+                (code_hash,)
+            ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite code read failed: {e}")
         row = None
@@ -841,17 +745,15 @@ def cached_exec(code: str, ttl: int = 0) -> dict:
     )
 
     try:
-        conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO code_cache (code_hash, code, output, exit_code, cached_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (code_hash, code, result.stdout, result.returncode, now))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO code_cache (code_hash, code, output, exit_code, cached_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (code_hash, code, result.stdout, result.returncode, now))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite code persist failed: {e}")
 
-    _record_tokens_saved("code_cache", _estimate_tokens(result.stdout))
+    _record_tokens_read_from_disk("code_cache", _estimate_tokens(result.stdout))
 
     return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
@@ -934,7 +836,7 @@ def cached_write(path: str, content: str) -> dict:
 
     if current == content:
         _record("write_cache", hit=True)
-        _record_tokens_saved("write_cache", _estimate_tokens(content))
+        _record_tokens_read_from_disk("write_cache", _estimate_tokens(content))
         return {"unchanged": True, "path": path}
 
     # Content differs — write
@@ -974,7 +876,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
         if old_string not in content:
             # new_string is there, old_string isn't → likely already applied
             _record("patch_cache", hit=True)
-            _record_tokens_saved("patch_cache", _estimate_tokens(new_string))
+            _record_tokens_read_from_disk("patch_cache", _estimate_tokens(new_string))
             return {"unchanged": True, "reason": "already_applied", "path": path}
         # Both present — check position
         idx_old = content.find(old_string)
@@ -982,7 +884,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
         if idx_new <= idx_old:
             # new_string appears at or before old_string — already applied
             _record("patch_cache", hit=True)
-            _record_tokens_saved("patch_cache", _estimate_tokens(new_string))
+            _record_tokens_read_from_disk("patch_cache", _estimate_tokens(new_string))
             return {"unchanged": True, "reason": "already_applied", "path": path}
 
     # Check: is old_string present at all?
@@ -1034,20 +936,15 @@ def cached_mcp_check(server: str, tool: str, arguments: dict = None, ttl: int = 
     now = time.time()
 
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT data, expires_at FROM mcp_cache WHERE request_hash = ?",
-            (request_hash,)
-        ).fetchone()
-
-        if row and row["expires_at"] > now:
-            conn.execute("UPDATE mcp_cache SET hits = hits + 1 WHERE request_hash = ?", (request_hash,))
-            conn.commit()
-            conn.close()
-            _record("mcp_cache", hit=True)
-            return {"cached": True, "data": row["data"], "server": server, "tool": tool}
-
-        conn.close()
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT data, expires_at FROM mcp_cache WHERE request_hash = ?",
+                (request_hash,)
+            ).fetchone()
+            if row and row["expires_at"] > now:
+                conn.execute("UPDATE mcp_cache SET hits = hits + 1 WHERE request_hash = ?", (request_hash,))
+                _record("mcp_cache", hit=True)
+                return {"cached": True, "data": row["data"], "server": server, "tool": tool}
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP cache read failed: {e}")
 
@@ -1063,25 +960,22 @@ def cached_mcp_store(request_hash: str, server: str, tool: str, arguments: dict,
     expires = now + ttl
     args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
     try:
-        conn = _get_db()
-        conn.execute("""
-            INSERT OR REPLACE INTO mcp_cache 
-            (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (request_hash, server, tool, args_json, data, now, expires))
-        conn.commit(); conn.close()
+        with _db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO mcp_cache 
+                (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (request_hash, server, tool, args_json, data, now, expires))
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP cache store failed: {e}")
 
-    _record_tokens_saved("mcp_cache", _estimate_tokens(data))
+    _record_tokens_read_from_disk("mcp_cache", _estimate_tokens(data))
 
 def invalidate_mcp_server(server: str):
     """Invalidate all cached items for a specific MCP server."""
     try:
-        conn = _get_db()
-        conn.execute("DELETE FROM mcp_cache WHERE mcp_server = ?", (server,))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("DELETE FROM mcp_cache WHERE mcp_server = ?", (server,))
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP server invalidate failed: {e}")
 
@@ -1110,19 +1004,20 @@ def get_stats() -> dict:
     """Get cache statistics (from SQLite + in-memory)."""
     stats = {}
     try:
-        conn = _get_db()
-        for row in conn.execute("SELECT * FROM cache_stats"):
-            total = row["hits"] + row["misses"]
-            stats[row["category"]] = {
-                "hits": row["hits"],
-                "misses": row["misses"],
-                "tokens_intercepted": row["tokens_intercepted"],
-                "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
-            }
-        for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache", "browser_cache"]:
-            r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
-            stats[f"{t}_entries"] = r[0]
-        conn.close()
+        with _db() as conn:
+            for row in conn.execute("SELECT * FROM cache_stats"):
+                total = row["hits"] + row["misses"]
+                stats[row["category"]] = {
+                    "hits": row["hits"],
+                    "misses": row["misses"],
+                    "tokens_read_from_disk": row["tokens_read_from_disk"],
+                    "tokens_saved": row["tokens_saved"],
+                    "updated_at": row["updated_at"],
+                    "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
+                }
+            for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache", "browser_cache"]:
+                r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
+                stats[f"{t}_entries"] = r[0]
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite stats failed: {e}")
 
@@ -1132,19 +1027,37 @@ def get_stats() -> dict:
     with _skill_cache_lock:
         stats["memory_skill_entries"] = len(_skill_cache)
 
+    # Recent access log (last 20 entries)
+    try:
+        with _db() as conn:
+            rows = conn.execute(
+                "SELECT category, path, hit, tokens, cached_at "
+                "FROM access_log ORDER BY cached_at DESC LIMIT 20"
+            ).fetchall()
+            stats["recent"] = [
+                {
+                    "category": r["category"],
+                    "path": r["path"],
+                    "hit": bool(r["hit"]),
+                    "tokens": r["tokens"],
+                    "ago": f"{time.time() - r['cached_at']:.1f}s",
+                }
+                for r in rows
+            ]
+    except Exception:
+        stats["recent"] = []
+
     return stats
 
 
 def reset_stats():
-    """Reset cache statistics counters (hits, misses, tokens_intercepted) without clearing cache entries."""
-    conn = _get_db()
+    """Reset cache statistics counters (hits, misses, tokens_read_from_disk, tokens_saved) without clearing cache entries."""
     try:
-        conn.execute("DELETE FROM cache_stats")
-        conn.commit()
+        with _db() as conn:
+            conn.execute("DELETE FROM cache_stats")
+            conn.execute("DELETE FROM access_log")
     except Exception as e:
         warnings.warn(f"ToolRecall: reset_stats failed: {e}")
-    finally:
-        conn.close()
 
 
 def invalidate_all():
@@ -1153,20 +1066,17 @@ def invalidate_all():
     with _skill_cache_lock:
         _skill_cache.clear()
 
-    conn = _get_db()
     try:
-        conn.execute("DELETE FROM file_cache")
-        conn.execute("DELETE FROM skill_cache")
-        conn.execute("DELETE FROM terminal_cache")
-        conn.execute("DELETE FROM script_cache")
-        conn.execute("DELETE FROM code_cache")
-        conn.execute("DELETE FROM mcp_cache")
-        conn.execute("DELETE FROM browser_cache")
-        conn.commit()
+        with _db() as conn:
+            conn.execute("DELETE FROM file_cache")
+            conn.execute("DELETE FROM skill_cache")
+            conn.execute("DELETE FROM terminal_cache")
+            conn.execute("DELETE FROM script_cache")
+            conn.execute("DELETE FROM code_cache")
+            conn.execute("DELETE FROM mcp_cache")
+            conn.execute("DELETE FROM browser_cache")
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite invalidate failed: {e}")
-    finally:
-        conn.close()
 
 
 def invalidate_file(path: str):
@@ -1175,17 +1085,14 @@ def invalidate_file(path: str):
     _file_cache.remove(path)
 
     h = _hash(path)
-    conn = _get_db()
     try:
-        conn.execute("DELETE FROM file_cache WHERE path_hash = ?", (h,))
-        conn.commit()
+        with _db() as conn:
+            conn.execute("DELETE FROM file_cache WHERE path_hash = ?", (h,))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite file invalidate failed: {e}")
-    finally:
-        conn.close()
 
 
-_init()
+_init()  # Uses re-exported wrapper with SCHEMA
 
 def refresh_file(path: str) -> dict:
     """Invalidate cache for a file and re-read it from disk in one call.
@@ -1203,17 +1110,32 @@ def refresh_file(path: str) -> dict:
 
 
 def garbage_collect() -> int:
-    """Remove expired cache entries and vacuum database to free disk space."""
+    """Remove expired cache entries, vacuum database, and reset stale stats.
+
+    Cache stats are reset every 24 hours to keep the hit/miss/read counters
+    representative of recent activity rather than cumulative since DB creation.
+    The updated_at timestamp tracks when each category was last reset.
+    """
     import time
     try:
-        conn = _get_db()
-        now = time.time()
-        c1 = conn.execute("DELETE FROM terminal_cache WHERE expires_at < ?", (now,)).rowcount
-        c2 = conn.execute("DELETE FROM mcp_cache WHERE expires_at < ?", (now,)).rowcount
-        conn.commit()
-        conn.execute("VACUUM")
-        conn.close()
-        return c1 + c2
+        with _db() as conn:
+            now = time.time()
+            c1 = conn.execute("DELETE FROM terminal_cache WHERE expires_at < ?", (now,)).rowcount
+            c2 = conn.execute("DELETE FROM mcp_cache WHERE expires_at < ?", (now,)).rowcount
+            ONE_DAY = 86400
+            c3 = conn.execute("""
+                UPDATE cache_stats SET
+                    hits = 0,
+                    misses = 0,
+                    tokens_read_from_disk = 0,
+                    tokens_saved = 0,
+                    updated_at = ?
+                WHERE updated_at > 0 AND updated_at < ?
+            """, (now, now - ONE_DAY)).rowcount
+        # VACUUM must run in its own connection (auto-commits, can't be in a transaction)
+        with _db() as conn:
+            conn.execute("VACUUM")
+        return c1 + c2 + c3
     except Exception as e:
         warnings.warn(f"ToolRecall GC failed: {e}")
         return -1
@@ -1237,26 +1159,23 @@ def cached_browser_check(
         ``{"cached": False}`` on miss.
     """
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT content, hits FROM browser_cache WHERE cache_key = ?",
-            (cache_key,),
-        ).fetchone()
-        if row:
-            conn.execute(
-                "UPDATE browser_cache SET hits = hits + 1 WHERE cache_key = ?",
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT content, hits FROM browser_cache WHERE cache_key = ?",
                 (cache_key,),
-            )
-            conn.commit()
-            conn.close()
-            _record("browser_cache", True)
-            tokens_saved = _estimate_tokens(row["content"])
-            return {
-                "cached": True,
-                "content": row["content"],
-                "tokens_saved": tokens_saved,
-            }
-        conn.close()
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE browser_cache SET hits = hits + 1 WHERE cache_key = ?",
+                    (cache_key,),
+                )
+                _record("browser_cache", True)
+                tokens_saved = _estimate_tokens(row["content"])
+                return {
+                    "cached": True,
+                    "content": row["content"],
+                    "tokens_saved": tokens_saved,
+                }
     except Exception as e:
         warnings.warn(f"ToolRecall: browser_cache check failed: {e}")
 
@@ -1296,17 +1215,15 @@ def cached_browser_store(
             "error": f"Content too large ({len(content)} bytes, max {MAX_CONTENT_BYTES})",
         }
     try:
-        conn = _get_db()
-        now = time.time()
-        conn.execute(
-            """INSERT OR REPLACE INTO browser_cache
-               (cache_key, url, content_type, content, title, content_hash, cached_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (cache_key, url, content_type, content, title, content_hash, now),
-        )
-        conn.commit()
-        conn.close()
-        _record_tokens_saved("browser_cache", _estimate_tokens(content))
+        with _db() as conn:
+            now = time.time()
+            conn.execute(
+                """INSERT OR REPLACE INTO browser_cache
+                   (cache_key, url, content_type, content, title, content_hash, cached_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (cache_key, url, content_type, content, title, content_hash, now),
+            )
+        _record_tokens_read_from_disk("browser_cache", _estimate_tokens(content))
         return {"stored": True}
     except Exception as e:
         warnings.warn(f"ToolRecall: browser_cache store failed: {e}")
@@ -1316,10 +1233,8 @@ def cached_browser_store(
 def invalidate_browser_url(url: str):
     """Invalidate all cached entries for a specific URL."""
     try:
-        conn = _get_db()
-        conn.execute("DELETE FROM browser_cache WHERE url = ?", (url,))
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute("DELETE FROM browser_cache WHERE url = ?", (url,))
     except Exception as e:
         warnings.warn(f"ToolRecall: browser_cache invalidate failed: {e}")
 
@@ -1341,32 +1256,29 @@ def cached_api_check(request_hash: str) -> dict:
     """
     import time
     try:
-        conn = _get_db()
-        now = time.time()
-        row = conn.execute(
-            "SELECT response_status, response_headers, response_body, expires_at "
-            "FROM api_cache WHERE request_hash = ?",
-            (request_hash,),
-        ).fetchone()
-        if row and row["expires_at"] > now:
-            conn.execute(
-                "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
+        with _db() as conn:
+            now = time.time()
+            row = conn.execute(
+                "SELECT response_status, response_headers, response_body, expires_at "
+                "FROM api_cache WHERE request_hash = ?",
                 (request_hash,),
-            )
-            conn.commit()
-            conn.close()
-            _record("api_cache", True)
-            import json as _json
-            headers = _json.loads(row["response_headers"]) if row["response_headers"] else {}
-            tokens_saved = _estimate_tokens(row["response_body"])
-            return {
-                "cached": True,
-                "status": row["response_status"],
-                "headers": headers,
-                "body": row["response_body"],
-                "tokens_saved": tokens_saved,
-            }
-        conn.close()
+            ).fetchone()
+            if row and row["expires_at"] > now:
+                conn.execute(
+                    "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
+                    (request_hash,),
+                )
+                _record("api_cache", True)
+                import json as _json
+                headers = _json.loads(row["response_headers"]) if row["response_headers"] else {}
+                tokens_saved = _estimate_tokens(row["response_body"])
+                return {
+                    "cached": True,
+                    "status": row["response_status"],
+                    "headers": headers,
+                    "body": row["response_body"],
+                    "tokens_saved": tokens_saved,
+                }
     except Exception as e:
         warnings.warn(f"ToolRecall: api_cache check failed: {e}")
 
@@ -1401,20 +1313,18 @@ def cached_api_store(request_hash: str, method: str, host: str, path: str,
     expires = now + ttl
 
     try:
-        conn = _get_db()
-        conn.execute(
-            """INSERT OR REPLACE INTO api_cache
-               (request_hash, method, host, path, request_body_hash,
-                request_body_preview, response_status, response_headers,
-                response_body, cached_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (request_hash, method, host, path, request_body_hash,
-             response_body[:200], response_status,
-             _json.dumps(response_headers), response_body, now, expires),
-        )
-        conn.commit()
-        conn.close()
-        _record_tokens_saved("api_cache", _estimate_tokens(response_body))
+        with _db() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO api_cache
+                   (request_hash, method, host, path, request_body_hash,
+                    request_body_preview, response_status, response_headers,
+                    response_body, cached_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (request_hash, method, host, path, request_body_hash,
+                 response_body[:200], response_status,
+                 _json.dumps(response_headers), response_body, now, expires),
+            )
+        _record_tokens_read_from_disk("api_cache", _estimate_tokens(response_body))
         return {"stored": True}
     except Exception as e:
         warnings.warn(f"ToolRecall: api_cache store failed: {e}")
@@ -1427,11 +1337,9 @@ def invalidate_api_host(host: str) -> int:
     Returns number of deleted rows.
     """
     try:
-        conn = _get_db()
-        deleted = conn.execute("DELETE FROM api_cache WHERE host = ?", (host,)).rowcount
-        conn.commit()
-        conn.close()
-        return deleted
+        with _db() as conn:
+            deleted = conn.execute("DELETE FROM api_cache WHERE host = ?", (host,)).rowcount
+            return deleted
     except Exception as e:
         warnings.warn(f"ToolRecall: api_cache invalidate failed: {e}")
         return 0

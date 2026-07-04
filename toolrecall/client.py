@@ -13,22 +13,27 @@ import time
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 
-# Pre-bind fallback imports from cache/docs modules.
-# These are called when the daemon is unavailable.
-from toolrecall.cache import (
-    cached_read as _direct_read,
-    cached_terminal as _direct_terminal,
-    cached_skill as _direct_skill,
-    cached_write as _direct_write,
-    cached_patch as _direct_patch,
-    invalidate_all as _direct_invalidate,
-    refresh_file as _direct_refresh,
-    get_stats as _direct_stats,
-)
-from toolrecall.docs import (
-    docs_search as _direct_docs_search,
-    docs_get_page as _direct_docs_get_page,
-)
+# Lazy fallback imports — imported only when daemon is unavailable.
+# This avoids opening a second SQLite connection that conflicts with
+# the running daemon's database lock.
+_direct_cache = None
+_direct_docs = None
+
+
+def _get_direct_cache():
+    """Lazy import toolrecall.cache for daemon-fallback operations."""
+    global _direct_cache
+    if _direct_cache is None:
+        from toolrecall import cache as _direct_cache
+    return _direct_cache
+
+
+def _get_direct_docs():
+    """Lazy import toolrecall.docs for daemon-fallback operations."""
+    global _direct_docs
+    if _direct_docs is None:
+        from toolrecall import docs as _direct_docs
+    return _direct_docs
 
 # ─── Shared Connection ───────────────────────────────────────
 
@@ -116,7 +121,7 @@ def cached_read(path: str) -> dict:
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp  # Success or real error from Daemon
     # Fallback: direct SQLite (no daemon needed)
-    return _direct_read(path)
+    return _get_direct_cache().cached_read(path)
 
 
 def cached_terminal(command: str, ttl: int = None) -> dict:
@@ -132,7 +137,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     resp = client.send(payload)
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _direct_terminal(command, ttl=ttl)
+    return _get_direct_cache().cached_terminal(command, ttl=ttl)
 
 
 def cached_skill(name: str) -> dict:
@@ -145,7 +150,7 @@ def cached_skill(name: str) -> dict:
     resp = client.send({"cmd": "cached_skill", "name": name})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _direct_skill(name)
+    return _get_direct_cache().cached_skill(name)
 
 
 def cached_write(path: str, content: str) -> dict:
@@ -158,7 +163,7 @@ def cached_write(path: str, content: str) -> dict:
     resp = client.send({"cmd": "cached_write", "path": path, "content": content})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _direct_write(path, content)
+    return _get_direct_cache().cached_write(path, content)
 
 
 def cached_patch(path: str, old_string: str, new_string: str) -> dict:
@@ -172,7 +177,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
                          "old_string": old_string, "new_string": new_string})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _direct_patch(path, old_string, new_string)
+    return _get_direct_cache().cached_patch(path, old_string, new_string)
 
 
 def docs_search(query: str, source: str = None) -> str:
@@ -188,7 +193,7 @@ def docs_search(query: str, source: str = None) -> str:
     resp = client.send(payload)
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
-    return _direct_docs_search(query, source=source)
+    return _get_direct_docs().docs_search(query, source=source)
 
 
 def docs_get_page(source: str, path: str) -> str:
@@ -201,7 +206,7 @@ def docs_get_page(source: str, path: str) -> str:
     resp = client.send({"cmd": "docs_get_page", "source": source, "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
-    return _direct_docs_get_page(source, path)
+    return _get_direct_docs().docs_get_page(source, path)
 
 
 def cache_status() -> str:
@@ -214,7 +219,7 @@ def cache_status() -> str:
     resp = client.send({"cmd": "cache_status"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
-    stats = _direct_stats()
+    stats = _get_direct_cache().get_stats()
     lines = ["ToolRecall Cache Status", "=" * 40]
     for k, v in stats.items():
         if isinstance(v, dict):
@@ -236,7 +241,7 @@ def cache_invalidate() -> str:
     resp = client.send({"cmd": "cache_invalidate"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", "Cache invalidated via daemon")
-    _direct_invalidate()
+    _get_direct_cache().invalidate_all()
     return "Cache invalidated (direct)"
 
 
@@ -250,7 +255,7 @@ def refresh_file(path: str) -> dict:
     resp = client.send({"cmd": "cache_refresh_file", "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _direct_refresh(path)
+    return _get_direct_cache().refresh_file(path)
 
 
 # ─── Connection Check ─────────────────────────────────────
@@ -374,9 +379,10 @@ def context_reset() -> dict:
     return resp
 
 
-# Direct fallbacks are imported at the top of this module from cache.py and docs.py.
-# These aliases (e.g. _direct_read, _direct_stats) are called when the daemon is
-# unreachable. No inline imports needed.
+# Direct fallbacks are lazy-imported via _get_direct_cache() / _get_direct_docs().
+# This avoids opening a second SQLite connection when the daemon is already running.
+# The cache module (and its DB connection) is only loaded when the daemon is
+# unreachable and we need to operate directly on the database.
 
 
 # ─── Auto-Cleanup ──────────────────────────────────
