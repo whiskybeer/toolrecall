@@ -220,9 +220,70 @@ toolrecall shim           Install/uninstall OS-level cache shim (.pth file)
 toolrecall nginx          Generate nginx config
 ```
 
-## Agent Integration
+## Agent Integration — zero-config for any agent
 
-### Forward proxy (API-level caching)
+ToolRecall's daemon provides two agent-agnostic caching layers. Neither requires per-agent configuration:
+
+### Layer 1: Python Shim (transparent, any Python agent)
+
+After `toolrecall setup`, every Python process on this machine auto-caches `open()` and `subprocess.run()` through ToolRecall. Hermes, Claude Code (Python), Cursor, Aider — all benefit without any config change.
+
+```bash
+pip install toolrecall
+toolrecall setup              # One-shot: shim + daemon + opencode config
+# Done — every Python process now transparently caches
+```
+
+### Layer 2: MCP Bridge (any MCP-compatible agent)
+
+Connect **any MCP agent** by registering one server. The same config works for all agents.
+
+**opencode (v1.17+):**
+`toolrecall setup` writes this automatically to `~/.opencode/opencode.jsonc`. Or add manually:
+
+```jsonc
+// ~/.opencode/opencode.jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "toolrecall": {
+      "type": "local",
+      "command": "toolrecall",
+      "args": ["mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Claude Code / Cursor / Cline / Windsurf / Continue:**
+
+```json
+// ~/.claude/settings.json  or  ~/.cursor/mcp.json  or  ~/.config/cline/mcp_settings.json
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Hermes Agent:**
+Hermes already ships with ToolRecall built in — the tools `cached_read`, `cached_terminal`, `mcp_call`, etc. are available directly in your toolset.
+
+**Aider:**
+```bash
+aider --mcp-toolrecall
+# or add to ~/.aider.mcp.json with the same format as above
+```
+
+All agents share **one daemon** and **one cache** — no duplication, no conflict.
+
+---
+
+## Forward Proxy (API-level caching)
 
 Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
 
