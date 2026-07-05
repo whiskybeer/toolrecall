@@ -84,12 +84,14 @@ flowchart TB
 
 **Value:** ToolRecall becomes language-agnostic. A Go service can use the same cache as a Python script.
 
-### Group C: Claude Code / Cursor / Codex Users
+### Group C: Claude Code / Cursor / Codex Users (⚠️ limited benefit)
 | Today | Daemon Architecture |
 |-------|---------------------|
 | MCP Server is a distinct process (200ms Startup) | MCP Bridge starts in <10ms |
 | Every Claude Code run = new cold cache | Daemon runs, Cache warm |
-| "I don't need it, startup is too slow" | "I'll use it because it's instantly available" |
+| "I don't need it, startup is too slow" | "I'll use it because it's instantly available" (multiplex/forward-proxy only) |
+
+> ⚠️ Claude Code and Codex CLI have native state tracking that conflicts with file/terminal caching. Only the MCP multiplex and forward proxy are safe with these agents. See [Agent Compatibility](AGENT_COMPATIBILITY.md).
 
 **Value:** lowers barrier to entry. The Daemon turns ToolRecall into an "always-on" infrastructure on a machine.
 

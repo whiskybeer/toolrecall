@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "toolrecall": {
+      "type": "local",
+      "command": "toolrecall",
+      "args": ["mcp"],
+      "enabled": true
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # ToolRecall: The "Explain It Like I'm 5" Pitch
 
-Imagine you hire a brilliant but extremely forgetful consultant (your AI Agent, like Claude Code or Hermes). 
+Imagine you hire a brilliant but extremely forgetful consultant (your AI Agent, like Hermes or Cline). 
 
 This consultant has an absurd billing model: **They charge you money every single time they have to read a page of text.**
 

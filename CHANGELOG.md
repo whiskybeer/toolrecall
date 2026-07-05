@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.3 (2026-07-05)
+
+- **Feature:** `toolrecall setup` auto-detects Hermes Agent, Claude Code, OpenCode/Crush — writes MCP config, init_scripts, and instruction snippets automatically
+- **Feature:** Daemon duplicate-instance guard — `run_daemon()` pings the socket before starting, refuses if daemon already responds
+- **Feature:** SQLite WAL retry — `_db()` retries once on `SQLITE_BUSY` with 100ms sleep
+- **Feature:** 13 E2E tests with real daemon subprocess — lifecycle, cache ops, CLI, stress (10 concurrent, 5x rapid restart), isolated temp socket + DB
+- **Docs:** `docs/AGENT_COMPATIBILITY.md` — per-agent value matrix with guidance
+- **Docs:** Agent config files for Cline, OpenCode, Aider, Windsurf, Continue
+- **Docs:** `tests/README.md` translated to English, full 30-file overview table
+- **Docs:** `configs/README.md` rewritten with per-agent sections and 7-agent compatibility table
+- **Docs:** All Claude Code references caveated across docs; shim claims scoped to Python agents only
+- **Config:** `[tool.pytest.ini_options]` — e2e marker added to pyproject.toml
+- **Chore:** `.gitignore` — .hermes, .ruff_cache, .pytest_cache, editor swp files
+
 ## v0.8.2 (2026-07-04)
 
 - **Feature:** `toolrecall/toml_serializer.py` — zero-dependency TOML writer (replaces `tomli-w`)

@@ -1305,6 +1305,28 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     import sys as _sys
     _sys.path = [p for p in _sys.path if '/home/hermes/toolrecall/toolrecall' not in p]
 
+    # Prevent duplicate instances: try to bind the socket.
+    # If the socket file already exists and a daemon responds on it,
+    # refuse to start another one.
+    if not socket_path:
+        socket_path = _default_socket_path()
+    try:
+        from toolrecall.transport import TransportClient
+        tc = TransportClient(socket_path)
+        resp = tc.send({"cmd": "ping"}, timeout=1)
+        if resp.get("pong"):
+            print(f"ToolRecall Daemon already running (PID {resp.get('pid', '?')}) — refusing duplicate.")
+            sys.exit(0)
+    except (ConnectionRefusedError, FileNotFoundError, TimeoutError, OSError, Exception):
+        pass  # Socket stale or absent — safe to start
+    # Remove stale socket file if present
+    sock_path = socket_path
+    if os.path.exists(sock_path) and not IS_WINDOWS:
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+
     # Disable file-read shim to prevent infinite recursion:
     # _shim_open -> client.cached_read -> daemon -> cached_read -> open -> _shim_open -> ...
     try:

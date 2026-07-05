@@ -851,8 +851,13 @@ def cmd_setup():
     else:
         errors.append("daemon could not be started")
 
-    # ─── 4. Agent integration (opencode) ─────────
-    _ensure_agent_integration()
+    # ─── 4. Agent integration ────────────────
+    agents = _ensure_agent_integration()
+    found_agents = [k for k, v in agents.items() if v]
+    if found_agents:
+        steps_ok.append(f"agent integration: {', '.join(found_agents)}")
+    else:
+        steps_ok.append("agent integration: none detected")
 
     # ─── Summary ──────────────────────────────────
     print()
@@ -865,31 +870,246 @@ def cmd_setup():
     if errors:
         print(f"  ⚠️  Setup finished with {len(errors)} issue(s)")
     else:
-        print("  ✅ Setup complete — ToolRecall is ready")
+        print(f"  ✅ Setup complete — ToolRecall is ready")
+    if not found_agents:
+        print()
+        print(_MANUAL_AGENT_GUIDE)
+    else:
+        print()
+        print("  ℹ️  ToolRecall MCP tools available on next agent restart")
+        print("     Agents must be told to use cached_read/cached_terminal over native tools")
+        print("     (ToolRecall instruction snippets appended to agent configs where applicable)")
     print("=" * 56)
 
 
 def _ensure_agent_integration():
-    """Auto-detect opencode and write MCP config.
+    """Auto-detect supported agents and wire up ToolRecall MCP.
 
-    Detects opencode by checking for ~/.opencode/ directory and writes
-    the MCP integration config so 'toolrecall mcp' is available as an
-    MCP server in opencode sessions.
+    Currently detects:
+      - Hermes Agent (via hermes binary on PATH)
+      - OpenCode/Crush (via ~/.opencode/ directory)
+      - Claude Code (via claude binary on PATH or ~/.claude.json)
 
-    Returns True if config was written, False if no opencode found.
+    For Claude Code: prefers `claude mcp add` (automatic, no user action needed)
+    when the binary is on PATH. Falls back to writing ~/.claude.json directly.
+
+    For Hermes: writes init_scripts entry automatically — transparent caching
+    kicks in on next session start.
+
+    Returns dict with keys: 'hermes', 'opencode', 'claude' — bool per agent.
     """
-    OC_DIR = os.path.expanduser("~/.opencode")
-    if not os.path.isdir(OC_DIR):
-        return False
-
-    oc_config_path = os.path.join(OC_DIR, "opencode.jsonc")
-    config = _prepare_opencode_config(oc_config_path)
-
+    import os
+    import subprocess
     import json
-    with open(oc_config_path, "w") as f:
+    import shutil
+
+    result = {}
+
+    # ─── Hermes Agent ───────────────────────────────
+    hermes_bin = shutil.which("hermes")
+    if hermes_bin:
+        # Transparent cache via init_scripts — automatic, zero user action
+        hermes_init = os.path.expanduser("~/.toolrecall/hermes_init.py")
+        hermes_config = os.path.expanduser("~/.hermes/config.yaml")
+
+        # Ensure init script exists
+        if not os.path.exists(hermes_init):
+            os.makedirs(os.path.dirname(hermes_init), exist_ok=True)
+            _HERMES_INIT_CONTENT = (
+                "import sys; sys.path.insert(0, '')\n"
+                "try:\n"
+                "    from toolrecall.hermes_init import patch_native_tools\n"
+                "    patch_native_tools()\n"
+                "    print('[ToolRecall] Transparent cache active')\n"
+                "except Exception as e:\n"
+                "    print(f'[ToolRecall] Init failed: {e}')\n"
+            )
+            with open(hermes_init, "w") as f:
+                f.write(_HERMES_INIT_CONTENT)
+
+        # Register init_scripts in Hermes config
+        if os.path.exists(hermes_config):
+            try:
+                r = subprocess.run(
+                    [hermes_bin, "config", "set", "agent.init_scripts",
+                     f'["{hermes_init}"]'],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if r.returncode == 0:
+                    print(f"  ✅ Hermes transparent cache registered (automatic — active next session)")
+                else:
+                    print(f"  ⚠️  'hermes config set' returned exit {r.returncode}")
+                    if r.stderr.strip():
+                        print(f"     stderr: {r.stderr.strip()[:200]}")
+                    print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
+                result["hermes"] = True
+            except FileNotFoundError:
+                print(f"  ⚠️  'hermes' binary found but 'hermes config' failed")
+                print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
+                result["hermes"] = True
+        else:
+            print(f"  ⚠️  Hermes detected but ~/.hermes/config.yaml not found")
+            print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
+            result["hermes"] = True
+
+        # Also enable transparent mode in toolrecall config
+        tr_config = os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
+        if os.path.exists(tr_config):
+            with open(tr_config) as f:
+                content = f.read()
+            if "[hermes]" not in content:
+                with open(tr_config, "a") as f:
+                    f.write("\n[hermes]\ntransparent_cache = \"transparent\"\n")
+                print(f"  ✅ Hermes transparent mode enabled in toolrecall config")
+
+    # ─── OpenCode / Crush ────────────────────────────
+    OC_DIR = os.path.expanduser("~/.opencode")
+    if os.path.isdir(OC_DIR):
+        oc_config_path = os.path.join(OC_DIR, "opencode.jsonc")
+        config = _prepare_opencode_config(oc_config_path)
+        with open(oc_config_path, "w") as f:
+            json.dump(config, f, indent=2)
+        print(f"  ✅ OpenCode MCP config written (automatic): {oc_config_path}")
+        result["opencode"] = True
+    else:
+        result["opencode"] = False
+
+    # ─── Claude Code ────────────────────────────────
+    claude_bin = shutil.which("claude")
+
+    if claude_bin:
+        # Automatic: uses Claude's own CLI to register the MCP server
+        # No user action needed — this runs on its own
+        try:
+            r = subprocess.run(
+                [claude_bin, "mcp", "add", "toolrecall", "-s", "user", "--", "toolrecall", "mcp"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                print(f"  ✅ Claude Code MCP server registered (automatic — via 'claude mcp add')")
+                result["claude"] = True
+            else:
+                print(f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config")
+                if r.stderr.strip():
+                    print(f"     stderr: {r.stderr.strip()[:200]}")
+                _write_claude_json_config()
+                result["claude"] = True
+        except FileNotFoundError:
+            _write_claude_json_config()
+            result["claude"] = True
+        except subprocess.TimeoutExpired:
+            print(f"  ⚠️  'claude mcp add' timed out — falling back to direct config")
+            _write_claude_json_config()
+            result["claude"] = True
+    else:
+        # Fallback: detect via ~/.claude.json
+        claude_json = os.path.expanduser("~/.claude.json")
+        if os.path.exists(claude_json):
+            _write_claude_json_config()
+            print(f"  ✅ Claude Code MCP config written (automatic): {claude_json}")
+            result["claude"] = True
+
+    # Instruction snippet: tell Claude to prefer cached tools
+    claude_dotdir = os.path.expanduser("~/.claude/claude_dotfiles")
+    claude_md = os.path.join(claude_dotdir, "claude.md")
+    if result.get("claude") and not os.path.exists(claude_md):
+        os.makedirs(claude_dotdir, exist_ok=True)
+        try:
+            with open(claude_md, "w") as f:
+                f.write(_CLAUDE_INSTRUCTION_SNIPPET)
+            print(f"  ✅ Claude Code instruction snippet written (automatic): {claude_md}")
+        except (OSError, IOError) as e:
+            print(f"  ⚠️  Could not write instruction snippet: {e}")
+    elif result.get("claude") and os.path.exists(claude_md):
+        try:
+            with open(claude_md) as f:
+                content = f.read()
+                if "ToolRecall" not in content:
+                    with open(claude_md, "a") as f2:
+                        f2.write(_CLAUDE_INSTRUCTION_SNIPPET)
+                    print(f"  ✅ Appended ToolRecall instruction to {claude_md}")
+        except (OSError, IOError) as e:
+            print(f"  ⚠️  Could not check/update instruction snippet: {e}")
+
+    return result
+
+
+_CLAUDE_INSTRUCTION_SNIPPET = """
+## ToolRecall Cache
+ToolRecall is installed. When reading files, use `cached_read` via MCP instead of `read_file`.
+When running terminal commands, use `cached_terminal` instead of `terminal`.
+"""
+
+
+_HERMES_INIT_CONTENT = """import sys; sys.path.insert(0, '')
+try:
+    from toolrecall.hermes_init import patch_native_tools
+    patch_native_tools()
+    print('[ToolRecall] Transparent cache active')
+except Exception as e:
+    print(f'[ToolRecall] Init failed: {e}')
+"""
+
+
+_MANUAL_AGENT_GUIDE = """
+No supported agent detected on this machine.
+
+ToolRecall works with any AI coding agent via MCP. To integrate manually:
+
+  Hermes Agent:
+    hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]'
+    → Transparent caching — native read_file/terminal auto-cached
+
+  Claude Code:
+    claude mcp add toolrecall -s user -- toolrecall mcp
+    → Adds cached_read/cached_terminal as MCP tools
+
+  OpenCode / Crush:
+    Add to ~/.opencode/opencode.jsonc under "mcp" key:
+    { "toolrecall": { "type": "local", "command": "toolrecall", "args": ["mcp"], "enabled": true } }
+
+  Cursor:
+    Add to .cursorrules: "Use cached_read for file reads, cached_terminal for terminal commands"
+
+  Cline / Roo Code:
+    Add to .clinerules: same instruction as Cursor
+
+  Any MCP-compatible agent:
+    Add an MCP server with command "toolrecall" and args ["mcp"]
+
+After configuring your agent: make sure the ToolRecall daemon is running:
+    toolrecall daemon
+    toolrecall status
+"""
+
+
+def _write_claude_json_config():
+    """Write toolrecall MCP entry to ~/.claude.json.
+
+    Reads existing config, merges toolrecall into mcpServers, writes back.
+    Used as fallback when 'claude mcp add' CLI command is unavailable.
+    """
+    import os
+    import json
+
+    claude_json = os.path.expanduser("~/.claude.json")
+    config = {}
+    if os.path.exists(claude_json):
+        try:
+            with open(claude_json) as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, Exception):
+            config = {}
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+    config["mcpServers"]["toolrecall"] = {
+        "command": "toolrecall",
+        "args": ["mcp"],
+    }
+
+    with open(claude_json, "w") as f:
         json.dump(config, f, indent=2)
-    print(f"  ✅ opencode MCP config written: {oc_config_path}")
-    return True
 
 
 def _prepare_opencode_config(config_path):

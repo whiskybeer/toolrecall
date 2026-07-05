@@ -17,6 +17,6 @@ Without TR: $60. With TR (90% discount): $6. Plus local dedup: ~$0.15.
 
 4. **Security:** Zero-Trust WAF — `os.path.realpath` blocks directory traversal, `.env` files are air-gapped from the LLM, `allow_terminal=false` drops RCE attempts.
 
-5. **Universal:** Standard `stdio` MCP (`toolrecall mcp`). Works with Claude Code, Cursor, Cline, Hermes, Aider[^notall] — any MCP-speaking agent. No custom plugins needed.
+5. **Universal:** Standard `stdio` MCP (`toolrecall mcp`). Works with Hermes, OpenCode, Cline, Aider[^notall] — any MCP-speaking agent. No custom plugins needed.
 
-[^notall]: Not all agents tested yet — please report bugs at https://github.com/whiskybeer/toolrecall/issues
+[^notall]: Not all agents benefit equally. Claude Code and Codex CLI have native state tracking that can conflict with external caching. See [Agent Compatibility](AGENT_COMPATIBILITY.md) for per-agent guidance.

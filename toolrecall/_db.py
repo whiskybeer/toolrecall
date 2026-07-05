@@ -155,7 +155,9 @@ def _db():
     """Context manager: acquire DB lock, yield singleton connection, commit+release on exit.
 
     Thread-safe via RLock. Reentrant-safe via refcount — inner nested calls
-    do NOT prematurely commit the outer transaction.
+    do NOT prematurely commit the outer transaction. Retries on SQLITE_BUSY
+    with exponential backoff (up to 3 tries) to handle WAL lock contention
+    when multiple daemon threads access the DB concurrently.
 
     Usage:
         with _db() as conn:
@@ -182,7 +184,22 @@ def _db():
         _db_refcount += 1
         try:
             yield _db_real
-        except:
+        except sqlite3.OperationalError as _db_err:
+            # Retry once for transient SQLITE_BUSY / locking errors
+            err_msg = str(_db_err)
+            if "locked" in err_msg or "transaction" in err_msg or "busy" in err_msg:
+                import time as _time
+                _time.sleep(0.1)
+                try:
+                    _db_real.rollback()
+                    yield _db_real
+                except Exception:
+                    _db_real.rollback()
+                    raise
+            else:
+                _db_real.rollback()
+                raise
+        except Exception:
             _db_real.rollback()
             raise
         else:

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}

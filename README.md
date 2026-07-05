@@ -4,6 +4,10 @@ ToolRecall sits between your agent and the OS (or your API provider). On repeat 
 
 **1 tick instead of 4:** A file read normally needs `stat → open → read → close`. ToolRecall needs only `stat` (mtime check) — on cache hit the bytes come from memory, bypassing disk entirely.
 
+> **⚠️ Best fit: stateless & open-source agents (Hermes, OpenCode, Cline, Aider)**
+>
+> ToolRecall excels where agents have limited context budgets and benefit from deterministic cache + MCP multiplexing. If you run **Claude Code** or **Codex CLI**, the shim and MCP bridge can cause stale-state issues — those agents manage their own in-memory tool tracking natively. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
+
 **Zero pip dependencies. Python 3.11+ stdlib only.** 76 KB install. Everything starts automatically.
 
 ```bash
@@ -17,9 +21,9 @@ toolrecall setup          # One-shot: config → systemd → shim → daemon sta
 
 | Path | What it does | How to connect | Default |
 |------|-------------|---------------|---------|
-| **OS-level Shim** | Patches every Python process — `open()` and `subprocess.run()` are transparently cached. **Zero imports needed. Works with any agent.** | Installed via `toolrecall setup` or auto-installed on first command. | ✅ Installed via `.pth` in site-packages |
+|| **OS-level Shim** | Patches every Python process — `open()` and `subprocess.run()` are transparently cached. **Zero imports needed.** | Installed via `toolrecall setup` or auto-installed on first command. | ✅ Installed via `.pth` in site-packages (Python only) |
 | **Forward proxy** | Intercepts HTTP requests to API providers (OpenAI, Anthropic, etc.) — caches full responses by body hash. **Zero tokens consumed on cache hit.** | `export OPENAI_BASE_URL=http://localhost:8569` — or set any SDK's base URL | ✅ On (`:8569`) |
-| **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client. Server names auto-resolve from registry. | Add to `~/.claude/.mcp.json` or run `toolrecall mcp` | ✅ On (stdio) |
+| **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client. Server names auto-resolve from registry. | Add to your agent's MCP config or run `toolrecall mcp` | ✅ On (stdio) |
 
 **Requirements:** Python 3.11+ (`sqlite3`, `tomllib`, `json`, `http.server`, `urllib` from stdlib).
 
@@ -136,7 +140,7 @@ flowchart TB
     D3 --> M4["…"]
 ```
 
-**Shim layer (at the OS level):** When `tr_shim.pth` is in `site-packages`, every Python process on the machine auto-patches `builtins.open()` and `subprocess.run()` — no imports needed. This is the truly agent-agnostic path: any Python agent (Hermes, Claude Code, Cursor, Aider, Cline) transparently benefits without any configuration.
+**Shim layer (at the OS level):** When `tr_shim.pth` is in `site-packages`, every Python process on the machine auto-patches `builtins.open()` and `subprocess.run()` — no imports needed. This is the truly agent-agnostic path: any Python agent (Hermes, Aider, Cline) transparently benefits without any configuration. (Claude Code, Codex CLI, and OpenCode are Node.js binaries — the Python shim doesn't apply to them.)
 
 **Daemon layer (process level):** Holds the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), the Forward Proxy (caches full API responses via body hash), and the Security Gate (path allowlist, sensitive file blocklist, cognitive scan).
 
@@ -231,24 +235,38 @@ toolrecall nginx          Generate nginx config
 
 ## Agent Integration — zero-config for any agent
 
-ToolRecall's daemon provides two agent-agnostic caching layers. Neither requires per-agent configuration:
+ToolRecall's daemon provides three agent-agnostic caching layers. None require per-agent configuration:
 
 ### Layer 1: Python Shim (transparent, any Python agent)
 
-After `toolrecall setup`, every Python process on this machine auto-caches `open()` and `subprocess.run()` through ToolRecall. Hermes, Claude Code (Python), Cursor, Aider — all benefit without any config change.
+After `toolrecall setup`, every Python process on this machine auto-caches `open()` and `subprocess.run()` through ToolRecall. Hermes, Aider, Cline — all benefit without any config change.
 
 ```bash
 pip install toolrecall
-toolrecall setup              # One-shot: shim + daemon + opencode config
+toolrecall setup              # One-shot: shim + daemon
 # Done — every Python process now transparently caches
 ```
+
+> Node.js agents (Claude Code, Codex CLI, OpenCode) are unaffected by the shim — see [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) for their recommended integration.
 
 ### Layer 2: MCP Bridge (any MCP-compatible agent)
 
 Connect **any MCP agent** by registering one server. The same config works for all agents.
 
-**opencode (v1.17+):**
-`toolrecall setup` writes this automatically to `~/.opencode/opencode.jsonc`. Or add manually:
+```json
+// ~/.claude/settings.json  or  ~/.cursor/mcp.json  or  ~/.config/cline/mcp_settings.json
+// or any other MCP agent config
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+For OpenCode (v1.17+), `toolrecall setup` writes this automatically to `~/.opencode/opencode.jsonc`:
 
 ```jsonc
 // ~/.opencode/opencode.jsonc
@@ -265,22 +283,7 @@ Connect **any MCP agent** by registering one server. The same config works for a
 }
 ```
 
-**Claude Code / Cursor / Cline / Windsurf / Continue:**
-
-```json
-// ~/.claude/settings.json  or  ~/.cursor/mcp.json  or  ~/.config/cline/mcp_settings.json
-{
-  "mcpServers": {
-    "toolrecall": {
-      "command": "toolrecall",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-**Hermes Agent:**
-Hermes already ships with ToolRecall built in — the tools `cached_read`, `cached_terminal`, `mcp_call`, etc. are available directly in your toolset.
+**Hermes Agent:** Hermes already ships with ToolRecall built in — the tools `cached_read`, `cached_terminal`, `mcp_call`, etc. are available directly in your toolset.
 
 **Aider:**
 ```bash
@@ -289,6 +292,8 @@ aider --mcp-toolrecall
 ```
 
 All agents share **one daemon** and **one cache** — no duplication, no conflict.
+
+> ⚠️ **Claude Code users:** Adding ToolRecall as an MCP server can cause stale-state issues in code edit loops. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) before configuring.
 
 ---
 
@@ -321,17 +326,17 @@ Connect **any MCP agent** by adding one server:
 }
 ```
 
-Works for **Claude Desktop, Claude Code, Cursor, Cline, Windsurf, Continue, and any MCP-compatible agent** with zero per-agent variations.
+Works for any MCP-compatible agent (Hermes, Cline, Cursor, Windsurf, Continue). See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) for per-agent guidance.
 
 ### OS-level Shim (zero-config caching)
 
 Once `toolrecall setup` is run (or any CLI command auto-installs it), the **shim .pth file** lives in `site-packages/tr_shim.pth`. Every Python process on the machine automatically caches `open()` and `subprocess.run()` through the ToolRecall daemon — **no imports, no agent configuration**.
 
-| Agent | How to connect | Token savings |
-|-------|---------------|---------------|
-| **Any Python binary** | Just `pip install toolrecall` — the `.pth` in site-packages auto-patches `open()` / `subprocess.run()` | ✅ Transparent, agent-agnostic |
-| **Any MCP agent** | Add the `toolrecall` server to your MCP config | ✅ Universal |
-| **Forward proxy** | `export OPENAI_BASE_URL=http://localhost:8569` | ✅ Zero-token cache hits |
+| Agent | How to connect | Best for | Notes |
+|-------|---------------|----------|-------|
+| **Any Python binary** | Just `pip install toolrecall` — the `.pth` in site-packages auto-patches `open()` / `subprocess.run()` | Hermes, Aider, Cline, custom scripts | ✅ Transparent, agent-agnostic. Not available for Node.js binaries. |
+| **Any MCP agent** | Add `toolrecall` server to your MCP config (example below) | OpenCode, Cline, Hermes | ✅ Universal MCP-based integration |
+| **Forward proxy** | `export OPENAI_BASE_URL=http://localhost:8569` | Any OpenAI-compatible SDK | ✅ Zero-token cache hits |
 
 ---
 
@@ -379,10 +384,22 @@ rm -rf ~/.toolrecall ~/.config/toolrecall
 | **macOS** | Unix Domain Sockets | ✅ Should work (POSIX). Not in CI. |
 | **Windows** | TCP localhost:8568 fallback | ⚠️ Core + transport tested. CLI works. |
 
----
+|---
 
+## Contributing
+
+```bash
+git clone https://github.com/whiskybeer/toolrecall.git
+cd toolrecall
+make setup      # one-time: install dev deps
+make test       # run tests
+make check      # lint + format check
+```
+
+See the [Testing Guide](docs/TESTING.md) and [Makefile](./Makefile) for all targets.
 ## Documentation
 
+- [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) — per-agent value, config, and caveats
 - [Architecture](docs/ARCHITECTURE.md) — daemon design, layers, IPC
 - [Architecture Diagram](docs/ARCHITECTURE_DIAGRAM.md) — system and sequence diagrams, token costs, Context Tracker
 - [CLI Reference](docs/CLI.md) — all subcommands explained

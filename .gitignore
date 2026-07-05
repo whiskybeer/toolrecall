@@ -10,18 +10,15 @@ uv.lock
 dist/
 build/
 .venv/
-
-# Editor artifacts
+.hermes/
+.ruff_cache/
+.pytest_cache/
 *.swp
 *.swo
 *~
-
-# Test artifacts
-Dockerfile.test
-
-# VS Code Extension
 vscode-extension/node_modules/
 vscode-extension/out/
 vscode-extension/*.vsix
 vscode-extension/package-lock.json
 vscode-extension/benchmark_on2_results.json
+Dockerfile.test

@@ -6,10 +6,11 @@ Both cache file reads but at fundamentally different layers.
 
 | | Claude Code (default) | ToolRecall |
 |---|---|---|
+| **Recommendation** | Default state tracking is sufficient alone | ⚠️ **Do not enable file/terminal caching** — use only for MCP multiplex + forward proxy |
 | **Cache scope** | Per-session (in-memory) | Cross-session (SQLite disk + in-memory LRU) |
 | **What is cached** | `read_file` calls only | Files, terminal output, skills, docs, MCP |
 | **Persistence** | Lost when `claude` exits | Survives reboots, daemon restarts, agent switches |
-| **All agents share?** | No — isolated per CLI session | Yes — single daemon serves Hermes + Claude Code + Cursor |
+| **All agents share?** | No — isolated per CLI session | Yes — single daemon serves Hermes + OpenCode + Cline |
 | **Dependencies** | Node.js + 100MB+ | Zero — pure Python stdlib (76 KB) |
 | **MCP multiplex** | Each server = new subprocess | Single daemon, lazy-load (~0.01s), idle timeout 15min |
 | **Auto-heal** | Manual restart | systemd + watchdog + IPC shutdown/restart |

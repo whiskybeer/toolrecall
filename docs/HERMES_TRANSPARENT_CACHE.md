@@ -92,7 +92,7 @@ Instead of Hermes transparent mode, you can use the **OS-level shim** which work
 toolrecall shim --install
 ```
 
-The shim patches `open()` and `subprocess.run()` at the Python interpreter level — every Python process on the machine auto-caches. This includes Aider, Codex CLI, Claude Code, Cursor, Cline, Hermes, scripts.
+The shim patches `open()` and `subprocess.run()` at the Python interpreter level — every Python process on the machine auto-caches. This includes Aider, Cline, Hermes, scripts. (Claude Code, Codex CLI, and OpenCode are Node.js binaries — the shim doesn't apply to them.)
 
 **Tradeoff:**
 
