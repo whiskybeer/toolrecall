@@ -11,7 +11,7 @@ ToolRecall sits between your agent and the OS (or your API provider). On repeat 
 **Zero pip dependencies. Python 3.11+ stdlib only.** 76 KB install. Everything starts automatically.
 
 ```bash
-pip install toolrecall
+pipx install toolrecall
 toolrecall setup          # One-shot: config → systemd → shim → daemon start
 ```
 
@@ -22,7 +22,7 @@ toolrecall setup          # One-shot: config → systemd → shim → daemon sta
 | Path | What it does | How to connect | Default |
 |------|-------------|---------------|---------|
 || **OS-level Shim** | Patches every Python process — `open()` and `subprocess.run()` are transparently cached. **Zero imports needed.** | Installed via `toolrecall setup` or auto-installed on first command. | ✅ Installed via `.pth` in site-packages (Python only) |
-| **Forward proxy** | Intercepts HTTP requests to API providers (OpenAI, Anthropic, etc.) — caches full responses by body hash. **Zero tokens consumed on cache hit.** | `export OPENAI_BASE_URL=http://localhost:8569` — or set any SDK's base URL | ✅ On (`:8569`) |
+| **Forward proxy** | Intercepts HTTP requests to API providers (OpenAI, Anthropic, etc.) — caches full responses by body hash. **Zero tokens consumed on cache hit.** | Set base URL to `http://localhost:8569` — or set any SDK's base URL | ✅ On (`:8569`) |
 | **MCP bridge** | Caches tool output (file reads, terminal commands) — agent connects as an MCP client. Server names auto-resolve from registry. | Add to your agent's MCP config or run `toolrecall mcp` | ✅ On (stdio) |
 
 **Requirements:** Python 3.11+ (`sqlite3`, `tomllib`, `json`, `http.server`, `urllib` from stdlib).
@@ -63,7 +63,7 @@ Source: [Benchmark](docs/BENCHMARK.md)
 ToolRecall should be installed once per machine, then it works transparently for all agents.
 
 ```bash
-pip install toolrecall         # installs CLI + Shim (.pth file activates on next Python start)
+pipx install toolrecall         # installs CLI + Shim (.pth file activates on next Python start)
 toolrecall setup               # config → systemd service → shim → daemon start
 ```
 
@@ -242,7 +242,7 @@ ToolRecall's daemon provides three agent-agnostic caching layers. None require p
 After `toolrecall setup`, every Python process on this machine auto-caches `open()` and `subprocess.run()` through ToolRecall. Hermes, Aider, Cline — all benefit without any config change.
 
 ```bash
-pip install toolrecall
+pipx install toolrecall
 toolrecall setup              # One-shot: shim + daemon
 # Done — every Python process now transparently caches
 ```
@@ -302,13 +302,14 @@ All agents share **one daemon** and **one cache** — no duplication, no conflic
 Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
 
 ```bash
-export OPENAI_BASE_URL=http://localhost:8569/v1   # Any OpenAI-compatible SDK
-# or override the base URL in your provider config / client init
+# Point any OpenAI-compatible SDK at the forward proxy
+export OPENAI_BASE_URL=http://localhost:8569/v1
+# or set your SDK's base_url / base_path accordingly
 ```
 
 | Provider SDK | How to connect | Token savings |
 |-------------|---------------|---------------|
-| **Any OpenAI-compatible client** | `export OPENAI_BASE_URL=http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
+| **Any OpenAI-compatible client** | Set base URL to `http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
 | **Custom port** | `toolrecall serve --port 9090` | Same |
 
 ### MCP Bridge (tool-level caching)
@@ -334,9 +335,9 @@ Once `toolrecall setup` is run (or any CLI command auto-installs it), the **shim
 
 | Agent | How to connect | Best for | Notes |
 |-------|---------------|----------|-------|
-| **Any Python binary** | Just `pip install toolrecall` — the `.pth` in site-packages auto-patches `open()` / `subprocess.run()` | Hermes, Aider, Cline, custom scripts | ✅ Transparent, agent-agnostic. Not available for Node.js binaries. |
+| **Any Python binary** | Just `pipx install toolrecall` — the `.pth` in site-packages auto-patches `open()` / `subprocess.run()` | Hermes, Aider, Cline, custom scripts | ✅ Transparent, agent-agnostic. Not available for Node.js binaries. |
 | **Any MCP agent** | Add `toolrecall` server to your MCP config (example below) | OpenCode, Cline, Hermes | ✅ Universal MCP-based integration |
-| **Forward proxy** | `export OPENAI_BASE_URL=http://localhost:8569` | Any OpenAI-compatible SDK | ✅ Zero-token cache hits |
+| **Forward proxy** | Set base URL to `http://localhost:8569` | Any OpenAI-compatible SDK | ✅ Zero-token cache hits |
 
 ---
 
@@ -370,7 +371,7 @@ servers = ["time", "sequential-thinking"]
 toolrecall shim --uninstall          # Remove .pth from site-packages
 systemctl --user stop toolrecall-daemon
 systemctl --user disable toolrecall-daemon
-pip uninstall toolrecall
+pipx uninstall toolrecall
 rm -rf ~/.toolrecall ~/.config/toolrecall
 ```
 
