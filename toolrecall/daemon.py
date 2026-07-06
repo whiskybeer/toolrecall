@@ -839,10 +839,21 @@ class DaemonServer:
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
             self._gc_thread.start()
 
+            # Set a accept timeout so the main loop periodically checks
+            # self._running instead of blocking forever on accept().
+            # Without this, SIGTERM → stop() → _server.close() does NOT
+            # reliably unblock accept() on Linux (closing a socket from
+            # another thread doesn't interrupt a blocked accept syscall).
+            # The daemon then hangs until systemd's TimeoutStopSec (90s)
+            # expires and SIGKILLs it, leaving the service in "failed" state.
+            self._server.settimeout(1.0)
+
             while self._running:
                 try:
                     conn, addr = self._server.accept()
                     self._executor.submit(self._handle, conn)
+                except socket.timeout:
+                    continue  # No connection — loop back and check _running
                 except OSError:
                     break  # Server closed
 

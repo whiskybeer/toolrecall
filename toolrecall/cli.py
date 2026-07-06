@@ -610,7 +610,15 @@ def _ensure_daemon():
 
 
 def _ensure_shim():
-    """Install OS-level shim if not present, then load it into the current process."""
+    """Install OS-level shim if not present, then load it into the current process.
+
+    Why this is needed: the tr_shim.pth file auto-imports toolrecall.shim
+    on every Python process startup.  If the .pth file uses a bare
+    'import toolrecall.shim', Python's import system may resolve it to
+    the source tree (editable install) instead of the installed copy.
+    The .pth file we install uses importlib.util.spec_from_file_location
+    with 'sitedir' to load from the exact site-packages directory.
+    """
     import os
     import shutil
     import sys
@@ -623,9 +631,9 @@ def _ensure_shim():
                 if os.path.exists(pth):
                     installed = True
                     break
-        
+
         if not installed:
-            # Install the .pth file
+            # Install the .pth file from the package's bundled copy
             for p in sys.path:
                 if p.endswith("site-packages") and os.path.isdir(p):
                     pth_src = os.path.join(os.path.dirname(__file__), "tr_shim.pth")
@@ -635,7 +643,7 @@ def _ensure_shim():
                         print("  ℹ️  Shim auto-installed (tr_shim.pth)")
                         installed = True
                     break
-        
+
         # Load the shim into the CURRENT process so existing agents benefit immediately
         if installed:
             try:
@@ -798,6 +806,10 @@ Type=simple
 ExecStart=%s
 Restart=on-failure
 RestartSec=5s
+# Kill the daemon quickly on stop — the daemon's accept() loop has a 1s
+# poll timeout and exits cleanly within ~2s.  The default 90s timeout
+# leaves a hung daemon blocking restarts for over a minute.
+TimeoutStopSec=10
 
 [Install]
 WantedBy=default.target

@@ -28,7 +28,11 @@ def _get_tr():
     global _TR
     if _TR is None and _ENABLED:
         try:
-            from toolrecall.client import (
+            # Use relative import so the client module is loaded from
+            # the same package directory as this shim module — not from
+            # wherever sys.path resolves "toolrecall" (which can be the
+            # source tree if an editable install shadows site-packages).
+            from .client import (
                 cached_read as cr,
                 cached_terminal as ct,
             )
