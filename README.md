@@ -66,7 +66,7 @@ In a 13-hour session (Hermes + Gemini 3.1 Pro, 386 messages, 13 project files):
 - **~20 min less wait time** — each cache hit avoids ~1.5s subprocess fork
 - **Provider prefix-caching** becomes reliable: byte-identical payloads qualify for Anthropic/OpenAI's up-to-90% discount on every call
 
-**Real-agent debug loop (10 turns, 5 writes):** A Hermes agent fixing bugs in ToolRecall's own code shows **36.4% token savings** — 63,326 input tokens without TR → 40,270 with TR. Write-invalidation resets the cache on every edit, so savings are lower than read-only benchmarks (98%+) but reflect actual edit-heavy sessions. At 50 turns with the same write frequency, estimated savings climb to ~68%. [Full methodology](docs/REAL_AGENT_BENCHMARK.md).
+**Real-agent debug loop (10 turns, 5 writes):** A Hermes agent fixing bugs in ToolRecall's own code shows **36.4% input token savings** — 63,326 input tokens without TR → 40,270 with TR. Write-invalidation resets the cache on every edit, so savings are lower than read-only benchmarks (98%+) but reflect actual edit-heavy sessions. At 50 turns with the same write frequency, estimated savings climb to ~68%. [Full methodology](docs/REAL_AGENT_BENCHMARK.md).
 
 Source: [Benchmark](docs/BENCHMARK.md)
 
