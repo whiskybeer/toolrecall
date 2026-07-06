@@ -44,6 +44,18 @@ ToolRecall intercepts tool calls at the daemon level and returns cached results 
 
 Dynamic commands (`git`, `ls`, `curl`) and state-changing operations always execute live.
 
+### Cache Invalidation
+
+| Cache Type | Invalidation | How it works |
+|------------|-------------|--------------|
+| **File cache** | **mtime-based** (automatic) | `os.path.getmtime()` checked on every `cached_read()`. File modified → next read fetches fresh from disk. No user action needed. |
+| **Terminal cache** | **TTL-based** | Only cached for the 8 static commands in the allowlist (hostname, whoami, pwd, etc.). Default TTL 300s. |
+| **MCP cache** | **TTL-based** | Configurable per server via `servers_config.<name>.ttl`. Default 60s. |
+| **Forward proxy** | **Request-body hash** | Same request body → same response. New body = fresh API call. No expiry — cached until overwritten. |
+| **Write invalidation** | **Explicit** | Every `cached_write()`, `cached_patch()`, or native `write_file` through the shim immediately deletes stale cache entries. The next read after a write is always a cache miss and fetches fresh data. |
+
+**Stale data cannot persist.** File modifications change mtime, writes invalidate explicitly, TTLs expire automatically. The cache always returns the freshest available data within its invalidation model.
+
 ### Measured effect
 
 In a 13-hour session (Hermes + Gemini 3.1 Pro, 386 messages, 13 project files):
@@ -194,6 +206,10 @@ servers = ["time", "github", "fetch"]
 | `playwright` | `@playwright/mcp` — browser automation |
 | `slack` | `mcp-server-slack` — Slack workspace |
 
+### Naming Collisions
+
+When two MCP servers expose tools with the same name (e.g., `github` and `git` both register `list_issues`), the **first server registered wins** — its tool takes priority and a warning is logged. The second server's conflicting tool is silently skipped. Per-server tools are always unique (no two servers share a tool name in the same config), so collisions are rare in practice. If you need both servers with overlapping tool names, use the `servers_config.<name>.ttl` to stagger them, or configure one server via Hermes `mcp_servers` instead of the multiplexer.
+
 See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration details.
 
 ---
@@ -232,6 +248,15 @@ toolrecall daemon         Start/stop/manage cache daemon
 toolrecall shim           Install/uninstall OS-level cache shim (.pth file)
 toolrecall nginx          Generate nginx config
 ```
+
+### FTS5 Knowledge Base — Query via MCP or HTTP
+
+The SQLite FTS5 index built by `toolrecall index` is queryable by the agent itself:
+
+- **MCP tool** (active when MCP bridge is connected): `mcp_toolrecall_docs_search(query="...")` — returns BM25-ranked results with snippets
+- **HTTP endpoint** (active when Forward Proxy is running): `GET http://localhost:8569/__docs/search?q=<query>` — returns JSON, any HTTP-speaking client can use it
+
+This means the agent can search its own cached docs, memory stores, and indexed files without leaving the tool loop. Index with `toolrecall index`. See [Knowledge DB](docs/KNOWLEDGE_DB.md).
 
 ## Agent Integration — zero-config for any agent
 
