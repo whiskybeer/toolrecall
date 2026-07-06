@@ -112,6 +112,69 @@ The Daemon does not open any TCP ports. All communication happens over Unix Doma
 | Server-side prompt caching | **Requires same-temperature, same-model runs** across turns. Agent-imposed randomness (sampling params, multi-turn conversation drift) busts this. The daemon freezes OS output, but cannot control the LLM API's internal cache policy. |
 | Micro-RAG | **Agent must actively drop and re-fetch cache entries.** ToolRecall provides the cache backend — it doesn't enforce eviction. The agent (or its system prompt) decides when to re-fetch. |
 
+## 6. Data Storage & Lifecycle
+
+ToolRecall stores cached data in a local SQLite database. This section describes what data is stored, how long it lives, who can access it, and how to control or delete it.
+
+### 6.1 What Data Is Stored
+
+| Cache Table | Content Stored | Source |
+|-------------|---------------|--------|
+| `file_cache` | Full file contents (text files read through `cached_read`) | Files on your local filesystem |
+| `terminal_cache` | Command stdout + exit code | Shell commands run through `cached_terminal` |
+| `mcp_cache` | MCP tool call responses (e.g. GitHub API, fetch results) | Multiplexed MCP server responses |
+| `api_cache` | Full LLM API responses (prompt + completion) | Forward proxy intercepting LLM provider requests |
+| `browser_cache` | Page content (HTML text) | Browser extension / page fetches |
+| `access_log` | File path, hit/miss, timestamp, token count | Every cache access (daemon path only) |
+| `cache_stats` | Cumulative hit/miss/tokens counters | Aggregated from `_record()` calls |
+
+**No authentication credentials, API keys, or secrets are stored in the cache.** The sensitive-file blocklist (`_is_sensitive_path()`) prevents `.env`, `.ssh/*`, `credentials.json`, `.netrc`, `.pem`/`.key` files, and similar from being cached. See §1.B2 for the full list.
+
+### 6.2 Data Retention
+
+| Cache Type | Invalidation Strategy | Maximum Age |
+|------------|----------------------|-------------|
+| `file_cache` | mtime-based — invalidated when file modification time changes | Indefinite (until mtime changes or manual invalidation) |
+| `terminal_cache` | TTL-based per command pattern | 5 min (unknown commands) to 1h (deterministic commands) |
+| `mcp_cache` | TTL-based per server | 60s default (configurable) |
+| `api_cache` | TTL-based | 300s (5 min) |
+| `browser_cache` | Hash-based — re-cached when page DOM changes | Until next page load with different hash |
+| `cache_stats` | Auto-reset by periodic GC | Reset after 24h of inactivity |
+| `access_log` | Rolling window | Last 1000 entries (approximate — FIFO eviction) |
+
+**Cache entries survive daemon restarts.** The SQLite database persists on disk until explicitly invalidated. See §6.4 for invalidation commands.
+
+### 6.3 Where Data Lives
+
+- **Database file:** `~/.toolrecall/cache.db` (or `$XDG_RUNTIME_DIR/toolrecall.db`)
+- **Permissions:** `600` (owner read/write only)
+- **Encryption at rest:** No. The SQLite database is unencrypted. Any process running under your user account can read it directly (`sqlite3 ~/.toolrecall/cache.db`).
+- **Network transmission:** Never. The cache never leaves your machine. ToolRecall makes no outbound network calls except when explicitly configured to forward API requests (the forward proxy).
+- **Cloud / third-party access:** None. No telemetry, no analytics, no crash reporting.
+
+### 6.4 User Control
+
+| Action | Command |
+|--------|---------|
+| View cache status | `toolrecall status` |
+| Invalidate all caches | `toolrecall invalidate` |
+| Invalidate a single file | `toolrecall refresh-file <path>` |
+| Reset statistics | `toolrecall reset-stats` |
+| Disable caching entirely | Remove `mcp` entry from agent's MCP config, or set `TOOLRECALL_SHIM_DISABLE=1` |
+| Delete cached data permanently | `rm ~/.toolrecall/cache.db` (daemon must be stopped first) |
+| Exclude a directory | Keep it out of `allowed_paths` in `~/.toolrecall/config.toml` |
+
+### 6.5 Uninstall Cleanup
+
+Uninstalling ToolRecall (`pip uninstall toolrecall` or `pipx uninstall toolrecall`) does **not** delete the cache database, config, or logs. To fully remove all traces:
+
+```bash
+toolrecall daemon stop
+rm -rf ~/.toolrecall           # cache.db, config.toml, logs
+rm -f /run/user/$(id -u)/toolrecall.sock  # UDS socket
+pip uninstall toolrecall
+```
+
 ---
 
 ## 7. Interface Exposure & Default Transport Security
@@ -173,7 +236,56 @@ For deployments at scale (100+ agents on one machine, or agents across machines)
 
 ---
 
-## 8. Reporting Vulnerabilities
+## 6. Data Storage & Lifecycle
+
+ToolRecall stores cached data in a local SQLite database. This section describes what data is stored, how long it lives, who can access it, and how to control or delete it.
+
+### 6.1 What Data Is Stored
+
+| Cache Table | Content Stored | Source |
+|-------------|---------------|--------|
+| `file_cache` | Full file contents (text files read through `cached_read`) | Files on your local filesystem |
+| `terminal_cache` | Command stdout + exit code | Shell commands run through `cached_terminal` |
+| `mcp_cache` | MCP tool call responses (e.g. GitHub API, fetch results) | Multiplexed MCP server responses |
+| `api_cache` | Full LLM API responses (prompt + completion) | Forward proxy intercepting LLM provider requests |
+| `browser_cache` | Page content (HTML text) | Browser extension / page fetches |
+| `access_log` | File path, hit/miss, timestamp, token count | Every cache access (daemon path only) |
+| `cache_stats` | Cumulative hit/miss/tokens counters | Aggregated from `_record()` calls |
+
+**No authentication credentials, API keys, or secrets are stored in the cache.** The sensitive-file blocklist (`_is_sensitive_path()`) prevents `.env`, `.ssh/*`, `credentials.json`, `.netrc`, `.pem`/`.key` files, and similar from being cached. See §1.B2 for the full list.
+
+### 6.2 Data Retention
+
+| Cache Type | Invalidation Strategy | Maximum Age |
+|------------|----------------------|-------------|
+| `file_cache` | mtime-based — invalidated when file modification time changes | Indefinite (until mtime changes or manual invalidation) |
+| `terminal_cache` | TTL-based per command pattern | 5 min (unknown commands) to 1h (deterministic commands) |
+| `mcp_cache` | TTL-based per server | 60s default (configurable) |
+| `api_cache` | TTL-based | 300s (5 min) |
+| `browser_cache` | Hash-based — re-cached when page DOM changes | Until next page load with different hash |
+| `cache_stats` | Auto-reset by periodic GC | Reset after 24h of inactivity |
+| `access_log` | Rolling window | Last 1000 entries (approximate — FIFO eviction) |
+
+**Cache entries survive daemon restarts.** The SQLite database persists on disk until explicitly invalidated. See §6.4 for invalidation commands.
+
+### 6.3 Where Data Lives
+
+- **Database file:** `~/.toolrecall/cache.db` (or `$XDG_RUNTIME_DIR/toolrecall.db`)
+- **Permissions:** `600` (owner read/write only)
+- **Encryption at rest:** No. The SQLite database is unencrypted. Any process running under your user account can read it directly (`sqlite3 ~/.toolrecall/cache.db`).
+- **Network transmission:** Never. The cache never leaves your machine. ToolRecall makes no outbound network calls except when explicitly configured to forward API requests (the forward proxy, §7).
+- **Cloud / third-party access:** None. No telemetry, no analytics, no crash reporting.
+
+### 6.4 User Control
+
+| Action | Command |
+|--------|---------|
+| View cache status | `toolrecall status` |
+| Invalidate all caches | `toolrecall invalidate` |
+| Invalidate a single file | `toolrecall refresh-file <path>` |
+| Reset statistics | `toolrecall reset-stats` |
+| Disable caching entirely | Remove `mcp` entry from agent's MCP config, or set `TOOLRECALL_SHIM_DISABLE=1` |
+| Exclude a directory | Keep it out of `allowed_paths` in `~/.toolrecall/config.toml` |
 
 This project is maintained by a solo developer. For security issues, open a GitHub issue with the `security` label or contact the author directly. There is no bug bounty program.
 [^notall]: Not all agents tested yet — please report bugs at https://github.com/whiskybeer/toolrecall/issues

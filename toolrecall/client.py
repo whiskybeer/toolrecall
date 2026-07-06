@@ -9,7 +9,6 @@ local execution when the daemon is not running.
 """
 
 import atexit
-import time
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 

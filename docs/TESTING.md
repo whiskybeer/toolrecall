@@ -2,20 +2,34 @@
 
 ## Test Runner
 
+### Quick start (Makefile)
+
 ```bash
-# Full suite
+make setup          # one-time: install dev deps
+make test           # full suite
+make test-fast      # unit tests only (skip e2e)
+make test-file FILE=tests/test_mcp_fetch.py
+make test-kw KW=registry
+```
+
+Requires `make` (standard on all Linux/macOS, [Windows via Chocolatey](https://community.chocolatey.org/packages/make) or WSL).
+
+The Makefile auto-detects `uv` for speed and falls back to `pip` — zero environment setup.
+
+### Manual (without Makefile)
+
+```bash
+# From project root:
+pip install -e ".[dev]"
+# Then:
 python -m pytest tests/ -v
-
-# Single file
 python -m pytest tests/test_mcp_fetch.py -v
-
-# By keyword
 python -m pytest tests/ -k "registry"
 ```
 
-**Requirements:** Python 3.11+ stdlib only — no test dependencies beyond `pytest`.
+**Requirements:** Python 3.11+, `pytest` (included via `.[dev]`).
 
-**Current count:** ~330 tests (as of v0.7.5). Daemon managed by systemd.
+**Current count:** ~330 tests (as of v0.7.5).
 
 ## Test File Organization
 

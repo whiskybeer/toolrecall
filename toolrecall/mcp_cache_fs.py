@@ -142,6 +142,11 @@ def _cached_write(path: str, content: str) -> str:
     This does NOT cache the write — it invalidates any cached read
     for the same path so the next read is fresh. Returns the write result.
 
+    SECURITY: Routes the write through the daemon (which enforces the
+    path allowlist and sensitive-file blocklist) instead of writing
+    directly. Previously wrote to any path with no security checks,
+    allowing writes to ~/.ssh/authorized_keys etc.
+
     Args:
         path: Absolute path to write to
         content: Content to write
@@ -149,27 +154,33 @@ def _cached_write(path: str, content: str) -> str:
     Returns:
         Success/error message
     """
-    path = os.path.expanduser(path)
+    # SECURITY: Route through daemon — it enforces the path allowlist
+    # and sensitive-file blocklist. We must NOT write directly here.
+    resp = _daemon_send({
+        "cmd": "cached_write",
+        "path": path,
+        "content": content,
+    })
 
-    # Write the file
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(content)
-    except Exception as e:
-        return f"Error writing file: {e}"
+    if resp.get("error"):
+        return f"Error: {resp['error']}"
 
-    # Invalidate cache entry
-    try:
-        _daemon_send({"cmd": "invalidate_file", "path": path})
-    except Exception:
-        pass  # Best-effort cache invalidation
+    result = resp.get("result", resp)
+    if isinstance(result, dict) and result.get("cached") is False:
+        return f"Written {len(content)} bytes to {path}"
+    elif isinstance(result, dict) and result.get("unchanged"):
+        return f"File unchanged (content already matches): {path}"
+    elif isinstance(result, dict) and result.get("error"):
+        return f"Error: {result['error']}"
 
     return f"Written {len(content)} bytes to {path}"
 
 
 def _cached_patch(path: str, old_string: str, new_string: str) -> str:
     """Apply a find-and-replace patch to a file, invalidating the cache.
+
+    SECURITY: Routes through the daemon (which enforces the path allowlist
+    and sensitive-file blocklist) instead of writing directly.
 
     Args:
         path: Absolute path to the file to patch
@@ -179,35 +190,28 @@ def _cached_patch(path: str, old_string: str, new_string: str) -> str:
     Returns:
         Result message with diff info
     """
-    path = os.path.expanduser(path)
+    # SECURITY: Route through daemon — it enforces the path allowlist
+    # and sensitive-file blocklist.
+    resp = _daemon_send({
+        "cmd": "cached_patch",
+        "path": path,
+        "old_string": old_string,
+        "new_string": new_string,
+    })
 
-    if not os.path.isfile(path):
-        return f"Error: file not found: {path}"
+    if resp.get("error"):
+        return f"Error: {resp['error']}"
 
-    try:
-        with open(path, "r") as f:
-            content = f.read()
-    except Exception as e:
-        return f"Error reading file: {e}"
-
-    count = content.count(old_string)
-    if count == 0:
-        return f"Error: old_string not found in {path}"
-    if count > 1 and old_string != "":
-        return f"Error: old_string appears {count} times in {path} (not unique)"
-
-    new_content = content.replace(old_string, new_string, 1)
-    try:
-        with open(path, "w") as f:
-            f.write(new_content)
-    except Exception as e:
-        return f"Error writing file: {e}"
-
-    # Invalidate cache entry
-    try:
-        _daemon_send({"cmd": "invalidate_file", "path": path})
-    except Exception:
-        pass
+    result = resp.get("result", resp)
+    if isinstance(result, dict):
+        if result.get("error"):
+            return f"Error: {result['error']}"
+        if result.get("unchanged"):
+            reason = result.get("reason", "unknown")
+            return f"File unchanged ({reason}): {path}"
+        if result.get("cached") is False:
+            changes = result.get("changes", 1)
+            return f"Patched {path}: replaced {len(old_string)} chars with {len(new_string)} chars ({changes} match)"
 
     return f"Patched {path}: replaced {len(old_string)} chars with {len(new_string)} chars"
 

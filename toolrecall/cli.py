@@ -17,11 +17,14 @@ Usage:
     toolrecall daemon --foreground  # Start in foreground
     toolrecall init            # Create default config.toml and .env
 """
-import os, sys, json
+import os
+import sys
+import json
 
 def cmd_init():
     """Create boilerplate config and .env for users with interactive setup."""
-    import os, sys
+    import os
+    import sys
     cfg_dir = os.path.expanduser("~/.config/toolrecall")
     os.makedirs(cfg_dir, exist_ok=True)
 
@@ -209,7 +212,6 @@ def cmd_stats():
     """Detailed statistics as JSON."""
     try:
         from toolrecall.client import cache_status
-        import re
         print(cache_status())  # String output for CLI
     except Exception:
         from toolrecall.cache import get_stats
@@ -609,7 +611,9 @@ def _ensure_daemon():
 
 def _ensure_shim():
     """Install OS-level shim if not present, then load it into the current process."""
-    import os, shutil, sys
+    import os
+    import shutil
+    import sys
     try:
         installed = False
         # Check if shim is already in site-packages
@@ -647,7 +651,6 @@ def cmd_daemon():
     """Manage the ToolRecall Cache Daemon.
     
     Starts cache daemon + MCP bridge + forward proxy (:8569)."""
-    import os, subprocess
     from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
 
     if "--help" in sys.argv or "-h" in sys.argv:
@@ -828,7 +831,6 @@ def cmd_setup():
         service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
         os.makedirs(systemd_dir, exist_ok=True)
 
-        import sys
         toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
         if not os.path.exists(toolrecall_bin):
             import shutil
@@ -870,7 +872,7 @@ def cmd_setup():
     if errors:
         print(f"  ⚠️  Setup finished with {len(errors)} issue(s)")
     else:
-        print(f"  ✅ Setup complete — ToolRecall is ready")
+        print("  ✅ Setup complete — ToolRecall is ready")
     if not found_agents:
         print()
         print(_MANUAL_AGENT_GUIDE)
@@ -936,7 +938,7 @@ def _ensure_agent_integration():
                     capture_output=True, text=True, timeout=10,
                 )
                 if r.returncode == 0:
-                    print(f"  ✅ Hermes transparent cache registered (automatic — active next session)")
+                    print("  ✅ Hermes transparent cache registered (automatic — active next session)")
                 else:
                     print(f"  ⚠️  'hermes config set' returned exit {r.returncode}")
                     if r.stderr.strip():
@@ -944,11 +946,11 @@ def _ensure_agent_integration():
                     print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
                 result["hermes"] = True
             except FileNotFoundError:
-                print(f"  ⚠️  'hermes' binary found but 'hermes config' failed")
+                print("  ⚠️  'hermes' binary found but 'hermes config' failed")
                 print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
                 result["hermes"] = True
         else:
-            print(f"  ⚠️  Hermes detected but ~/.hermes/config.yaml not found")
+            print("  ⚠️  Hermes detected but ~/.hermes/config.yaml not found")
             print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
             result["hermes"] = True
 
@@ -960,7 +962,7 @@ def _ensure_agent_integration():
             if "[hermes]" not in content:
                 with open(tr_config, "a") as f:
                     f.write("\n[hermes]\ntransparent_cache = \"transparent\"\n")
-                print(f"  ✅ Hermes transparent mode enabled in toolrecall config")
+                print("  ✅ Hermes transparent mode enabled in toolrecall config")
 
     # ─── OpenCode / Crush ────────────────────────────
     OC_DIR = os.path.expanduser("~/.opencode")
@@ -986,7 +988,7 @@ def _ensure_agent_integration():
                 capture_output=True, text=True, timeout=15,
             )
             if r.returncode == 0:
-                print(f"  ✅ Claude Code MCP server registered (automatic — via 'claude mcp add')")
+                print("  ✅ Claude Code MCP server registered (automatic — via 'claude mcp add')")
                 result["claude"] = True
             else:
                 print(f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config")
@@ -998,7 +1000,7 @@ def _ensure_agent_integration():
             _write_claude_json_config()
             result["claude"] = True
         except subprocess.TimeoutExpired:
-            print(f"  ⚠️  'claude mcp add' timed out — falling back to direct config")
+            print("  ⚠️  'claude mcp add' timed out — falling back to direct config")
             _write_claude_json_config()
             result["claude"] = True
     else:
@@ -1221,7 +1223,7 @@ def cmd_restart():
 
     if result.returncode != 0:
         print(f"  ⚠️  systemctl restart returned exit {result.returncode}")
-        print(f"     (exit -15 = SIGTERM = daemon was killed; exit 3 = not running)")
+        print("     (exit -15 = SIGTERM = daemon was killed; exit 3 = not running)")
         if result.stderr.strip() and result.returncode not in (-15, 3):
             for line in result.stderr.strip().split("\n"):
                 print(f"     {line}")

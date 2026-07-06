@@ -3,7 +3,8 @@
 Full-text search over indexed documents (skills, projects, etc.).
 No embedding, no GPU, no API call -- pure SQLite FTS5 + BM25.
 """
-import os, time, sqlite3, hashlib, subprocess
+import os
+import sqlite3
 from pathlib import Path
 from toolrecall.cache import _hash
 from toolrecall.config import load_config
@@ -223,7 +224,6 @@ def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -
 
     Returns number of entries indexed.
     """
-    import hashlib, re
 
     if memories_dir is None:
         agent_home = (
@@ -301,7 +301,6 @@ def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
 
     Returns number of files indexed.
     """
-    import hashlib
 
     if source is None:
         source = os.path.basename(os.path.expanduser(dir_path))

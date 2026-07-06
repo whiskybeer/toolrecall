@@ -33,13 +33,11 @@ import json
 import logging
 import os
 import socket
-import struct
 import subprocess
 import sys
 import signal
 import threading
 import time
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 from toolrecall import __version__
@@ -57,14 +55,12 @@ from toolrecall.cache import (
     cached_api_store as _cache_api_store,
     _is_sensitive_path,
     invalidate_all,
-    invalidate_file as _invalidate_file,
     refresh_file as _refresh_file,
     get_stats,
 )
 from toolrecall.transport import (
-    TransportClient, DEFAULT_PATH,
-    create_socket, bind_socket, send_message,
-    recv_exact, receive_message, IS_WINDOWS,
+    TransportClient, create_socket, bind_socket, send_message,
+    receive_message, IS_WINDOWS,
 )
 from toolrecall.docs import docs_search as _docs_search, docs_get_page as _docs_get_page
 from toolrecall.config import load_config
@@ -271,8 +267,8 @@ class SecurityGate:
     def cognitive_scan_arguments(self, arguments: dict) -> str | None:
         """Scan tool arguments for prompt injection, jailbreak, and exfiltration patterns.
 
-        Scans every string value in the arguments dict (non-string values are
-        silently skipped). Returns an error message on match, or None on pass.
+        Scans every string value in the arguments dict, including those nested
+        inside dicts and lists. Returns an error message on match, or None on pass.
 
         Performance: ~0.001ms per call after cache warmup (lazy pattern compilation
         adds ~0.08ms on the very first call).
@@ -283,7 +279,18 @@ class SecurityGate:
         patterns = self._compile_cognitive_patterns()
         ovrd, role, fish, jail, overf, enc, exf_dom, exf_ip = patterns
 
-        for key, val in arguments.items():
+        # Recursively extract all string values from nested dicts/lists
+        def _extract_strings(obj, key_path=""):
+            if isinstance(obj, str):
+                yield key_path, obj
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    yield from _extract_strings(v, f"{key_path}.{k}" if key_path else k)
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj):
+                    yield from _extract_strings(v, f"{key_path}[{i}]")
+
+        for key, val in _extract_strings(arguments):
             if not isinstance(val, str):
                 continue  # Skip non-string values silently
 
@@ -412,7 +419,10 @@ class MCPClientSession:
         self.args = args
         self.env = env or {}
         self._proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
+        # SECURITY: RLock (not Lock) to prevent deadlock when _send_raw
+        # recursively calls itself on reconnect — a non-reentrant Lock
+        # would deadlock the calling thread forever on the first reconnect.
+        self._lock = threading.RLock()
         self._reconnect_count = 0
         self._max_reconnects = 3
         self._req_id = 0
@@ -453,7 +463,7 @@ class MCPClientSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=full_env,
-            preexec_fn=os.setsid,  # Start in a new process group for clean killing
+            preexec_fn=os.setsid if os.name != 'nt' else None,  # POSIX only; new process group for clean killing
         )
 
     def _send_raw(self, payload: dict) -> dict:
@@ -467,11 +477,19 @@ class MCPClientSession:
             try:
                 self._proc.stdin.write(line.encode("utf-8"))
                 self._proc.stdin.flush()
+                # Read response with timeout to prevent indefinite blocking
+                # on hung MCP subprocesses (common with Node.js on startup).
+                # Without this, a single hung server exhausts the thread pool.
+                import select
+                stdout_fd = self._proc.stdout.fileno()
+                readable, _, _ = select.select([stdout_fd], [], [], 30)
+                if not readable:
+                    raise ConnectionError("MCP subprocess response timeout (30s)")
                 resp_line = self._proc.stdout.readline()
                 if not resp_line:
                     raise ConnectionError("Empty response from subprocess")
                 return json.loads(resp_line.decode("utf-8"))
-            except Exception as e:
+            except Exception:
                 # Attempt reconnect once
                 if self._reconnect_count < self._max_reconnects:
                     self._reconnect_count += 1
@@ -488,7 +506,7 @@ class MCPClientSession:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "toolrecall", "version": "0.3.0"},
+                "clientInfo": {"name": "toolrecall", "version": __version__},
             },
         })
 
@@ -634,7 +652,10 @@ class MCPMultiplexer:
                         if session:
                             try:
                                 session.shutdown()
-                                print(f"  💤 {name}: idle shutdown ({int(idle_mins)}min)")
+                                # BUGFIX: was `idle_mins` (loop var from the first
+                                # for-loop), which always printed the last item's
+                                # idle time. Now uses `mins` — the current item.
+                                print(f"  💤 {name}: idle shutdown ({int(mins)}min)")
                             except Exception:
                                 pass
                             self._last_use.pop(name, None)
@@ -667,36 +688,41 @@ class MCPMultiplexer:
     def list_servers(self) -> list:
         """List all configured servers — running, idle, or not yet started."""
         self._discover_configs()
-        result = []
+        # Collect session references under lock, then call list_tools()
+        # outside the lock to avoid blocking all multiplexer.call() calls
+        # while doing blocking I/O with each subprocess.
         with self._lock:
-            for name_lower, config in self._configs.items():
-                session = self._sessions.get(name_lower)
-                if session and session.running:
-                    try:
-                        tools = session.list_tools()
-                        result.append({
-                            "name": config["name"],
-                            "running": True,
-                            "status": "active",
-                            "tools": len(tools),
-                            "tool_names": [t.get("name") for t in tools],
-                        })
-                    except Exception:
-                        result.append({
-                            "name": config["name"],
-                            "running": False,
-                            "status": "error",
-                            "tools": 0,
-                            "tool_names": [],
-                        })
-                else:
+            config_snapshot = [(name_lower, dict(config)) for name_lower, config in self._configs.items()]
+
+        result = []
+        for name_lower, config in config_snapshot:
+            session = self._sessions.get(name_lower)
+            if session and session.running:
+                try:
+                    tools = session.list_tools()
+                    result.append({
+                        "name": config["name"],
+                        "running": True,
+                        "status": "active",
+                        "tools": len(tools),
+                        "tool_names": [t.get("name") for t in tools],
+                    })
+                except Exception:
                     result.append({
                         "name": config["name"],
                         "running": False,
-                        "status": "idle",
+                        "status": "error",
                         "tools": 0,
                         "tool_names": [],
                     })
+            else:
+                result.append({
+                    "name": config["name"],
+                    "running": False,
+                    "status": "idle",
+                    "tools": 0,
+                    "tool_names": [],
+                })
         return result
 
     def call(self, server: str, tool: str, arguments: dict = None) -> dict:
@@ -713,8 +739,10 @@ class MCPMultiplexer:
         if err:
             return {"error": err}
 
-        # Mark used (for idle timeout)
-        self._last_use[server_lower] = time.time()
+        # Mark used (for idle timeout) — inside lock to prevent
+        # race with reaper thread reading _last_use concurrently.
+        with self._lock:
+            self._last_use[server_lower] = time.time()
 
         # Call
         with self._lock:
@@ -790,7 +818,7 @@ class DaemonServer:
 
             # Start MCP Multiplexer (lazy — no servers started yet)
             if self.cfg.mcp_multiplex_enabled:
-                print(f"\nMCP Multiplexer:")
+                print("\nMCP Multiplexer:")
                 self.multiplexer.start()
             print("")
 
@@ -851,7 +879,7 @@ class DaemonServer:
                 return
             response = self._route(request)
             send_message(conn, response)
-        except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError) as e:
+        except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError):
             pass
         except Exception as e:
             try:
@@ -964,8 +992,12 @@ class DaemonServer:
         threading.Thread(target=self._do_exit, daemon=True).start()
 
     def _do_exit(self) -> None:
+        # SECURITY: Use sys.exit(0) instead of os._exit(0).
+        # os._exit() skips finally blocks, atexit handlers, and __del__,
+        # leaving MCP subprocesses running and SQLite WAL uncommitted.
+        # sys.exit() raises SystemExit which allows proper cleanup.
         time.sleep(0.5)
-        os._exit(0)
+        sys.exit(0)
 
     def _handle_restart(self, req: dict) -> dict:
         """Restart: spawn a new daemon, then shut down."""
@@ -1302,8 +1334,10 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     # Strip local source tree from sys.path — ensures we import from
     # site-packages (pip-installed) when running inside a venv whose
     # cwd/pyvenv.cfg leaks the project dir ahead of site-packages.
+    # Uses __file__ to find the package dir dynamically (not hardcoded).
     import sys as _sys
-    _sys.path = [p for p in _sys.path if '/home/hermes/toolrecall/toolrecall' not in p]
+    _pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    _sys.path = [p for p in _sys.path if _pkg_dir not in p]
 
     # Prevent duplicate instances: try to bind the socket.
     # If the socket file already exists and a daemon responds on it,
@@ -1448,7 +1482,7 @@ def daemon_status():
                 if status.returncode == 0 and status.stdout.strip():
                     print(f"  Since: {status.stdout.strip()}")
             except Exception:
-                print(f"ToolRecall Daemon: RUNNING (via systemctl)")
+                print("ToolRecall Daemon: RUNNING (via systemctl)")
                 print(f"  Transport: {_default_socket_path()}")
             return
         elif active == "inactive":

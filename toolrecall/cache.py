@@ -25,19 +25,15 @@ Secondary caches (terminal, script, code) use SQLite directly.
 Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 (English ~4 chars/token, code ~2 char/token → weighted average ~3)
 """
-import os, re, sqlite3, time, hashlib, warnings
-from pathlib import Path
+import os
+import time
+import warnings
 from threading import Lock
 from collections import OrderedDict
 from toolrecall.config import load_config
 from toolrecall._db import _db
 from toolrecall._db import _init as _db_init
 from toolrecall._db import _hash
-from toolrecall._db import (
-    SENSITIVE_FILE_PATTERNS,
-    SENSITIVE_FILE_EXTENSIONS,
-    SENSITIVE_BASENAMES,
-)
 
 # Re-export for test compatibility: toolrecall.cache._init() calls _db_init with SCHEMA
 def _init():
@@ -577,7 +573,15 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
             break
 
     if not is_cacheable:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        # SECURITY: Never use shell=True — command injection risk.
+        # Use shlex.split to pass args as a list to subprocess.
+        # If shlex fails (complex shell syntax), the caller should use
+        # a shell script file via cached_run() instead.
+        try:
+            cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
+            result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
+        except (ValueError, OSError) as e:
+            return {"error": f"Cannot parse command: {e}", "exit_code": -1, "cached": False}
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
     cmd_hash = _hash(cmd)
@@ -602,11 +606,12 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     try:
         cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
         result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
-    except Exception:
-        # Fallback to shell=True for complex commands
+    except (ValueError, OSError):
+        # SECURITY: shlex.split failed — do NOT fall back to shell=True.
+        # Return an error instead of risking command injection.
         if _LOG_SHELL_FALLBACK:
             _log_shell_fallback(cmd, "shlex split failed (terminal)")
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        return {"error": "Command contains unparseable shell syntax. Use a script file instead.", "exit_code": -1, "cached": False}
 
     expires = now + (cacheable_ttl or 300)
     try:
@@ -643,15 +648,26 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
     stat = os.stat(path)
     ext = os.path.splitext(path)[1].lower()
     if ttl is not None and ttl <= 0:
-        result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+        # SECURITY: Use shlex.split instead of shell=True.
+        # The path is validated (exists check above); args are split safely.
+        try:
+            run_args = shlex.split(args, posix=_POSIX_MODE) if args else []
+            result = subprocess.run([path] + run_args, capture_output=True, text=True, timeout=60)
+        except (ValueError, OSError) as e:
+            return {"error": f"Cannot parse script arguments: {e}", "exit_code": -1}
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
     is_cacheable = ext in SCRIPT_CACHEABLE_EXTENSIONS
 
     if not is_cacheable:
+        # SECURITY: Use shlex.split instead of shell=True.
         if _LOG_SHELL_FALLBACK:
             _log_shell_fallback(f"{path} {args}", "non-cacheable script")
-        result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+        try:
+            run_args = shlex.split(args, posix=_POSIX_MODE) if args else []
+            result = subprocess.run([path] + run_args, capture_output=True, text=True, timeout=60)
+        except (ValueError, OSError) as e:
+            return {"error": f"Cannot parse script arguments: {e}", "exit_code": -1}
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
     path_hash = _hash(f"{path}:{args}")
@@ -683,10 +699,11 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
         script_args = shlex.split(args, posix=_POSIX_MODE) if args else []
         cmd = [path] + script_args
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except Exception:
+    except (ValueError, OSError):
+        # SECURITY: shlex.split failed — do NOT fall back to shell=True.
         if _LOG_SHELL_FALLBACK:
             _log_shell_fallback(f"{path} {args}", "shlex split failed (script)")
-        result = subprocess.run(f"{path} {args}", shell=True, capture_output=True, text=True, timeout=60)
+        return {"error": "Script arguments contain unparseable shell syntax.", "exit_code": -1}
 
     try:
         with _db() as conn:

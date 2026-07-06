@@ -17,7 +17,6 @@ Config:
     TOOLRECALL_SHIM_DISABLE=1  — disable shim at runtime
 """
 import os
-import sys
 import builtins
 
 _ENABLED = not os.environ.get("TOOLRECALL_SHIM_DISABLE", "")
@@ -67,20 +66,23 @@ def _shim_run(*args, **kwargs):
     tr = _get_tr()
     if tr and args:
         cmd = args[0] if args else kwargs.get("args", "")
-        if isinstance(cmd, list):
-            cmd = " ".join(str(c) for c in cmd)
-        try:
-            result = tr["terminal"](cmd)
-            if result and "output" in result and "exit_code" in result:
-                from subprocess import CompletedProcess
-                return CompletedProcess(
-                    args=args[0] if args else kwargs.get("args", []),
-                    returncode=result["exit_code"],
-                    stdout=result["output"],
-                    stderr=result.get("error", ""),
-                )
-        except Exception:
-            pass
+        # Only route string commands through cached_terminal.
+        # List-form commands (e.g. ["python3", "-c", code]) are passed
+        # through to the original subprocess.run — cached_terminal expects
+        # a shell string and shlex.split would mangle quoting in code strings.
+        if isinstance(cmd, str):
+            try:
+                result = tr["terminal"](cmd)
+                if result and "output" in result and "exit_code" in result:
+                    from subprocess import CompletedProcess
+                    return CompletedProcess(
+                        args=args[0] if args else kwargs.get("args", []),
+                        returncode=result["exit_code"],
+                        stdout=result["output"],
+                        stderr=result.get("error", ""),
+                    )
+            except Exception:
+                pass
     return _original_run(*args, **kwargs)
 
 # Popen stays original (background/captured output can't cache)

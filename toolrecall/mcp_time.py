@@ -2,7 +2,8 @@
 Optional replacement for `npx -y @modelcontextprotocol/server-time`.
 Zero dependencies, ~10 lines of actual logic.
 """
-import json, sys
+import json
+import sys
 from datetime import datetime, timezone, timedelta
 
 TOOLS = [

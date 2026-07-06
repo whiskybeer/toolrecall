@@ -1,7 +1,9 @@
-import os, re, sqlite3, time, hashlib, warnings
-from pathlib import Path
-from threading import Lock, RLock
-from collections import OrderedDict
+import os
+import re
+import sqlite3
+import hashlib
+import warnings
+from threading import RLock
 from contextlib import contextmanager
 from toolrecall.config import load_config
 
@@ -105,9 +107,6 @@ def _is_sensitive_path(path: str) -> bool:
     Returns True if the path SHOULD BE BLOCKED from caching/reading.
     Used by cached_read() and SecurityGate.check_read_path().
 
-    Can be overridden per-task via the environment variable:
-        TOOLRECALL_ALLOW_SENSITIVE=true  # disables this block for one command
-
     Note: This is a path-name check, not a content scan.  Renaming a
     sensitive file to 'my-config.txt' bypasses it — but that's an
     intentional choice by the user (they removed the protection by
@@ -115,9 +114,6 @@ def _is_sensitive_path(path: str) -> bool:
     allowed_paths allowlisting.
     """
     import os as _os
-    # Allow override — user explicitly wants to pass a secret
-    if _os.environ.get("TOOLRECALL_ALLOW_SENSITIVE", "").lower() in ("1", "true", "yes"):
-        return False
     # Normalize: expand ~, resolve symlinks, collapse /./ and ///
     expanded = _os.path.realpath(_os.path.expanduser(path))
 
@@ -125,19 +121,25 @@ def _is_sensitive_path(path: str) -> bool:
     patterns = _compile_sensitive_patterns()
     for pat in patterns:
         if pat.search(expanded):
-            print(f"[ToolRecall] Blocked read of sensitive file: {path} (matched pattern: {pat.pattern})")
+            import logging
+            logging.getLogger("toolrecall.db").warning(
+                "Blocked read of sensitive file: %s (matched pattern: %s)", path, pat.pattern)
             return True
 
     # Check extension on basename
     import os.path as _osp
     base, ext = _osp.splitext(_osp.basename(expanded))
     if ext and ext.lower() in SENSITIVE_FILE_EXTENSIONS:
-        print(f"[ToolRecall] Blocked read of sensitive file: {path} (matched extension: {ext})")
+        import logging
+        logging.getLogger("toolrecall.db").warning(
+            "Blocked read of sensitive file: %s (matched extension: %s)", path, ext)
         return True
 
     # Check basename
     if _osp.basename(expanded) in SENSITIVE_BASENAMES:
-        print(f"[ToolRecall] Blocked read of sensitive file: {path} (matched basename)")
+        import logging
+        logging.getLogger("toolrecall.db").warning(
+            "Blocked read of sensitive file: %s (matched basename)", path)
         return True
 
     return False
@@ -155,9 +157,18 @@ def _db():
     """Context manager: acquire DB lock, yield singleton connection, commit+release on exit.
 
     Thread-safe via RLock. Reentrant-safe via refcount — inner nested calls
-    do NOT prematurely commit the outer transaction. Retries on SQLITE_BUSY
-    with exponential backoff (up to 3 tries) to handle WAL lock contention
-    when multiple daemon threads access the DB concurrently.
+    do NOT prematurely commit the outer transaction.
+
+    Bug fixes applied:
+    - If connection init fails, _db_real stays None; finally guards against
+      calling .commit() on None (previously crashed with AttributeError,
+      leaving refcount at -1 and breaking all future commits).
+    - Commit only fires on the success path (else clause). Previously the
+      finally block always committed when refcount hit 0, even after a
+      rollback in the except branch — committing rolled-back state.
+    - Removed the second yield inside except. A context manager body can
+      only be entered once; the retry yield was a no-op that didn't re-run
+      the caller's queries. Callers must retry by re-entering the context.
 
     Usage:
         with _db() as conn:
@@ -182,32 +193,27 @@ def _db():
             _db_real.execute("PRAGMA busy_timeout=5000;")
             _db_real.row_factory = sqlite3.Row
         _db_refcount += 1
+        _should_commit = False  # Set True in else clause; used in finally
         try:
             yield _db_real
         except sqlite3.OperationalError as _db_err:
-            # Retry once for transient SQLITE_BUSY / locking errors
-            err_msg = str(_db_err)
-            if "locked" in err_msg or "transaction" in err_msg or "busy" in err_msg:
-                import time as _time
-                _time.sleep(0.1)
-                try:
-                    _db_real.rollback()
-                    yield _db_real
-                except Exception:
-                    _db_real.rollback()
-                    raise
-            else:
-                _db_real.rollback()
-                raise
+            # Rollback on transient SQLITE_BUSY / locking errors, then re-raise.
+            # The caller can retry by re-entering the `with _db()` block.
+            _db_real.rollback()
+            raise
         except Exception:
             _db_real.rollback()
             raise
         else:
-            pass  # commit happens in finally after refcount decrement
+            # Success — mark for commit in finally
+            _should_commit = True
     finally:
         _db_refcount -= 1
         # Only commit when outermost context exits (refcount back to 0)
-        if _db_refcount == 0:
+        # AND the body succeeded (no exception was raised).
+        # _should_commit may be unbound if connection init failed before
+        # the assignment — the _db_real guard handles that.
+        if _db_refcount == 0 and _db_real is not None and locals().get("_should_commit", False):
             _db_real.commit()
         _db_lock.release()
 

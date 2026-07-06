@@ -17,7 +17,10 @@ Content size limit:
     all available memory (no streaming in stdio MCP).
 """
 
-import json, sys, logging, os
+import json
+import sys
+import logging
+import os
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlparse

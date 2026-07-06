@@ -110,7 +110,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header(hdr_key, hdr_val)
             self.send_header("X-ToolRecall-Cache", "HIT")
             self.end_headers()
-            self.wfile.write(cached["body"].encode("utf-8"))
+            # Body is stored as bytes — write directly.
+            cached_body = cached["body"]
+            self.wfile.write(cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body)
             return
 
         # Cache MISS — forward to real API
@@ -119,7 +121,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             method, target_host, target_path, target_scheme, body_bytes,
         )
 
-        # Store in cache
+        # Store in cache — body is bytes now, stored as-is
         self._client.send({
             "cmd": "cached_api_store",
             "request_hash": request_hash,
@@ -128,8 +130,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             "path": target_path,
             "request_body_hash": body_hash,
             "response_status": resp_status,
-            "response_headers": dict(resp_headers),
-            "response_body": resp_body,
+            "response_headers": list(resp_headers),  # list of tuples, preserves duplicates
+            "response_body": resp_body,  # bytes
             "ttl": 300,
         })
 
@@ -140,7 +142,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header(k, v)
         self.send_header("X-ToolRecall-Cache", "MISS")
         self.end_headers()
-        self.wfile.write(resp_body.encode("utf-8") if isinstance(resp_body, str) else resp_body)
+        # Body is bytes — write directly.
+        self.wfile.write(resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8"))
 
     def do_GET(self):
         self._handle("GET")
@@ -161,12 +164,19 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                  scheme: str, body: bytes) -> tuple:
         """Forward request to the real API server.
 
-        Returns (status_code, list_of_headers, body_string).
+        Returns (status_code, list_of_headers, body_bytes).
         """
+        # SECURITY: Never fall back to plaintext HTTP for known API hosts.
+        # The previous code caught ALL exceptions and fell back to HTTPConnection,
+        # silently sending Authorization headers over unencrypted transport.
+        # All hosts in FORWARD_HOSTS are HTTPS-only.
         try:
             conn = http.client.HTTPSConnection(host, timeout=30)
-        except Exception:
-            conn = http.client.HTTPConnection(host, timeout=30)
+        except Exception as e:
+            log.error("Cannot establish HTTPS connection to %s: %s", host, e)
+            return 502, [("Content-Type", "application/json")], json.dumps({
+                "error": f"HTTPS connection failed: {e}",
+            })
 
         # Copy headers, dropping the ones we shouldn't forward
         headers = {}
@@ -179,7 +189,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         try:
             conn.request(method, path, body=body or None, headers=headers)
             resp = conn.getresponse()
-            resp_body = resp.read().decode("utf-8", errors="replace")
+            # SECURITY: Read body as raw bytes — previously decoded as UTF-8
+            # with errors="replace", corrupting binary responses with U+FFFD.
+            # Now stored and served as bytes to preserve fidelity.
+            resp_body = resp.read()
             resp_headers = resp.getheaders()
             conn.close()
             return resp.status, resp_headers, resp_body
@@ -194,6 +207,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         body_bytes = b""
         cl = int(self.headers.get("Content-Length", 0))
         if cl > 0:
+            # SECURITY: Same MAX_BODY_SIZE protection as the API host path.
+            # Previously this method had no size check, allowing OOM attacks.
+            if cl > MAX_BODY_SIZE:
+                self.send_response(413)
+                self.end_headers()
+                self.wfile.write(b'{"error":"Request too large"}')
+                return
             body_bytes = self.rfile.read(cl)
         status, headers, body = self._forward(method, host, path, scheme, body_bytes)
         self.send_response(status)
@@ -201,7 +221,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             if k.lower() not in ("transfer-encoding", "content-encoding"):
                 self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body.encode("utf-8") if isinstance(body, str) else body)
+        # Body is now bytes — write directly.
+        self.wfile.write(body if isinstance(body, bytes) else body.encode("utf-8"))
 
     def log_message(self, format, *args):
         log.debug("ForwardProxy: " + format, *args)

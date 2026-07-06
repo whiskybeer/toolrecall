@@ -7,7 +7,14 @@ Supports: create_repository, create_or_update_file, push_files, list_commits
 
 Token is loaded from the ToolRecall daemon environment (never exposed to subprocess).
 """
-import base64, json, os, sys, time, logging, urllib.request, urllib.error
+import base64
+import json
+import os
+import sys
+import time
+import logging
+import urllib.request
+import urllib.error
 
 # Lazy init — token + logger only when main() runs, not on import
 _LOG: logging.Logger | None = None

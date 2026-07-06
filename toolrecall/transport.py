@@ -136,6 +136,11 @@ def receive_message(sock: socket.socket) -> dict | None:
         return None
     msg_len = struct.unpack("!I", raw_len)[0]
     if msg_len > _MAX_MSG_SIZE:
+        # SECURITY: Drain the oversized payload from the socket before returning.
+        # Previously returned an error dict without reading msg_len bytes,
+        # leaving the socket poisoned — the next receive_message would read
+        # the unread payload as a new length prefix, cascading errors.
+        recv_exact(sock, msg_len)
         return {"error": "Message too large"}
     raw_data = recv_exact(sock, msg_len)
     if not raw_data:
@@ -161,6 +166,15 @@ class TransportClient:
     @property
     def is_tcp(self) -> bool:
         return _is_tcp(self._path)
+
+    def close(self):
+        """No-op — TransportClient is stateless (connects per request).
+        
+        Added for API compatibility: client.py's atexit cleanup calls
+        _client.close(), which previously raised AttributeError because
+        TransportClient had no close() method.
+        """
+        pass
     
     def send(self, payload: dict, timeout: float = 5.0) -> dict:
         """Send a request and receive response."""

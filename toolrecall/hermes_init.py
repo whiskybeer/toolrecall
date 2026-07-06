@@ -20,7 +20,6 @@
 # Then restart Hermes or run /reset.
 
 import os
-import sys
 
 # ─── 1. Import ToolRecall Client ─────────────────────────────
 try:
@@ -225,7 +224,7 @@ def _patch_write_file():
                                 abs_path = os.path.abspath(path)
                                 result = cached_write(abs_path, content)
                                 if result.get("unchanged"):
-                                    return f"=== unchanged (content identical, write skipped) ==="
+                                    return "=== unchanged (content identical, write skipped) ==="
                                 if "error" not in result:
                                     return result
                             # Fall through to original on any error
@@ -317,13 +316,13 @@ if TOOLRECALL_AVAILABLE:
     daemon_active = daemon_running() if daemon_running else False
 
     print(f"  {'='*48}")
-    print(f"  ToolRecall Caching Registered")
+    print("  ToolRecall Caching Registered")
     print(f"  Tools: {', '.join(tools_registered)}")
     print(f"  Mode:  {'Transparent' if mode in ('transparent', 'write') else 'Separate'}")
     if daemon_active:
-        print(f"  Backend: Daemon (UDS) — shared cache")
+        print("  Backend: Daemon (UDS) — shared cache")
     else:
-        print(f"  Backend: Direct SQLite — no daemon")
+        print("  Backend: Direct SQLite — no daemon")
     print(f"  {'='*48}")
     print()
 else:

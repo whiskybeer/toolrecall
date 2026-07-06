@@ -20,11 +20,10 @@ Requires a running ToolRecall Daemon:
 """
 
 import json
-import os
 import sys
-from pathlib import Path
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
+from toolrecall import __version__
 
 
 # ─── MCP Tool Definitions ────────────────────────────────
@@ -222,7 +221,7 @@ class MCPBridge:
                 "capabilities": {"tools": {}},
                 "serverInfo": {
                     "name": "ToolRecall (Bridge)",
-                    "version": "0.2.0",
+                    "version": __version__,
                     "security": security,
                 },
                 "instructions": (
@@ -326,7 +325,6 @@ class MCPBridge:
 
 def main():
     """Start the MCP Bridge (stdio → Daemon ↔ UDS)."""
-    import sys
 
     bridge = MCPBridge()
 
@@ -338,8 +336,8 @@ def main():
         print("   Or:  toolrecall mcp --direct   (legacy standalone)", file=sys.stderr)
         sys.exit(1)
 
-    print(f"ToolRecall MCP Bridge v0.2.0", file=sys.stderr)
-    print(f"  Connected to daemon", file=sys.stderr)
+    print("ToolRecall MCP Bridge v0.2.0", file=sys.stderr)
+    print("  Connected to daemon", file=sys.stderr)
     term = ping.get("allow_terminal", False)
     inv = ping.get("allow_invalidate", False)
     paths = ping.get("allowed_paths", [])

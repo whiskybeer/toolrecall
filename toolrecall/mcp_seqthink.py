@@ -3,7 +3,9 @@ Optional replacement for `npx -y @modelcontextprotocol/server-sequential-thinkin
 Pure logic: validates reasoning steps, detects contradictions, tracks depth.
 Zero network calls, zero dependencies.
 """
-import json, sys, re
+import json
+import sys
+import re
 
 TOOLS = [
     {"name": "think_step", "description": "Process a single reasoning step",
