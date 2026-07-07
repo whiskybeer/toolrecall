@@ -256,6 +256,23 @@ class Config:
         return raw if isinstance(raw, list) else []
 
     @property
+    def mcp_allowed_terminal_patterns(self) -> list:
+        """Compiled regex patterns from allowed_terminal_commands.
+        Empty list = no terminal commands allowed via MCP.
+        """
+        import re
+        raw = self.mcp_allowed_terminal_commands
+        if not raw:
+            return []
+        patterns = []
+        for p in raw:
+            try:
+                patterns.append(re.compile(p))
+            except re.error:
+                pass
+        return patterns
+
+    @property
     def mcp_allow_invalidate(self) -> bool:
         """Allow cache_invalidate tool (default: False)."""
         return self.get("mcp", "allow_invalidate", default=False)

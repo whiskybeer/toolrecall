@@ -209,6 +209,20 @@ def cmd_status():
             ca = r.get("cached_at", "")[11:19]  # HH:MM:SS from ISO
             print(f"  {r['since_status']:>8} {icon} {tokens_str:>8} {ca:<26} {p}")
 
+    # ─── Terminal cache info ─────────────────
+    print()
+    print("  Terminal cache (read-only commands):")
+    print("    System: hostname(3600s), whoami(3600s), pwd(3600s), uptime(300s), uname(3600s)")
+    print("    Files:  ls(60s), cat(30s), head(30s), tail(30s), wc(30s)")
+    print("    Search: grep(60s), rg(60s), find(60s), fd(60s)")
+    print("    Git:    status(30s), diff(30s), log(30s), branch(300s), stash(300s)")
+    print("    Env:    which(3600s), python3 --version(3600s), pip list(600s)")
+    print()
+    print("  ⚠️  Only read-only commands are cached. Dangerous")
+    print("     commands (rm, sudo, git push, kill) are NEVER cached.")
+    print()
+
+
 def cmd_stats():
     """Detailed statistics as JSON."""
     try:
@@ -894,6 +908,17 @@ def cmd_setup():
         print("  ℹ️  ToolRecall MCP tools available on next agent restart")
         print("     Agents must be told to use cached_read/cached_terminal over native tools")
         print("     (ToolRecall instruction snippets appended to agent configs where applicable)")
+        print()
+        print("  📦 Cached terminal commands (read-only):")
+        print("     System: hostname(3600), whoami(3600), pwd(3600), uptime(300), uname(3600)")
+        print("     Files:  ls(60), cat(30), head(30), tail(30), wc(30)")
+        print("     Search: grep(60), rg(60), find(60), fd(60)")
+        print("     Git:    status(30), diff(30), log(30), branch(300), stash(300)")
+        print("     Env:    which(3600), python3 --version(3600), pip list(600), node --version(3600)")
+        print("     Disk:   du(120), df(120)")
+        print()
+        print("  ⚠️  Security: only read-only commands are cached. Dangerous commands")
+        print("     (rm, sudo, mv, git push, kill) are NEVER cached. Use ttl=0 to bypass.")
     print("=" * 56)
 
 

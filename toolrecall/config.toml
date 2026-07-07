@@ -123,6 +123,47 @@ allowed_paths = [
 allow_terminal = true
 allow_invalidate = false
 
+# ═══ Terminal command regex allowlist ═══
+# Commands matching these patterns are eligible for terminal caching
+# via both the Python shim and the MCP cache-fs server.
+# EMPTY LIST (with allow_terminal=true) = ALL COMMANDS ALLOWED (DANGEROUS).
+# Only read-only commands should be listed here.
+#
+# The daemon applies re.search(), so prefix patterns work:
+#   "^ls(\\s+|$)" matches ls, ls -la, ls -1, etc.
+#   "^cat\\s" matches cat /etc/hostname
+# Dangerous commands (rm, sudo, git push, kill, mv) are NOT listed.
+# Users bypass with ttl=0 for a single call.
+allowed_terminal_commands = [
+    "^ls(\\s+|$)",
+    "^cat\\s",
+    "^head\\s",
+    "^tail\\s",
+    "^wc\\s",
+    "^grep\\s",
+    "^rg\\s",
+    "^find\\s",
+    "^fd\\s",
+    "^git\\s+(status|diff|log|branch|stash|show)",
+    "^which\\s",
+    "^ps\\s",
+    "^lsof\\s",
+    "^python3\\s+--version$",
+    "^node\\s+--version$",
+    "^pip\\s+list$",
+    "^date(\\s+|$)",
+    "^cal(\\s+|$)",
+    "^hostname(\\s+|$)",
+    "^whoami(\\s+|$)",
+    "^pwd(\\s+|$)",
+    "^uname\\s",
+    "^uptime(\\s+|$)",
+    "^free\\s",
+    "^df\\s",
+    "^du\\s",
+    "^crontab\\s",
+]
+
 # ─── MCP Multiplexer — Security-sensitive servers are opt-in ──
 #
 # GitHub is intentionally NOT pre-configured here. The GitHub MCP

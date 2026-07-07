@@ -510,17 +510,66 @@ def cached_skill(skill_name: str, skill_dirs: list = None) -> dict:
 # ─── TERMINAL CACHE (SQLite — output not on disk) ──────────
 
 DEFAULT_CACHEABLE = {
-    # System info (very static)
+    # ── System info (very static) ────────────────
     "hostname": 3600,
     "whoami": 3600,
     "pwd": 3600,
     "uname -a": 3600,
-    
-    # State-checkers (moderate TTL)
+
+    # ── State checkers (moderate TTL) ────────────
     "uptime": 300,
     "free -h": 300,
     "df -h /": 300,
     "crontab -l": 3600,
+
+    # ── File listing (60s — directory contents stable)
+    "ls": 60,
+    "ls -la": 60,
+    "ls -1": 60,
+    "ls -l": 60,
+    "ls -lh": 60,
+
+    # ── File reading (30s — avoids re-reads during same reasoning step)
+    "cat": 30,
+    "head": 30,
+    "tail": 30,
+    "wc": 30,
+
+    # ── Searching (60s — results stable within agent turn)
+    "grep": 60,
+    "rg": 60,
+    "find": 60,
+    "fd": 60,
+
+    # ── Git read-only (30s — changes frequently, short TTL)
+    "git status": 30,
+    "git diff": 30,
+    "git diff --stat": 30,
+    "git log --oneline": 30,
+    "git log --oneline -5": 30,
+    "git branch": 300,
+    "git stash list": 300,
+
+    # ── Process snapshots (15s — changes every second)
+    "ps aux": 15,
+    "ps afx": 15,
+    "lsof": 15,
+
+    # ── Disk / memory (120s — changes slowly)
+    "du -sh": 120,
+    "du -sh *": 120,
+    "df -h": 120,
+
+    # ── Environment queries (static within session)
+    "which": 3600,
+    "python3 --version": 3600,
+    "node --version": 3600,
+    "pip list": 600,
+
+    # ── Date / time (60s — predictable)
+    "date": 60,
+    "date +%s": 60,
+    "cal": 60,
 }
 
 
@@ -528,13 +577,22 @@ def _match_terminal(cmd: str, pattern: str) -> bool:
     """Match a command against a cacheable pattern.
 
     - Multi-word patterns (e.g. "git status") require exact match.
-    - Single-word patterns (e.g. "hostname", "whoami") require exact match only.
-    - No startswith prefix-matching — prevents false cache of "hostname -I".
+    - Single-word patterns (e.g. "hostname", "ls") match by prefix.
+      This means "ls -la" matches "ls", "cat /etc/hostname" matches "cat".
+    - Safe because DEFAULT_CACHEABLE only contains read-only commands.
+      Dangerous commands (rm, sudo, mv, git push, kill) are NOT in the list.
+      Users can always bypass with ttl=0.
     """
-    # Normalize whitespace
     cmd_norm = " ".join(cmd.strip().split())
     pattern_norm = " ".join(pattern.strip().split())
-    return cmd_norm == pattern_norm
+    if " " in pattern_norm:
+        # Multi-word pattern: exact match only
+        return cmd_norm == pattern_norm
+    # Single-word pattern: match by prefix
+    # "cat /etc/hostname" starts with "cat " — matches
+    # "ls -la" starts with "ls " — matches
+    # "lsof" matches "ls"? No: "lsof " doesn't start with "ls ", and "lsof" != "ls"
+    return cmd_norm == pattern_norm or cmd_norm.startswith(pattern_norm + " ")
 
 
 _LOG_SHELL_FALLBACK = str(config.get("cache", "log_shell_fallback", default="true") or "true").lower() == "true"

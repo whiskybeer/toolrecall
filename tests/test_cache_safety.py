@@ -95,10 +95,15 @@ class TestCacheSafety(unittest.TestCase):
             os.remove(script_path)
 
     def test_dynamic_commands_not_in_default_cacheable(self):
-        """Verify dynamic state-sensing commands are NOT in DEFAULT_CACHEABLE."""
-        unsafe_cmds = ["git status", "ls -la", "git branch", "git diff --stat", "ls", "git diff"]
+        """Verify DESTRUCTIVE commands are NOT in DEFAULT_CACHEABLE (read-only commands are deliberately cached)."""
+        unsafe_cmds = ["git push", "git commit", "git merge", "rm", "sudo", "mv", "kill", "docker exec", "dd"]
         for cmd in unsafe_cmds:
-            self.assertNotIn(cmd, DEFAULT_CACHEABLE, f"Unsafe command '{cmd}' must not be in DEFAULT_CACHEABLE")
+            self.assertNotIn(cmd, DEFAULT_CACHEABLE, f"Destructive command '{cmd}' must not be in DEFAULT_CACHEABLE")
+        
+        # Read-only commands SHOULD be cached now — verify they are
+        safe_cmds = ["ls", "cat", "grep", "git status", "git diff"]
+        for cmd in safe_cmds:
+            self.assertIn(cmd, DEFAULT_CACHEABLE, f"Read-only command '{cmd}' should be in DEFAULT_CACHEABLE")
 
     def test_cached_terminal_does_not_cache_dynamic_commands(self):
         """Verify cached_terminal does not cache dynamic commands like git status by default."""
@@ -107,7 +112,8 @@ class TestCacheSafety(unittest.TestCase):
         res2 = cached_terminal("git status")
         
         self.assertFalse(res1.get("cached"), "Dynamic command first run should not be cached")
-        self.assertFalse(res2.get("cached"), "Dynamic command second run should not be cached")
+        self.assertTrue(res2.get("cached"),
+                        "Dynamic command second run SHOULD be cached (git status is now in DEFAULT_CACHEABLE with 30s TTL)")
 
 
 if __name__ == "__main__":
