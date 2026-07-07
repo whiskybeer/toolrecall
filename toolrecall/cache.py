@@ -28,6 +28,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 import os
 import time
 import warnings
+from datetime import datetime
 from threading import Lock
 from collections import OrderedDict
 from toolrecall.config import load_config
@@ -1057,7 +1058,8 @@ def get_stats() -> dict:
                     "path": r["path"],
                     "hit": bool(r["hit"]),
                     "tokens": r["tokens"],
-                    "ago": f"{time.time() - r['cached_at']:.1f}s",
+                    "since_status": f"{time.time() - r['cached_at']:.1f}s",
+                    "cached_at": datetime.fromtimestamp(r["cached_at"]).isoformat(),
                 }
                 for r in rows
             ]

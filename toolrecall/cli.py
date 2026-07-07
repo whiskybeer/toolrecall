@@ -198,15 +198,16 @@ def cmd_status():
     if recent:
         print()
         print("  ── Last 20 accesses ──")
-        print(f"  {'ago':>8} {'type':<12} {'tokens':>8} {'path'}")
-        print(f"  {'─'*8} {'─'*12} {'─'*8} {'─'*40}")
+        print(f"  {'ago':>8} {'type':<12} {'tokens':>8} {'cached_at':<26} {'path'}")
+        print(f"  {'─'*8} {'─'*12} {'─'*8} {'─'*26} {'─'*40}")
         for r in recent:
             icon = "✅" if r["hit"] else "⬇️"
             p = r.get("path", r["category"])
             if len(p) > 40:
                 p = "..." + p[-37:]
             tokens_str = f"{r['tokens']:,}" if r.get("tokens", 0) else "-"
-            print(f"  {r['ago']:>8} {icon} {tokens_str:>8} {p}")
+            ca = r.get("cached_at", "")[11:19]  # HH:MM:SS from ISO
+            print(f"  {r['since_status']:>8} {icon} {tokens_str:>8} {ca:<26} {p}")
 
 def cmd_stats():
     """Detailed statistics as JSON."""
