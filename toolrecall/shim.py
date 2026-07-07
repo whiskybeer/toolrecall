@@ -18,8 +18,35 @@ Config:
 """
 import os
 import builtins
+import threading
 
 _ENABLED = not os.environ.get("TOOLRECALL_SHIM_DISABLE", "")
+
+# ─── Re-entrancy guard ───
+# Prevents infinite recursion when the shim's own code path (importing
+# client, connecting to daemon, reading cache DB) calls open() — which
+# would be patched and call back into the shim.
+# Each thread gets its own guard so concurrent Python processes are
+# not blocked by each other.
+_thread_local = threading.local()
+
+
+def _shim_active() -> bool:
+    """Check if this thread is already inside a shimmed open() call."""
+    return getattr(_thread_local, "active", False)
+
+
+def _enter_shim():
+    """Mark thread as inside shim scope. Returns previous state."""
+    prev = getattr(_thread_local, "active", False)
+    _thread_local.active = True
+    return prev
+
+
+def _exit_shim(prev: bool):
+    """Restore thread's shim-active state to what it was before entry."""
+    _thread_local.active = prev
+
 
 # ─── Lazy-load client on first call ───
 _TR = None
@@ -46,16 +73,26 @@ def _get_tr():
 _original_open = builtins.open
 
 def _shim_open(path, mode='r', *args, **kwargs):
-    tr = _get_tr()
-    if tr and 'r' in mode and 'b' not in mode:
-        try:
-            result = tr["read"](os.fspath(path))
-            if result and "content" in result:
-                import io
-                return io.StringIO(result["content"])
-        except Exception:
-            pass
-    return _original_open(path, mode, *args, **kwargs)
+    # Re-entrancy guard: if we're already inside a shim call (e.g. the
+    # daemon's open(), or importing client triggers another open()), fall
+    # through to the real open() immediately to prevent infinite recursion.
+    if _shim_active():
+        return _original_open(path, mode, *args, **kwargs)
+
+    prev = _enter_shim()
+    try:
+        tr = _get_tr()
+        if tr and 'r' in mode and 'b' not in mode:
+            try:
+                result = tr["read"](os.fspath(path))
+                if result and "content" in result:
+                    import io
+                    return io.StringIO(result["content"])
+            except Exception:
+                pass
+        return _original_open(path, mode, *args, **kwargs)
+    finally:
+        _exit_shim(prev)
 
 
 # ─── Patch subprocess ───
