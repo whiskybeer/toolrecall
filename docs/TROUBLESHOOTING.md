@@ -71,7 +71,7 @@ volumes:
 **Symptom:** Terminal commands in Docker container hang or timeout.
 **Cause:** `allow_terminal=true` spawns shell processes that expect a TTY. Inside a container there is no TTY — no STDIN or real shell environment.
 **Fix:**
-- `allow_terminal=false` (default) — avoid terminal via MCP
+- `allow_terminal=false` — disable terminal caching in containers
 - Or start container with `tty: true`:
 ```yaml
 services:

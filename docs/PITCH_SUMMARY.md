@@ -15,7 +15,7 @@ Without TR: $60. With TR (90% discount): $6. Plus local dedup: ~$0.15.
 
 3. **Determinism:** Same args + same mtime = same output. 100% reproducible agent runs, no OS flakiness.
 
-4. **Security:** Zero-Trust WAF — `os.path.realpath` blocks directory traversal, `.env` files are air-gapped from the LLM, `allow_terminal=false` drops RCE attempts.
+4. **Security:** Zero-Trust WAF — `os.path.realpath` blocks directory traversal, `.env` files are air-gapped from the LLM, `allow_terminal=true` with regex allowlist (27 read-only patterns) prevents RCE.
 
 5. **Universal:** Standard `stdio` MCP (`toolrecall mcp`). Works with Hermes, OpenCode, Cline, Aider[^notall] — any MCP-speaking agent. No custom plugins needed.
 

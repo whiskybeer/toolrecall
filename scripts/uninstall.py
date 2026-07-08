@@ -172,14 +172,6 @@ def edit_config_file(path: str, label: str):
     original = content
     changed = False
 
-    # Remove init_scripts line referencing toolrecall
-    content = re.sub(
-        r'^  init_scripts: .*?toolrecall.*?\n',
-        '',
-        content,
-        flags=re.MULTILINE,
-    )
-
     # Remove mcp_servers.toolrecall block (multi-line)
     content = re.sub(
         r'^  toolrecall:\n(?:    .+\n)+',
@@ -212,7 +204,7 @@ def step_hermes_config():
         log("No toolrecall references in config", "−")
         return
 
-    if confirm("Remove toolrecall entries from config.yaml (init_scripts + mcp_servers)?"):
+    if confirm("Remove toolrecall entries from config.yaml (mcp_servers)?"):
         if edit_config_file(HERMES_CONFIG, "config.yaml"):
             log("Cleaned config.yaml", "✓")
             REMOVED += 1
@@ -327,13 +319,40 @@ def step_vscode():
         SKIPPED += 1
 
 
-# ── 9. Pip package ─────────────────────────────────────────────
+# ── 9. Pip/pipx package ────────────────────────────────────────
 
 def step_pip():
     global REMOVED, SKIPPED
-    print("\n[9/9] Pip package...")
+    print("\n[9/9] Pip/pipx package...")
 
-    # Check if installed
+    # Check pipx first (preferred install method)
+    pipx_found = False
+    try:
+        r = subprocess.run(
+            ["pipx", "list"], capture_output=True, text=True, timeout=15,
+        )
+        pipx_found = r.returncode == 0 and "toolrecall" in r.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    if pipx_found:
+        if confirm("Uninstall pipx package 'toolrecall'?"):
+            try:
+                subprocess.run(
+                    ["pipx", "uninstall", "toolrecall"],
+                    capture_output=True, timeout=30,
+                )
+                log("Uninstalled pipx package", "✓")
+                REMOVED += 1
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                log("pipx uninstall failed", "⚠")
+                SKIPPED += 1
+        else:
+            log("Skipped", "−")
+            SKIPPED += 1
+        return
+
+    # Check pip
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "toolrecall"],
         capture_output=True, text=True, timeout=30,

@@ -1,8 +1,18 @@
 # Changelog
 
-## v0.8.3 (2026-07-05)
+## v0.8.5 (2026-07-07)
 
-- **Feature:** `toolrecall setup` auto-detects Hermes Agent, Claude Code, OpenCode/Crush — writes MCP config, init_scripts, and instruction snippets automatically
+- **Removed:** `hermes_init.py` and `init_scripts` mechanism — Hermes Agent has no `init_scripts` config key, the script was never loaded. The OS-level `.pth` shim (`toolrecall/shim.py`) is the agent-agnostic mechanism for all Python-based agents.
+- **Removed:** `patch_shim.py` / `toolrecall_patch.py` — dead `PYTHONSTARTUP` mechanism, `toolrecall_patch` module never existed in the installed package.
+- **Removed:** Init script references from `toolrecall setup`, all docs, and uninstaller.
+- **Fixed:** Live `~/.toolrecall/config.toml` now has `allow_terminal = true` with 27 read-only regex patterns — terminal cache was blocked because the config had `false` and no allowlist. (Source config was already updated in v0.8.4, but live config was never synced.)
+- **Fixed:** Terminal regex patterns now correctly match bare commands (`cat`, `grep`, `find`, etc.) — `^cat\s` didn't match `cat` without args, changed to `^cat(\s+|$)`.
+- **Fixed:** `setup.sh` now detects `pipx` (preferred for CLI tools), falls back to `pip`. Hermes section installs the `.pth` shim instead of writing `hermes_init.py`.
+- **Fixed:** `scripts/uninstall.py` now checks `pipx list` before `pip show` — handles both install methods.
+
+## v0.8.4 (2026-07-07)
+
+- **Feature:** `toolrecall setup` auto-detects Hermes Agent, Claude Code, OpenCode/Crush — writes MCP config and instruction snippets automatically (Hermes uses the OS-level `.pth` shim, no per-agent config needed)
 - **Feature:** Daemon duplicate-instance guard — `run_daemon()` pings the socket before starting, refuses if daemon already responds
 - **Feature:** SQLite WAL retry — `_db()` retries once on `SQLITE_BUSY` with 100ms sleep
 - **Feature:** 13 E2E tests with real daemon subprocess — lifecycle, cache ops, CLI, stress (10 concurrent, 5x rapid restart), isolated temp socket + DB

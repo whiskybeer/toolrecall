@@ -222,7 +222,7 @@ ToolRecall doesn't prevent prompt injection — it cages the consequences:
 
 - **Default-deny path allowlist:** Without config, NO paths are readable. `toolrecall init` prompts for paths interactively.
 - **Sensitive file blocklist:** `.env`, `.ssh/`, `.pem`, `.aws/`, etc. are blocked even inside allowed paths.
-- **`allow_terminal=false`** (default): drops all `cached_terminal` calls into a void.
+- **`allow_terminal=true`** (default): allows read-only commands matching the regex allowlist (27 patterns for `ls`, `cat`, `git status`, etc.). Set `false` to disable all terminal caching.
 - **`os.path.realpath()`:** catches `../../../etc/shadow` traversal before OS is touched.
 - **Cognitive Pre-Fight:** Deterministic regex scan on MCP tool arguments for override instructions, jailbreak tags, exfiltration URLs. Zero LLM, ~0.001ms hot path.
 - **AST injection check:** Parses tool arguments as Python AST — blocks `exec()`, `eval()`, `__import__()` calls.
@@ -376,7 +376,10 @@ TOML (stdlib `tomllib`) or YAML (optional, requires `pyyaml`).
 # ~/.config/toolrecall/toolrecall.toml (created by toolrecall init)
 [mcp]
 allowed_paths = ["/home/user/projects"]  # Add your project dirs — default-deny!
-allow_terminal = false
+allow_terminal = true
+
+# Terminal command allowlist — only commands matching these regex patterns
+# are eligible for caching. See config.toml for the full list.
 allow_invalidate = false
 default_ttl = 60
 

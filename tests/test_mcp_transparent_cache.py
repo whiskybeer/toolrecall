@@ -15,7 +15,7 @@ REPO_DIR = os.path.expanduser("~/toolrecall")
 
 def _run_code(code, extra_env=None):
     env = os.environ.copy()
-    env.pop("TOOLRECALL_HERMES_MODE", None)
+    env.pop("TOOLRECALL_SHIM_DISABLE", None)
     env["PYTHONPATH"] = REPO_DIR
     if extra_env:
         env.update(extra_env)

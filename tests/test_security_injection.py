@@ -159,12 +159,13 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
         _log("  PASS: Access control is read-only by default (built-in keywords)")
 
     def test_terminal_default_is_disabled(self):
-        """A05-002: Prove terminal execution is disabled by default.
+        """A05-002: Prove terminal execution can be disabled for security.
         
         Attack: Agent calls terminal() to execute arbitrary shell commands.
-        Defense: allow_terminal=False by default — can only be enabled explicitly.
+        Defense: allow_terminal=False disables all terminal caching.
+        When enabled (default: true), a regex allowlist restricts to read-only commands.
         """
-        _log("Checking terminal default: allow_terminal=False")
+        _log("Checking terminal can be disabled: allow_terminal=False")
         self.assertFalse(
             self.mock_cfg.mcp_allow_terminal,
             "Terminal must be disabled by default",

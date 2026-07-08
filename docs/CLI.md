@@ -156,4 +156,4 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 
 - [Configuration Reference](CONFIG_REFERENCE.md) — `config.toml`, `config.py`, env vars
 - [MCP Multiplexer](MCP_MULTIPLEXER.md) — server registry, `mcp list`, auto-resolution
-- [Hermes Transparent Cache](HERMES_TRANSPARENT_CACHE.md) — agent-side integration via `hermes_init.py`
+- [Hermes Transparent Cache](HERMES_TRANSPARENT_CACHE.md) — agent-side integration via the OS-level .pth shim

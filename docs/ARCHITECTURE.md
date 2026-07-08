@@ -53,7 +53,8 @@ flowchart TB
 - Instead of its own LRU + SQLite: forwards to the Daemon
 - `cached_read(path)` → JSON over UDS → Daemon checks LRU → replies
 - **Fallback:** If no Daemon is running, uses direct SQLite (legacy behavior)
-- `hermes_init.py` becomes minimal (~20 LOC instead of 112)
+- Hermes integration is handled by the OS-level .pth shim (`toolrecall/shim.py`),
+  not an init script — every Python process auto-caches.
 
 **MCP Bridge** (`toolrecall mcp`):
 - Starts instantly (no Python module loading necessary — only socket + json)
@@ -69,8 +70,7 @@ flowchart TB
 ### Group A: Hermes users with ToolRecall (currently: Robin)
 | Today | Daemon Architecture |
 |-------|---------------------|
-| hermes_init.py loads cache.py (112 LOC) | Client (20 LOC) |
-| ToolRecall starts cold per Session | Cache is always warm (Daemon runs for days) |
+| Cold cache per session | Cache is always warm (Daemon runs for days) |
 | MCP Server needs extra RAM | MCP Bridge is <10MB |
 | Hermes Restart = Cache cold | Daemon survives Hermes restarts |
 

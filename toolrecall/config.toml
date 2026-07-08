@@ -136,18 +136,18 @@ allow_invalidate = false
 # Users bypass with ttl=0 for a single call.
 allowed_terminal_commands = [
     "^ls(\\s+|$)",
-    "^cat\\s",
-    "^head\\s",
-    "^tail\\s",
-    "^wc\\s",
-    "^grep\\s",
-    "^rg\\s",
-    "^find\\s",
-    "^fd\\s",
+    "^cat(\\s+|$)",
+    "^head(\\s+|$)",
+    "^tail(\\s+|$)",
+    "^wc(\\s+|$)",
+    "^grep(\\s+|$)",
+    "^rg(\\s+|$)",
+    "^find(\\s+|$)",
+    "^fd(\\s+|$)",
     "^git\\s+(status|diff|log|branch|stash|show)",
-    "^which\\s",
+    "^which(\\s+|$)",
     "^ps\\s",
-    "^lsof\\s",
+    "^lsof(\\s+|$)",
     "^python3\\s+--version$",
     "^node\\s+--version$",
     "^pip\\s+list$",
@@ -192,13 +192,10 @@ idle_minutes = 15
 # hermes-docs = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
 
 # ─── Hermes Integration ─────────────────────
-[hermes]
-# transparent_cache mode:
-#   "separate"    — register cached_read/cached_terminal etc. as extra tools (default)
-#   "transparent" — monkey-patch Hermes' read_file, terminal, write_file, patch
-#                    so the agent calls native tools but results come from cache.
-#                    The agent never notices.
-transparent_cache = "transparent"
+# Hermes uses the OS-level .pth shim (toolrecall/shim.py) for transparent caching.
+# No per-agent config or init_scripts needed — the shim patches builtins.open()
+# and subprocess.run() on every Python process automatically.
+# See: toolrecall shim --install
 
 # ─── Data sources for Knowledge Cache (FTS5) ──────────
 [sources]

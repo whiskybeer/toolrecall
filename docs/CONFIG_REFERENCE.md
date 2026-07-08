@@ -20,7 +20,6 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[mcp]` | MCP file/terminal access | `allowed_paths`, `allow_terminal`, `allow_invalidate`, `allowed_terminal_commands` |
 | `[mcp_multiplex]` | MCP Multiplexer settings | `enabled`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache` |
 | `[mcp_multiplex.servers_config]` | Custom server overrides | Any server name with `command`, `args`, `env`, `ttl` |
-| `[hermes]` | Hermes Agent integration | `transparent_cache` (`separate` or `transparent`) |
 | `[sources]` | Knowledge DB scanning | `scan_dirs`, `scan_extensions`, `scan_ignore`, `max_file_kb` |
 | `[sources.memory]` | Agent memory indexing | `enabled` |
 | `[forward_proxy]` | Forward proxy port | Port via `TOOLRECALL_FORWARD_PORT` env var |
@@ -58,7 +57,7 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `file_ttl` | File cache TTL (seconds) | `-1` (infinite) |
 | `terminal_default_ttl` | Default terminal TTL | `300` (5 min) |
 | `mcp_allowed_paths` | Default-deny read allowlist | `[]` |
-| `mcp_allow_terminal` | Allow shell execution | `false` |
+| `mcp_allow_terminal` | Allow shell execution | `true` |
 | `mcp_allow_invalidate` | Allow cache invalidation | `false` |
 | `mcp_multiplex_servers` | Server names to multiplex | `[]` |
 | `mcp_multiplex_servers_config` | Resolved server configs | Registry + overrides |
@@ -99,4 +98,4 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 
 - [MCP Multiplexer](MCP_MULTIPLEXER.md) — server registry, auto-resolution, `servers_config`
 - [Security Architecture](../SECURITY.md) — `allowed_paths`, `tool_access_control`, cognitive scan
-- [Hermes Transparent Cache](HERMES_TRANSPARENT_CACHE.md) — `[hermes]` section details
+- [Hermes Transparent Cache](HERMES_TRANSPARENT_CACHE.md) — OS-level .pth shim details

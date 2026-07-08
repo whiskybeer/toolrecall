@@ -84,12 +84,6 @@ Each test file covers a distinct module or feature:
 |------|------------------|---------------|
 | `tests/test_context_tracker.py` | `toolrecall/context_tracker.py` | Checkpoint lifecycle, dirty/clean tracking, mark_dirty on write/patch, reset, get_stats, concurrent access |
 
-### Hermes Integration
-
-| File | Module Under Test | What It Tests |
-|------|------------------|---------------|
-| `tests/test_hermes_init.py` | `toolrecall/hermes_init.py` | import behavior, mode detection, tool registration, transparent mode monkey-patching, daemon-running detection |
-
 ## Test Philosophy
 
 1. **No external dependencies.** Tests should run without network, without API keys, without a running daemon. All daemon tests use a temporary UDS socket.

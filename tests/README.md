@@ -43,7 +43,6 @@ python3 -m pytest tests/test_cli.py -v --tb=short
 | `test_security_injection.py` | 12+ | Security | OWASP injection: SSTI, null byte, error leakage, bypass |
 | `test_ast_security.py` | — | Security | AST-level security analysis |
 | `test_context_tracker.py` | — | Context | context dropping, micro-RAG |
-| `test_hermes_init.py` | — | Integration | Hermes init_script patching |
 | `test_cognitive_scan.py` | — | Scan | cognitive complexity scanning |
 | `test_daemon_pid_guard.py` | — | Daemon | PID file guard, duplicate start prevention |
 | `test_regression_v078_v0711.py` | — | Regression | regression checks for v0.7.8 → v0.7.11 |

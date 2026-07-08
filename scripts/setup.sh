@@ -82,13 +82,26 @@ echo ""
 echo "  ────────────────────────────────────────────────"
 echo ""
 
-pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null || pip install git+https://github.com/whiskybeer/toolrecall.git 2>/dev/null || {
-    echo "  ❌ pip not found."
-    echo "  ToolRecall requires Python 3.11+ with pip."
-    echo "  Install Python first: https://python.org/downloads/"
-    echo "  Then re-run this script."
-    exit 1
-}
+# Try pipx first (preferred for standalone CLI tools), fall back to pip
+if command -v pipx &>/dev/null; then
+    echo "  Installing via pipx (recommended for CLI tools)..."
+    pipx install toolrecall 2>/dev/null || pipx install --force toolrecall 2>/dev/null || {
+        echo "  ⚠ pipx install failed, falling back to pip..."
+        pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null
+    } || {
+        echo "  ❌ Installation failed."
+        echo "  Install manually: pip install toolrecall"
+        exit 1
+    }
+else
+    pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null || pip install git+https://github.com/whiskybeer/toolrecall.git 2>/dev/null || {
+        echo "  ❌ pip not found."
+        echo "  ToolRecall requires Python 3.11+ with pip."
+        echo "  Install Python first: https://python.org/downloads/"
+        echo "  Then re-run this script."
+        exit 1
+    }
+fi
 echo "  ✓ ToolRecall v$(python3 -c 'from toolrecall import __version__; print(__version__)' 2>/dev/null || echo 'installed')"
 echo ""
 
@@ -253,70 +266,18 @@ test -f ~/.clinerules && CLINE_FOUND=true
 if [ "$HERMES_FOUND" = true ] && [ -z "$NO_RC" ]; then
     echo "  ✓ Hermes Agent detected"
     echo ""
-    echo "  ToolRecall supports 3 integration levels for Hermes:"
-    echo ""
-    echo "   🥇 Level 1 — Python import + transparent mode (RECOMMENDED)"
-    echo "      → Monkey-patches native read_file/terminal to auto-cache"
-    echo "      → Agent never notices — just works"
-    echo ""
-    mkdir -p ~/.toolrecall
-    curl -sL https://raw.githubusercontent.com/whiskybeer/toolrecall/main/toolrecall/hermes_init.py \
-        -o ~/.toolrecall/hermes_init.py 2>/dev/null || true
-    hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]' 2>/dev/null || true
-    echo "  → Init script registered ✓"
-
-    # Enable transparent mode by default for Hermes
-    cat >> "$CONFIG_FILE" << TOML
-
-[hermes]
-transparent_cache = "transparent"
-
-TOML
-    echo "  → Transparent cache mode enabled ✓"
-    echo ""
-    echo "  → Restart Hermes or run /reset"
+    echo "  Hermes uses the OS-level .pth shim for transparent caching."
+    echo "  The shim patches builtins.open() and subprocess.run() on every"
+    echo "  Python process — no per-agent config needed."
     echo ""
 
-    echo "   🥈 Level 2 — MCP server (via mcp_servers)"
-    echo "      → stdio-local, auto-injected tools"
-    echo "      → Safe tools: cached_read, cached_skill, docs_search, docs_get_page, cache_status"
+    # Install the .pth shim into site-packages
+    toolrecall shim --install 2>/dev/null && echo "  → .pth shim installed ✓" || {
+        echo "  ⚠ Could not install .pth shim automatically."
+        echo "    Run manually: toolrecall shim --install"
+    }
     echo ""
-    echo "  Add to ~/.hermes/config.yaml ?"
-    read -p "  [y/N] " ADD_MCP
-    if [ "$ADD_MCP" = "y" ] || [ "$ADD_MCP" = "Y" ]; then
-        if grep -q "mcp_servers:" ~/.hermes/config.yaml 2>/dev/null; then
-            sed -i '/^mcp_servers:/a\  toolrecall:\n    command: python\n    args:\n    - -m\n    - toolrecall.mcp_server\n    timeout: 30' ~/.hermes/config.yaml
-        else
-            cat >> ~/.hermes/config.yaml << 'YAML'
-
-mcp_servers:
-  toolrecall:
-    command: python
-    args:
-    - -m
-    - toolrecall.mcp_server
-    timeout: 30
-YAML
-        fi
-        echo "  ✓ Added to mcp_servers. Restart Hermes to activate."
-    else
-        echo "  → Skipped. Add manually anytime:"
-        echo "    mcp_servers:"
-        echo "      toolrecall:"
-        echo '        command: "python"'
-        echo '        args: ["-m", "toolrecall.mcp_server"]'
-        echo "        timeout: 30"
-    fi
-    echo ""
-
-    echo "  ────────────────────────────────────────────"
-    echo "  SECURITY: MCP server is locked down by default"
-    echo "    • cached_read → restricted to configured paths"
-    echo "    • cached_terminal → DISABLED (set mcp.allow_terminal=true to enable)"
-    echo "    • cache_invalidate → DISABLED (set mcp.allow_invalidate=true to enable)"
-    echo ""
-    echo "  To customize: edit $CONFIG_FILE [mcp] section"
-    echo "  ────────────────────────────────────────────"
+    echo "  → Restart Hermes or run /reset to activate"
     echo ""
 fi
 

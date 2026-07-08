@@ -933,8 +933,8 @@ def _ensure_agent_integration():
     For Claude Code: prefers `claude mcp add` (automatic, no user action needed)
     when the binary is on PATH. Falls back to writing ~/.claude.json directly.
 
-    For Hermes: writes init_scripts entry automatically — transparent caching
-    kicks in on next session start.
+    For Hermes: transparent caching is provided by the OS-level .pth shim
+    (toolrecall/shim.py) — no init_scripts or per-agent config needed.
 
     Returns dict with keys: 'hermes', 'opencode', 'claude' — bool per agent.
     """
@@ -948,59 +948,11 @@ def _ensure_agent_integration():
     # ─── Hermes Agent ───────────────────────────────
     hermes_bin = shutil.which("hermes")
     if hermes_bin:
-        # Transparent cache via init_scripts — automatic, zero user action
-        hermes_init = os.path.expanduser("~/.toolrecall/hermes_init.py")
-        hermes_config = os.path.expanduser("~/.hermes/config.yaml")
-
-        # Ensure init script exists
-        if not os.path.exists(hermes_init):
-            os.makedirs(os.path.dirname(hermes_init), exist_ok=True)
-            _HERMES_INIT_CONTENT = (
-                "import sys; sys.path.insert(0, '')\n"
-                "try:\n"
-                "    from toolrecall.hermes_init import patch_native_tools\n"
-                "    patch_native_tools()\n"
-                "    print('[ToolRecall] Transparent cache active')\n"
-                "except Exception as e:\n"
-                "    print(f'[ToolRecall] Init failed: {e}')\n"
-            )
-            with open(hermes_init, "w") as f:
-                f.write(_HERMES_INIT_CONTENT)
-
-        # Register init_scripts in Hermes config
-        if os.path.exists(hermes_config):
-            try:
-                r = subprocess.run(
-                    [hermes_bin, "config", "set", "agent.init_scripts",
-                     f'["{hermes_init}"]'],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if r.returncode == 0:
-                    print("  ✅ Hermes transparent cache registered (automatic — active next session)")
-                else:
-                    print(f"  ⚠️  'hermes config set' returned exit {r.returncode}")
-                    if r.stderr.strip():
-                        print(f"     stderr: {r.stderr.strip()[:200]}")
-                    print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
-                result["hermes"] = True
-            except FileNotFoundError:
-                print("  ⚠️  'hermes' binary found but 'hermes config' failed")
-                print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
-                result["hermes"] = True
-        else:
-            print("  ⚠️  Hermes detected but ~/.hermes/config.yaml not found")
-            print(f"     → Manual: hermes config set agent.init_scripts '[\"{hermes_init}\"]'")
-            result["hermes"] = True
-
-        # Also enable transparent mode in toolrecall config
-        tr_config = os.path.expanduser("~/.config/toolrecall/toolrecall.toml")
-        if os.path.exists(tr_config):
-            with open(tr_config) as f:
-                content = f.read()
-            if "[hermes]" not in content:
-                with open(tr_config, "a") as f:
-                    f.write("\n[hermes]\ntransparent_cache = \"transparent\"\n")
-                print("  ✅ Hermes transparent mode enabled in toolrecall config")
+        # Hermes Agent uses the OS-level .pth shim (installed in Hermes' venv
+        # site-packages). No init_scripts or per-agent config needed — the shim
+        # patches builtins.open() and subprocess.run() on every Python process.
+        print("  ✅ Hermes transparent cache active via OS-level .pth shim")
+        result["hermes"] = True
 
     # ─── OpenCode / Crush ────────────────────────────
     OC_DIR = os.path.expanduser("~/.opencode")
@@ -1081,24 +1033,15 @@ When running terminal commands, use `cached_terminal` instead of `terminal`.
 """
 
 
-_HERMES_INIT_CONTENT = """import sys; sys.path.insert(0, '')
-try:
-    from toolrecall.hermes_init import patch_native_tools
-    patch_native_tools()
-    print('[ToolRecall] Transparent cache active')
-except Exception as e:
-    print(f'[ToolRecall] Init failed: {e}')
-"""
-
-
 _MANUAL_AGENT_GUIDE = """
 No supported agent detected on this machine.
 
 ToolRecall works with any AI coding agent via MCP. To integrate manually:
 
   Hermes Agent:
-    hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]'
-    → Transparent caching — native read_file/terminal auto-cached
+    toolrecall shim --install
+    → OS-level .pth shim patches open()/subprocess.run() in every Python process.
+      No init_scripts or per-agent config needed.
 
   Claude Code:
     claude mcp add toolrecall -s user -- toolrecall mcp

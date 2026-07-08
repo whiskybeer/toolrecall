@@ -91,8 +91,12 @@ Add to `~/.opencode/opencode.jsonc` under the `"mcp"` key:
 
 ### Hermes Agent
 
+Hermes uses the **OS-level `.pth` shim** (`toolrecall/shim.py`) — no per-agent config needed.
+The shim patches `builtins.open()` and `subprocess.run()` on every Python process, so
+file reads and terminal commands are transparently cached for any Python-based agent.
+
 ```bash
-hermes config set agent.init_scripts '["~/.toolrecall/hermes_init.py"]'
+toolrecall setup    # installs the .pth shim into site-packages
 ```
 
 This enables **transparent caching** — native `read_file`/`terminal` are auto-cached without changing how the agent calls them.
