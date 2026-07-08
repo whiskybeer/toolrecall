@@ -67,7 +67,7 @@ flowchart TB
 
 ## 3. Who is this for?
 
-### Group A: Hermes users with ToolRecall (currently: Robin)
+### Group A: Hermes users with ToolRecall
 | Today | Daemon Architecture |
 |-------|---------------------|
 | Cold cache per session | Cache is always warm (Daemon runs for days) |
