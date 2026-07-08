@@ -171,7 +171,7 @@ TOOLRECALL_SHIM_DISABLE=1 python my_uncached_script.py
 Install ToolRecall and start the daemon:
 
 ```bash
-pip install toolrecall
+pipx install toolrecall
 toolrecall init                     # Interactive security setup (default-deny paths)
 toolrecall daemon --foreground &    # Start cache daemon
 ```

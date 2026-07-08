@@ -3,8 +3,9 @@
 ToolRecall Updater — auto-detect install method and update to latest.
 
 Supports both install methods:
-    pip install       → pip install --upgrade toolrecall
-    local repo (git)  → git pull
+    pipx install    → pipx upgrade toolrecall
+    pip install    → pip install --upgrade toolrecall
+    local repo    → git pull
 
 Usage:
     python3 scripts/update.py              # interactive
@@ -34,17 +35,15 @@ def confirm(msg: str) -> bool:
 
 def get_current_version() -> str:
     """Read version from the installed package or pyproject.toml."""
-    # Try installed package first
     try:
         from toolrecall import __version__
         return __version__
     except ImportError:
         pass
-    # Fallback: read from pyproject.toml
-    pyproject = os.path.join(REPO_DIR, "pyproject.toml")
-    if os.path.isfile(pyproject):
+    path = os.path.join(REPO_DIR, "pyproject.toml")
+    if os.path.isfile(path):
         import tomllib
-        with open(pyproject, "rb") as f:
+        with open(path, "rb") as f:
             data = tomllib.load(f)
         return data.get("project", {}).get("version", "unknown")
     return "unknown"
@@ -53,8 +52,19 @@ def get_current_version() -> str:
 def detect_install_method() -> str:
     """Detect how ToolRecall is installed.
 
-    Returns: 'pip', 'repo', or 'unknown'
+    Returns: 'pipx', 'pip', 'repo', or 'unknown'.
     """
+    # Check pipx first
+    try:
+        r = subprocess.run(
+            ["pipx", "list"], capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0 and "toolrecall" in r.stdout:
+            return "pipx"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Check pip
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "toolrecall"],
         capture_output=True, text=True, timeout=30,
@@ -63,10 +73,10 @@ def detect_install_method() -> str:
         for line in result.stdout.splitlines():
             if line.startswith("Location:"):
                 loc = line.split(": ", 1)[1]
-                # Check if pip-installed version points to the repo (editable install)
                 if REPO_DIR in loc:
                     return "repo"
                 return "pip"
+
     # Not pip-installed — check if running from repo
     if os.path.isdir(os.path.join(REPO_DIR, ".git")):
         return "repo"
@@ -103,6 +113,26 @@ def step_announce(current: str, method: str):
 
 # ── Update methods ────────────────────────────────────────────
 
+def update_via_pipx(current: str) -> bool:
+    """Update via pipx upgrade."""
+    print("[1/3] Upgrading pipx package...")
+    result = subprocess.run(
+        ["pipx", "upgrade", "toolrecall"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode != 0:
+        log(f"pipx upgrade failed: {result.stderr.strip()}", "✗")
+        return False
+    log("Package upgraded", "✓")
+    # Verify
+    try:
+        from toolrecall import __version__
+        log(f"New version: {__version__}", "✓")
+    except ImportError:
+        pass
+    return True
+
+
 def update_via_pip(current: str) -> bool:
     """Update via pip install --upgrade."""
     print("[1/3] Upgrading pip package...")
@@ -115,7 +145,6 @@ def update_via_pip(current: str) -> bool:
         return False
     log("Package upgraded", "✓")
 
-    # Verify
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "toolrecall"],
         capture_output=True, text=True, timeout=30,
@@ -131,7 +160,6 @@ def update_via_git(current: str) -> bool:
     """Update via git pull on the repo."""
     print("[1/3] Updating from git...")
 
-    # Check for uncommitted changes
     result = subprocess.run(
         ["git", "status", "--porcelain"],
         capture_output=True, text=True, timeout=10, cwd=REPO_DIR,
@@ -149,7 +177,6 @@ def update_via_git(current: str) -> bool:
             log("Update cancelled", "−")
             return False
 
-    # Determine upstream branch
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "@{upstream}"],
         capture_output=True, text=True, timeout=10, cwd=REPO_DIR,
@@ -166,7 +193,6 @@ def update_via_git(current: str) -> bool:
             log("Update cancelled", "−")
             return False
 
-    # Pull
     result = subprocess.run(
         ["git", "pull", "--ff-only"],
         capture_output=True, text=True, timeout=60, cwd=REPO_DIR,
@@ -186,12 +212,10 @@ def restart_daemon():
         log("Daemon was not running — skipping restart", "−")
         return
 
-    # Stop
     subprocess.run(
         ["toolrecall", "daemon", "--stop"],
         capture_output=True, timeout=10,
     )
-    # Start
     subprocess.run(
         ["toolrecall", "daemon", "&"],
         capture_output=True, timeout=10, shell=True,
@@ -203,7 +227,6 @@ def verify():
     """Verify the update by checking the installed version is importable."""
     print("[3/3] Verification...")
     try:
-        # Clear any cached import
         for mod in list(sys.modules.keys()):
             if mod.startswith("toolrecall"):
                 del sys.modules[mod]
@@ -237,14 +260,16 @@ def main():
 
     if method == "unknown":
         log("Could not detect install method", "✗")
-        log("Update manually: pip install --upgrade toolrecall", "→")
+        log("Update manually: pipx install --upgrade toolrecall", "→")
         sys.exit(1)
 
     if not confirm(f"Update ToolRecall ({current})?"):
         log("Update cancelled", "−")
         return
 
-    if method == "pip":
+    if method == "pipx":
+        ok = update_via_pipx(current)
+    elif method == "pip":
         ok = update_via_pip(current)
     else:
         ok = update_via_git(current)

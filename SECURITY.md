@@ -91,7 +91,7 @@ The Daemon does not open any TCP ports. All communication happens over Unix Doma
 | MCP subprocesses | ✅ Isolated stdio, no network exposure to daemon | ❌ Downstream MCP servers (GitHub API, etc.) |
 | LLM agent | ❌ Assumed compromised (prompt injection) | — |
 | SQLite cache DB | ✅ Local file, no remote access | ❌ Readable by any process under your user |
-| Install path | `pip install toolrecall` — standard PyPI | `bash <(curl ...)` — NOT recommended, not advertised |
+| Install path | `pipx install toolrecall` (or `pip install toolrecall`) — standard PyPI | `bash <(curl ...)` — NOT recommended, not advertised |
 
 **Install security recommendation:** Use `pip install toolrecall`. The repo no longer advertises curl-pipe install. The `scripts/setup.sh` script is intended for use after a `git clone` — verify the source before running it locally.
 

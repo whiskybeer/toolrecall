@@ -2,7 +2,7 @@
 
 ## Why "separate" is default (and why nobody notices)
 
-ToolRecall installs via `setup.sh` or `pip install` in **"separate" mode**:
+ToolRecall installs via `setup.sh` or `pipx install` in **"separate" mode**:
 - It registers `cached_read`, `cached_terminal` as *extra* tools alongside native ones
 - Native `read_file`, `terminal` remain unchanged
 - Problem: **AI agents almost never pick `cached_read`** — they default to the familiar `read_file`

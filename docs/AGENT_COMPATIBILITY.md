@@ -29,7 +29,8 @@ ToolRecall is **built into Hermes** — the tools `cached_read`, `cached_termina
 
 **Config:**
 ```bash
-pip install toolrecall && toolrecall setup
+pipx install toolrecall && toolrecall setup
+# or: pip install toolrecall && toolrecall setup
 # Tools available natively in Hermes — no extra config needed.
 ```
 
