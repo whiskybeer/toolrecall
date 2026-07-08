@@ -7,6 +7,7 @@ Usage:
     python3 scripts/uninstall.py --help       # This message
 
 Supports both:
+    - pipx-installed (pipx install toolrecall)
     - pip-installed (pip install toolrecall)
     - local-repo   (import from ~/toolrecall/ via PYTHONPATH)
 """
