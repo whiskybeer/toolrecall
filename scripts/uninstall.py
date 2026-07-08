@@ -293,34 +293,7 @@ def step_skills():
             SKIPPED += 1
 
 
-# ── 8. VS Code Extension ──────────────────────────────────────
-
-def step_vscode():
-    global REMOVED, SKIPPED
-    print("\n[8/9] VS Code Extension...")
-
-    # Check for installed extension
-    result = subprocess.run(
-        ["code", "--list-extensions"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if result.returncode != 0 or "toolrecall" not in result.stdout:
-        log("ToolRecall VS Code extension not installed", "−")
-        return
-
-    if confirm("Uninstall ToolRecall VS Code extension?"):
-        subprocess.run(
-            ["code", "--uninstall-extension", "whiskybeer.toolrecall-cache"],
-            capture_output=True, timeout=10,
-        )
-        log("Uninstalled VS Code extension", "✓")
-        REMOVED += 1
-    else:
-        log("Skipped", "−")
-        SKIPPED += 1
-
-
-# ── 9. Pip/pipx package ────────────────────────────────────────
+# ── 8. Pip/pipx package ────────────────────────────────────────
 
 def step_pip():
     global REMOVED, SKIPPED
@@ -395,7 +368,6 @@ def main():
     step_sandbox()
     step_cron()
     step_skills()
-    step_vscode()
     step_pip()
 
     summary()
