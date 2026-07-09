@@ -86,7 +86,7 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **Purpose:** Set a config value in `~/.config/toolrecall/toolrecall.toml`.
 - **Usage:** `toolrecall config-set <section.key> <value>`
 - **Parsing:** Auto-detects booleans, integers, floats, lists (`[...]`), and strings.
-- **Note:** Requires `pip install toolrecall[toml-write]` (tomli-w).
+- **Note:** Uses the built-in TOML serializer — no external dependencies needed.
 
 ### `toolrecall daemon`
 
@@ -132,6 +132,7 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **Usage:**
   - `toolrecall shim --install` — install the shim
   - `toolrecall shim --remove` — remove the shim
+  - `toolrecall shim --status` — check if shim is installed
 
 ### `toolrecall nginx`
 
