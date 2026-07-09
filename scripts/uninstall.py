@@ -6,9 +6,9 @@ Usage:
     python3 scripts/uninstall.py --force      # Skip confirmations
     python3 scripts/uninstall.py --help       # This message
 
-Supports both:
-    - pipx-installed (pipx install toolrecall)
-    - pip-installed (pip install toolrecall)
+Supports all install methods:
+    - pipx-installed (`pipx install toolrecall`)  # recommended
+    - pip-installed (`pip install toolrecall`)
     - local-repo   (import from ~/toolrecall/ via PYTHONPATH)
 """
 
