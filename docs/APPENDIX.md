@@ -154,19 +154,17 @@ Two distinct mechanisms:
 
 ## I. Windows Compatibility
 
-| | Linux | Windows |
-|---|---|---|
+|| | Linux | Windows |
+|---|---|---|---|
 | Transport | UDS (`/run/user/.../toolrecall.sock`) | TCP `127.0.0.1:8568` |
 | Daemon | `os.fork()` | `multiprocessing` spawn |
-| Auto-start | `systemctl --user` | VS Code extension (no systemd) |
+| Auto-start | `systemctl --user` | manual / scheduled task (no systemd) |
 | Crash restart | systemd `Restart=on-failure` + watchdog | Watchdog only (Popen fallback) |
 
 **Auto-detection:** `transport.py` checks `IS_WINDOWS = (sys.platform == "win32")` → TCP fallback. Proxy bind always `127.0.0.1` (never `0.0.0.0`). Port random via OS.
-
-**VS Code extension:** Spawns `toolrecall daemon` with `windowsHide: true` (no console window). Searches PATH for `toolrecall.exe`/`.cmd`, `~/.local/bin`, `AppData\Local\Programs\Python`. Uses `shell: false` (no injection).
 
 **Known footguns:** (1) Python not on PATH → fix with `$env:Path += ";...\\Python312\\Scripts"`; (2) 260-char MAX_PATH → handled via `\\?\` prefix + Python 3.11+; (3) Backslash vs forward slash → `os.path.realpath` normalizes both; (4) No socket cleanup on TCP → `SO_REUSEADDR` avoids TIME_WAIT; (5) Antivirus → max 1-2s delay, retry or add exclusion.
 
 **Daemon crash fixes (root cause):** ThreadPoolExecutor created before `os.fork()` → corrupted locks on child process → moved to `start()` (post-fork). `start()` now wraps in `try/except BaseException` + `faulthandler.enable()`. YAML parser fixed: 2/4-space indent detection, proper `[1:-1]` bracket stripping, `try/except` on all parses.
 
-**Auto-healing:** systemd (~2s), watchdog (~10s), VS Code extension (on next file read).
+**Auto-healing:** systemd (~2s), watchdog (~10s).
