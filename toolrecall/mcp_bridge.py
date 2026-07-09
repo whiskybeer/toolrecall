@@ -12,7 +12,6 @@ Everything runs through the Daemon. This makes it:
 
 Usage:
     toolrecall mcp              # Start Bridge (requires Daemon)
-    toolrecall mcp-legacy       # Legacy: standalone MCP Server (no Daemon)
 
 Requires a running ToolRecall Daemon:
     toolrecall daemon &         # Start once
