@@ -16,12 +16,14 @@ os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from toolrecall.cache import cached_write, cached_patch
+from toolrecall.cache import cached_write, cached_patch, _init
 
 
 class TestCachedWrite(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
+        os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
+        _init()
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -103,6 +105,8 @@ class TestCachedWrite(unittest.TestCase):
 class TestCachedPatch(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
+        os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
+        _init()
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -177,6 +181,8 @@ class TestCachedWritePatchIntegration(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
+        os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
+        _init()
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)

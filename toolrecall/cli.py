@@ -6,15 +6,15 @@ Usage:
     toolrecall invalidate      # Clear cache
     toolrecall reset-stats     # Reset statistics counters
     toolrecall index           # Index knowledge base
+    toolrecall index-memory    # Index agent memory stores
+    toolrecall index-dir       # Index a directory into knowledge DB
+    toolrecall config-set      # Set a config value (section.key = value)
     toolrecall serve           # Start forward proxy (cache API responses)
     toolrecall debug           # Start debug/demo server (test cached_read via curl)
     toolrecall nginx           # Generate nginx config
     toolrecall mcp             # Start MCP Bridge (stdio → Daemon)
-    toolrecall mcp-legacy      # Start standalone MCP Server (no Daemon needed)
-    toolrecall daemon          # Start Cache Daemon (background)
-    toolrecall daemon --stop   # Stop Daemon
-    toolrecall daemon --status # Show Daemon status
-    toolrecall daemon --foreground  # Start in foreground
+    toolrecall daemon          # Start/stop/manage cache daemon
+    toolrecall shim            # Install/uninstall transparent cache shim (.pth)
     toolrecall init            # Create default config.toml and .env
 """
 import os
@@ -934,7 +934,7 @@ def _ensure_agent_integration():
     when the binary is on PATH. Falls back to writing ~/.claude.json directly.
 
     For Hermes: transparent caching is provided by the OS-level .pth shim
-    (toolrecall/shim.py) — no init_scripts or per-agent config needed.
+    (toolrecall/shim.py) — no per-agent config needed.
 
     Returns dict with keys: 'hermes', 'opencode', 'claude' — bool per agent.
     """
@@ -949,7 +949,7 @@ def _ensure_agent_integration():
     hermes_bin = shutil.which("hermes")
     if hermes_bin:
         # Hermes Agent uses the OS-level .pth shim (installed in Hermes' venv
-        # site-packages). No init_scripts or per-agent config needed — the shim
+        # site-packages). No per-agent config needed — the shim
         # patches builtins.open() and subprocess.run() on every Python process.
         print("  ✅ Hermes transparent cache active via OS-level .pth shim")
         result["hermes"] = True
@@ -1041,7 +1041,7 @@ ToolRecall works with any AI coding agent via MCP. To integrate manually:
   Hermes Agent:
     toolrecall shim --install
     → OS-level .pth shim patches open()/subprocess.run() in every Python process.
-      No init_scripts or per-agent config needed.
+      No per-agent config needed.
 
   Claude Code:
     claude mcp add toolrecall -s user -- toolrecall mcp

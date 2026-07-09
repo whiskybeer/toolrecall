@@ -56,6 +56,30 @@ Dynamic commands (`git`, `ls`, `curl`) and state-changing operations always exec
 
 **Stale data cannot persist.** File modifications change mtime, writes invalidate explicitly, TTLs expire automatically. The cache always returns the freshest available data within its invalidation model.
 
+### Script & Code Cache (Python API)
+
+`cached_run` and `cached_exec` cache script executions and inline Python code via SQLite:
+
+```python
+from toolrecall import cached_run, cached_exec
+
+# Run a script — cached by path+args hash, invalidated on mtime change
+result = cached_run("/path/to/script.sh", args="--flag value", ttl=300)
+result["output"]    # stdout
+result["exit_code"] # return code
+result["cached"]    # True if served from cache
+
+# Execute Python code string — cached by content hash
+result = cached_exec("print('hello')", ttl=60)
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ttl` | `0` | Seconds to cache. `0` = always execute fresh (no caching). |
+| `args` | `""` | Arguments passed to the script (shlex-split, no shell). |
+
+Cached results are stored in the same SQLite DB as file/terminal caches, share the same invalidation rules, and count toward the same stats.
+
 ### Measured effect
 
 In a 13-hour session (Hermes + Gemini 3.1 Pro, 386 messages, 13 project files):
