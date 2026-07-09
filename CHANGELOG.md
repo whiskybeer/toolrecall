@@ -1,6 +1,21 @@
 # Changelog
 
-## v0.8.5 (2026-07-07)
+## v0.8.6 (2026-07-09)
+
+- **Feature:** `__main__.py` — `python -m toolrecall` now works (used by `_handle_restart` fallback)
+- **Feature:** `cached_run` / `cached_exec` docs added — documented alongside `cached_read`/`cached_terminal`
+- **Fix:** Shim-cache double-counting — `_check_cache` no longer increments hit/miss stats twice on the same lookup
+- **Fix:** Test isolation — UDS path collision, MCP Cache FS daemon startup restored, graceful skip for missing `toolrecall` binary
+- **Fix:** `test_context_tracker` skips gracefully when `toolrecall` binary not on PATH
+- **Fix:** CORS status in `docs/APPENDIX.md` updated to reflect fixed code
+- **Clean:** Removed `go-client/` empty stub, `github-auth-permanent-fix.md`, `test_mcp_transparent_cache.py`
+- **Clean:** Removed dead `mcp-legacy` reference from `mcp_bridge.py` docstring
+- **Clean:** Removed dead VS Code extension step from uninstaller
+- **Docs:** All stale references cleaned across 10+ doc files (hooks.py/store.py, tomli-w, VS Code, google-adk dead links, ARCHITECTURE_DIAGRAM formatting, APPENDIX, AGENT_COMPATIBILITY table, MCP_MULTIPLEXER typo, KNOWLEDGE_DB ASCII→Mermaid)
+- **Docs:** pipx as primary install method throughout (README, SECURITY, CLI.md, docstrings, scripts)
+- **Docs:** Removed user-specific reference from ARCHITECTURE.md
+- **Scripts:** `setup.sh` formatting and output wording improved
+- **Scripts:** `uninstall.py` docstring updated for install method clarity
 
 - **Removed:** `hermes_init.py` and `init_scripts` mechanism — Hermes Agent has no `init_scripts` config key, the script was never loaded. The OS-level `.pth` shim (`toolrecall/shim.py`) is the agent-agnostic mechanism for all Python-based agents.
 - **Removed:** `patch_shim.py` / `toolrecall_patch.py` — dead `PYTHONSTARTUP` mechanism, `toolrecall_patch` module never existed in the installed package.
