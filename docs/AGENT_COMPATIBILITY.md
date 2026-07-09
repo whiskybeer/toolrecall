@@ -6,15 +6,16 @@ Not all agents benefit equally from ToolRecall. This document explains **who win
 
 ## Quick Reference
 
-| Agent | Caching Value | Use Shim? | Use MCP Bridge? | Notes |
-|---|---|---|---|---|
-| **Hermes** | ✅ High | ✅ Yes | ✅ Yes | Stateless, small context → biggest win |
-| **OpenCode** | ✅ High | ❌ N/A (Node.js) | ✅ Yes | MCP multiplex is the killer feature |
-| **Cline** | ✅ High | ✅ Yes | ✅ Yes | Benefits from both layers |
-| **Aider** | ✅ Medium | ✅ Yes | ⚠️ Via `--mcp-toolrecall` | Aider is diff-patch based, fewer tool re-reads |
-| **Claude Code** | ⚠️ **Low / Negative** | ❌ **Avoid** | ⚠️ Use with caution | See detailed section below |
-| **Codex CLI** | ⚠️ Mixed | ❌ N/A (Node.js) | ⚠️ Multiplex only | MCP bridge for static tool multiplexing only |
-| **Cursor** | ⚠️ Mixed | ⚠️ Shim safe | ⚠️ Configurable | Cursor manages its own tool state; MCP optional |
+|| Agent | Caching Value | Use Shim? | Use MCP Bridge? | Notes |
+|---|---|---|---|---|---|
+|| **Hermes** | ✅ High | ✅ Yes | ✅ Yes | Stateless, small context → biggest win |
+|| **OpenCode** | ✅ High | ❌ N/A (Node.js) | ✅ Yes | MCP multiplex is the killer feature |
+|| **Cline** | ✅ High | ✅ Yes | ✅ Yes | Benefits from both layers |
+|| **Aider** | ✅ Medium | ✅ Yes | ⚠️ Via `--mcp-toolrecall` | Aider is diff-patch based, fewer tool re-reads |
+|| **Google ADK** | ✅ High | ✅ Yes | ✅ Yes | Python SDK, no built-in tool caching; transparent shim catches `open()` in tools |
+|| **Claude Code** | ⚠️ **Low / Negative** | ❌ **Avoid** | ⚠️ Use with caution | See detailed section below |
+|| **Codex CLI** | ⚠️ Mixed | ❌ N/A (Node.js) | ⚠️ Multiplex only | MCP bridge for static tool multiplexing only |
+|| **Cursor** | ⚠️ Mixed | ⚠️ Shim safe | ⚠️ Configurable | Cursor manages its own tool state; MCP optional |
 
 ---
 
@@ -30,7 +31,7 @@ ToolRecall is **built into Hermes** — the tools `cached_read`, `cached_termina
 **Config:**
 ```bash
 pipx install toolrecall && toolrecall setup
-# or: pip install toolrecall && toolrecall setup
+# or: pip install toolrecall && toolrecall setup  (if not using pipx)
 # Tools available natively in Hermes — no extra config needed.
 ```
 
@@ -95,6 +96,25 @@ aider --mcp-toolrecall
 ```
 
 **Shim benefit:** The Python shim catches `read_file` calls from Aider's tool execution layer. Worth enabling for projects with large files read multiple times.
+
+---
+
+## Google ADK — ✅ High value
+
+Google's Agent Development Kit (ADK) is a Python framework with no built-in tool-output caching. Every tool call runs through `run_async()` fresh — even repeated reads of the same file.
+
+**Why it works:**
+- ADK tools are plain Python functions, so the `.pth` shim transparently caches `open()` and `subprocess.run()` calls inside them.
+- The MCP Bridge gives ADK access to shared, persistent MCP server subprocesses (time, fetch, GitHub, etc.).
+- For deepest integration, wrap tools with `cached_read`, `cached_write`, etc.
+
+**Config:**
+```bash
+pipx install toolrecall && toolrecall setup
+# No per-agent config needed for the shim.
+```
+
+For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md).
 
 ---
 
