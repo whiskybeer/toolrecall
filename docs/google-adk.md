@@ -65,9 +65,9 @@ This works because ADK (like all modern frameworks) respects `GEMINI_BASE_URL` /
 |--------|-------|
 | **ADK changes** | ❌ None |
 | **What it caches** | `builtins.open()` + `subprocess.run()` + `subprocess.Popen()` |
-| **Setup** | `.pth` file + `PYTHONSTARTUP` shim |
+| **Setup** | `.pth` file installed via `toolrecall shim --install` |
 
-See [`agent-agnostic-patching.md`](agent-agnostic-patching.md) for full documentation.
+See the [Hermes Transparent Cache guide](HERMES_TRANSPARENT_CACHE.md) for full documentation on the OS-level `.pth` shim.
 
 Patching happens at the Python level: **every** `open(path, 'r')` in ADK, in custom tools, in MCP server processes is automatically routed through ToolRecall.
 
@@ -82,50 +82,44 @@ def read_config() -> str:
 ```
 
 The patch covers:
-1. `builtins.open()` → mtime-based caching
+1. `builtins.open()` → mtime-based caching (file reads)
 2. `subprocess.run()` → TTL-based caching (read-only commands like `ls`, `hostname`)
-3. Security: binary files, `.env`, `.ssh` etc. are never cached
+3. `subprocess.Popen()` is left untouched (background processes can't cache meaningfully)
+4. Security: binary files, `.env`, `.ssh` etc. are never cached
 
 **ADK advantage:** Because ADK is written in Python and defines tools as Python functions, **every tool call benefits automatically** — no tool needs to know TR exists.
 
 ### 3. Embedded Library — deepest integration
 
-| Aspect | Value |
-|--------|-------|
-| **ADK changes** | ⚡ Minimal — wrappers around ADK tools |
-| **Setup** | `from toolrecall import HybridCache` in custom tools |
-| **Control** | Full — invalidation, mtime-check, chunks |
+|| Aspect | Value |
+||--------|-------|
+|| **ADK changes** | ⚡ Minimal — wrappers around ADK tools |
+|| **Setup** | `from toolrecall import cached_read, cached_write` in custom tools |
+|| **Control** | Full — invalidation, mtime-check, write dedup |
 
-See [`embedded-library-integration.md`](embedded-library-integration.md) for the full API.
+See the [CLI Reference](CLI.md) and [API usage in `toolrecall/cache.py`](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/cache.py) for the full API.
 
 **Wrapper pattern for ADK `FunctionTool`:**
 
 ```python
 from google.adk import Agent, function_tool
-from toolrecall import HybridCache
-
-cache = HybridCache(max_memory_mb=20)
+from toolrecall import cached_read, cached_write, invalidate_file
+import os
 
 @function_tool
 def read_file(path: str) -> str:
     """Read a file with caching."""
-    abs_path = os.path.abspath(path)
-    mtime = os.path.getmtime(abs_path)
-    cached = cache.cached_read(str(abs_path), mtime)
-    if cached.hit:
-        return cached.content
-    with open(abs_path) as f:
-        data = f.read()
-    cache.store(str(abs_path), data)
-    return data
+    result = cached_read(path)
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return result["content"]
 
 @function_tool
 def write_file(path: str, content: str) -> str:
-    """Write a file — always invalidates cache."""
-    abs_path = os.path.abspath(path)
-    with open(abs_path, "w") as f:
-        f.write(content)
-    cache.invalidate(str(abs_path))
+    """Write a file — skips if content is identical."""
+    result = cached_write(path, content)
+    if "error" in result:
+        raise RuntimeError(result["error"])
     return f"Written {len(content)} bytes"
 ```
 
