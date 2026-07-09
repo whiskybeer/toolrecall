@@ -423,6 +423,14 @@ TOML (stdlib `tomllib`) or YAML (optional, requires `pyyaml`).
 
 ```toml
 # ~/.config/toolrecall/toolrecall.toml (created by toolrecall init)
+[norm]
+# Cache key normalization (v0.9.0) — deterministic JSON sorting + noise stripping.
+# When enabled, tool call arguments are normalized before cache key generation:
+# keys sorted, whitespace stripped, timestamps/session IDs removed.
+# This broadens cache hits when agents rephrase or reorder arguments.
+# ⚠️ Changes existing cache keys — existing entries become orphans.
+enabled = false
+
 [mcp]
 allowed_paths = ["/home/user/projects"]  # Add your project dirs — default-deny!
 allow_terminal = true

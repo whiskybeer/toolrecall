@@ -91,6 +91,49 @@ def cmd_init():
 
         print()
 
+    # ─── Cache key normalization toggle ──────────────────
+    print()
+    print("╔══════════════════════════════════════════════════════════╗")
+    print("║  🔑 Cache Key Normalization (Track 1 — Semantic Intent) ║")
+    print("║                                                          ║")
+    print("║  Normalizes tool call arguments before cache key         ║")
+    print("║  generation so that semantically identical calls         ║")
+    print("║  produce the same cache key:                            ║")
+    print("║                                                          ║")
+    print("║  • Sorts JSON keys — {b:2, a:1} == {a:1, b:2}          ║")
+    print("║  • Strips whitespace — \"  /tmp  \" == \"/tmp\"            ║")
+    print("║  • Removes noise — timestamps, session IDs, trace IDs   ║")
+    print("║  • Lowercases command names — \"LS -la\" == \"ls -la\"     ║")
+    print("║                                                          ║")
+    print("║  ⚠️  Changes existing cache keys — existing entries      ║")
+    print("║     become orphans until they expire or are overwritten. ║")
+    print("╚══════════════════════════════════════════════════════════╝")
+    print()
+
+    norm_enabled = False
+    if sys.stdin.isatty():
+        resp = input("Enable cache key normalization? [y/N] ").strip().lower()
+        norm_enabled = resp == "y"
+        if norm_enabled:
+            print("  ✅ Normalization enabled — broader cache hits across rephrased queries.")
+        else:
+            print("  ℹ️  Normalization disabled (default) — can be enabled later via config.")
+        print()
+    else:
+        print("  ℹ️  Non-interactive — normalization disabled (default).")
+        print("     Set [norm].enabled = true in config.toml to enable.")
+        print()
+
+    norm_toml = f"""
+[norm]
+# Cache key normalization — deterministic JSON + noise stripping.
+# When enabled, tool call arguments are normalized before cache key
+# generation: keys sorted, whitespace stripped, non-semantic fields
+# (timestamps, session IDs, request IDs, trace IDs, nonces) removed.
+# ⚠️ Changing this invalidates existing cache entries.
+enabled = {"true" if norm_enabled else "false"}
+"""
+
     # ─── Build config content ──────────────────────────
     paths_toml = ",\n    ".join(f'"{p}"' for p in paths)
 
@@ -140,7 +183,7 @@ idle_minutes = 15
 # ToolRecall Daemon starts the forward proxy on :8569 automatically.
 # Set TOOLRECALL_FORWARD_PORT to change the default port.
 # Point your API client at http://localhost:8569 to get cached API responses.
-"""
+{norm_toml}"""
 
     env_content = """# ToolRecall Secrets
 # Loaded safely by the Daemon. Do NOT commit this file.

@@ -110,6 +110,15 @@ allowed_paths = [
     "~", "/etc", "/dev",
 ]
 
+# ─── Cache Key Normalization (v0.9.0) ────────
+# When enabled, tool call arguments are normalized before cache key
+# generation: keys are sorted, whitespace stripped, non-semantic fields
+# (timestamps, session IDs, etc.) are removed.
+# This broadens cache hits when agents rephrase or reorder arguments.
+# ⚠️ Changing this setting invalidates existing cache entries.
+[norm]
+enabled = false
+
 # Whether to cache terminal command output via the shim.
 # When enabled, every subprocess.run()/Popen() call is cached through the
 # ToolRecall daemon. This includes commands like lsb_release, uname, systemctl,

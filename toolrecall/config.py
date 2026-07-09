@@ -44,6 +44,7 @@ ENV_MAP = {
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
     "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
     "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
+    "TOOLRECALL_NORM_ENABLED": ("norm", "enabled"),
 }
 
 

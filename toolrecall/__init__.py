@@ -29,6 +29,9 @@ def __getattr__(name):
     if name == "cli_main":
         from toolrecall.cli import main
         return main
+    if name in ("normalize_json", "normalize_tool_args", "normalize_command"):
+        from toolrecall.normalizer import normalize_json, normalize_tool_args, normalize_command
+        return locals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

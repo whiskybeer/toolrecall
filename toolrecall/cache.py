@@ -48,7 +48,7 @@ config = load_config()
 # We re-import _is_sensitive_path explicitly below for use within this module.
 from toolrecall._db import _is_sensitive_path as _is_sensitive_path
 from toolrecall._db import _compile_sensitive_patterns as _compile_sensitive_patterns
-
+from toolrecall.normalizer import normalize_tool_args, normalize_command
 
 # ─── In-memory file cache with LRU ──────────────────────────
 
@@ -652,7 +652,9 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
             return {"error": f"Cannot parse command: {e}", "exit_code": -1, "cached": False}
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
-    cmd_hash = _hash(cmd)
+    # Normalize command for cache key when enabled
+    cmd_key = normalize_command(cmd) if config.get("norm", "enabled", default=False) else cmd
+    cmd_hash = _hash(cmd_key)
     now = time.time()
 
     try:
@@ -738,7 +740,9 @@ def cached_run(script_path: str, args: str = "", ttl: int = 0) -> dict:
             return {"error": f"Cannot parse script arguments: {e}", "exit_code": -1}
         return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
 
-    path_hash = _hash(f"{path}:{args}")
+    # Normalize script path+args for cache key when enabled
+    script_key = f"{path}:{normalize_command(args)}" if config.get("norm", "enabled", default=False) else f"{path}:{args}"
+    path_hash = _hash(script_key)
     now = time.time()
 
     try:
@@ -1015,7 +1019,13 @@ def cached_mcp_check(server: str, tool: str, arguments: dict = None, ttl: int = 
         return {"cached": False, "key": request_hash, "bypassed": True, "server": server, "tool": tool}
 
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
-    args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
+
+    # Normalize MCP arguments for cache key when enabled
+    if config.get("norm", "enabled", default=False) and arguments:
+        from toolrecall.normalizer import normalize_tool_args
+        args_json = normalize_tool_args(arguments)
+    else:
+        args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
     request_str = f"{server}://{tool}?{args_json}"
     request_hash = _hash(request_str)
     now = time.time()
