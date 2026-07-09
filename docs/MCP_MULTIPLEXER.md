@@ -32,7 +32,7 @@ flowchart LR
     MUX --> T
     MUX --> F
     MUX --> E
-
+end
 
 - **Single daemon** — all agents share one persistent process
 - **Lazy loading** — servers boot *only* on first call, not at daemon start
@@ -114,7 +114,7 @@ Auto-resolved via `uvx` when listed in `servers`:
 | `playwright` | `@playwright/mcp` | Browser automation |
 | `slack` | `mcp-server-slack` | Slack workspace integration |
 
-> **Note:** External servers require `uvx` (part of `uv`, installable via `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`). Built-in servers need no extra dependencies.
+> **Note:** External servers require `uvx` (part of `uv`, installable via `curl -LsSf https://astral.sh/uv/install.sh | sh`). Built-in servers need no extra dependencies.
 
 The registry is defined in [`toolrecall/mcp_registry.py`](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/mcp_registry.py) — extend it by sending a PR.  
 The built-in servers (`toolrecall/mcp_time.py`, `toolrecall/mcp_github.py`, `toolrecall/mcp_seqthink.py`, `toolrecall/mcp_fetch.py`) are all pure Python stdlib — no external packages needed.
