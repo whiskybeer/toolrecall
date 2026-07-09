@@ -1037,7 +1037,17 @@ class DaemonServer:
         if err:
             return {"error": err}
         bypass = req.get("bypass_cache", False)
-        result = _refresh_file(path) if bypass else _cache_read(path)
+        if bypass:
+            # Remove from in-memory cache so the next read is fresh.
+            # We skip the SQLite DELETE to avoid _db() lock contention
+            # from within the daemon handler. _cache_read checks mtime
+            # against SQLite, so stale SQLite entries are harmless.
+            import toolrecall.cache as _tr_cache
+            try:
+                _tr_cache._file_cache.remove(path)
+            except KeyError:
+                pass  # wasn't in cache, nothing to invalidate
+        result = _cache_read(path)
         # Track read for context tracker (mark_read is no-op if path empty)
         if result and not result.get("error"):
             self._context.mark_read(path)
@@ -1124,17 +1134,10 @@ class DaemonServer:
         Only re-reads from disk, does not destroy other cache entries.
         Returns same shape as _handle_read().
         """
-        path = req.get("path", "")
-        if not path:
-            return {"error": "Missing 'path'"}
-        err = self.security.check_read_path(path)
-        if err:
-            return {"error": err}
-        result = _refresh_file(path)
-        # Force "cached": False in the result so the caller knows it was fresh
-        if isinstance(result, dict):
-            result["cached"] = False
-        return result
+        # Delegate to _handle_read bypass — it handles invalidation + fresh read
+        # through the daemon's own cache path, avoiding SQLite lock contention.
+        req["bypass_cache"] = True
+        return self._handle_read(req)
 
     def _handle_mcp_call(self, req: dict) -> dict:
         """Call a tool on a multiplexed MCP server.

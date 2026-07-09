@@ -5,14 +5,18 @@ by matching the Host header. On repeat requests with identical bodies, returns t
 cached response — no API call, no token cost.
 
 Architecture:
-    Browser Extension (DNR redirect) → Forward Proxy (port 8569)
+    Agent SDK → Forward Proxy (port 8569, set OPENAI_BASE_URL / ANTHROPIC_BASE_URL)
       → Cache HIT: respond from api_cache table
       → Cache MISS: forward to real API, store response, return
 
-No MITM needed — the browser extension redirects the URL, preserving
-all original headers (Authorization, Content-Type) and body intact.
+No MITM needed — works by redirecting the base URL in your SDK config,
+preserving all original headers (Authorization, Content-Type) and body intact.
 
-For agent use, point OPENAI_BASE_URL / ANTHROPIC_BASE_URL to localhost:8569.
+Usage:
+    export OPENAI_BASE_URL=http://localhost:8569/v1
+    export ANTHROPIC_BASE_URL=http://localhost:8569
+    # Or set any SDK's base_url to http://localhost:8569
+    # Then use your agent/scripts normally — API responses are cached automatically.
 """
 
 import hashlib
@@ -32,7 +36,6 @@ log = logging.getLogger("toolrecall.proxy")
 MAX_BODY_SIZE = 5 * 1024 * 1024
 
 # Known LLM API hosts that the forward proxy routes requests for.
-# The browser extension declares DNR rules matching exactly these hosts.
 FORWARD_HOSTS = {
     "api.openai.com",
     "api.anthropic.com",
@@ -47,13 +50,13 @@ FORWARD_HOSTS = {
 
 
 class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
-    """Forward proxy that caches API responses via ToolRecall daemon.
+    """Forward proxy handler that caches API responses via ToolRecall daemon.
 
-    Receives requests redirected by the browser extension (DNR) or pointed
-    at this proxy via OPENAI_BASE_URL / ANTHROPIC_BASE_URL.
-    Matches the Host header against FORWARD_HOSTS, hashes the request
-    body, checks the api_cache, and either returns cached responses
-    or forwards to the real API and caches the result.
+        Receives requests pointed at this proxy via OPENAI_BASE_URL / ANTHROPIC_BASE_URL
+        or by setting any SDK's base URL to http://localhost:8569.
+        Matches the Host header against FORWARD_HOSTS, hashes the request
+        body, checks the api_cache, and either returns cached responses
+        or forwards to the real API and caches the result.
 
     No MITM needed — works by URL redirection, preserving
     all original headers (Authorization, Content-Type) and body intact.

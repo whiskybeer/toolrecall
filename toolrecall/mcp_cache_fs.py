@@ -4,19 +4,27 @@ Provides MCP tools that cache file reads and terminal commands through
 ToolRecall's daemon. This is agent-agnostic — any MCP-compatible agent
 (opencode, Claude Code, Cursor, etc.) gets transparent caching.
 
+The tools use native names (read_file, write_file, patch, terminal) so
+agents pick them naturally — no cached_ prefix needed.
+
 Architecture:
   ┌─────────────┐     MCP stdio      ┌──────────────────────┐
   │   Agent     │ ◄────────────────► │ ToolRecall Cache FS  │
   │ (opencode,  │                    │   MCP Server         │
   │  Claude,    │     tools:         │                      │
-  │  Cursor)    │     cached_read    │  ┌────────────────┐  │
-  │             │     cached_terminal│  │ ToolRecall     │  │
-  │             │     cached_write   │  │ Daemon (UDS)   │  │
-  │             │     cached_patch   │  └────────────────┘  │
+  │  Cursor)    │     read_file      │  ┌────────────────┐  │
+  │             │     write_file     │  │ ToolRecall     │  │
+  │             │     patch          │  │ Daemon (UDS)   │  │
+  │             │     terminal       │  └────────────────┘  │
   └─────────────┘                    └──────────────────────┘
 
 The MCP server connects to the running ToolRecall daemon via UDS.
 If the daemon isn't running, it starts it automatically (_ensure_daemon).
+
+Note: This server is most useful as a standalone MCP tool set for agents
+that don't use the ToolRecall multiplexer. If you use the multiplexer
+(`toolrecall mcp`), the bridge already provides these tools natively
+along with cache status, docs search, and MCP server management.
 """
 
 import json
@@ -227,7 +235,7 @@ def _cached_patch(path: str, old_string: str, new_string: str) -> str:
 
 TOOLS = [
     {
-        "name": "cached_read",
+        "name": "read_file",
         "description": "Read a file through ToolRecall's cache. "
                        "On first read, content is fetched from disk and cached. "
                        "Subsequent reads return cached content instantly. "
@@ -250,7 +258,7 @@ TOOLS = [
         },
     },
     {
-        "name": "cached_terminal",
+        "name": "terminal",
         "description": "Run a terminal command through ToolRecall's cache. "
                        "On first run, output is fetched and cached. "
                        "Subsequent identical commands return cached output. "
@@ -272,9 +280,9 @@ TOOLS = [
         },
     },
     {
-        "name": "cached_write",
+        "name": "write_file",
         "description": "Write content to a file. Invalidates the cache entry "
-                       "so the next cached_read is fresh. Does NOT cache the write itself.",
+                       "so the next read_file is fresh. Does NOT cache the write itself.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -291,9 +299,9 @@ TOOLS = [
         },
     },
     {
-        "name": "cached_patch",
+        "name": "patch",
         "description": "Apply a find-and-replace patch to a file. "
-                       "Invalidates the cache entry so the next cached_read is fresh. "
+                       "Invalidates the cache entry so the next read_file is fresh. "
                        "The old_string must be unique in the file.",
         "inputSchema": {
             "type": "object",
@@ -320,28 +328,28 @@ TOOLS = [
 def _handle_tool_call(name: str, arguments: dict) -> dict:
     """Route a tool call to the right implementation."""
     try:
-        if name == "cached_read":
+        if name == "read_file":
             content = _cached_read(
                 path=arguments["path"],
                 max_tokens=arguments.get("max_tokens", 0),
             )
             return {"content": [{"type": "text", "text": content}]}
 
-        elif name == "cached_terminal":
+        elif name == "terminal":
             output = _cached_terminal(
                 command=arguments["command"],
                 timeout=arguments.get("timeout", 30),
             )
             return {"content": [{"type": "text", "text": output}]}
 
-        elif name == "cached_write":
+        elif name == "write_file":
             result = _cached_write(
                 path=arguments["path"],
                 content=arguments["content"],
             )
             return {"content": [{"type": "text", "text": result}]}
 
-        elif name == "cached_patch":
+        elif name == "patch":
             result = _cached_patch(
                 path=arguments["path"],
                 old_string=arguments["old_string"],
@@ -377,7 +385,7 @@ def main():
         },
         "serverInfo": {
             "name": "toolrecall-cache-fs",
-            "version": "0.7.9",
+            "version": "0.8.6",
         },
     }
 

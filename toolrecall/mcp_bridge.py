@@ -28,10 +28,71 @@ from toolrecall import __version__
 # ─── MCP Tool Definitions ────────────────────────────────
 
 TOOL_DEFINITIONS = [
+    # ── Native-named aliases (agents pick these naturally) ──
+    {
+        "name": "read_file",
+        "description": "Read a file through ToolRecall's cache. "
+                       "Cached until file modification time (mtime) changes. "
+                       "Set bypass_cache=true to force a fresh read from disk. "
+                       "This is the cached version of the standard read_file tool.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to read"},
+                "bypass_cache": {"type": "boolean", "description": "Skip cache and force fresh read from disk"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "write_file",
+        "description": "Write content to a file and invalidate the cache entry. "
+                       "Routes through the daemon's security gate (path allowlist, "
+                       "sensitive-file blocklist). Next read_file returns fresh content.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute path to write to"},
+                "content": {"type": "string", "description": "Content to write"}
+            },
+            "required": ["path", "content"]
+        }
+    },
+    {
+        "name": "patch",
+        "description": "Apply a find-and-replace patch to a file. "
+                       "Invalidates the cache entry so the next read_file is fresh. "
+                       "The old_string must be unique in the file. "
+                       "Routes through the daemon's security gate.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File to patch"},
+                "old_string": {"type": "string", "description": "Exact text to find (must be unique)"},
+                "new_string": {"type": "string", "description": "Replacement text"}
+            },
+            "required": ["path", "old_string", "new_string"]
+        }
+    },
+    {
+        "name": "terminal",
+        "description": "Run a terminal command with TTL-based caching. "
+                       "⚠ Requires mcp.allow_terminal=true in config. "
+                       "This is the cached version of the standard terminal tool.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell command"},
+                "ttl": {"type": "integer", "description": "Cache TTL in seconds (0=bypass)"}
+            },
+            "required": ["command"]
+        }
+    },
+    # ── Explicit cached tools (cached_ prefix for clarity) ──
     {
         "name": "cached_read",
         "description": "Read a file with hybrid In-Memory + SQLite cache. "
-                       "Cached until file modification time (mtime) changes. "
+                       "Alias: read_file. Cached until file modification time (mtime) changes. "
                        "Set bypass_cache=true to force a fresh read from disk.",
         "inputSchema": {
             "type": "object",
@@ -45,6 +106,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "cached_terminal",
         "description": "Run a terminal command with TTL-based caching. "
+                       "Alias: terminal. "
                        "⚠ Requires mcp.allow_terminal=true in config.",
         "inputSchema": {
             "type": "object",
@@ -153,7 +215,13 @@ TOOL_DEFINITIONS = [
 ]
 
 CMD_TO_MCP = {
+    "read_file": "cached_read",
     "cached_read": "cached_read",
+    "write_file": "cached_write",
+    "cached_write": "cached_write",  # not a daemon cmd, special-cased below
+    "patch": "cached_patch",
+    "cached_patch": "cached_patch",  # special-cased below
+    "terminal": "cached_terminal",
     "cached_terminal": "cached_terminal",
     "cached_skill": "cached_skill",
     "docs_search": "docs_search",
@@ -226,12 +294,14 @@ class MCPBridge:
                 "instructions": (
                                     "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
                                     "This bridge connects to the ToolRecall daemon. "
-                                    "6 tools always available, 2 opt-in via config.\n"
-                                    f"  cached_read: path-allowlisted (bypass_cache=true for fresh read)\n"
-                                    f"  cache_refresh_file: re-read a single file from disk (safe)\n"
-                                    f"  cache_status: view cache statistics\n"
-                                    f"  cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
-                                    f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
+                                    "All file read/write tools are transparently cached.\n"
+                                    "  read_file / cached_read: path-allowlisted (bypass_cache=true for fresh read)\n"
+                                    "  write_file: write content, invalidates cache\n"
+                                    "  patch: find-and-replace, invalidates cache\n"
+                                    "  cache_refresh_file: re-read a single file from disk (safe)\n"
+                                    "  cache_status: view cache statistics\n"
+                                    "  terminal / cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
+                                    "  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
                                     "Start daemon: toolrecall daemon &"
                                 ),
             }
@@ -247,7 +317,7 @@ class MCPBridge:
         tools = []
         for tdef in TOOL_DEFINITIONS:
             name = tdef["name"]
-            if name == "cached_terminal" and not allow_terminal:
+            if name in ("cached_terminal", "terminal") and not allow_terminal:
                 continue
             if name == "cache_invalidate" and not allow_invalidate:
                 continue
@@ -289,10 +359,23 @@ class MCPBridge:
                 resp = self.client.send({"cmd": "mcp_list_servers"})
             else:
                 # cached_read with bypass_cache → translate to refresh_file
-                if tool_name == "cached_read" and arguments.get("bypass_cache", False):
+                if tool_name in ("cached_read", "read_file") and arguments.get("bypass_cache", False):
                     resp = self.client.send({
                         "cmd": "cache_refresh_file",
                         "path": arguments.get("path", ""),
+                    })
+                elif tool_name == "write_file":
+                    resp = self.client.send({
+                        "cmd": "cached_write",
+                        "path": arguments.get("path", ""),
+                        "content": arguments.get("content", ""),
+                    })
+                elif tool_name == "patch":
+                    resp = self.client.send({
+                        "cmd": "cached_patch",
+                        "path": arguments.get("path", ""),
+                        "old_string": arguments.get("old_string", ""),
+                        "new_string": arguments.get("new_string", ""),
                     })
                 else:
                     resp = self._uds_request(uds_cmd, **arguments)
