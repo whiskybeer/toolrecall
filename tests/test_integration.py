@@ -172,6 +172,7 @@ class TestDaemonSubprocess(unittest.TestCase):
         os.makedirs(self.test_dir, exist_ok=True)
         self._db = os.path.join(self.test_dir, "cache.db")
         self._uds = os.path.join(self.test_dir, "tc.sock")
+        self._orig_uds = os.environ.get("TOOLRECALL_UDS_PATH")
         os.environ["TOOLRECALL_CACHE_DB"] = self._db
         os.environ["TOOLRECALL_UDS_PATH"] = self._uds
         # Remove stale socket from previous runs
@@ -189,6 +190,11 @@ class TestDaemonSubprocess(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 self.process.kill()
             self.process = None
+        # Restore original UDS path so other tests can find the real daemon
+        if self._orig_uds is not None:
+            os.environ["TOOLRECALL_UDS_PATH"] = self._orig_uds
+        else:
+            os.environ.pop("TOOLRECALL_UDS_PATH", None)
 
     def _start_daemon(self):
         """Start a minimal UDS daemon subprocess that responds to ping/invalidate."""

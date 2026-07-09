@@ -42,6 +42,13 @@ def _ensure_daemon() -> bool:
     except Exception:
         pass
 
+    # Remove stale socket before starting daemon
+    if os.path.exists(DEFAULT_PATH):
+        try:
+            os.unlink(DEFAULT_PATH)
+        except OSError:
+            pass
+
     # Auto-start via subprocess
     import subprocess
     import shutil
