@@ -72,12 +72,12 @@ echo "  ────────────────────────
 echo "  Install methods (choose ONE):"
 echo ""
 echo "    🥇 Recommended — from PyPI (via pipx):"
-echo "       pipx install toolrecall"
-echo "       → Stable release, isolated venv, auto-entry-points"
+echo "    pipx install toolrecall"
+echo "    → Stable release, isolated venv, auto-entry-points"
 echo ""
-echo "    🥈 Using pip (alternative):"
+echo "    🥑 Using pip (alternative):"
 echo "       pip install toolrecall"
-echo "       → Latest commit, may include unreleased changes"
+echo "       → Standard release, installs into current environment"
 echo ""
 echo "  ────────────────────────────────────────────────"
 echo ""
@@ -90,15 +90,16 @@ if command -v pipx &>/dev/null; then
         pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null
     } || {
         echo "  ❌ Installation failed."
-        echo "  Install manually: pip install toolrecall"
+        echo "  Install manually: pipx install toolrecall"
+        echo "  (or if you prefer pip: pip install toolrecall)"
         exit 1
     }
 else
     pip install toolrecall 2>/dev/null || pip3 install toolrecall 2>/dev/null || pip install git+https://github.com/whiskybeer/toolrecall.git 2>/dev/null || {
         echo "  ❌ pip not found."
         echo "  ToolRecall requires Python 3.11+ with pip."
-        echo "  Install Python first: https://python.org/downloads/"
-        echo "  Then re-run this script."
+        echo "  Recommended install: pipx install toolrecall"
+        echo "  Or install Python first: https://python.org/downloads/"
         exit 1
     }
 fi
