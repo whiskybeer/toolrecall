@@ -85,7 +85,11 @@ def _shim_open(path, mode='r', *args, **kwargs):
         if tr and 'r' in mode and 'b' not in mode:
             try:
                 result = tr["read"](os.fspath(path))
-                if result and "content" in result:
+                # Only serve from shim if it was a cache HIT.
+                # On cache miss, fall through to _original_open so the
+                # real cached_read (from cache.py) reads the file directly
+                # and records stats exactly once.
+                if result and result.get("cached", False) and "content" in result:
                     import io
                     return io.StringIO(result["content"])
             except Exception:

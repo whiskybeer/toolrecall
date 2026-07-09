@@ -136,7 +136,7 @@ Two distinct mechanisms:
 | 🟡 Medium | 5 |
 | 🟢 Low | 4 |
 
-**🔴 C1 — HTTP proxy CORS:** `Access-Control-Allow-Origin: *` on ALL endpoints (including `/cache/invalidate`). Default bind is `127.0.0.1` (safe) but port 8569 is unauthenticated. **Fix:** Remove CORS entirely for localhost-only service.
+**🔴 C1 — HTTP proxy CORS:** `Access-Control-Allow-Origin: *` on ALL endpoints (including `/cache/invalidate`). Default bind is `127.0.0.1` (safe) but port 8569 is unauthenticated. **Status:** Fixed — CORS headers removed. Proxy binds to localhost only.
 
 **🟡 H1 — Shell injection:** 5 `shell=True` calls in `cache.py`, 3 with variable `args` → `shlex.split()` primary path, `shell=True` fallback. **Fix:** Remove `shell=True` fallbacks in `cached_run()`; log WARNING on fallback.
 
@@ -150,7 +150,7 @@ Two distinct mechanisms:
 
 **Already good:** Default-deny path allowlist, 25+ sensitive file regexes, `os.path.realpath()` everywhere, air-gapped secrets in `~/.toolrecall/.env`, parameterized SQL, 1MB/5MB limits, 176+ security tests, no `curl | bash` install.
 
-**Top 5 fixes:** (1) Remove CORS `*`, (2) Stop token leak in stderr, (3) Add null-byte rejection, (4) Lazy init log handler, (5) Log `shell=True` fallback.
+**Top 5 fixes:** (1) ~~Remove CORS `*`~~ ✅ Done, (2) Stop token leak in stderr, (3) Add null-byte rejection, (4) Lazy init log handler, (5) Log `shell=True` fallback.
 
 ## I. Windows Compatibility
 

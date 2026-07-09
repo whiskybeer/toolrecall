@@ -398,7 +398,16 @@ def cached_read(path: str) -> dict:
         return {"error": f"File exceeds 5MB limit ({stat.st_size / 1024 / 1024:.1f} MB). Refusing to cache or read."}
 
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        # Use the real open() to bypass the shim (if installed).
+        # The shim intercepts open() and routes back to cached_read,
+        # causing double-counting of stats and unnecessary re-entry.
+        # toolrecall.shim saves _original_open = builtins.open before
+        # patching; if the shim isn't installed, fall back to builtins.open.
+        try:
+            from toolrecall.shim import _original_open as _real_open
+        except ImportError:
+            _real_open = open
+        with _real_open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
     except Exception as e:
         return {"error": str(e)}
