@@ -267,6 +267,7 @@ toolrecall invalidate     Clear all caches                     [auto-starts daem
 toolrecall restart        Health check + clean daemon restart  [auto-starts daemon]
 toolrecall mcp            Start MCP Bridge                     [auto-starts daemon]
 toolrecall serve          Forward proxy (cache API responses)  [auto-starts daemon]
+toolrecall serve --port 9000  Forward proxy on custom port
 toolrecall debug          Start debug/demo server              [auto-starts daemon]
 toolrecall index          Build/update FTS5 knowledge database [auto-starts daemon]
 toolrecall config-set     Set a config value
@@ -344,6 +345,30 @@ aider --mcp-toolrecall
 
 All agents share **one daemon** and **one cache** — no duplication, no conflict.
 
+### Layer 3: Go Client (`tr` binary) — for any language or shell
+
+Not using Python? Not using MCP? The `tr` binary connects directly to the ToolRecall daemon over UDS. No Python runtime needed.
+
+```bash
+tr read main.py            # Cached file read
+tr cat /etc/os-release     # Alias for read
+tr term "hostname"         # Cached terminal command
+tr status                  # Daemon health & cache stats
+tr ping                    # Fast connectivity check
+tr read --bypass file.py   # Force fresh read
+tr read --refresh file.py  # Alias for bypass
+tr write /tmp/test.txt "hello"  # Write (invalidates cache)
+```
+
+Use it when: **OpenCode** and **Claude Code** (Node.js, no Python shim), CI/CD pipelines, Rust/Ruby/Java agents, any shell script.
+
+```bash
+# Build from source
+cd go-client && go build -o /usr/local/bin/tr .
+```
+
+See [Go Client](go-client/README.md) for full details.
+
 > ⚠️ **Claude Code users:** Adding ToolRecall as an MCP server can cause stale-state issues in code edit loops. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) before configuring.
 
 ---
@@ -363,9 +388,9 @@ export OPENAI_BASE_URL=http://localhost:8569/v1
 | **Any OpenAI-compatible client** | Set base URL to `http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
 | **Custom port** | `toolrecall serve --port 9090` | Same |
 
-### MCP Bridge (tool-level caching)
+Supported providers: OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, Mistral, Groq, Together, OpenRouter. See [Forward Proxy docs](docs/FORWARD_PROXY.md) for the full provider list and usage examples.
 
-Connect **any MCP agent** by adding one server:
+### MCP Bridge (tool-level caching)
 
 ```json
 {
@@ -466,6 +491,7 @@ See the [Testing Guide](docs/TESTING.md) and [Makefile](./Makefile) for all targ
 - [Benchmark](docs/BENCHMARK.md) — measured performance, token savings
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide
 - [Docker Deployment](docs/DOCKER.md) — containerized stack
+- [Forward Proxy](docs/FORWARD_PROXY.md) — cache API responses by body hash, provider list, usage
 - [Security Architecture](SECURITY.md) — WAF details, trust boundary
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common fixes
 - [Appendix](docs/APPENDIX.md) — comparison tables, OSI model, ROI, vision, audit
