@@ -99,25 +99,24 @@ enabled = true
 
 ## Architecture
 
-```text
-                   ┌─────────────────────────────────┐
-                   │  ToolRecall Knowledge DB         │
-                   │  (SQLite FTS5, WAL mode)         │
-                   │                                  │
-                   │  pages table     pages_fts        │
-                   │  ┌──────────┐    ┌──────────┐   │
-                   │  │ source   │◄──▶│ MATCH    │   │
-                   │  │ path     │    │ BM25     │   │
-                   │  │ title    │    │ Porter   │   │
-                   │  │ content  │    │ unicode61│   │
-                   │  │ url      │    └──────────┘   │
-                   │  └──────────┘                    │
-                   └─────────────────────────────────┘
-                              │
-         ┌────────────────────┼────────────────────┐
-         │                    │                    │
-   Python import        MCP tools           HTTP Proxy
-   docs_search()   docs_search/docs_get    /docs_search
+```mermaid
+flowchart TB
+    subgraph DB["ToolRecall Knowledge DB — SQLite FTS5, WAL mode"]
+        PAGES[("pages")]
+        FTS[("pages_fts")]
+        PAGES -- "triggers" --> FTS
+    end
+
+    PAGES["source | path | title | content | url"]
+    FTS["MATCH | BM25 | Porter | unicode61"]
+
+    PY["Python import\ndocs_search()"]
+    MCP["MCP tools\ndocs_search / docs_get_page"]
+    HTTP["HTTP Proxy\n/docs_search / docs_get_page"]
+
+    PY --> DB
+    MCP --> DB
+    HTTP --> DB
 ```
 
 **FTS5 Triggers:** `AFTER INSERT`/`UPDATE`/`DELETE` on `pages` auto-sync `pages_fts`,
