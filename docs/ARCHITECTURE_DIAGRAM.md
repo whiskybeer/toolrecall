@@ -159,12 +159,9 @@ TOOLRECALL_SHIM_DISABLE=1 python my_uncached_script.py
 
 - `toolrecall/shim.py` — the OS-level patch module (patches `builtins.open` + `subprocess.run`)
 - `toolrecall/tr_shim.pth` — `.pth` file auto-imported by site-packages (runs `import toolrecall.shim`)
-- `toolrecall/hooks.py` — hook logic for open/subprocess interception
-- `toolrecall/store.py` — KV-Store (SQLite FTS5 + in-memory LRU)
+- `toolrecall/cache.py` — in-memory LRU + SQLite cache backend
 - `toolrecall/client.py` — Python client (used by MCP bridge + direct imports)
 - `toolrecall/context_tracker.py` — Context Tracker (tracks dirty/clean file state)
-
----
 
 ## Installation
 
@@ -203,72 +200,25 @@ Connect any MCP agent (Aider, Codex, Hermes, Cline, Cursor, Claude Code):
 
 Set these **before starting your agent** (not the daemon). Each targets a specific layer of the ToolRecall stack:
 
-| Env | Default | Affects | Effect |
+|| Env | Default | Affects | Effect |
 |-----|---------|---------|--------|
 | `TOOLRECALL_SHIM_DISABLE=1` | *(not set)* | OS-level shim (every Python process) | Disable the shim for a specific process: `TOOLRECALL_SHIM_DISABLE=1 python my_script.py` |
-| `TOOLRECALL_TRANSPORT=tcp://127.0.0.1:9090` | *(auto: UDS or TCP)* | Daemon client IPC | Override the transport path (see [Transport Layer](#transport-layer) above) |
-| `TOOLRECALL_FORWARD_PORT=9090` | `8569` | Forward proxy | Change the proxy port (default: `:8569`) |
+| `TOOLRECALL_TRANSPORT=/custom/path/tc.sock` | *(auto: UDS or TCP)* | Daemon client IPC | Override the transport path |
+| `TOOLRECALL_FORWARD_PORT=9090` | `8569` | Forward proxy | Change the proxy port |
 
----
+## Context Tracker public API
 
-## Context Tracker
+```python
+from toolrecall.client import (
+    context_set_checkpoint,
+    context_get_dirty,
+    context_get_stats,
+    context_reset,
+)
 
-ToolRecall includes a **Context Tracker** — an in-memory checkpoint-based dirty-file tracker that lets agents safely drop clean file content from their context window. This breaks O(n²) attention cost growth.
-
-| Feature | Benefit |
-|---------|--------|
-| **Set checkpoint** | Mark current state as "clean" |
-| **Get dirty/clean** | List files written vs. read since checkpoint |
-| **Reset** | Clear all tracking for a fresh cycle |
-| **93.8% O(n²) reduction** | Context stays bounded across turns |
+cp = context_set_checkpoint("start")   # returns {"checkpoint": int, "name": str}
+result = context_get_dirty()           # returns {"dirty": [...], "clean": [...], ...}
+context_reset()
+```
 
 See [Context Tracker](CONTEXT_TRACKER.md) for the full workflow.
-
----
-
-## Transport Layer
-
-ToolRecall's transport layer (`toolrecall/transport.py`) provides platform-agnostic IPC between the daemon and all clients (MCP bridge, forward proxy, Python client, OS-level shim). It auto-selects the transport based on the operating system:
-
-| Platform | Transport | Path | Latency |
-|----------|-----------|------|---------|
-| **Linux / macOS** | Unix Domain Socket (AF_UNIX) | `~/.toolrecall/toolrecall.sock` (or `$XDG_RUNTIME_DIR`) | ~4µs round-trip |
-| **Windows** | TCP (AF_INET) | `tcp://127.0.0.1:8568` | ~0.5ms |
-
-All messages use a length-prefixed JSON protocol (4-byte big-endian header + UTF‑8 payload, max 1 MB). The `TransportClient` handles connection, framing, timeouts, and graceful degradation — if the daemon is unreachable it returns `{"error": "daemon_unavailable"}` instead of crashing.
-
-Override the transport path at runtime:
-
-```bash
-export TOOLRECALL_TRANSPORT=/custom/path/tc.sock    # Custom UDS path
-export TOOLRECALL_TRANSPORT=tcp://127.0.0.1:9090     # Custom TCP endpoint
-```
-
----
-
-## Deployment (Production)
-
-Minimal startup — only the ToolRecall Daemon runs. No other services needed.
-
-### Persist across reboots
-
-```bash
-crontab -e
-@reboot /home/yourname/start_services.sh start
-```
-
-### Forward proxy (auto-started with daemon)
-
-Point any OpenAI-compatible SDK at the daemon to cache API responses:
-
-```bash
-export OPENAI_BASE_URL=http://localhost:8569/v1
-```
-
-### Persist across agent sessions
-
-The daemon is an OS process — it survives `/new`, IDE reloads, connection drops.
-
-### What "cache stays warm" means
-
-The daemon holds the **in-memory LRU cache** (~20 MB). When the agent session ends (`/new`, IDE restart), the daemon **keeps running** — its LRU isn't cleared. Next session: no cold start, no re-reads from SQLite for hot files. The SQLite WAL cache on disk is always persistent regardless.
