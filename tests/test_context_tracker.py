@@ -352,9 +352,12 @@ class TestContextTrackerViaDaemonIPC:
 
     def test_client_without_daemon(self):
         """Client functions handle daemon-not-running gracefully."""
-        # Stop the daemon if it's running
+        # Stop the daemon if it's running (ignore if not installed / no daemon)
         import subprocess
-        subprocess.run(["toolrecall", "daemon", "--stop"], capture_output=True)
+        try:
+            subprocess.run(["toolrecall", "daemon", "--stop"], capture_output=True)
+        except FileNotFoundError:
+            pass
         time.sleep(0.5)
 
         from toolrecall.client import (
