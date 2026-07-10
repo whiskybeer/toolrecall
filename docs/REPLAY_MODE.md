@@ -157,6 +157,48 @@ Replay mode is a **module-level singleton** — `_active` in `toolrecall.replay`
 - Mode changes are **instant** — no restart needed
 - Recording and replaying are **mutually exclusive** — starting one stops the other
 
+### Data Structure & What's Recorded
+
+### Current recording format
+
+Each tool call is stored as a single row in the `replay_scenarios` table:
+
+| Field | Type | Example |
+|-------|------|---------|
+| scenario_name | TEXT | `"auth-flow"` |
+| call_index | INTEGER | `0`, `1`, `2` |
+| tool_name | TEXT | `"cached_read"` |
+| args_hash | TEXT | `"a1b2c3d4e5f6g7h8"` |
+| args_json | TEXT | `{"path": "/etc/config.yaml"}` |
+| response_json | TEXT | `{"output": "key: value", "cached": false}` |
+| recorded_at | REAL | `1760000000.0` |
+
+This is a flat list of tool call → response pairs. It's enough for:
+
+- **Deterministic replay** — same tool + same args → same response
+- **Debugging** — inspect what was called and what came back
+- **Export/import** — portable JSON across machines and CI
+
+### What's NOT recorded (currently)
+
+Replay mode does NOT capture:
+
+- **Turn boundaries** — no concept of agent→assistant→tool→assistant structure
+- **Session context** — no prompt, no LLM response, no decision trace
+- **Ordering semantics** — calls are indexed sequentially but there's no grouping by turn
+
+For **training agent models** you'd need session-level traces with full turn context. That's the domain of framework-level recording (ADK, LangChain, etc.), not the daemon-level tool cache. The exported JSON is a good building block — it's clean, structured, and can be integrated into a training pipeline, but it's not a training dataset on its own.
+
+## Integration with herdr
+
+[herdr](https://herdr.dev) is a Rust-based terminal multiplexer for managing parallel AI coding agents. ToolRecall integrates with it in two ways:
+
+1. **Via the existing Go client (`tr`)** — Agents running inside herdr can call `tr read`, `tr term`, `tr status` directly from shell. The `tr` binary connects to the ToolRecall daemon via UDS. No Rust plugin needed.
+
+2. **Via MCP bridge** — If herdr agents support MCP, add `toolrecall mcp` as the MCP entry point. All tool calls are transparently cached through the shared multiplexer.
+
+The Go client is already built. No additional Rust or Go code is required to use ToolRecall inside herdr today.
+
 ### What's Recorded vs What's Not
 
 | Call Type | Recorded? | Notes |
