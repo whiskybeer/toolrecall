@@ -1320,6 +1320,7 @@ def main():
         print("  mcp             Start MCP Bridge (requires daemon)")
         print("  daemon          Start/stop/manage cache daemon")
         print("  shim            Install/uninstall transparent cache shim (.pth)")
+        print("  replay          Record/replay tool call scenarios (Replay mode)")
         return
 
     if sys.argv[1] in ("--version", "-V", "-v"):
@@ -1363,6 +1364,9 @@ def main():
 
     if cmd in commands:
         commands[cmd]()
+    elif cmd == "replay":
+        from toolrecall.replay_cli import cmd_replay
+        cmd_replay(sys.argv[2:])
     else:
         print(f"Unknown command: {cmd}")
         print("Available: status, stats, invalidate, index, serve, nginx, mcp, daemon")
