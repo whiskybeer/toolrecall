@@ -9,12 +9,13 @@ The Go client exists for agents and tools that **don't run on Python**:
 
 | Agent | Runtime | Use `tr` when... |
 |-------|---------|-----------------|
-| **OpenCode** | Node.js | The MCP bridge isn't wired up yet, or you want CLI-level caching |
-| **Claude Code** | Node.js | You want cached file reads without the MCP bridge |
-| **Cursor** | Node.js | You want to replace `cat file.py` with `tr cat file.py` |
+| **OpenCode** | Node.js | Shell-level caching in prompt templates, build scripts, or any shell command — no MCP tools needed |
+| **Claude Code** | Node.js | Cached file reads and terminal commands from shell, without adding MCP servers to Claude Code |
+| **Cursor** | Node.js | Replace `cat file.py` with `tr cat file.py` for cached reads |
 | **Any shell script** | Bash | `tr read config.yml` is faster than `cat config.yml` on repeat |
 | **CI/CD** | Any | `tr read deployment.yml` in any pipeline step |
 | **Rust / Ruby / Java** | Any | Shell out to `tr` for cached reads — no Python runtime needed |
+| **herdr panes** | Any | Every agent in a herdr pane can call `tr read`, `tr term` directly — same daemon, shared cache |
 
 ## Install
 

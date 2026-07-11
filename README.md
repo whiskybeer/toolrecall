@@ -347,7 +347,7 @@ All agents share **one daemon** and **one cache** — no duplication, no conflic
 
 ### Layer 3: Go Client (`tr` binary) — for any language or shell
 
-Not using Python? Not using MCP? The `tr` binary connects directly to the ToolRecall daemon over UDS. No Python runtime needed.
+**For OpenCode, Claude Code, Codex CLI, or any non-Python agent:** The `tr` binary connects directly to the ToolRecall daemon over UDS. Cached file reads, terminal commands, and status checks — all from the shell, no Python runtime needed.
 
 ```bash
 tr read main.py            # Cached file read
