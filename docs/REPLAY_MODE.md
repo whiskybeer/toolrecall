@@ -215,3 +215,5 @@ The Go client is already built. No additional Rust or Go code is required to use
 - **Daemon required** — Replay mode intercepts tool calls at the daemon level. Direct SQLite operations bypass replay.
 - **No semantic matching** — Replay is exact-hash only (after normalization). A future version may add semantic similarity for broader matches.
 - **Forward proxy not recorded** — Replay currently only records tool-level calls, not HTTP API responses through the forward proxy.
+- **Model determinism not guaranteed** — Replay caches tool *outputs* but does not control the LLM that drives the agent. For fully deterministic CI runs, pin the agent's model and temperature (`temperature=0`) during replay. Different models or temperatures may produce different agent behaviors even when tool outputs match.
+- **Timing-sensitive agents** — Agents that branch on execution time, wall-clock duration, or timestamps may produce different tool sequences on replay. Record/Replay assumes the agent follows the same code path — if the agent's logic diverges (e.g., "if cached: skip" vs "if fresh: run"), unmatched tool calls fall through to real execution.
