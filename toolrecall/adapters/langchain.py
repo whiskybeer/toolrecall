@@ -91,6 +91,7 @@ class ToolRecallCache:
         """Check if an LLM response is cached for this prompt.
 
         Returns cached generations on hit, None on miss.
+        Deserializes the JSON-stored data back into ChatGeneration objects.
         """
         if not daemon_running():
             return None
@@ -103,7 +104,19 @@ class ToolRecallCache:
         if result.get("cached"):
             logger.info("Cache HIT  langchain/llm  - key=%s...", key[:40])
             try:
-                return json.loads(result["data"])
+                data = json.loads(result["data"])
+                from langchain_core.outputs import ChatGeneration
+                from langchain_core.messages import AIMessage
+                generations = []
+                for item in data:
+                    msg = AIMessage(content=item.get("text", ""))
+                    gen = ChatGeneration(
+                        text=item.get("text", ""),
+                        message=msg,
+                        generation_info=item.get("generation_info"),
+                    )
+                    generations.append(gen)
+                return generations
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 logger.warning("Cache deserialization error: %s", e)
                 return None
@@ -121,7 +134,11 @@ class ToolRecallCache:
 
         key = self._make_key(prompt, llm_string)
         try:
-            serialized = json.dumps(return_val, default=str)
+            # Serialize ChatGeneration objects as dicts via model_dump
+            serialized = json.dumps(
+                [g.model_dump() if hasattr(g, 'model_dump') else str(g) for g in return_val],
+                ensure_ascii=False,
+            )
             check_result = cached_mcp_check(
                 ADAPTER_SERVER, "llm_generate", {"key": key}, ttl=self._ttl
             )
@@ -249,13 +266,21 @@ def _ensure_base():
         _BaseCache = BC
         _BaseCallbackHandler = BCH
 
+        # Save references to the originals before replacing them
+        _OriginalCache = ToolRecallCache
+        _OriginalHandler = ToolRecallCallbackHandler
+
         # Dynamically inherit from the BaseCache class
         class ToolRecallCacheImpl(BC):  # type: ignore
             __doc__ = ToolRecallCache.__doc__
 
             def __init__(self, ttl: Optional[int] = None):
                 super().__init__()
-                self._impl = ToolRecallCache(ttl=ttl)
+                self._impl = _OriginalCache(ttl=ttl)
+                self._ttl = ttl
+
+            def _make_key(self, prompt: str, llm_string: str) -> str:
+                return self._impl._make_key(prompt, llm_string)
 
             def lookup(self, prompt: str, llm_string: str) -> Optional[list]:
                 return self._impl.lookup(prompt, llm_string)
@@ -274,7 +299,7 @@ def _ensure_base():
 
             def __init__(self, ttl: Optional[int] = None):
                 super().__init__()
-                self._impl = ToolRecallCallbackHandler(ttl=ttl)
+                self._impl = _OriginalHandler(ttl=ttl)
                 self._tool_errors = self._impl._tool_errors
                 self._ttl = self._impl._ttl
 

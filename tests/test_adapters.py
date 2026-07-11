@@ -168,12 +168,12 @@ class TestLangChainAdapter:
         assert hasattr(lc_adapter, "ToolRecallCache")
         assert hasattr(lc_adapter, "ToolRecallCallbackHandler")
 
-    def test_ensure_base_raises_without_langchain(self):
-        """_ensure_base raises ImportError when langchain is not installed."""
+    def test_ensure_base_succeeds_with_langchain(self):
+        """_ensure_base succeeds when langchain_core is installed."""
         from toolrecall.adapters.langchain import _ensure_base
 
-        with pytest.raises(ImportError, match="langchain_core"):
-            _ensure_base()
+        _ensure_base()
+        # Should not raise — langchain is installed
 
     def test_tool_recall_cache_basic_usage(self):
         """ToolRecallCache works as standalone without BaseCache inheritance."""
