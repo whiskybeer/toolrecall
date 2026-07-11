@@ -21,6 +21,8 @@ flowchart LR
 
 ## 2. The Solution: One Daemon, Three Bridges
 
+> **Tool naming convention:** The MCP bridge exposes native tool names (`read_file`, `write_file`, `patch`, `terminal`) that agents recognize naturally. Internally, these map to daemon commands (`cached_read`, `cached_write`, `cached_patch`, `cached_terminal`). Both names work in the MCP bridge. The Python API (`from toolrecall.client import cached_read`) uses the `cached_*` names directly.
+
 ```mermaid
 flowchart TB
     subgraph Daemon["ToolRecall Daemon"]

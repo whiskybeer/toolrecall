@@ -344,12 +344,22 @@ class TestApplyRemove(unittest.TestCase):
         self._real_open = shim_mod._original_open
         shim_mod.remove()
         shim_mod._TR = None
+        # Temporarily bypass pytest detection so apply() actually patches
+        self._orig_argv = sys.argv[:]
+        sys.argv = ["python"]
+        self._orig_env = os.environ.pop("PYTEST_CURRENT_TEST", None)
+        # Temporarily re-enable the shim (conftest sets TOOLRECALL_SHIM_DISABLE=1)
+        self._orig_enabled = shim_mod._ENABLED
+        shim_mod._ENABLED = True
 
     def tearDown(self):
         # Ensure clean state restored
+        sys.argv = self._orig_argv
+        if self._orig_env is not None:
+            os.environ["PYTEST_CURRENT_TEST"] = self._orig_env
+        shim_mod._ENABLED = self._orig_enabled
         shim_mod.remove()
-        # Re-apply for any subsequent tests
-        shim_mod._ENABLED = not os.environ.get("TOOLRECALL_SHIM_DISABLE", "")
+        # Re-apply for any subsequent tests (but not under pytest)
         shim_mod.apply()
 
     def test_apply_patches_open(self):

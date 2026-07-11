@@ -150,6 +150,7 @@ def _is_sensitive_path(path: str) -> bool:
 _db_lock = RLock()
 _db_real: sqlite3.Connection | None = None
 _db_refcount: int = 0  # Reentrancy counter: commit only at outermost exit
+_db_path_cached: str | None = None  # Track DB path to detect env var changes
 
 
 @contextmanager
@@ -181,17 +182,29 @@ def _db():
     global _db_real, _db_refcount
     _db_lock.acquire()
     try:
+        cfg = load_config()
+        db_path = os.path.expanduser(cfg.cache_db)
+        # Detect DB path change (e.g. tests switching TOOLRECALL_CACHE_DB).
+        # If the path changed, close the old connection so the new one gets
+        # schema tables created via _init().
+        if _db_real is not None:
+            try:
+                # sqlite3 exposes the DB path via .execute("PRAGMA database_list")
+                if _db_path_cached != db_path:
+                    _db_real.close()
+                    _db_real = None
+            except Exception:
+                pass
         if _db_real is None:
-            cfg = load_config()
             if cfg.storage_backend != "sqlite":
                 warnings.warn(f"ToolRecall: Backend '{cfg.storage_backend}' not yet implemented. Falling back to 'sqlite'.")
-            db_path = os.path.expanduser(cfg.cache_db)
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             _db_real = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
             _db_real.execute("PRAGMA journal_mode=WAL;")
             _db_real.execute("PRAGMA synchronous=NORMAL;")
             _db_real.execute("PRAGMA busy_timeout=5000;")
             _db_real.row_factory = sqlite3.Row
+            _db_path_cached = db_path
         _db_refcount += 1
         _should_commit = False  # Set True in else clause; used in finally
         try:

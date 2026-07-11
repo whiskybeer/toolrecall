@@ -44,6 +44,9 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
         test_name = self._testMethodName
         self._db = os.path.join(self.test_dir, f"knowledge_{test_name}.db")
         os.environ["TOOLRECALL_KNOWLEDGE_DB"] = self._db
+        # Re-init cache DB schema (other test modules may have switched the path)
+        os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(INTEGRATION_BASE, "integration_cache.db")
+        _init()
 
         self.mem_dir = os.path.join(self.test_dir, "memories")
         os.makedirs(self.mem_dir, exist_ok=True)

@@ -6,7 +6,7 @@ ToolRecall — Universal Tool-Output Cache for LLM Agents.
 # This prevents SQLite lock conflicts when both daemon and client open the DB.
 # Each submodule is imported on first access via __getattr__.
 
-__version__ = "0.8.6"
+__version__ = "0.9.0"
 
 
 def __getattr__(name):

@@ -671,11 +671,9 @@ def _ensure_shim():
     """Install OS-level shim if not present, then load it into the current process.
 
     Why this is needed: the tr_shim.pth file auto-imports toolrecall.shim
-    on every Python process startup.  If the .pth file uses a bare
-    'import toolrecall.shim', Python's import system may resolve it to
-    the source tree (editable install) instead of the installed copy.
-    The .pth file we install uses importlib.util.spec_from_file_location
-    with 'sitedir' to load from the exact site-packages directory.
+    on every Python process startup. The .pth file uses a bare
+    'import toolrecall.shim' which relies on Python's normal import
+    resolution — this works with both editable and regular installs.
     """
     import os
     import shutil

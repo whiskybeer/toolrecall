@@ -36,6 +36,7 @@ def _reset_db():
         if _db_real is not None:
             _db_real.close()
             _db_mod._db_real = None
+            _db_mod._db_path_cached = None
     finally:
         _db_lock.release()
     os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
@@ -324,7 +325,7 @@ class TestMCPCacheFS(unittest.TestCase):
         self.assertEqual(result.get("serverInfo", {}).get("name"), "toolrecall-cache-fs")
 
     def test_tools_list_returns_four_tools(self):
-        """tools/list returns cached_read, cached_terminal, cached_write, cached_patch."""
+        """tools/list returns read_file, terminal, write_file, patch (native names)."""
         responses = self._run_mcp_server([
             {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
@@ -336,17 +337,17 @@ class TestMCPCacheFS(unittest.TestCase):
         self.assertIsNotNone(tools_result, "tools/list response not found")
         tools = tools_result.get("tools", [])
         tool_names = [t["name"] for t in tools]
-        self.assertIn("cached_read", tool_names)
-        self.assertIn("cached_terminal", tool_names)
-        self.assertIn("cached_write", tool_names)
-        self.assertIn("cached_patch", tool_names)
+        self.assertIn("read_file", tool_names)
+        self.assertIn("terminal", tool_names)
+        self.assertIn("write_file", tool_names)
+        self.assertIn("patch", tool_names)
 
     def test_cached_read_existing_file(self):
-        """cached_read returns content of an existing file."""
+        """read_file returns content of an existing file."""
         responses = self._run_mcp_server([
             {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-                "name": "cached_read",
+                "name": "read_file",
                 "arguments": {"path": self.test_file},
             }},
         ])
@@ -362,11 +363,11 @@ class TestMCPCacheFS(unittest.TestCase):
         self.assertIn("MCP Cache FS test content", text)
 
     def test_cached_read_nonexistent_file(self):
-        """cached_read returns error for nonexistent file."""
+        """read_file returns error for nonexistent file."""
         responses = self._run_mcp_server([
             {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-                "name": "cached_read",
+                "name": "read_file",
                 "arguments": {"path": "/nonexistent/path/file.txt"},
             }},
         ])

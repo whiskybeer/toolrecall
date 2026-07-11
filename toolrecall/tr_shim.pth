@@ -1,1 +1,1 @@
-import os,sys,importlib.util as _u;_p=os.path.join(sitedir,'toolrecall','shim.py');_s=_u.spec_from_file_location('toolrecall.shim',_p) if os.path.exists(_p) else None;_m=_u.module_from_spec(_s) if _s else None;_s.loader.exec_module(_m) if _m else None
+import toolrecall.shim; toolrecall.shim.apply()

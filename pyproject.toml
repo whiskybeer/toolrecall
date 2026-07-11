@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.8.6"
+version = "0.9.0"
 description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
 readme = "README.md"
 authors = [{name = "Robin Schultka", email = "robin@nousresearch.com"}]
@@ -27,6 +27,8 @@ dependencies = []  # Zero runtime deps — pure Python stdlib
 [tool.pytest.ini_options]
 markers = [
     "e2e: End-to-end tests that spawn a real daemon subprocess",
+    "adk: Google ADK adapter tests (requires google-adk)",
+    "adk_llm: Google ADK full agent tests (requires GEMINI_API_KEY)",
 ]
 
 [project.optional-dependencies]

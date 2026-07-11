@@ -111,8 +111,8 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **File:** `cli.py : cmd_debug()`
 - **Purpose:** Start minimal debug/demo server on `:8570`.
 - **Endpoints:**
-  - `GET /read?path=X` — cached_read demo
-  - `GET /term?cmd=X` — cached_terminal demo
+  - `GET /read?path=X` — cached file read demo
+  - `GET /term?cmd=X` — cached terminal demo
   - `GET /stats` — cache statistics
   - `GET /health` — daemon status
 

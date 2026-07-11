@@ -51,7 +51,7 @@ ToolRecall sits at **Layer 4 (Transport/Daemon)** in the agent tool execution st
 | Layer | Without TR | With TR (Hit) |
 |---|---|---|
 | L7 — Agent | Calls tool | Calls tool (no change) |
-| L6 — Tool Protocol | `cached_read main.py` | Same MCP call (no change) |
+| L6 — Tool Protocol | `read_file main.py` | Same MCP call (no change) |
 | L5 — Session/IPC | UDS to daemon | Same socket (no change) |
 | **L4 — Daemon (GATE)** | Forwards to OS | **Returns from SQLite LRU (~0.6ms)** |
 | L3–L1 — OS/HW | subprocess + disk I/O (~1.5s) | **Skipped entirely** |

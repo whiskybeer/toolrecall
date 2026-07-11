@@ -1,5 +1,6 @@
 """
 Google ADK Adapter — @cached_tool decorator for ADK @tool functions.
+Requires: google-adk (optional dependency — install via pip install google-adk)
 
 The Python shim already caches file reads (open()) and terminal commands
 (subprocess.run()) at the interpreter level. This adapter fills the gap:
@@ -7,10 +8,11 @@ ADK @tool functions that make API calls, search queries, or database
 lookups — code the shim can't see.
 
 Usage:
+    # Requires: pip install google-adk
     from toolrecall.adapters import google_adk
-    from google.adk import tool
+    from google.adk.tools.function_tool import FunctionTool
 
-    @tool
+    @FunctionTool
     @google_adk.cached_tool(ttl=300)
     def search_web(query: str) -> str:
         # This runs only on cache miss
@@ -97,7 +99,8 @@ def _cached_call(func, tool_name: str, ttl, args, kwargs):
 
     if result.get("cached"):
         logger.info("Cache HIT  adk/%s  —  %s", tool_name, _summarize_args(arguments))
-        return result["data"]
+        import json
+        return json.loads(result["data"])
 
     logger.info("Cache MISS adk/%s  —  executing live", tool_name)
     data = func(*args, **kwargs)
@@ -116,7 +119,8 @@ async def _cached_call_async(func, tool_name: str, ttl, args, kwargs):
 
     if result.get("cached"):
         logger.info("Cache HIT  adk/%s  —  %s", tool_name, _summarize_args(arguments))
-        return result["data"]
+        import json
+        return json.loads(result["data"])
 
     logger.info("Cache MISS adk/%s  —  executing live", tool_name)
     data = await func(*args, **kwargs)

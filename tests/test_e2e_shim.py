@@ -34,6 +34,9 @@ def _run_python(code: str, extra_env: dict[str, str] | None = None) -> tuple[str
     env["PYTHONPATH"] = REPO_DIR
     # Isolate cache DB
     env["TOOLRECALL_CACHE_DB"] = os.path.join(tempfile.mkdtemp(), "e2e_shim.db")
+    # Don't let pytest's env vars interfere with the subprocess shim detection
+    env.pop("PYTEST_CURRENT_TEST", None)
+    env.pop("TOOLRECALL_SHIM_DISABLE", None)
     if extra_env:
         env.update(extra_env)
     result = sys.executable and __import__("subprocess").run(

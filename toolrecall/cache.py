@@ -895,6 +895,7 @@ def cached_write(path: str, content: str) -> dict:
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
+            _file_cache.remove(path)
             _record("write_cache", hit=False)
             return {"cached": False, "path": path, "size": len(content)}
         except Exception as e:
@@ -911,6 +912,7 @@ def cached_write(path: str, content: str) -> dict:
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
+            _file_cache.remove(path)
             _record("write_cache", hit=False)
             return {"cached": False, "path": path, "size": len(content)}
         except Exception as e:
@@ -932,6 +934,7 @@ def cached_write(path: str, content: str) -> dict:
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+        _file_cache.remove(path)  # Invalidate stale cache entry (mtime may not change on fast writes)
         _record("write_cache", hit=False)
         return {"cached": False, "path": path, "size": len(content)}
     except Exception as e:
@@ -988,6 +991,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
+        _file_cache.remove(path)  # Invalidate stale cache entry (mtime may not change on fast writes)
         _record("patch_cache", hit=False)
         return {"cached": False, "path": path, "changes": change_count}
     except Exception as e:

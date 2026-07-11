@@ -21,7 +21,7 @@ Not all agents benefit equally from ToolRecall. This document explains **who win
 
 ## Hermes (Nous Research) — ✅ Best-in-class
 
-ToolRecall is **built into Hermes** — the tools `cached_read`, `cached_terminal`, `mcp_call` are available directly.
+ToolRecall is **built into Hermes** — the tools `read_file`, `terminal`, `mcp_call` are available directly (native MCP names). The internal daemon commands are `cached_read`, `cached_terminal`, etc. — both names work in the MCP bridge.
 
 **Why it works:**
 - Hermes is a stateless agent with limited context budget

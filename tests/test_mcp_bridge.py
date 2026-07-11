@@ -6,13 +6,13 @@ requests into UDS calls to the ToolRecall Daemon, writes responses to stdout.
 Tests cover:
   - MCPBridge handles initialize (returns capabilities)
   - MCPBridge handles tools/list (filters tools by daemon security gates)
-  - MCPBridge handles tools/call for cached_read, cached_terminal, etc.
+  - MCPBridge handles tools/call for cached_read, cached_terminal, read_file, write_file, patch, terminal, etc.
   - MCPBridge handles tools/call with bypass_cache → refresh_file
   - MCPBridge handles mcp_call and mcp_list_servers
   - MCPBridge returns -32601 for unknown tools/methods
   - MCPBridge silently ignores notifications/initialized
-  - TOOL_DEFINITIONS contain correct schemas for all 10 tools
-  - CMD_TO_MCP mapping covers all tool names
+  - TOOL_DEFINITIONS contain correct schemas for all 14 tools (10 original + 4 native-named aliases)
+  - CMD_TO_MCP mapping covers all tool names (native aliases map to cached_* daemon commands)
   - main() exits with error when daemon unavailable
 
 Uses a real UDS server to simulate daemon responses.
@@ -28,8 +28,10 @@ import time
 import unittest
 import tempfile
 import io
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import toolrecall.mcp_bridge
 from toolrecall.mcp_bridge import MCPBridge, TOOL_DEFINITIONS, CMD_TO_MCP
 from toolrecall.transport import (
     create_socket, bind_socket, send_message, receive_message,
@@ -153,12 +155,13 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     # ── Tools/List ─────────────────────────────────────────
 
     def test_tools_list_returns_all_with_gates_open(self):
-        """When all gates enabled, all 10 tools are listed."""
+        """When all gates enabled, all 14 tools are listed (10 original + 4 native aliases)."""
         resp = self.bridge.handle_request({
             "jsonrpc": "2.0", "method": "tools/list", "id": 1
         })
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
+        # Original tool names
         self.assertIn("cached_read", names)
         self.assertIn("cached_terminal", names)
         self.assertIn("cached_skill", names)
@@ -169,10 +172,15 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         self.assertIn("cache_refresh_file", names)
         self.assertIn("mcp_call", names)
         self.assertIn("mcp_list_servers", names)
-        self.assertEqual(len(tools), 10)
+        # Native-named aliases
+        self.assertIn("read_file", names)
+        self.assertIn("write_file", names)
+        self.assertIn("patch", names)
+        self.assertIn("terminal", names)
+        self.assertEqual(len(tools), 14)
 
     def test_tools_list_hides_terminal_when_disabled(self):
-        """cached_terminal is hidden when daemon has allow_terminal=False."""
+        """cached_terminal and terminal are hidden when daemon has allow_terminal=False."""
         # Override daemon response for this test
         daemon2 = MockDaemonServer(self.sock_path)
         daemon2.start(ping_response={
@@ -186,7 +194,9 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         })
         names = [t["name"] for t in resp["result"]["tools"]]
         self.assertNotIn("cached_terminal", names)
+        self.assertNotIn("terminal", names)
         self.assertIn("cached_read", names)
+        self.assertIn("read_file", names)
 
     def test_tools_list_hides_invalidate_when_disabled(self):
         """cache_invalidate is hidden when allow_invalidate=False."""
@@ -401,11 +411,11 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
 
 class TestToolDefinitions(unittest.TestCase):
-    """TOOL_DEFINITIONS contains valid schemas for all 10 tools."""
+    """TOOL_DEFINITIONS contains valid schemas for all 14 tools."""
 
-    def test_has_all_10_tools(self):
-        """There are exactly 10 tool definitions."""
-        self.assertEqual(len(TOOL_DEFINITIONS), 10)
+    def test_has_all_14_tools(self):
+        """There are exactly 14 tool definitions (10 original + 4 native-named aliases)."""
+        self.assertEqual(len(TOOL_DEFINITIONS), 14)
 
     def test_each_tool_has_valid_schema(self):
         """Every tool has name, description, and inputSchema with properties."""
@@ -445,10 +455,27 @@ class TestCmdToMCPMapping(unittest.TestCase):
         for tdef in TOOL_DEFINITIONS:
             self.assertIn(tdef["name"], CMD_TO_MCP, f"Missing CMD_TO_MCP entry for '{tdef['name']}'")
 
-    def test_mapping_is_identity(self):
-        """CMD_TO_MCP maps each name to itself (cmd = tool name)."""
+    def test_native_aliases_map_to_cached_cmds(self):
+        """Native-named aliases map to their cached_* daemon commands, not to themselves."""
+        native_to_cmd = {
+            "read_file": "cached_read",
+            "write_file": "cached_write",
+            "patch": "cached_patch",
+            "terminal": "cached_terminal",
+        }
+        for native_name, daemon_cmd in native_to_cmd.items():
+            self.assertIn(native_name, CMD_TO_MCP, f"Missing native alias '{native_name}'")
+            self.assertEqual(CMD_TO_MCP[native_name], daemon_cmd,
+                             f"Native alias '{native_name}' should map to '{daemon_cmd}'")
+
+    def test_original_names_map_to_themselves(self):
+        """Original tool names (cached_*, docs_*, cache_*, mcp_*) map to themselves."""
+        native_names = {"read_file", "write_file", "patch", "terminal"}
         for tdef in TOOL_DEFINITIONS:
-            self.assertEqual(CMD_TO_MCP[tdef["name"]], tdef["name"])
+            name = tdef["name"]
+            if name not in native_names:
+                self.assertEqual(CMD_TO_MCP[name], name,
+                                 f"Original tool '{name}' should map to itself")
 
 
 class TestMainFunctionDaemonCheck(unittest.TestCase):
@@ -457,15 +484,6 @@ class TestMainFunctionDaemonCheck(unittest.TestCase):
     def test_main_exits_when_daemon_down(self):
         """Without a running daemon, main() prints error and exits."""
         sock_path = os.path.join(tempfile.mkdtemp(), "nope.sock")
-
-        import toolrecall.transport as tp
-        old_default = tp.DEFAULT_PATH
-        tp.DEFAULT_PATH = sock_path
-
-        # Re-load mcp_bridge so it picks up the new DEFAULT_PATH
-        import importlib
-        import toolrecall.mcp_bridge
-        importlib.reload(toolrecall.mcp_bridge)
 
         old_stdin = sys.stdin
         old_stdout = sys.stdout
@@ -478,8 +496,10 @@ class TestMainFunctionDaemonCheck(unittest.TestCase):
             sys.stdin = stdin_buf
             sys.stdout = stdout_buf
             sys.stderr = stderr_buf
-            with self.assertRaises(SystemExit) as ctx:
-                toolrecall.mcp_bridge.main()
+            # Patch DEFAULT_PATH so MCPBridge() uses a non-existent socket
+            with patch("toolrecall.mcp_bridge.DEFAULT_PATH", sock_path):
+                with self.assertRaises(SystemExit) as ctx:
+                    toolrecall.mcp_bridge.main()
             self.assertEqual(ctx.exception.code, 1)
             stderr = stderr_buf.getvalue()
             self.assertIn("daemon is not running", stderr.lower())
@@ -487,7 +507,6 @@ class TestMainFunctionDaemonCheck(unittest.TestCase):
             sys.stdin = old_stdin
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-            tp.DEFAULT_PATH = old_default
 
 
 if __name__ == "__main__":

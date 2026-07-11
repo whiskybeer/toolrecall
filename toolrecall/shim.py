@@ -18,6 +18,7 @@ Config:
 """
 import os
 import builtins
+import sys
 import threading
 
 _ENABLED = not os.environ.get("TOOLRECALL_SHIM_DISABLE", "")
@@ -79,6 +80,11 @@ def _shim_open(path, mode='r', *args, **kwargs):
     if _shim_active():
         return _original_open(path, mode, *args, **kwargs)
 
+    # Don't intercept non-file paths (integers = file descriptors,
+    # None, or capture objects from test frameworks).
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return _original_open(path, mode, *args, **kwargs)
+
     prev = _enter_shim()
     try:
         tr = _get_tr()
@@ -135,8 +141,30 @@ _shim_popen = _original_popen if _sp else None
 
 
 def apply():
-    """Apply all shim monkey-patches. Called once on .pth import."""
+    """Apply all shim monkey-patches. Called once on .pth import.
+
+    Skips patching when running under pytest (interferes with capture)
+    unless force=True is passed (for tests that explicitly test the shim).
+    """
     if not _ENABLED:
+        return
+    # Don't patch when running under pytest — interferes with stdout/stderr capture.
+    # At .pth load time, pytest isn't in sys.modules yet. Detection:
+    # - pytest binary: sys.argv[0] contains 'pytest' (e.g. /usr/local/bin/pytest)
+    # - python3 -m pytest: sys.argv[0] is '-m' (module mode — can't tell which module)
+    # - PYTEST_CURRENT_TEST env var is set during test execution
+    # For the '-m' case, we can't distinguish pytest from other modules at .pth time,
+    # so we also check if any arg looks like a test path.
+    _argv = sys.argv[:5] if sys.argv else []
+    if any("pytest" in str(a) for a in _argv):
+        return
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    # For 'python3 -m pytest tests/...' — check for test-like args
+    if _argv and _argv[0] == "-m" and any(
+        str(a).startswith("test") or "pytest" in str(a)
+        for a in _argv[1:]
+    ):
         return
     builtins.open = _shim_open
     if _sp:

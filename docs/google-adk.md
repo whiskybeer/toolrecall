@@ -1,6 +1,6 @@
 # ToolRecall + Google ADK (Agent Development Kit)
 
-> **Date:** July 2026 · ADK Python 2.0 (20.4k ⭐, google/adk-python)
+> **Date:** July 2026 · ADK Python 2.4.0+ (google/adk-python)
 > **Principle:** ToolRecall is agent-agnostic. No ADK code changes required.
 
 ## Table of Contents
@@ -75,7 +75,10 @@ Patching happens at the Python level: **every** `open(path, 'r')` in ADK, in cus
 
 ```python
 # ADK code — ToolRecall patches builtins.open()
-@function_tool
+# Requires: pip install google-adk
+from google.adk.tools.function_tool import FunctionTool
+
+@FunctionTool
 def read_config() -> str:
     with open("config.yaml") as f:  # ← TR intercepts here
         return f.read()
@@ -102,11 +105,13 @@ See the [CLI Reference](CLI.md) and [API usage in `toolrecall/cache.py`](https:/
 **Wrapper pattern for ADK `FunctionTool`:**
 
 ```python
-from google.adk import Agent, function_tool
+# Requires: pip install google-adk
+from google.adk import Agent
+from google.adk.tools.function_tool import FunctionTool
 from toolrecall import cached_read, cached_write, invalidate_file
 import os
 
-@function_tool
+@FunctionTool
 def read_file(path: str) -> str:
     """Read a file with caching."""
     result = cached_read(path)
@@ -114,7 +119,7 @@ def read_file(path: str) -> str:
         raise RuntimeError(result["error"])
     return result["content"]
 
-@function_tool
+@FunctionTool
 def write_file(path: str, content: str) -> str:
     """Write a file — skips if content is identical."""
     result = cached_write(path, content)

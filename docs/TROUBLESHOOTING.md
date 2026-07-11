@@ -109,7 +109,7 @@ docker compose logs daemon | grep -i 'security\\|waf\\|gate\\|sandbox\\|allowed'
 toolrecall daemon --status
 
 # 3. Test: Directory traversal blocked?
-curl -s 'http://localhost:8569/cached_read?path=../../etc/shadow'
+curl -s 'http://localhost:8569/read?path=../../etc/shadow'
 # → Should return "Access Denied", not host content
 ```
 **Explanation:** Security Gate runs **inside the daemon process**, independent of the host OS. As long as the daemon runs in the container, the WAF is active. The host's `/etc/shadow` is invisible anyway — container isolation + WAF = defense in depth.
@@ -172,7 +172,7 @@ systemctl --user restart toolrecall-daemon
 the CLI process opens its own connection. SQLite's WAL lock contention causes the CLI to block.
 **Fix:** Use the daemon's interfaces instead of direct Python calls:
 - Via MCP: `toolrecall mcp`
-- Via HTTP: `curl http://localhost:8569/cached_read?path=/my/file`
+- Via HTTP: `curl http://localhost:8569/read?path=/my/file`
 - Only use direct `cached_read()` imports when the daemon is stopped.
 
 This is by design — the daemon is the cache owner, not a shared library.
