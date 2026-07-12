@@ -1392,10 +1392,13 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
             print(f"  Socket: {_server_instance.socket_path}")
             sys.exit(0)
             
-        # Child process: Redirect standard streams
+        # Child process: Redirect standard streams, write PID file
         log_file = os.path.expanduser("~/.toolrecall/daemon.log")
         sys.stdout = open(log_file, "a")
         sys.stderr = sys.stdout
+        os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
     
     elif not foreground and IS_WINDOWS:
         # Windows: use multiprocessing instead of fork
