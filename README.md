@@ -497,7 +497,10 @@ See the [Testing Guide](docs/TESTING.md) and [Makefile](./Makefile) for all targ
 - [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) — single-daemon MCP management, server registry
 - [Testing Guide](docs/TESTING.md) — test philosophy, organization, per-file coverage
 - [Benchmark](docs/BENCHMARK.md) — measured performance, token savings
+- [Real-Agent Debug Loop](docs/REAL_AGENT_BENCHMARK.md) — edit-heavy session benchmark
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide
+- [Normalizer](docs/NORMALIZER.md) — cache key normalization, deterministic JSON sorting
+- [Replay Mode](docs/REPLAY_MODE.md) — record/replay tool calls for deterministic CI testing
 - [Docker Deployment](docs/DOCKER.md) — containerized stack
 - [Forward Proxy](docs/FORWARD_PROXY.md) — cache API responses by body hash, provider list, usage
 - [Security Architecture](SECURITY.md) — WAF details, trust boundary
