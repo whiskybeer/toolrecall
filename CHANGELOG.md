@@ -2,24 +2,27 @@
 
 ## v0.8.7 (2026-07-12)
 
-- **Fix:** Shim exclude prefixes now configurable via `[shim].exclude_prefixes` in `toolrecall.toml` or `TOOLRECALL_SHIM_EXCLUDE_PREFIXES` env var. Defaults skip `/tmp/hermes-cwd-*` and `/tmp/hermes-snap-*` (Hermes terminal infra files). Empty list = bypass nothing.
-- **Fix:** `context_tokens_saved` column added to `cache_stats` — tracks only cache hits from agent-tool reads (`source="agent_tool"`), not from internal infrastructure reads. Separates actual LLM-context savings from general disk-read avoidance (`tokens_saved`).
-- **Fix:** `client.cached_read()` sends `source="agent_tool"` to daemon so agent file reads count toward context token savings.
-- **Docs:** `HERMES_TRANSPARENT_CACHE.md` — added risk section on infrastructure file noise with config examples, plus new section on visibility-into-agent-behavior side effect.
-- **Docs:** `CONFIG_REFERENCE.md` — added `TOOLRECALL_SHIM_EXCLUDE_PREFIXES` to env var table.
-
-## v0.8.6 (2026-07-09)
-
 - **Feature:** Cache key normalizer — deterministic JSON sorting, whitespace stripping, noise key removal (timestamps, session IDs). Opt-in via `[norm].enabled = true` or `TOOLRECALL_NORM_ENABLED=true`.
 - **Feature:** Replay mode — record and replay agent tool calls for deterministic, offline, zero-cost CI testing. `toolrecall replay record <name>` / `toolrecall replay replay <name>`. Scenarios export as portable JSON.
 - **Feature:** Framework adapters — Google ADK (`@cached_tool` decorator), LangChain (`ToolRecallCache` BaseCache + callback handler), herdr (integration guide via `tr` binary + MCP bridge). Thin wrappers around `toolrecall.client`, no new dependencies.
 - **Feature:** Go client (`tr` binary) — cached file reads, terminal commands, and status from any language. Connects to the daemon over UDS.
 - **Feature:** Forward proxy — cache LLM API responses by request body hash. Set SDK base URL to `http://localhost:8569`.
 - **Feature:** Native-named MCP tools — `read_file`, `write_file`, `patch`, `terminal` as aliases for `cached_read`, `cached_write`, `cached_patch`, `cached_terminal`. Agents pick these naturally.
+- **Fix:** Shim exclude prefixes now configurable via `[shim].exclude_prefixes` in `toolrecall.toml` or `TOOLRECALL_SHIM_EXCLUDE_PREFIXES` env var. Defaults skip `/tmp/hermes-cwd-*` and `/tmp/hermes-snap-*` (Hermes terminal infra files). Empty list = bypass nothing.
+- **Fix:** `context_tokens_saved` column added to `cache_stats` — tracks only cache hits from agent-tool reads (`source="agent_tool"`), not from internal infrastructure reads. Separates actual LLM-context savings from general disk-read avoidance (`tokens_saved`).
+- **Fix:** `client.cached_read()` sends `source="agent_tool"` to daemon so agent file reads count toward context token savings.
 - **Fix:** `cached_write` and `cached_patch` now invalidate `_file_cache` after writing — prevents stale reads when the shim is active and mtime resolution doesn't change on fast writes.
 - **Fix:** `_db.py` singleton now detects `TOOLRECALL_CACHE_DB` env var changes and reconnects — eliminates "no such table" warnings when tests switch DB paths.
-- **Fix:** `test_mcp_bridge.py` — updated tool count assertions (10→14), tool name expectations, and replaced `importlib.reload` with `unittest.mock.patch` to prevent module state corruption.
-- **Fix:** `test_regression_v078_v0711.py` — updated `TestMCPCacheFS` to use native tool names (`read_file`, `terminal`, `write_file`, `patch`).
+- **Fix:** LangChain adapter — fixed serialization recursion bug + e2e tests.
+- **Fix:** ADK adapter — fixed `json.loads` deserialization + full e2e tests.
+- **Fix:** `test_mcp_bridge.py` — updated tool count assertions (10→14), tool name expectations, replaced `importlib.reload` with `unittest.mock.patch`.
+- **Fix:** `test_regression_v078_v0711.py` — updated `TestMCPCacheFS` to use native tool names.
+- **Docs:** `HERMES_TRANSPARENT_CACHE.md` — added risk section on infrastructure file noise with config examples, plus new section on visibility-into-agent-behavior side effect.
+- **Docs:** `CONFIG_REFERENCE.md` — added `TOOLRECALL_SHIM_EXCLUDE_PREFIXES` to env var table.
+- **Docs:** Added model-determinism caveat to replay mode limitations.
+- **Docs:** Sharpened Go client messaging — non-Python agents first, herdr support, improved Why table.
+- **Docs:** Added data structure section, herdr integration, and what's-not-recorded to replay mode.
+- **Docs:** README — Go client, forward proxy provider list, MCP native tools.
 
 ## v0.8.6 (2026-07-09)
 
