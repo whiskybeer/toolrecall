@@ -1,6 +1,6 @@
-# Security Architecture & Exploit Mitigation
+# Security Architecture — Input Sanitation & Exploit Mitigation
 
-ToolRecall is designed as a **Zero-Trust Web Application Firewall (WAF)** for Large Language Model (LLM) agents. Because autonomous agents operate on untrusted data (e.g., reading web pages or open-source repositories), they are highly vulnerable to **Prompt Injection**. 
+ToolRecall is designed with **defense-in-depth** for Large Language Model (LLM) agents. Because autonomous agents operate on untrusted data (e.g., reading web pages or open-source repositories), they are highly vulnerable to **Prompt Injection**. 
 
 ToolRecall assumes the LLM *will* be compromised. Its architecture ensures that a compromised agent cannot pivot from a prompt injection into a system compromise.
 
@@ -79,7 +79,9 @@ Standard agents load API keys into their environment variables, making them triv
 ToolRecall manages MCP servers internally as isolated subprocesses. The daemon authenticates with external APIs using `~/.toolrecall/.env`. **The LLM never sees the actual tokens**, preventing exfiltration.
 
 ### Unix Domain Sockets (IPC)
-The Daemon does not open any TCP ports. All communication happens over Unix Domain Sockets (`/run/user/1000/toolrecall.sock`). This renders ToolRecall completely immune to Server-Side Request Forgery (SSRF) and remote port-scanning attacks.
+The Daemon does not open any TCP ports for its IPC layer. All daemon-to-bridge communication happens over Unix Domain Sockets (`/run/user/1000/toolrecall.sock`). This renders the daemon's IPC layer immune to Server-Side Request Forgery (SSRF) and remote port-scanning attacks.
+
+*The forward proxy* (a separate component for HTTP API caching) listens on TCP `:8569` — this is intentional for SDK compatibility and is not part of the daemon's transport layer.
 
 ---
 
@@ -232,60 +234,9 @@ For deployments at scale (100+ agents on one machine, or agents across machines)
 | Agent reads another agent's cache | Cache entries are process-visible. Cache DB is single-user. | ⚠️ Single-user assumption |
 | MCP bridge bypasses SecurityGate | All commands pass through daemon validation. Bridge is a thin proxy. | ✅ Validated per call |
 
-**Summary:** ToolRecall exposes no network ports, no SHM, and no cross-user sockets. The only transport is a user-scoped UDS file (POSIX) or localhost TCP (Windows). Every command passes through SecurityGate validation — no bypass path exists from any agent interface.
+**Summary:** ToolRecall exposes no network ports for IPC, no SHM, and no cross-user sockets. The primary transport is a user-scoped UDS file (POSIX) or localhost TCP (Windows). Every command passes through SecurityGate validation — no bypass path exists from any agent interface. The forward proxy (a separate HTTP API cache) opens TCP `:8569` by design for SDK compatibility.
 
 ---
-
-## 6. Data Storage & Lifecycle
-
-ToolRecall stores cached data in a local SQLite database. This section describes what data is stored, how long it lives, who can access it, and how to control or delete it.
-
-### 6.1 What Data Is Stored
-
-| Cache Table | Content Stored | Source |
-|-------------|---------------|--------|
-| `file_cache` | Full file contents (text files read through `cached_read`) | Files on your local filesystem |
-| `terminal_cache` | Command stdout + exit code | Shell commands run through `cached_terminal` |
-| `mcp_cache` | MCP tool call responses (e.g. GitHub API, fetch results) | Multiplexed MCP server responses |
-| `api_cache` | Full LLM API responses (prompt + completion) | Forward proxy intercepting LLM provider requests |
-| `browser_cache` | Page content (HTML text) | Browser extension / page fetches |
-| `access_log` | File path, hit/miss, timestamp, token count | Every cache access (daemon path only) |
-| `cache_stats` | Cumulative hit/miss/tokens counters | Aggregated from `_record()` calls |
-
-**No authentication credentials, API keys, or secrets are stored in the cache.** The sensitive-file blocklist (`_is_sensitive_path()`) prevents `.env`, `.ssh/*`, `credentials.json`, `.netrc`, `.pem`/`.key` files, and similar from being cached. See §1.B2 for the full list.
-
-### 6.2 Data Retention
-
-| Cache Type | Invalidation Strategy | Maximum Age |
-|------------|----------------------|-------------|
-| `file_cache` | mtime-based — invalidated when file modification time changes | Indefinite (until mtime changes or manual invalidation) |
-| `terminal_cache` | TTL-based per command pattern | 5 min (unknown commands) to 1h (deterministic commands) |
-| `mcp_cache` | TTL-based per server | 60s default (configurable) |
-| `api_cache` | TTL-based | 300s (5 min) |
-| `browser_cache` | Hash-based — re-cached when page DOM changes | Until next page load with different hash |
-| `cache_stats` | Auto-reset by periodic GC | Reset after 24h of inactivity |
-| `access_log` | Rolling window | Last 1000 entries (approximate — FIFO eviction) |
-
-**Cache entries survive daemon restarts.** The SQLite database persists on disk until explicitly invalidated. See §6.4 for invalidation commands.
-
-### 6.3 Where Data Lives
-
-- **Database file:** `~/.toolrecall/cache.db` (or `$XDG_RUNTIME_DIR/toolrecall.db`)
-- **Permissions:** `600` (owner read/write only)
-- **Encryption at rest:** No. The SQLite database is unencrypted. Any process running under your user account can read it directly (`sqlite3 ~/.toolrecall/cache.db`).
-- **Network transmission:** Never. The cache never leaves your machine. ToolRecall makes no outbound network calls except when explicitly configured to forward API requests (the forward proxy, §7).
-- **Cloud / third-party access:** None. No telemetry, no analytics, no crash reporting.
-
-### 6.4 User Control
-
-| Action | Command |
-|--------|---------|
-| View cache status | `toolrecall status` |
-| Invalidate all caches | `toolrecall invalidate` |
-| Invalidate a single file | `toolrecall refresh-file <path>` |
-| Reset statistics | `toolrecall reset-stats` |
-| Disable caching entirely | Remove `mcp` entry from agent's MCP config, or set `TOOLRECALL_SHIM_DISABLE=1` |
-| Exclude a directory | Keep it out of `allowed_paths` in `~/.toolrecall/config.toml` |
 
 This project is maintained by a solo developer. For security issues, open a GitHub issue with the `security` label or contact the author directly. There is no bug bounty program.
 [^notall]: Not all agents tested yet — please report bugs at https://github.com/whiskybeer/toolrecall/issues

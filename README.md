@@ -105,7 +105,7 @@ pipx install toolrecall         # installs CLI + Shim (.pth file activates on ne
 toolrecall setup               # config → systemd service → shim → daemon start
 ```
 
-That's it. Now **every** Python process on this machine transparently caches file reads and terminal commands through ToolRecall.
+That's it. Now **opt-in Python processes** (with the `.pth` shim installed) transparently cache file reads and terminal commands through ToolRecall. To enable the shim: `toolrecall shim --install`.
 
 ### What `toolrecall setup` does
 
@@ -250,7 +250,7 @@ ToolRecall doesn't prevent prompt injection — it cages the consequences:
 - **`os.path.realpath()`:** catches `../../../etc/shadow` traversal before OS is touched.
 - **Cognitive Pre-Fight:** Deterministic regex scan on MCP tool arguments for override instructions, jailbreak tags, exfiltration URLs. Zero LLM, ~0.001ms hot path.
 - **AST injection check:** Parses tool arguments as Python AST — blocks `exec()`, `eval()`, `__import__()` calls.
-- **Daemon IPC via UDS:** No open ports, immune to SSRF.
+- **Daemon IPC via UDS:** No open ports (POSIX), immune to SSRF. The forward proxy listens on TCP `:8569` for HTTP API caching — this is intentional and separate from the daemon's UDS transport.
 
 See [Security Architecture](SECURITY.md) for the full trust boundary.
 
@@ -291,7 +291,7 @@ ToolRecall's daemon provides three agent-agnostic caching layers. None require p
 
 ### Layer 1: Python Shim (transparent, any Python agent)
 
-After `toolrecall setup`, every Python process on this machine auto-caches `open()` and `subprocess.run()` through ToolRecall. Hermes, Aider, Cline — all benefit without any config change.
+After ```toolrecall setup```, Python processes with the `.pth` shim installed auto-cache ``open()`` and ``subprocess.run()`` through ToolRecall. Hermes, Aider, Cline — all benefit once the shim is active (``toolrecall shim --install``).
 
 ```bash
 pipx install toolrecall
@@ -407,7 +407,7 @@ Works for any MCP-compatible agent (Hermes, Cline, Cursor, Windsurf, Continue). 
 
 ### OS-level Shim (zero-config caching)
 
-Once `toolrecall setup` is run (or any CLI command auto-installs it), the **shim .pth file** lives in `site-packages/tr_shim.pth`. Every Python process on the machine automatically caches `open()` and `subprocess.run()` through the ToolRecall daemon — **no imports, no agent configuration**.
+Once `toolrecall setup` is run and the shim is installed (`toolrecall shim --install`), the **shim .pth file** lives in `site-packages/tr_shim.pth`. Python processes in that environment automatically cache `open()` and `subprocess.run()` through the ToolRecall daemon — **no imports, no agent configuration**.
 
 | Agent | How to connect | Best for | Notes |
 |-------|---------------|----------|-------|
@@ -433,7 +433,7 @@ enabled = false
 
 [mcp]
 allowed_paths = ["/home/user/projects"]  # Add your project dirs — default-deny!
-allow_terminal = true
+allow_terminal = false
 
 # Terminal command allowlist — only commands matching these regex patterns
 # are eligible for caching. See config.toml for the full list.
