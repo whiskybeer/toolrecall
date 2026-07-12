@@ -50,12 +50,28 @@ ENV_MAP = {
 
 
 def _apply_env_overrides(config: dict) -> dict:
+    # Track which keys expect booleans (need explicit string→bool coercion)
+    _BOOL_KEYS = frozenset({
+        "allow_terminal", "allow_invalidate", "enabled",
+        "transparent_cache", "cognitive_check_enabled",
+        "ast_check_enabled", "tool_access_control",
+    })
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
         if val is None:
             continue
         if section not in config:
             config[section] = {}
+        # Explicit bool coercion for boolean-typed keys
+        if key in _BOOL_KEYS:
+            lower = val.strip().lower()
+            if lower in ("true", "1", "yes"):
+                config[section][key] = True
+            elif lower in ("false", "0", "no"):
+                config[section][key] = False
+            else:
+                pass  # Leave default — invalid bool value
+            continue
         try:
             config[section][key] = int(val)
             continue

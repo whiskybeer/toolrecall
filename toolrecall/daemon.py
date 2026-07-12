@@ -1038,11 +1038,8 @@ class DaemonServer:
             return {"error": err}
         bypass = req.get("bypass_cache", False)
         if bypass:
-            import toolrecall.cache as _tr_cache
-            try:
-                _tr_cache._file_cache.remove(path)
-            except KeyError:
-                pass
+            from toolrecall.cache import invalidate_file
+            invalidate_file(path)
         # If source is "agent_tool", pass it through so context tokens are tracked
         source = req.get("source", "")
         result = _cache_read(path, source=source)

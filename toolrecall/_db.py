@@ -181,6 +181,7 @@ def _db():
     """
     global _db_real, _db_refcount
     _db_lock.acquire()
+    _should_commit = False  # Initialize before try — always in scope
     try:
         cfg = load_config()
         db_path = os.path.expanduser(cfg.cache_db)
@@ -206,27 +207,23 @@ def _db():
             _db_real.row_factory = sqlite3.Row
             _db_path_cached = db_path
         _db_refcount += 1
-        _should_commit = False  # Set True in else clause; used in finally
         try:
             yield _db_real
         except sqlite3.OperationalError as _db_err:
-            # Rollback on transient SQLITE_BUSY / locking errors, then re-raise.
-            # The caller can retry by re-entering the `with _db()` block.
             _db_real.rollback()
             raise
         except Exception:
             _db_real.rollback()
             raise
         else:
-            # Success — mark for commit in finally
             _should_commit = True
     finally:
-        _db_refcount -= 1
-        # Only commit when outermost context exits (refcount back to 0)
-        # AND the body succeeded (no exception was raised).
-        # _should_commit may be unbound if connection init failed before
-        # the assignment — the _db_real guard handles that.
-        if _db_refcount == 0 and _db_real is not None and locals().get("_should_commit", False):
+        # Only decrement if we successfully incremented
+        if _db_refcount > 0:
+            _db_refcount -= 1
+        # Commit only when outermost context exits, body succeeded,
+        # and connection exists
+        if _db_refcount == 0 and _db_real is not None and _should_commit:
             _db_real.commit()
         _db_lock.release()
 
