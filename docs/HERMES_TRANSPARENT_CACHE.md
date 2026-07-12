@@ -74,7 +74,28 @@ on the machine — not just the agent. This is by design (zero agent-side
 config) but means a buggy shim affects all Python scripts. Use
 `TOOLRECALL_SHIM_DISABLE=1` to bypass per-process.
 
-### 4. Non-Python agents
+### 4. Infrastructure file noise
+
+The shim intercepts **all** `open()` calls, including your agent's internal
+infrastructure files (cwd trackers, env snapshots, config polls, cron job
+lists). These are tiny, rewritten constantly, and never benefit from caching
+— but they inflate the cache stats.
+
+**Solution:** Configure exclude prefixes in `toolrecall.toml`:
+
+```toml
+[shim]
+exclude_prefixes = [
+    "/tmp/hermes-cwd-",   # Hermes terminal cwd tracker
+    "/tmp/hermes-snap-",  # Hermes terminal env snapshot
+]
+```
+
+Or via env var: `TOOLRECALL_SHIM_EXCLUDE_PREFIXES=/tmp/hermes-cwd-,/tmp/hermes-snap-`
+
+Empty list = bypass NOTHING. Add your framework's internal paths as needed.
+
+### 5. Non-Python agents
 
 The shim patches the Python interpreter. Node.js-based agents (Claude Code,
 Codex CLI as a Node binary, OpenCode) are unaffected — they use MCP
