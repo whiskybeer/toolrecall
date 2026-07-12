@@ -119,6 +119,18 @@ allowed_paths = [
 [norm]
 enabled = false
 
+# Sort lists of primitive types (str, int, float, bool, None) during
+# normalization.  True (default) broadens cache hits across reordered
+# tool arguments.  Set False to preserve argument order, which matters
+# for positional CLI args (e.g. `["src", "dst"]` vs `["dst", "src"]`).
+sort_lists = true
+
+# Strip leading/trailing whitespace from string values during normalization.
+# True (default) broadens cache hits across minor formatting differences.
+# Set False to preserve significant whitespace (e.g. patches that differ
+# only in trailing newlines).
+strip_strings = true
+
 # Whether to cache terminal command output via the shim.
 # When enabled, every subprocess.run()/Popen() call is cached through the
 # ToolRecall daemon. This includes commands like lsb_release, uname, systemctl,

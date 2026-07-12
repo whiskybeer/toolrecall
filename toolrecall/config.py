@@ -45,6 +45,8 @@ ENV_MAP = {
     "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
     "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
     "TOOLRECALL_NORM_ENABLED": ("norm", "enabled"),
+    "TOOLRECALL_NORM_SORT_LISTS": ("norm", "sort_lists"),
+    "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
 }
 
@@ -55,6 +57,7 @@ def _apply_env_overrides(config: dict) -> dict:
         "allow_terminal", "allow_invalidate", "enabled",
         "transparent_cache", "cognitive_check_enabled",
         "ast_check_enabled", "tool_access_control",
+        "sort_lists", "strip_strings",
     })
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
@@ -392,6 +395,24 @@ class Config:
                     result[name_lower]["command"] = sys.executable
 
         return result
+
+    # ─── Norm Properties ───────────────────────────────
+
+    @property
+    def norm_sort_lists(self) -> bool:
+        """Sort lists of primitive types during normalization (default: True).
+        Set False to preserve argument order (e.g. for positional args).
+        Configured via [norm].sort_lists in toolrecall.toml.
+        """
+        return bool(self.get("norm", "sort_lists", default=True))
+
+    @property
+    def norm_strip_strings(self) -> bool:
+        """Strip leading/trailing whitespace during normalization (default: True).
+        Set False to preserve significant whitespace in string values.
+        Configured via [norm].strip_strings in toolrecall.toml.
+        """
+        return bool(self.get("norm", "strip_strings", default=True))
 
     # ─── Shim Properties ────────────────────────────────
 

@@ -56,7 +56,7 @@ def _hash(value: str) -> str:
 #
 # Why not just rely on allowed_paths?
 #   - allowed_paths is an allowlist — it requires explicit configuration
-#   - When empty, it means "allow everything" (common in dev/single-user)
+#   - When empty, it means NO paths are readable (default-deny)
 #   - A blocklist catches the obvious sensitive files EVEN when the
 #     user hasn't configured an allowlist yet
 #   - Both mechanisms compose: allowlist narrows scope FIRST,
