@@ -1,6 +1,19 @@
 # Changelog
 
-## v0.8.8 (2026-07-12)\n\n- **Docs:** README restructured — problem-first hook, quick-start promoted before benchmarks, agent integration dedicated section, herdr added to `tr` binary section and agent compatibility callout\n- **Docs:** Moved cache invalidation reference (3 tables + script/code cache Python API) from README to ARCHITECTURE.md Appendix\n- **Docs:** Replaced mermaid diagram with lighter ASCII art (renders everywhere)\n- **Docs:** FTS5 section moved inside Forward Proxy; MCP Multiplexer moved inside Architecture\n- **Docs:** Security section tightened — added fail-closed fallback bullet, removed orphan `|---` syntax\n\n## v0.8.7 (2026-07-12)
+## v0.8.8 (2026-07-12)
+
+- **Docs:** README restructured — problem-first hook, quick-start promoted before benchmarks, agent integration dedicated section, herdr added to `tr` binary section and agent compatibility callout
+- **Docs:** Moved cache invalidation reference (3 tables + script/code cache Python API) from README to ARCHITECTURE.md Appendix
+- **Docs:** Replaced mermaid diagram with lighter ASCII art (renders everywhere)
+- **Docs:** FTS5 section moved inside Forward Proxy; MCP Multiplexer moved inside Architecture
+- **Docs:** Security section tightened — added fail-closed fallback bullet, removed orphan `|---` syntax
+- **Docs:** LICENSE copyright URL updated from (robka.de) to (https://robka.de/toolrecall)
+- **Chore:** Dockerfile — fixed image source URL, broken `\n` escape in EXPOSE line
+- **Chore:** docker/entrypoint.sh — fixed stale `index-memory` → `index` CLI command
+- **Chore:** Makefile — added `reinstall` (pipx --force from local tree) and `daemon-restart` (systemd restart) targets
+- **Chore:** Version bump to 0.8.8 (pyproject.toml, __init__.py)
+
+## v0.8.7 (2026-07-12)
 
 - **Feature:** Cache key normalizer — deterministic JSON sorting, whitespace stripping, noise key removal (timestamps, session IDs). Opt-in via `[norm].enabled = true` or `TOOLRECALL_NORM_ENABLED=true`.
 - **Feature:** Replay mode — record and replay agent tool calls for deterministic, offline, zero-cost CI testing. `toolrecall replay record <name>` / `toolrecall replay replay <name>`. Scenarios export as portable JSON.
