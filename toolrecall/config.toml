@@ -221,3 +221,15 @@ enabled = true
 # ─── Shim Cache (transparent OS-level monkey-patch) ──
 # Installed via toolrecall shim install
 # See: pip install toolrecall[shim] or toolrecall shim --install
+#
+# Path prefixes to skip when the shim intercepts open() calls.
+# Files matching these prefixes are read directly (bypassing cache).
+# Useful for internal infrastructure files that are rewritten constantly
+# and never benefit from caching (e.g. Hermes' /tmp/hermes-cwd-* files).
+# Empty list = bypass NOTHING (all open() calls go through the shim).
+# Override via TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated).
+[shim]
+exclude_prefixes = [
+    "/tmp/hermes-cwd-",   # Hermes terminal cwd tracker
+    "/tmp/hermes-snap-",  # Hermes terminal env snapshot
+]

@@ -70,6 +70,38 @@ def _get_tr():
     return _TR
 
 
+# ─── Internal infrastructure paths to skip (never benefit from caching) ───
+# These are loaded from toolrecall.toml [shim].exclude_prefixes (or
+# TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var) on first call to _should_skip().
+# Files matching these prefixes bypass the shim and go directly to the
+# real open() — they are tiny, rewritten constantly, and never benefit
+# from caching.  Intercepting them just pollutes the cache stats with noise.
+# Empty list = bypass NOTHING (all open() calls go through the shim).
+_SKIP_PREFIXES = None
+
+def _load_skip_prefixes():
+    """Load exclude prefixes from config. Call once on first use."""
+    global _SKIP_PREFIXES
+    if _SKIP_PREFIXES is not None:
+        return
+    try:
+        from toolrecall.config import load_config
+        cfg = load_config()
+        _SKIP_PREFIXES = list(cfg.shim_exclude_prefixes)
+    except Exception:
+        _SKIP_PREFIXES = []
+
+def _should_skip(path: str | bytes | os.PathLike) -> bool:
+    """Check if a path is an internal infrastructure file that should bypass the shim."""
+    if _SKIP_PREFIXES is None:
+        _load_skip_prefixes()
+    ps = os.fspath(path)
+    for prefix in _SKIP_PREFIXES:
+        if ps.startswith(prefix):
+            return True
+    return False
+
+
 # ─── Patch open() ───
 _original_open = builtins.open
 
@@ -85,12 +117,18 @@ def _shim_open(path, mode='r', *args, **kwargs):
     if not isinstance(path, (str, bytes, os.PathLike)):
         return _original_open(path, mode, *args, **kwargs)
 
+    # Skip Hermes internal infrastructure files — they're tiny, rewritten
+    # constantly, and caching them just pollutes the stats.
+    path_str = os.fspath(path)
+    if _should_skip(path_str):
+        return _original_open(path_str, mode, *args, **kwargs)
+
     prev = _enter_shim()
     try:
         tr = _get_tr()
         if tr and 'r' in mode and 'b' not in mode:
             try:
-                result = tr["read"](os.fspath(path))
+                result = tr["read"](path_str)
                 # Only serve from shim if it was a cache HIT.
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly
@@ -100,7 +138,7 @@ def _shim_open(path, mode='r', *args, **kwargs):
                     return io.StringIO(result["content"])
             except Exception:
                 pass
-        return _original_open(path, mode, *args, **kwargs)
+        return _original_open(path_str, mode, *args, **kwargs)
     finally:
         _exit_shim(prev)
 

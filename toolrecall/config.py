@@ -45,6 +45,7 @@ ENV_MAP = {
     "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
     "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
     "TOOLRECALL_NORM_ENABLED": ("norm", "enabled"),
+    "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
 }
 
 
@@ -375,6 +376,27 @@ class Config:
                     result[name_lower]["command"] = sys.executable
 
         return result
+
+    # ─── Shim Properties ────────────────────────────────
+
+    @property
+    def shim_exclude_prefixes(self) -> list:
+        """Path prefixes to skip when the shim intercepts open() calls.
+
+        Files matching these prefixes are read directly (bypassing the cache).
+        Useful for internal infrastructure files that are rewritten constantly
+        and never benefit from caching (e.g. Hermes /tmp/hermes-cwd-* files).
+
+        Configured via [shim].exclude_prefixes in toolrecall.toml,
+        or TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated).
+
+        Empty list = bypass NOTHING (all open() calls go through the shim).
+        """
+        raw = self.get("shim", "exclude_prefixes", default=[])
+        if isinstance(raw, list):
+            return raw
+        return []
+
 # ─── save_config / load_config ────────────────────────
 
 _CONFIG = None
