@@ -5,9 +5,28 @@ import hashlib
 import warnings
 from threading import RLock
 from contextlib import contextmanager
-from toolrecall.config import load_config
+from toolrecall.config import load_config, Config
 
 config = load_config()
+
+
+# Module-level config cache for _db() — avoids re-reading TOML from disk
+# on every single SQLite entry (38 call sites).  Reloaded only when the
+# DB path changes (detected via _db_path_cached in _db()).
+_cached_config: Config | None = None
+
+
+def _get_cached_config() -> Config:
+    """Return the cached Config, re-loading only on demand.
+
+    Unlike the hot-path load_config() call that was previously inside _db(),
+    this caches the Config instance and only re-reads TOML when the caller
+    explicitly requests a reload (e.g. when the DB path changed).
+    """
+    global _cached_config
+    if _cached_config is None:
+        _cached_config = load_config()
+    return _cached_config
 
 
 # ─── Hash Helper (pluggable algorithm) ─────────────────────
@@ -183,17 +202,23 @@ def _db():
     _db_lock.acquire()
     _should_commit = False  # Initialize before try — always in scope
     try:
-        cfg = load_config()
+        cfg = _get_cached_config()
         db_path = os.path.expanduser(cfg.cache_db)
         # Detect DB path change (e.g. tests switching TOOLRECALL_CACHE_DB).
-        # If the path changed, close the old connection so the new one gets
-        # schema tables created via _init().
+        # If the path changed, close the old connection AND reload config
+        # so the new db path is picked up.
         if _db_real is not None:
             try:
                 # sqlite3 exposes the DB path via .execute("PRAGMA database_list")
                 if _db_path_cached != db_path:
                     _db_real.close()
                     _db_real = None
+                    # Force config reload on DB path change — env var or
+                    # test fixture may have changed TOOLRECALL_CACHE_DB.
+                    global _cached_config
+                    _cached_config = None
+                    cfg = _get_cached_config()
+                    db_path = os.path.expanduser(cfg.cache_db)
             except Exception:
                 pass
         if _db_real is None:

@@ -33,8 +33,9 @@ def _reset_db():
     try:
         if _db_real is not None:
             _db_real.close()
-            _db_mod._db_real = None
-            _db_mod._db_path_cached = None
+        _db_mod._db_real = None
+        _db_mod._db_path_cached = None
+        _db_mod._cached_config = None  # Invalidate config cache too
     finally:
         _db_lock.release()
     os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
