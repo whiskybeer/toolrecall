@@ -317,11 +317,21 @@ class TestClientFallbackDirect(unittest.TestCase):
         self.assertIn("content", result)
         self.assertIn("fallback content", result.get("content", ""))
 
+    def test_cached_read_fallback_blocked_outside_allowlist(self):
+        """Fallback cached_read must block paths outside allowed_paths."""
+        os.environ["TOOLRECALL_MCP_ALLOWED_PATHS"] = self.tmpdir
+        _fresh_client_module()
+        from toolrecall.client import cached_read
+        result = cached_read("/etc/hosts")
+        self.assertIn("error", result)
+        self.assertIn("access denied", result["error"])
+
     def test_cached_terminal_fallback(self):
         from toolrecall.client import cached_terminal
         result = cached_terminal("echo fallback_works")
-        self.assertIn("output", result)
-        self.assertIn("fallback_works", result.get("output", ""))
+        # SECURITY: fail-closed — terminal requires the daemon
+        self.assertIn("error", result)
+        self.assertIn("daemon_unavailable", result["error"])
 
     def test_cached_skill_fallback(self):
         from toolrecall.client import cached_skill

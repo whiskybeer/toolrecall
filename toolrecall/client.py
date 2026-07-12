@@ -113,13 +113,26 @@ def cached_read(path: str) -> dict:
     """Read file via daemon (UDS) or direct SQLite.
 
     Daemon-first: sends path to the running daemon over Unix Domain Socket.
-    If daemon is unreachable, falls back to direct local SQLite lookup.
+    Fallback respects allowed_paths by loading the config and checking
+    against the same SecurityGate rules the daemon would apply.
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_read", "path": path, "source": "agent_tool"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp  # Success or real error from Daemon
-    # Fallback: direct SQLite (no daemon needed)
+    # Fallback: check allowed_paths ourselves, then read directly
+    from toolrecall.config import load_config
+    cfg = load_config()
+    allowed_paths = cfg.mcp_allowed_paths
+    if allowed_paths:
+        import os as _os
+        abs_path = _os.path.realpath(_os.path.expanduser(path))
+        for allowed in allowed_paths:
+            allowed_abs = _os.path.realpath(_os.path.expanduser(allowed))
+            if abs_path == allowed_abs or abs_path.startswith(allowed_abs + _os.sep):
+                break
+        else:
+            return {"error": "Path not allowed: access denied (daemon unavailable)"}
     return _get_direct_cache().cached_read(path, source="agent_tool")
 
 
@@ -136,7 +149,11 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     resp = client.send(payload)
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _get_direct_cache().cached_terminal(command, ttl=ttl)
+    # SECURITY: fail-closed on daemon unavailable — terminal is a gated
+    # operation that requires the daemon's SecurityGate. Without the
+    # daemon, we cannot enforce allow_terminal or allowed_terminal_commands.
+    # The user must restart the daemon to use this feature.
+    return {"error": "daemon_unavailable: cached_terminal requires the daemon. Restart with 'toolrecall daemon'."}
 
 
 def cached_skill(name: str) -> dict:

@@ -81,7 +81,7 @@ def _ensure_tables(conn):
     conn.commit()
 
 
-def docs_search(query: str, source: str = None) -> str:
+def docs_search(query: str, source: str = None, _retried: bool = False) -> str:
     """
     Full-text search across indexed documents.
     Uses FTS5 MATCH + BM25 ranking.
@@ -158,14 +158,14 @@ def docs_search(query: str, source: str = None) -> str:
     except Exception as e:
         conn.close()
         estr = str(e)
-        if "malformed" in estr.lower():
+        if "malformed" in estr.lower() and not _retried:
             try:
                 rebuild = sqlite3.connect(_get_db_path(), timeout=30.0)
                 rebuild.execute("INSERT INTO pages_fts(pages_fts) VALUES('rebuild')")
                 rebuild.close()
             except Exception:
                 pass
-            return docs_search(query, source=source)
+            return docs_search(query, source=source, _retried=True)
         return f"Search error: {e}"
 
 

@@ -106,25 +106,27 @@ def _should_skip(path: str | bytes | os.PathLike) -> bool:
 _original_open = builtins.open
 
 def _shim_open(path, mode='r', *args, **kwargs):
-    # Re-entrancy guard: if we're already inside a shim call (e.g. the
-    # daemon's open(), or importing client triggers another open()), fall
-    # through to the real open() immediately to prevent infinite recursion.
-    if _shim_active():
-        return _original_open(path, mode, *args, **kwargs)
-
     # Don't intercept non-file paths (integers = file descriptors,
     # None, or capture objects from test frameworks).
     if not isinstance(path, (str, bytes, os.PathLike)):
         return _original_open(path, mode, *args, **kwargs)
 
-    # Skip Hermes internal infrastructure files — they're tiny, rewritten
-    # constantly, and caching them just pollutes the stats.
     path_str = os.fspath(path)
-    if _should_skip(path_str):
+
+    # Re-entrancy guard: if we're already inside a shim call, fall
+    # through to the real open() immediately to prevent infinite recursion.
+    if _shim_active():
         return _original_open(path_str, mode, *args, **kwargs)
 
     prev = _enter_shim()
     try:
+        # Skip Hermes internal infrastructure files — they're tiny, rewritten
+        # constantly, and caching them just pollutes the stats.
+        # NOTE: called inside shim scope so any open() triggered by
+        # _load_skip_prefixes() is caught by the re-entrancy guard.
+        if _should_skip(path_str):
+            return _original_open(path_str, mode, *args, **kwargs)
+
         tr = _get_tr()
         if tr and 'r' in mode and 'b' not in mode:
             try:

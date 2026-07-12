@@ -134,10 +134,6 @@ class SecurityGate:
             allowed_abs = os.path.realpath(os.path.expanduser(allowed))
             if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
                 break
-            # Also check the non-resolved path (for symlinks like /etc -> /usr/lib)
-            raw_path = os.path.abspath(os.path.expanduser(path))
-            if raw_path == allowed_abs or raw_path.startswith(allowed_abs + os.sep):
-                break
         else:
             # Generic error — never leak the real resolved path to the caller
             self.logger.warning("Blocked path not in allowed_paths: %s", path)
