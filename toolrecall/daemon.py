@@ -1038,17 +1038,14 @@ class DaemonServer:
             return {"error": err}
         bypass = req.get("bypass_cache", False)
         if bypass:
-            # Remove from in-memory cache so the next read is fresh.
-            # We skip the SQLite DELETE to avoid _db() lock contention
-            # from within the daemon handler. _cache_read checks mtime
-            # against SQLite, so stale SQLite entries are harmless.
             import toolrecall.cache as _tr_cache
             try:
                 _tr_cache._file_cache.remove(path)
             except KeyError:
-                pass  # wasn't in cache, nothing to invalidate
-        result = _cache_read(path)
-        # Track read for context tracker (mark_read is no-op if path empty)
+                pass
+        # If source is "agent_tool", pass it through so context tokens are tracked
+        source = req.get("source", "")
+        result = _cache_read(path, source=source)
         if result and not result.get("error"):
             self._context.mark_read(path)
         return result

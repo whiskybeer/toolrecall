@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     misses INTEGER DEFAULT 0,
     tokens_read_from_disk INTEGER DEFAULT 0,
     tokens_saved INTEGER DEFAULT 0,
+    context_tokens_saved INTEGER DEFAULT 0,
     updated_at REAL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS access_log (
@@ -220,8 +221,8 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
-def _record(category, hit: bool, tokens_read: int = 0, path: str = "", tokens_saved: int = 0):
-    """Track cache statistics + log access.
+def _record(category, hit: bool, tokens_read: int = 0, path: str = "", tokens_saved: int = 0, context_tokens: int = 0):
+    """Track cache statistics + access log.
 
     - hit=True:  increments hit counter and tokens_saved
     - hit=False: increments miss counter
@@ -229,19 +230,25 @@ def _record(category, hit: bool, tokens_read: int = 0, path: str = "", tokens_sa
       were read from disk. NOT set on cache hits.
     - path: optional file path for access logging
     - tokens_saved: (only on cache hit) records how many tokens were
-      served from cache without disk I/O
+      served from cache without disk I/O (disk-read avoidance)
+    - context_tokens: (only on cache hit, agent-tool reads) records how
+      many tokens were served from cache that would have been sent to
+      the LLM context. This is a subset of tokens_saved — only counts
+      reads that originate from agent tools (read_file, skill_view),
+      not internal infrastructure reads (config, cron, cwd files).
     """
     try:
         with _db() as conn:
             if hit:
                 conn.execute("""
-                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, tokens_saved, updated_at)
-                    VALUES (?, 1, 0, 0, 0, ?)
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, tokens_saved, context_tokens_saved, updated_at)
+                    VALUES (?, 1, 0, 0, 0, 0, ?)
                     ON CONFLICT(category) DO UPDATE SET
                         hits = hits + 1,
                         tokens_saved = tokens_saved + ?,
+                        context_tokens_saved = context_tokens_saved + ?,
                         updated_at = ?
-                """, (category, time.time(), tokens_saved, time.time()))
+                """, (category, time.time(), tokens_saved, context_tokens, time.time()))
             else:
                 conn.execute("""
                     INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, updated_at)
@@ -327,10 +334,17 @@ def _persist_file_to_sqlite(path: str, content: str, stat_result):
         warnings.warn(f"ToolRecall: SQLite persist failed for {path}: {e}")
 
 
-def cached_read(path: str) -> dict:
+def cached_read(path: str, source: str = "") -> dict:
     """Read file with hybrid cache.
 
     Lookup order: in-memory LRU (fast) → SQLite (persistent) → disk.
+
+    Args:
+        path: File path to read.
+        source: Optional source identifier. When "agent_tool", cache hits
+            count toward context_tokens_saved (actual LLM context savings)
+            in addition to the general tokens_saved (disk-read avoidance).
+            Empty string or "internal" = only counts disk-read avoidance.
     """
     path = os.path.expanduser(path)
 
@@ -363,7 +377,9 @@ def cached_read(path: str) -> dict:
     # ── 1. In-memory cache (fast path) ──
     entry = _file_cache.get(path)
     if entry and entry["mtime"] == stat.st_mtime:
-        _record("file_cache", hit=True, path=path, tokens_saved=_estimate_tokens(entry["content"]))
+        tokens = _estimate_tokens(entry["content"])
+        context_tokens = tokens if source == "agent_tool" else 0
+        _record("file_cache", hit=True, path=path, tokens_saved=tokens, context_tokens=context_tokens)
         return {"cached": True, "content": entry["content"], "path": path}
 
     # ── 2. SQLite cache (warm from previous session) ──
@@ -379,7 +395,9 @@ def cached_read(path: str) -> dict:
 
     if row and row["mtime"] == stat.st_mtime:
         _file_cache.put(path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size})
-        _record("file_cache", hit=True, path=path, tokens_saved=_estimate_tokens(row["content"]))
+        tokens = _estimate_tokens(row["content"])
+        context_tokens = tokens if source == "agent_tool" else 0
+        _record("file_cache", hit=True, path=path, tokens_saved=tokens, context_tokens=context_tokens)
         return {"cached": True, "content": row["content"], "path": path}  # ── 2. SQLite hit ──
     _record("file_cache", hit=False, path=path)
     # Count tokens_read_from_disk only for truly new content:
@@ -1111,6 +1129,7 @@ def get_stats() -> dict:
                     "misses": row["misses"],
                     "tokens_read_from_disk": row["tokens_read_from_disk"],
                     "tokens_saved": row["tokens_saved"],
+                    "context_tokens_saved": row["context_tokens_saved"],
                     "updated_at": row["updated_at"],
                     "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
                 }

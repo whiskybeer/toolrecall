@@ -231,9 +231,11 @@ def cmd_status():
             continue
         if isinstance(v, dict):
             saved = v.get("tokens_saved", 0)
+            context = v.get("context_tokens_saved", 0)
             saved_str = f", tokens_saved={saved:,}" if saved else ""
+            context_str = f", context_tokens_saved={context:,}" if context else ""
             print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
-                  f"hit_rate={v['hit_rate']}, tokens_read_from_disk={v['tokens_read_from_disk']:,}{saved_str}")
+                  f"hit_rate={v['hit_rate']}, tokens_read_from_disk={v['tokens_read_from_disk']:,}{saved_str}{context_str}")
         else:
             print(f"  {k}: {v}")
     # Recent activity
