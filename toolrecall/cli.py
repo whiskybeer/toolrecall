@@ -915,9 +915,7 @@ def cmd_setup():
     except FileNotFoundError:
         pass  # No systemd — _ensure_daemon will use fork
 
-    # ─── 3. Shim + Daemon (auto-start) ────────────
-    _ensure_shim()
-    steps_ok.append("shim: installed")
+    # ─── 3. Daemon (auto-start) ────────────
     if _ensure_daemon():
         steps_ok.append("daemon: running")
     else:
@@ -1337,8 +1335,6 @@ def main():
         "index-memory", "index-dir",
     }
     if cmd in _DAEMON_REQUIRED:
-        # Auto-install shim if missing, then ensure daemon is running
-        _ensure_shim()
         if not _ensure_daemon():
             print(f"  ⚠️  Could not start daemon — running '{cmd}' in direct mode.", file=sys.stderr)
 
