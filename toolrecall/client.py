@@ -116,11 +116,11 @@ def cached_read(path: str) -> dict:
     If daemon is unreachable, falls back to direct local SQLite lookup.
     """
     client = _get_client()
-    resp = client.send({"cmd": "cached_read", "path": path})
+    resp = client.send({"cmd": "cached_read", "path": path, "source": "agent_tool"})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp  # Success or real error from Daemon
     # Fallback: direct SQLite (no daemon needed)
-    return _get_direct_cache().cached_read(path)
+    return _get_direct_cache().cached_read(path, source="agent_tool")
 
 
 def cached_terminal(command: str, ttl: int = None) -> dict:
