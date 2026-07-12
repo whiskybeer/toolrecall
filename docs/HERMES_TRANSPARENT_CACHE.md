@@ -95,7 +95,28 @@ Or via env var: `TOOLRECALL_SHIM_EXCLUDE_PREFIXES=/tmp/hermes-cwd-,/tmp/hermes-s
 
 Empty list = bypass NOTHING. Add your framework's internal paths as needed.
 
-### 5. Non-Python agents
+### 5. Visibility into agent behavior
+
+Because the shim intercepts every `open()` and `subprocess.run()` call, the
+ToolRecall healthcheck and stats (`toolrecall stats`) provide a real-time
+dashboard of what the agent is doing:
+
+- **Which files are being read** — the access log shows every file path with
+  timestamps, hit rates, and token counts. If the agent is reading unexpected
+  files (e.g. config files on every turn, transient temp files), you'll see it
+  immediately.
+- **Which commands are being run** — terminal commands are cached and logged,
+  revealing what the agent is executing under the hood.
+- **Detecting cache-bypass** — if the hit rate drops to 0% after >100 calls,
+  the agent may be using native tools instead of cached paths.
+- **Finding infrastructure noise** — the access log reveals which files are
+  being read heavily but aren't user content. These are candidates for
+  `[shim].exclude_prefixes`.
+
+This visibility is a side effect of the shim's design, not a feature — but it
+has proven invaluable for debugging agent behavior and performance tuning.
+
+### 6. Non-Python agents
 
 The shim patches the Python interpreter. Node.js-based agents (Claude Code,
 Codex CLI as a Node binary, OpenCode) are unaffected — they use MCP
