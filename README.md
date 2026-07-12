@@ -360,7 +360,7 @@ tr read --refresh file.py  # Alias for bypass
 tr write /tmp/test.txt "hello"  # Write (invalidates cache)
 ```
 
-Use it when: **OpenCode** and **Claude Code** (Node.js, no Python shim), CI/CD pipelines, Rust/Ruby/Java agents, any shell script.
+Use it when: **OpenCode** and **Claude Code** (Node.js, no Python shim), **herdr panes** (every agent in any pane can use `tr` directly), CI/CD pipelines, Rust/Ruby/Java agents, any shell script.
 
 ```bash
 # Build from source
@@ -504,3 +504,7 @@ See the [Testing Guide](docs/TESTING.md) and [Makefile](./Makefile) for all targ
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common fixes
 - [Appendix](docs/APPENDIX.md) — comparison tables, OSI model, ROI, vision, audit
 - [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes Agent
+- **Framework Adapters:**
+  - [Google ADK](docs/google-adk.md) — `@cached_tool` decorator + forward proxy + runtime patch
+  - [LangChain / LangGraph](docs/langchain.md) — `ToolRecallCache` BaseCache + callback handler
+  - [herdr](docs/herdr.md) — `tr` binary + MCP bridge for any agent in any pane
