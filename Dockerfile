@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM python:3.11-slim AS base
 
-LABEL org.opencontainers.image.source="https://github.com/whiskybeer/toolrecall"
+LABEL org.opencontainers.image.source="https://robka.de/toolrecall"
 LABEL org.opencontainers.image.description="ToolRecall — L1 Cache & MCP Multiplexer for LLM Agents"
 LABEL org.opencontainers.image.licenses="MIT"
 
@@ -67,7 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Expose toolrecall proxy + ollama API\nEXPOSE 8569 11434
+# Expose toolrecall proxy + ollama API
+EXPOSE 8569 11434
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

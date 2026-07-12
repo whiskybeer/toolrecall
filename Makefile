@@ -65,6 +65,10 @@ help:
 	@echo "Package"
 	@echo "  make build          Build wheel + sdist"
 	@echo "  make publish-prep   Check build, tag, dry-run"
+	@echo ""
+	@echo "Deploy"
+	@echo "  make reinstall      Reinstall from local tree (pipx --force)"
+	@echo "  make daemon-restart Restart systemd daemon"
 
 # ─── Bootstrap ────────────────────────────────────────────────
 
@@ -210,3 +214,13 @@ publish-prep:
 	@echo ""
 	@echo "Or with uv:"
 	@echo "  uv publish"
+
+.PHONY: reinstall
+reinstall:
+	pipx install --force . 2>&1
+	@echo "✓ Reinstalled from local tree"
+
+.PHONY: daemon-restart
+daemon-restart:
+	systemctl --user restart toolrecall-daemon 2>/dev/null || toolrecall daemon --restart
+	@echo "✓ Daemon restarted"

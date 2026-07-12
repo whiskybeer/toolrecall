@@ -42,10 +42,10 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
-# Optionally index memory (as non-root user)
+# Optionally build FTS5 knowledge index (as non-root user)
 if [ "${INDEX_MEMORY:-true}" = "true" ]; then
-    echo "[toolrecall] Indexing Hermes memory..."
-    _run "toolrecall index-memory" 2>/dev/null || true
+    echo "[toolrecall] Building knowledge index..."
+    _run "toolrecall index" 2>/dev/null || true
 fi
 
 # Optionally start HTTP proxy
