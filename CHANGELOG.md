@@ -1,6 +1,14 @@
 # Changelog
 
-## v0.9.0 (2026-07-10)
+## v0.8.7 (2026-07-12)
+
+- **Fix:** Shim exclude prefixes now configurable via `[shim].exclude_prefixes` in `toolrecall.toml` or `TOOLRECALL_SHIM_EXCLUDE_PREFIXES` env var. Defaults skip `/tmp/hermes-cwd-*` and `/tmp/hermes-snap-*` (Hermes terminal infra files). Empty list = bypass nothing.
+- **Fix:** `context_tokens_saved` column added to `cache_stats` — tracks only cache hits from agent-tool reads (`source="agent_tool"`), not from internal infrastructure reads. Separates actual LLM-context savings from general disk-read avoidance (`tokens_saved`).
+- **Fix:** `client.cached_read()` sends `source="agent_tool"` to daemon so agent file reads count toward context token savings.
+- **Docs:** `HERMES_TRANSPARENT_CACHE.md` — added risk section on infrastructure file noise with config examples, plus new section on visibility-into-agent-behavior side effect.
+- **Docs:** `CONFIG_REFERENCE.md` — added `TOOLRECALL_SHIM_EXCLUDE_PREFIXES` to env var table.
+
+## v0.8.6 (2026-07-09)
 
 - **Feature:** Cache key normalizer — deterministic JSON sorting, whitespace stripping, noise key removal (timestamps, session IDs). Opt-in via `[norm].enabled = true` or `TOOLRECALL_NORM_ENABLED=true`.
 - **Feature:** Replay mode — record and replay agent tool calls for deterministic, offline, zero-cost CI testing. `toolrecall replay record <name>` / `toolrecall replay replay <name>`. Scenarios export as portable JSON.
