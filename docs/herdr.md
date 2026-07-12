@@ -21,7 +21,14 @@
 
 herdr is a Rust-based terminal multiplexer for running multiple AI coding agents in parallel panes. ToolRecall provides transparent caching for every agent running inside herdr — no per-agent or per-pane configuration needed.
 
-herdr supports **21 agents** (Hermes, OpenCode, Claude Code, Codex, Copilot, Cursor, Kilo, Qoder, MastraCode, and more). ToolRecall works with **all of them** through two standard paths — no plugin, no Rust build, no herdr-side changes.
+herdr supports **21 agents** (Hermes, OpenCode, Claude Code, Codex, Copilot, Cursor, Kilo, Qoder, MastraCode, and more). ToolRecall provides two integration paths that cover all of them at the shell level — with one caveat for specific agents at the MCP level.
+
+| Path | Coverage | Caveat |
+|------|----------|--------|
+| **`tr` binary** (recommended) | All 21 agents | None — shell-level caching, no agent integration needed |
+| **MCP bridge** | MCP-capable agents | ❌ **Claude Code / Codex**: stale reads in edit loops (they manage their own in-memory tool state). Use `tr` instead. ✅ All others safe |
+
+See [Agent Compatibility](AGENT_COMPATIBILITY.md) for per-agent guidance.
 
 ---
 
