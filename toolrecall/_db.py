@@ -179,7 +179,7 @@ def _db():
 
     On exception: rollback + release (no lock leak).
     """
-    global _db_real, _db_refcount
+    global _db_real, _db_refcount, _db_path_cached
     _db_lock.acquire()
     _should_commit = False  # Initialize before try — always in scope
     try:

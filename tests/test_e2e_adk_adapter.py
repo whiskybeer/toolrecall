@@ -9,7 +9,6 @@ Requires:
   - google-adk package installed
 """
 
-import json
 import pytest
 
 
@@ -257,7 +256,7 @@ class TestADKAgentE2E:
         assert call_count[0] == 1, "Tool should have been called once"
 
         # Second call — should hit the cache
-        events2 = list(runner.run(
+        list(runner.run(
             user_id="test_user",
             session_id="test-session-2",
             new_message=types.Content(

@@ -15,7 +15,6 @@ Usage:
 """
 
 import json
-import sys
 import os
 
 
@@ -85,10 +84,10 @@ def _cmd_record(rest: list[str]) -> None:
         return
     scenario = rest[0]
     from toolrecall.replay import start_recording
-    result = start_recording(scenario)
+    result = start_recording(scenario)  # noqa: F841 — intentional discard
     print(f"🟡 Recording started: {scenario}")
-    print(f"   All tool calls will be recorded.")
-    print(f"   Run 'toolrecall replay stop' to stop recording.")
+    print("   All tool calls will be recorded.")
+    print("   Run 'toolrecall replay stop' to stop recording.")
     print(f"   Run 'toolrecall replay replay {scenario}' to replay.")
 
 
@@ -108,10 +107,10 @@ def _cmd_replay(rest: list[str]) -> None:
         yn = input("  Start replay anyway? [y/N] ").strip().lower()
         if yn != "y":
             return
-    result = start_replay(scenario)
+    result = start_replay(scenario)  # noqa: F841 — intentional discard
     print(f"🟢 Replay started: {scenario}")
-    print(f"   Matching tool calls will be served from recorded responses.")
-    print(f"   Run 'toolrecall replay stop' to stop replay.")
+    print("   Matching tool calls will be served from recorded responses.")
+    print("   Run 'toolrecall replay stop' to stop replay.")
 
 
 def _cmd_stop() -> None:
@@ -120,7 +119,7 @@ def _cmd_stop() -> None:
     if result["replay_mode"] == "stopped":
         print(f"🔴 Replay stopped (was: {result['was']}, scenario: {result['scenario']})")
     else:
-        print(f"Replay mode was not active.")
+        print("Replay mode was not active.")
 
 
 def _cmd_status() -> None:
@@ -130,9 +129,9 @@ def _cmd_status() -> None:
     print(f"Scenario: {s['scenario'] or '(none)'}")
     print(f"Active:   {s['is_active']}")
     if s["is_recording"]:
-        print(f"  → Recording: all tool calls are being saved")
+        print("  → Recording: all tool calls are being saved")
     elif s["is_replaying"]:
-        print(f"  → Replaying: matching calls return cached responses")
+        print("  → Replaying: matching calls return cached responses")
 
 
 def _cmd_list() -> None:

@@ -2,7 +2,8 @@
 Realistic workload benchmark: simulates agentic coding session behavior.
 Measures: unique token savings, hit rates, cost, cross-session behavior.
 """
-import os, sys, time, json, sqlite3
+import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -61,7 +62,7 @@ print("\n─── PHASE 1: Session Day 1 (first reads) ───")
 for f in FILES:
     if os.path.exists(f):
         r = cached_read(f)
-        check(f"Read {os.path.basename(f)}", not r.get("cached"), f"unexpected cache hit")
+        check(f"Read {os.path.basename(f)}", not r.get("cached"), "unexpected cache hit")
 
 s1 = get_stats()
 fc = s1.get("file_cache", {})
@@ -115,7 +116,7 @@ fc3 = s3.get("file_cache", {})
 new_tokens = fc3.get("tokens_read_from_disk", 0) - tokens_after_phase2
 check(f"Tokens increased by {new_tokens:,} for 3 new files",
       new_tokens > 0,
-      f"no increase")
+      "no increase")
 
 # ════════════════════════════════════════════
 # PHASE 4: Cross-session (daemon restart simulation)
@@ -226,7 +227,7 @@ print(f"  Memory: {final.get('memory_used_mb', 0)} MB / {final.get('memory_max_m
 print(f"  Memory entries: {final.get('memory_file_entries', 0)} files")
 
 # Cost comparison
-print(f"\n  💰 COST COMPARISON (@ $2/M input tokens):")
+print("\n  💰 COST COMPARISON (@ $2/M input tokens):")
 print(f"     Real (1x counted): {total_tokens:>10,} tokens = ${total_cost:.4f}")
 
 # Old bug simulation
@@ -238,7 +239,7 @@ old_bug_file = sum(max(1, r['b'] // 3) * r['hits']
 _conn.close()
 old_bug = old_bug_file + total_tokens - (final.get("file_cache", {}).get("tokens_read_from_disk", 0))
 print(f"     Alter Bug (alle hits):{old_bug:>10,} tokens = ${old_bug/1_000_000 * 2:.4f} (×{old_bug/max(total_tokens,1):.0f})")
-print(f"     Echte unique Tokens: ~55K (13 files)")
+print("     Echte unique Tokens: ~55K (13 files)")
 
 print(f"\n  {'='*65}")
 print(f"  CHECKS: {TOTAL_PASS} passed, {TOTAL_FAIL} failed (of {TOTAL_CHECKS})")
@@ -246,7 +247,9 @@ print(f"  {'='*65}")
 
 # Cleanup
 for f in new_files:
-    try: os.unlink(f)
-    except: pass
+    try:
+        os.unlink(f)
+    except Exception:
+        pass
 
 sys.exit(1 if TOTAL_FAIL else 0)

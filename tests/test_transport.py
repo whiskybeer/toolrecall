@@ -27,7 +27,7 @@ from toolrecall.transport import (
     _default_socket_path, _is_tcp, _parse_tcp,
     create_socket, bind_socket, connect_socket,
     send_message, receive_message,
-    TransportClient, DEFAULT_PATH,
+    TransportClient,
 )
 
 
@@ -274,7 +274,7 @@ class TestFramedMessageProtocol(unittest.TestCase):
             def accept_one():
                 conn, _ = server.accept()
                 conn_ref[0] = conn
-                resp = receive_message(conn)
+                receive_message(conn)
                 conn_ref[0].close()
 
             t = threading.Thread(target=accept_one)

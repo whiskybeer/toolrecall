@@ -145,7 +145,7 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
         from toolrecall.config import load_config
         cfg = load_config()
 
-        old_mem_cfg = cfg.get("sources", "memory")
+        cfg.get("sources", "memory")
         cfg._data.setdefault("sources", {})["memory"] = {"enabled": True}
 
         old_hermes = os.environ.get("HERMES_HOME", "")
@@ -222,7 +222,8 @@ class TestDaemonSubprocess(unittest.TestCase):
         return False
 
     def _send_command(self, action: str) -> dict:
-        import socket, json
+        import socket
+        import json
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             sock.settimeout(3)

@@ -10,9 +10,6 @@ Usage:
 import os
 import sys
 import time
-import signal
-import shutil
-import socket
 import tempfile
 import subprocess
 from pathlib import Path
@@ -95,13 +92,12 @@ class E2EDaemon:
     def _wait_until_ready(self, timeout: float = 10.0) -> None:
         """Block until the daemon responds to a ping, or raise TimeoutError."""
         deadline = time.monotonic() + timeout
-        last_error = None
         while time.monotonic() < deadline:
             try:
                 if self._client is not None and self._client.ping(timeout=1.0):
                     return
-            except Exception as exc:
-                last_error = exc
+            except Exception:
+                pass
 
             # Check whether the subprocess already exited (crash on start)
             if self.process is not None and self.process.poll() is not None:

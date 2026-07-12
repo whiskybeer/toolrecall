@@ -49,9 +49,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 # langchain_core is optional - only imported when actually used
 if TYPE_CHECKING:
-    from langchain_core.caches import BaseCache as LangChainBaseCache
-    from langchain_core.callbacks import BaseCallbackHandler
-    from langchain_core.outputs import Generation
+    pass
 
 from toolrecall.cache import cached_mcp_check, cached_mcp_store, invalidate_mcp_server
 from toolrecall.client import daemon_running

@@ -21,7 +21,7 @@ os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(test_dir, "bench_cache.db")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from toolrecall.cache import cached_mcp_check, cached_mcp_store, cached_mcp, MCP_DEFAULT_TTL
+from toolrecall.cache import cached_mcp_check, cached_mcp_store, cached_mcp
 from toolrecall.cache import _init, get_stats
 
 
@@ -165,23 +165,23 @@ if __name__ == "__main__":
           f"({results['response_size_tokens']} tokens)")
     print(f"  Rounds:         {results['test_rounds']}")
     print()
-    print(f"  +----------------------+--------------+--------------+")
-    print(f"  | Metric               | Cache MISS    | Cache HIT     |")
-    print(f"  +----------------------+--------------+--------------+")
+    print("  +----------------------+--------------+--------------+")
+    print("  | Metric               | Cache MISS    | Cache HIT     |")
+    print("  +----------------------+--------------+--------------+")
     print(f"  | Avg time (check+     | {results['miss_avg_ms']:>10.4f} ms   "
           f"| {results['hit_avg_ms']:>10.4f} ms   |")
-    print(f"  | fetch/store)         |              |              |")
-    print(f"  +----------------------+--------------+--------------+")
+    print("  | fetch/store)         |              |              |")
+    print("  +----------------------+--------------+--------------+")
     print(f"  | Fastest              | {min(results['miss_times_ms']):>10.4f} ms   "
           f"| {min(results['hit_times_ms']):>10.4f} ms   |")
     print(f"  | Slowest              | {max(results['miss_times_ms']):>10.4f} ms   "
           f"| {max(results['hit_times_ms']):>10.4f} ms   |")
-    print(f"  +----------------------+--------------+--------------+")
+    print("  +----------------------+--------------+--------------+")
     print(f"  | Speedup              | --           | {results['speedup']}x           |")
     print(f"  | Tokens saved         | --           | {results['tokens_saved']}               |")
-    print(f"  +----------------------+--------------+--------------+")
+    print("  +----------------------+--------------+--------------+")
     print()
-    print(f"  cached_mcp() one-shot:")
+    print("  cached_mcp() one-shot:")
     print(f"    Miss (check+fetch+store): {results['cached_mcp_miss_ms']:.4f} ms")
     print(f"    Hit  (cache only):        {results['cached_mcp_hit_ms']:.4f} ms")
     print()

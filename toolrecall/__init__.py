@@ -30,7 +30,7 @@ def __getattr__(name):
         from toolrecall.cli import main
         return main
     if name in ("normalize_json", "normalize_tool_args", "normalize_command"):
-        from toolrecall.normalizer import normalize_json, normalize_tool_args, normalize_command
+        from toolrecall.normalizer import normalize_json as _nj, normalize_tool_args as _nta, normalize_command as _nc  # noqa: F401 — lazy attr dispatch via locals()
         return locals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

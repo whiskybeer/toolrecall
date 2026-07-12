@@ -46,7 +46,6 @@ class TestDaemonLifecycle(unittest.TestCase):
     def test_daemon_rejects_on_wrong_socket(self):
         """Connecting to a non-existent socket returns error, not crash."""
         bogus = os.path.join(tempfile.mkdtemp(), "nonexistent.sock")
-        client = TransportClient(path=bogus) if False else None
         # Import here to avoid ImportError on test collection if transport is broken
         from toolrecall.transport import TransportClient
         client = TransportClient(path=bogus)

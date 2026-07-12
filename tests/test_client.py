@@ -29,7 +29,6 @@ import threading
 import time
 import unittest
 import tempfile
-import shutil
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -45,7 +44,6 @@ def _patch_transport(path):
     """
     import toolrecall.client as cl
     cl.set_socket_path(path)
-    import toolrecall.mcp_bridge as mb
     import toolrecall.transport as tp
     tp.DEFAULT_PATH = path  # mb reads from transport module directly
 
@@ -146,7 +144,6 @@ class TestClientNoDaemon(unittest.TestCase):
     def tearDown(self):
         import toolrecall.client as cl
         cl._client = None
-        import toolrecall.transport as tp
         # Don't restore DEFAULT_PATH — the next test's setUp patches it
 
     def test_get_client_returns_singleton(self):
@@ -199,7 +196,6 @@ class TestClientDaemonFirst(unittest.TestCase):
         self.daemon.stop()
         import toolrecall.client as cl
         cl._client = None
-        import toolrecall.transport as tp
         # Don't restore — next setUp patches it
 
     def test_mcp_call_routed_via_daemon(self):
@@ -308,7 +304,6 @@ class TestClientFallbackDirect(unittest.TestCase):
         os.environ.pop("TOOLRECALL_CACHE_DB", None)
         import toolrecall.client as cl
         cl._client = None
-        import toolrecall.transport as tp
         # Don't restore — next setUp patches it
 
     def test_cached_read_fallback(self):

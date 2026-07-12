@@ -18,10 +18,7 @@ Tests cover:
 Uses a real UDS server to simulate daemon responses.
 """
 
-import json
 import os
-import socket
-import struct
 import sys
 import threading
 import time

@@ -11,11 +11,9 @@ import os
 import sys
 import unittest
 import tempfile
-import time
 import shutil
 import json
 import subprocess
-from unittest.mock import patch, MagicMock
 
 # Isolated test DB
 test_db_dir = tempfile.mkdtemp()

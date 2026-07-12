@@ -57,7 +57,6 @@ class TestFormatValue:
         assert _format_value(3.14) == "3.14"
 
     def test_float_special(self):
-        import math
         assert _format_value(float("inf")) == "inf"
         assert _format_value(float("-inf")) == "-inf"
         assert _format_value(float("nan")) == "nan"

@@ -12,10 +12,7 @@ these tests focus on:
 4. Error handling doesn't raise
 """
 
-import json
-import os
 import sys
-import tempfile
 import pytest
 
 
@@ -271,7 +268,6 @@ class TestHerdrAdapter:
         """setup_notice() prints without error."""
         from toolrecall.adapters.herdr import setup_notice
         import io
-        import sys
         captured = io.StringIO()
         sys.stdout = captured
         setup_notice()

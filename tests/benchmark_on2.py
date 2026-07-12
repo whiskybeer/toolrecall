@@ -17,7 +17,11 @@ Three scenarios:
 
 Each scenario simulates N agents, each doing T turns of "read file → produce output"
 """
-import os, sys, time, json, math, statistics, tempfile
+import os
+import sys
+import time
+import json
+import statistics
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # ── Configuration ──────────────────────────────────────────────
@@ -331,12 +335,12 @@ class AgentSimulator:
         print("\n" + "=" * 70)
         print("  O(n²) CONTEXT WINDOW SCALABILITY BENCHMARK")
         print("=" * 70)
-        print(f"\n  Configuration:")
+        print("\n  Configuration:")
         print(f"  - Agents: {AGENT_COUNTS}")
         print(f"  - Turns/agent: {TURNS_PER_AGENT}")
         print(f"  - Shared files: {SHARED_FILES}")
         print(f"  - Unique files/agent: {UNIQUE_FILES_PER_AGENT}")
-        print(f"  - Turn output tokens: 200")
+        print("  - Turn output tokens: 200")
         
         all_results = {}
         

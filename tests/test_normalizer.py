@@ -1,7 +1,6 @@
 """Tests for toolrecall.normalizer — deterministic cache key normalization."""
 
 import json
-import pytest
 from toolrecall.normalizer import (
     normalize_json,
     normalize_tool_args,

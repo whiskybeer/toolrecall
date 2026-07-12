@@ -55,7 +55,6 @@ from toolrecall.cache import (
     cached_api_store as _cache_api_store,
     _is_sensitive_path,
     invalidate_all,
-    refresh_file as _refresh_file,
     get_stats,
 )
 from toolrecall.transport import (

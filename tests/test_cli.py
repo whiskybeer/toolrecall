@@ -5,7 +5,6 @@ import sys
 import unittest
 import tempfile
 import shutil
-from unittest.mock import patch
 
 
 class TestCLIMainDispatch(unittest.TestCase):

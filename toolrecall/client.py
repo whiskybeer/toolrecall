@@ -307,9 +307,6 @@ def _reimport_default_path():
     import toolrecall.transport
     global _DEFAULT_PATH
     _DEFAULT_PATH = toolrecall.transport.DEFAULT_PATH
-    # Also update the module-level attribute so _patch_transport in tests
-    # can see it as client.DEFAULT_PATH
-    DEFAULT_PATH = _DEFAULT_PATH
 
 
 # ─── Context Tracker API ────────────────────────────────

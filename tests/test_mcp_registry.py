@@ -9,13 +9,8 @@ Tests cover:
 - uvx detection
 """
 
-import os
 import sys
-import json
-import tempfile
-from pathlib import Path
 
-import pytest
 
 from toolrecall.mcp_registry import (
     resolve_server,

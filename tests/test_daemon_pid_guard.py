@@ -7,11 +7,8 @@ Daemon is managed by systemd --user. These tests verify that:
 """
 
 import os
-import signal
-import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
@@ -40,9 +37,10 @@ class TestDaemonPIDFallback(unittest.TestCase):
 
     def test_stop_daemon_no_pid_file(self):
         """stop_daemon prints 'not running' when no PID file exists."""
-        with patch("sys.stdout") as mock_stdout:
+        with patch("sys.stdout"):
             daemon.stop_daemon()
             # In no-systemd fallback, should print "not running"
+            # mock_stdout intentionally discarded — we just check no crash
             # (We can't easily capture output here, but we can check no crash)
 
     def test_stop_daemon_stale_pid(self):
@@ -57,8 +55,9 @@ class TestDaemonPIDFallback(unittest.TestCase):
 
     def test_daemon_status_no_pid_file(self):
         """daemon_status prints 'not running' when no PID file exists."""
-        with patch("sys.stdout") as mock_stdout:
+        with patch("sys.stdout"):
             daemon.daemon_status()
+            # mock_stdout intentionally discarded — we just check no crash
             # Should not crash
 
     def test_pid_file_constant_exists(self):

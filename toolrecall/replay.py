@@ -36,7 +36,7 @@ import time
 from typing import Any, Optional
 
 from toolrecall._db import _db
-from toolrecall.normalizer import normalize_tool_args, normalize_json
+from toolrecall.normalizer import normalize_tool_args
 
 
 # ─── Constants ─────────────────────────────────────────────────────────────────

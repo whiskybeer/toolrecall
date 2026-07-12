@@ -46,9 +46,9 @@ config = load_config()
 # _hash, SENSITIVE_FILE_PATTERNS, SENSITIVE_FILE_EXTENSIONS, SENSITIVE_BASENAMES,
 # _compile_sensitive_patterns, _is_sensitive_path are imported from toolrecall._db.
 # We re-import _is_sensitive_path explicitly below for use within this module.
-from toolrecall._db import _is_sensitive_path as _is_sensitive_path
-from toolrecall._db import _compile_sensitive_patterns as _compile_sensitive_patterns
-from toolrecall.normalizer import normalize_tool_args, normalize_command
+from toolrecall._db import _is_sensitive_path as _is_sensitive_path  # noqa: E402
+from toolrecall._db import _compile_sensitive_patterns as _compile_sensitive_patterns  # noqa: E402
+from toolrecall.normalizer import normalize_command  # noqa: E402
 
 # ─── In-memory file cache with LRU ──────────────────────────
 

@@ -40,7 +40,8 @@ def _check_contradictions(thoughts: list) -> list:
     contradictions = []
     for i, t1 in enumerate(thoughts):
         for j, t2 in enumerate(thoughts):
-            if i >= j: continue
+            if i >= j:
+                continue
             # Simple negation check
             for word in ["not ", "cannot ", "doesn't ", "isn't ", "won't "]:
                 if word in t1.lower() and word not in t2.lower():
@@ -108,7 +109,8 @@ def main():
     sys.stderr.flush()
     for line in sys.stdin:
         line = line.strip()
-        if not line: continue
+        if not line:
+            continue
         try:
             req = json.loads(line)
         except json.JSONDecodeError:

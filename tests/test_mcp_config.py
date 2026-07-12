@@ -6,12 +6,9 @@ We test: TOML parse succeeds, server definitions are correct,
 the real config file loads without errors.
 """
 
-import json
 import os
 import sys
 import unittest
-import tempfile
-import shutil
 import tomllib
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

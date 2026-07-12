@@ -1,9 +1,7 @@
 """Minimal UDS daemon for integration testing."""
 import os
-import sys
 import socket
 import json
-import time
 import tempfile
 
 UDS = os.environ.get("TOOLRECALL_UDS_PATH", os.path.join(tempfile.gettempdir(), "tc_test.sock"))

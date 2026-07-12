@@ -120,8 +120,6 @@ def _cached_read(path: str, max_tokens: int = 0) -> str:
         return f"Error: {resp['error']}"
 
     content = resp.get("content", "")
-    cached = resp.get("cached", False)
-    source = resp.get("source", "unknown")
 
     return content
 
@@ -146,7 +144,6 @@ def _cached_terminal(command: str, timeout: int = 30) -> str:
         return f"Error: {resp['error']}"
 
     output = resp.get("output", "")
-    cached = resp.get("cached", False)
 
     return output
 

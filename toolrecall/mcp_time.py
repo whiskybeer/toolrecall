@@ -53,7 +53,8 @@ def main():
     sys.stderr.flush()
     for line in sys.stdin:
         line = line.strip()
-        if not line: continue
+        if not line:
+            continue
         try:
             req = json.loads(line)
         except json.JSONDecodeError:

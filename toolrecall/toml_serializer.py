@@ -45,7 +45,6 @@ def _escape_basic(s: str) -> str:
 
 def _format_value(val, indent: int = 0) -> str:
     """Format a TOML value with proper indentation."""
-    pad = "  " * indent
 
     if val is None:
         return ""

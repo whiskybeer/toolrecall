@@ -13,12 +13,10 @@ Usage:
   python3 -m pytest tests/test_security_injection.py -v --log-cli-level=DEBUG
 """
 
-import json
 import os
 import sys
 import unittest
 import tempfile
-import shutil
 
 # Isolated test environment — no side effects on production DB
 test_dir = tempfile.mkdtemp()

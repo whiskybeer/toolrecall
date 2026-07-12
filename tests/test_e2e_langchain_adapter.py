@@ -9,7 +9,6 @@ Requires:
   - GOOGLE_API_KEY env var set
 """
 
-import json
 import pytest
 
 pytestmark = [pytest.mark.e2e, pytest.mark.langchain]
@@ -76,7 +75,7 @@ class TestToolRecallCacheE2E:
 
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
-        r1 = llm.invoke("Say 'cache-clear-test' in one word")
+        llm.invoke("Say 'cache-clear-test' in one word")
 
         cache.clear()
 

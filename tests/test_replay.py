@@ -1,8 +1,5 @@
 """Tests for toolrecall.replay — Recording and replay of tool call scenarios."""
 
-import json
-import os
-import tempfile
 import pytest
 from toolrecall.replay import (
     ReplayManager,
@@ -363,7 +360,7 @@ class TestReplayIntercept:
 
     def test_record_response_explicit_scenario(self):
         start_recording("default-scenario")
-        result = record_response("cached_read", {"path": "/tmp/x"},
+        record_response("cached_read", {"path": "/tmp/x"},
                                   "data", scenario="override-scenario")
         replay = ReplayManager()
         # Should be recorded under override, not default
@@ -374,7 +371,7 @@ class TestReplayIntercept:
 
     def test_full_record_replay_cycle(self):
         """Record a session, then replay it — end-to-end."""
-        replay = ReplayManager()
+        ReplayManager()
         # Phase 1: Record
         start_recording("full-cycle")
         resp1 = {"output": "file content", "cached": False}

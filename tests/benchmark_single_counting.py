@@ -7,7 +7,9 @@ Simulates a realistic multi-session workload and validates:
   3. Unique token counting prevents inflated numbers
 """
 
-import os, sys, tempfile, time, json, hashlib
+import os
+import sys
+import tempfile
 
 # Isolated test DB
 test_db_dir = tempfile.mkdtemp()
@@ -17,8 +19,7 @@ os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.cache import (
-    cached_read, cached_terminal, cached_exec, cached_run,
-    get_stats, reset_stats, _init, _estimate_tokens
+    cached_read, cached_terminal, cached_exec, get_stats, reset_stats, _init, _estimate_tokens
 )
 
 PASS = 0
@@ -121,9 +122,9 @@ fc = get_stats().get("file_cache", {})
 check(f"100 reads of same file = {big_tokens} tokens (not 100×)",
       fc["tokens_read_from_disk"] == big_tokens,
       f"got {fc['tokens_read_from_disk']} (should be {big_tokens})")
-check(f"hits = 99 (100 reads - 1 miss)",
+check("hits = 99 (100 reads - 1 miss)",
       fc["hits"] == 99, f"got {fc['hits']}")
-check(f"misses = 1",
+check("misses = 1",
       fc["misses"] == 1, f"got {fc['misses']}")
 
 # Compare: old bug would have counted 99 × big_tokens
@@ -204,7 +205,7 @@ code = "print('hello world')"
 c1 = cached_exec(code, ttl=60)
 c2 = cached_exec(code, ttl=60)
 cc = get_stats().get("code_cache", {})
-check(f"Code cache tokens counted once",
+check("Code cache tokens counted once",
       cc["tokens_read_from_disk"] > 0,
       f"got {cc['tokens_read_from_disk']}")
 check("Code cache hit works", c2.get("cached"))
