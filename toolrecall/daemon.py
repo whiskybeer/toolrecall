@@ -1068,6 +1068,11 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
+        # Scan content for injection (cognitive only — AST is for code, not data)
+        cog_err = self.security.cognitive_scan_arguments({"content": content})
+        if cog_err:
+            print(f"[ToolRecall] Cognitive scan blocked write: {path}")
+            return {"error": cog_err}
         result = _cache_write(path, content)
         # Track write as dirty for context tracker
         if result and not result.get("error"):
@@ -1085,6 +1090,11 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
+        # Scan content for injection (cognitive only — AST is for code, not data)
+        cog_err = self.security.cognitive_scan_arguments({"old_string": old_string, "new_string": new_string})
+        if cog_err:
+            print(f"[ToolRecall] Cognitive scan blocked patch: {path}")
+            return {"error": cog_err}
         result = _cache_patch(path, old_string, new_string)
         # Track patch as dirty for context tracker
         if result and not result.get("error"):
@@ -1150,6 +1160,18 @@ class DaemonServer:
         sandbox_err = self.security.check_mcp_tool_access(tool)
         if sandbox_err:
             return {"error": sandbox_err}
+
+        # ═══ Security scan: cognitive + AST injection ═══
+        # Both scans are config-gated (cognitive_check_enabled, ast_check_enabled).
+        # They run BEFORE the cache lookup so cached results also pass security.
+        cog_err = self.security.cognitive_scan_arguments(arguments)
+        if cog_err:
+            print(f"[ToolRecall] Cognitive scan blocked MCP call: {server}/{tool}")
+            return {"error": cog_err}
+        ast_err = self.security.check_ast_injection(arguments)
+        if ast_err:
+            print(f"[ToolRecall] AST injection blocked MCP call: {server}/{tool}")
+            return {"error": ast_err}
 
         # Check cache (only when transparent cache is enabled)
         cached = {"key": f"{server}:{tool}"}  # default for type checker
