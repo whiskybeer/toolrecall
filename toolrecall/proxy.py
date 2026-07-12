@@ -48,6 +48,20 @@ FORWARD_HOSTS = {
     "openrouter.ai",
 }
 
+# Path-based routing: maps path prefixes to API hosts.
+# Used when the SDK sends Host: localhost (OPENAI_BASE_URL=http://localhost:8569).
+PATH_ROUTES = {
+    "api.openai.com": "/v1",
+    "api.anthropic.com": "/v1",
+    "api.deepseek.com": "/v1",
+    "api.x.ai": "/v1",
+    "api.mistral.ai": "/v1",
+    "api.groq.com": "/v1",
+    "api.together.xyz": "/v1",
+    "openrouter.ai": "/v1",
+    "generativelanguage.googleapis.com": "/v1beta",
+}
+
 
 class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
     """Forward proxy handler that caches API responses via ToolRecall daemon.
@@ -69,9 +83,27 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
     # ── Generic dispatch ────────────────────────────────
 
     def _handle(self, method: str):
-        """Handle any HTTP method (GET, POST, etc.) via forwarding proxy."""
-        target_host = self.headers.get("Host", "")
+        """Handle any HTTP method (GET, POST, etc.) via forwarding proxy.
+
+        Resolves the real target host from:
+          1. X-Target-Host header (explicit override, for SDK usage)
+          2. Host header (works with curl -H "Host: api.openai.com")
+          3. Path-based routing: /v1/chat/completions → api.openai.com
+        """
+        target_host = (
+            self.headers.get("X-Target-Host")
+            or self.headers.get("Host", "")
+        )
         target_path = self.path
+
+        # Path-based routing fallback: when Host is localhost (SDK redirect),
+        # infer the real API host from the path prefix.
+        if not target_host or target_host.split(":")[0] in ("localhost", "127.0.0.1"):
+            for known_host, path_prefix in PATH_ROUTES.items():
+                if target_path.startswith(path_prefix):
+                    target_host = known_host
+                    break
+
         target_scheme = "https"
 
         # Only cache known API hosts
@@ -96,27 +128,32 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         request_str = f"{method}:{target_host}:{target_path}:{body_hash}"
         request_hash = hashlib.sha256(request_str.encode()).hexdigest()
 
-        # Check cache
+        # Check cache — only serve cached 2xx responses
         cached = self._client.send({
             "cmd": "cached_api_check",
             "request_hash": request_hash,
         })
         if cached.get("cached"):
-            log.info(
-                "✅ API CACHE HIT: %s %s%s (hash=%s, saved ~%s tokens)",
-                method, target_host, target_path,
-                request_hash[:12], cached.get("tokens_saved", "?"),
-            )
-            self.send_response(cached.get("status", 200))
-            for hdr_key, hdr_val in cached.get("headers", {}).items():
-                if hdr_key.lower() not in ("transfer-encoding", "content-encoding", "content-length"):
-                    self.send_header(hdr_key, hdr_val)
-            self.send_header("X-ToolRecall-Cache", "HIT")
-            self.end_headers()
-            # Body is stored as bytes — write directly.
-            cached_body = cached["body"]
-            self.wfile.write(cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body)
-            return
+            status = cached.get("status", 200)
+            # Don't replay non-2xx responses even if cached
+            if status < 200 or status >= 300:
+                log.warning("Skipping cached non-2xx response (status %d) for %s %s%s",
+                            status, method, target_host, target_path)
+            else:
+                log.info(
+                    "✅ API CACHE HIT: %s %s%s (hash=%s, saved ~%s tokens)",
+                    method, target_host, target_path,
+                    request_hash[:12], cached.get("tokens_saved", "?"),
+                )
+                self.send_response(status)
+                for hdr_key, hdr_val in cached.get("headers", {}).items():
+                    if hdr_key.lower() not in ("transfer-encoding", "content-encoding", "content-length"):
+                        self.send_header(hdr_key, hdr_val)
+                self.send_header("X-ToolRecall-Cache", "HIT")
+                self.end_headers()
+                cached_body = cached["body"]
+                self.wfile.write(cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body)
+                return
 
         # Cache MISS — forward to real API
         log.info("❌ API CACHE MISS: %s %s%s — forwarding...", method, target_host, target_path)
@@ -124,19 +161,27 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             method, target_host, target_path, target_scheme, body_bytes,
         )
 
-        # Store in cache — body is bytes now, stored as-is
-        self._client.send({
-            "cmd": "cached_api_store",
-            "request_hash": request_hash,
-            "method": method,
-            "host": target_host,
-            "path": target_path,
-            "request_body_hash": body_hash,
-            "response_status": resp_status,
-            "response_headers": list(resp_headers),  # list of tuples, preserves duplicates
-            "response_body": resp_body,  # bytes
-            "ttl": 300,
-        })
+        # Store in cache — only cache 2xx responses
+        if 200 <= resp_status < 300:
+            # Convert headers list[tuple] to dict for JSON transport
+            headers_dict = {}
+            for k, v in resp_headers:
+                if k.lower() not in headers_dict:
+                    headers_dict[k] = v  # first wins (preserves Content-Type etc.)
+            # Body must be str for JSON transport (api_cache schema stores TEXT)
+            body_str = resp_body.decode("utf-8", errors="replace") if isinstance(resp_body, bytes) else resp_body
+            self._client.send({
+                "cmd": "cached_api_store",
+                "request_hash": request_hash,
+                "method": method,
+                "host": target_host,
+                "path": target_path,
+                "request_body_hash": body_hash,
+                "response_status": resp_status,
+                "response_headers": headers_dict,
+                "response_body": body_str,
+                "ttl": 300,
+            })
 
         # Respond
         self.send_response(resp_status)
@@ -145,7 +190,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header(k, v)
         self.send_header("X-ToolRecall-Cache", "MISS")
         self.end_headers()
-        # Body is bytes — write directly.
         self.wfile.write(resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8"))
 
     def do_GET(self):
@@ -248,7 +292,8 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
         server = http.server.HTTPServer((bind, port), ForwardProxyHandler)
         actual_port = server.server_port
     except OSError as e:
-        if e.errno == 98:  # Address already in use
+        import errno
+        if e.errno == errno.EADDRINUSE:
             log.error("Port %d already in use", port)
             return
         raise
