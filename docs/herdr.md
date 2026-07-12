@@ -13,7 +13,6 @@
 - [Why Not a Plugin Yet?](#why-not-a-plugin-yet)
 - [Comparison: Paths Side by Side](#comparison-paths-side-by-side)
 - [Troubleshooting](#troubleshooting)
-- [Future: Native herdr Plugin](#future-native-herdr-plugin)
 
 ---
 
@@ -109,9 +108,7 @@ No additional setup needed beyond `toolrecall setup` and `herdr integration inst
 
 ## Why Not a Plugin Yet?
 
-herdr has a plugin system, but ToolRecall does **not** currently ship as a herdr plugin. The two paths above (tr + MCP) are standard ToolRecall features that work in any herdr pane today — no plugin, no Rust build, no herdr-side changes required.
-
-A future native herdr plugin would auto-provision the `tr` binary and MCP config into new panes. Until then, the existing paths cover all agents.
+herdr has a plugin system, but ToolRecall does **not** currently ship as a herdr plugin. The two paths above (tr + MCP) are standard ToolRecall features that work in any herdr pane today — no plugin, no Rust build, no herdr-side changes required. The existing paths cover all agents.
 
 ---
 
@@ -138,17 +135,3 @@ Both paths work together. Use `tr` for quick shell commands and MCP for full age
 
 ---
 
-## Future: Native herdr Plugin
-
-Once herdr's plugin system is stable and ToolRecall's herdr integration is mature enough, ToolRecall will ship as a herdr plugin:
-
-```bash
-herdr plugin install toolrecall
-```
-
-This would auto-provision:
-- The `tr` binary into every new pane
-- MCP server config for MCP-capable agents
-- Environment variables for all agents to discover ToolRecall
-
-Track the issue: [github.com/whiskybeer/toolrecall/issues](https://github.com/whiskybeer/toolrecall/issues)

@@ -164,32 +164,22 @@ def process_results(state):
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│              LangChain / LangGraph Agent             │
-│                                                      │
-│  ┌────────────────────┐    ┌──────────────────────┐  │
-│  │  ToolRecallCache     │    │ ToolRecallCallback   │  │
-│  │  (BaseCache)         │    │ Handler (Callbacks)   │  │
-│  │                      │    │                       │  │
-│  │  set_llm_cache(tr)   │    │  manager.add_handler  │  │
-│  └─────────┬───────────┘    └──────────┬────────────┘  │
-│            │                            │               │
-└────────────┼────────────────────────────┼───────────────┘
-             │                            │
-             ▼                            ▼
-     ┌─────────────────────────────────────────┐
-     │      ToolRecall Daemon (UDS)             │
-     │  ┌──────────┐  ┌──────────────────────┐  │
-     │  │ MCP Cache │  │  SQLite WAL (shared) │  │
-     │  │ (LRU)     │  │  Namespace: langchain│  │
-     │  └──────────┘  └──────────────────────┘  │
-     │         │              │                   │
-     │         ▼              ▼                   │
-     │  ┌──────────────────────────────────────┐  │
-     │  │     Disk cache.db (persistent)        │  │
-     │  └──────────────────────────────────────┘  │
-     └─────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Agent["LangChain / LangGraph Agent"]
+        LC["ToolRecallCache<br/>(BaseCache)<br/>set_llm_cache(tr)"]
+        LH["ToolRecallCallbackHandler<br/>(Callbacks)<br/>manager.add_handler"]
+    end
+
+    subgraph TR["ToolRecall Daemon (UDS)"]
+        MCP["MCP Cache (LRU)"]
+        SQL["SQLite WAL<br/>Namespace: langchain"]
+        DISK["Disk cache.db<br/>(persistent)"]
+        MCP --> SQL --> DISK
+    end
+
+    LC --> MCP
+    LH --> MCP
 ```
 
 Both adapter components talk to the same daemon over the same UDS socket. The daemon manages the SQLite connection — the adapter never opens a direct DB connection, avoiding lock contention. The namespace `"langchain"` separates LangChain cache entries from entries created by other frameworks (ADK) or the shim.
