@@ -230,3 +230,54 @@ import toolrecall.shim
 3. **UDS Path** — `/tmp/toolrecall.sock` or `~/.toolrecall/toolrecall.sock`? A: `XDG_RUNTIME_DIR` (e.g., `/run/user/1000/toolrecall.sock`).
 4. **Auth** — UDS has only Filesystem-Permissions (`chmod 700`). Is that enough? A: Yes, for single-user dev machines.
 5. **Multiuser** — if two users on the machine use ToolRecall, do they need separate sockets? A: Yes, `XDG_RUNTIME_DIR` inherently isolates users.
+
+---
+
+## Appendix: Cache Invalidation Reference
+
+### Cache Invalidation Rules
+
+| Cache Type | Invalidation | How it works |
+|------------|-------------|--------------|
+| **File cache** | **mtime-based** (automatic) | `os.path.getmtime()` checked on every `cached_read()`. File modified → next read fetches fresh from disk. No user action needed. |
+| **Terminal cache** | **TTL-based** | Only cached for the 8 static commands in the allowlist (hostname, whoami, pwd, etc.). Default TTL 300s. |
+| **MCP cache** | **TTL-based** | Configurable per server via `servers_config.<name>.ttl`. Default 60s. |
+| **Forward proxy** | **Request-body hash** | Same request body → same response. New body = fresh API call. No expiry — cached until overwritten. |
+| **Write invalidation** | **Explicit** | Every `cached_write()`, `cached_patch()`, or native `write_file` through the shim immediately deletes stale cache entries. The next read after a write is always a cache miss and fetches fresh data. |
+
+**Stale data cannot persist.** File modifications change mtime, writes invalidate explicitly, TTLs expire automatically. The cache always returns the freshest available data within its invalidation model.
+
+### Full Cache Coverage
+
+| Mechanism | What gets cached | Invalidation | Token saving |
+|-----------|----------------|-------------|-----------|
+| **File cache** | First disk read per file | `mtime` changes → fresh read | Smaller context → provider prefix-cache discounts |
+| **Terminal cache** | Static commands (hostname, whoami, pwd, uname, uptime, df, free, crontab) | TTL-based (default 300s) | Same output never re-sent to LLM |
+| **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (default 60s, per-server override) | Repeated tool results served from local cache |
+| **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Same as file cache |
+| **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
+| **Context Tracker** | Tracks dirty/clean files via checkpoints | In-memory (resets on daemon restart) | **93.8% O(n²) reduction** — drop clean files from context |
+
+### Script & Code Cache (Python API)
+
+`cached_run` and `cached_exec` cache script executions and inline Python code via SQLite:
+
+```python
+from toolrecall import cached_run, cached_exec
+
+# Run a script — cached by path+args hash, invalidated on mtime change
+result = cached_run("/path/to/script.sh", args="--flag value", ttl=300)
+result["output"]    # stdout
+result["exit_code"] # return code
+result["cached"]    # True if served from cache
+
+# Execute Python code string — cached by content hash
+result = cached_exec("print('hello')", ttl=60)
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ttl` | `0` | Seconds to cache. `0` = always execute fresh (no caching). |
+| `args` | `""` | Arguments passed to the script (shlex-split, no shell). |
+
+Cached results are stored in the same SQLite DB as file/terminal caches, share the same invalidation rules, and count toward the same stats.
