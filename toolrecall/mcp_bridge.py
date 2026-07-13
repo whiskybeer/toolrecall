@@ -378,7 +378,11 @@ class MCPBridge:
                         "new_string": arguments.get("new_string", ""),
                     })
                 else:
-                    resp = self._uds_request(uds_cmd, **arguments)
+                    # Mark agent-tool reads so context_tokens_saved counts
+                    if tool_name in ("cached_read", "read_file"):
+                        resp = self._uds_request(uds_cmd, **arguments, source="agent_tool")
+                    else:
+                        resp = self._uds_request(uds_cmd, **arguments)
 
             if "error" in resp:
                 return self._error(req_id, -32603, resp["error"])

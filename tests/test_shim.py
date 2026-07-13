@@ -264,6 +264,57 @@ class TestShimOpenRouting(unittest.TestCase):
         shim_mod._original_open.assert_called_once()
         self.assertEqual(result.read(), "direct content")
 
+    # ─── Bug 1 fix: r+ / w+ / a must not be intercepted ───
+
+    def test_read_write_mode_bypasses_cache(self):
+        """'r+' mode must not be intercepted (writes would go to StringIO)."""
+        shim_mod._TR = {
+            "read": MagicMock(return_value={"cached": True, "content": "fake"}),
+            "terminal": MagicMock(),
+        }
+        real_file = MagicMock()
+        shim_mod._original_open = MagicMock(return_value=real_file)
+
+        result = shim_mod._shim_open("/some/file", "r+")
+        shim_mod._TR["read"].assert_not_called()
+        shim_mod._original_open.assert_called_once_with("/some/file", "r+")
+
+    def test_write_plus_mode_bypasses_cache(self):
+        """'w+' mode must not be intercepted."""
+        shim_mod._TR = {
+            "read": MagicMock(return_value={"cached": True, "content": "fake"}),
+            "terminal": MagicMock(),
+        }
+        real_file = MagicMock()
+        shim_mod._original_open = MagicMock(return_value=real_file)
+
+        shim_mod._shim_open("/some/file", "w+")
+        shim_mod._TR["read"].assert_not_called()
+
+    def test_append_mode_bypasses_cache(self):
+        """'a' mode must not be intercepted."""
+        shim_mod._TR = {
+            "read": MagicMock(return_value={"cached": True, "content": "fake"}),
+            "terminal": MagicMock(),
+        }
+        real_file = MagicMock()
+        shim_mod._original_open = MagicMock(return_value=real_file)
+
+        shim_mod._shim_open("/some/file", "a")
+        shim_mod._TR["read"].assert_not_called()
+
+    def test_rt_mode_is_intercepted(self):
+        """'rt' mode is a pure read and should be intercepted."""
+        shim_mod._TR = {
+            "read": MagicMock(return_value={"cached": True, "content": "cached rt content"}),
+            "terminal": MagicMock(),
+        }
+        shim_mod._original_open = MagicMock()
+
+        result = shim_mod._shim_open("/some/file", "rt")
+        self.assertIsInstance(result, io.StringIO)
+        self.assertEqual(result.read(), "cached rt content")
+
 
 class TestShimSubprocess(unittest.TestCase):
     """_shim_run routing: string commands cached, list commands bypassed."""
@@ -331,6 +382,115 @@ class TestShimSubprocess(unittest.TestCase):
         shim_mod._original_run.assert_called_once_with("ls")
         self.assertEqual(result, "fallback")
 
+    # ─── Bug 2 fix: safe string command routing ───
+
+    def test_safe_string_command_routed_to_cache(self):
+        """Simple string command with no kwargs routes through cached_terminal."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={
+                "output": "file1.txt",
+                "stderr": "",
+                "exit_code": 0,
+            }),
+        }
+        shim_mod._original_run = MagicMock()
+
+        result = shim_mod._shim_run("ls -la")
+
+        shim_mod._TR["terminal"].assert_called_once_with("ls -la")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "file1.txt")
+        self.assertEqual(result.stderr, "")
+        shim_mod._original_run.assert_not_called()
+
+    def test_shell_pipe_bypasses_cache(self):
+        """String command with '|' bypasses cache (shell metachar)."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real result")
+
+        result = shim_mod._shim_run("ls | grep foo")
+
+        shim_mod._TR["terminal"].assert_not_called()
+        shim_mod._original_run.assert_called_once_with("ls | grep foo")
+        self.assertEqual(result, "real result")
+
+    def test_semicolon_bypasses_cache(self):
+        """String command with ';' bypasses cache (shell metachar)."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real")
+
+        shim_mod._shim_run("cd /tmp; ls")
+        shim_mod._TR["terminal"].assert_not_called()
+
+    def test_redirect_bypasses_cache(self):
+        """String command with '>' bypasses cache (shell metachar)."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real")
+
+        shim_mod._shim_run("echo hello > /tmp/out")
+        shim_mod._TR["terminal"].assert_not_called()
+
+    def test_kwargs_cwd_bypasses_cache(self):
+        """String command with cwd= kwarg bypasses cache."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real")
+
+        shim_mod._shim_run("git status", cwd="/tmp")
+        shim_mod._TR["terminal"].assert_not_called()
+
+    def test_kwargs_check_bypasses_cache(self):
+        """String command with check=True kwarg bypasses cache."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real")
+
+        shim_mod._shim_run("git status", check=True)
+        shim_mod._TR["terminal"].assert_not_called()
+
+    def test_kwargs_env_bypasses_cache(self):
+        """String command with env= kwarg bypasses cache."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real")
+
+        shim_mod._shim_run("echo hello", env={"FOO": "bar"})
+        shim_mod._TR["terminal"].assert_not_called()
+
+    def test_string_command_includes_stderr(self):
+        """cached_terminal stderr is passed through to CompletedProcess."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={
+                "output": "stdout content",
+                "stderr": "warning: something",
+                "exit_code": 0,
+            }),
+        }
+        shim_mod._original_run = MagicMock()
+
+        result = shim_mod._shim_run("git status")
+
+        self.assertEqual(result.stdout, "stdout content")
+        self.assertEqual(result.stderr, "warning: something")
+        self.assertEqual(result.returncode, 0)
+
 
 class TestApplyRemove(unittest.TestCase):
     """apply() and remove() correctly patch/unpatch builtins.
@@ -392,6 +552,53 @@ class TestApplyRemove(unittest.TestCase):
         self.assertIs(builtins.open, original_builtins_open)
         # Restore for other tests
         importlib.reload(shim_mod)
+
+    # ─── Bug 4 fix: pytest detection uses basename, not substring ───
+
+    def test_apply_skips_when_pytest_in_argv(self):
+        """apply() skips patching when sys.argv[0] basename starts with 'pytest'."""
+        orig_argv = sys.argv[:]
+        orig_pytest = os.environ.pop("PYTEST_CURRENT_TEST", None)
+        try:
+            sys.argv = ["/usr/local/bin/pytest", "tests/"]
+            shim_mod.remove()
+            shim_mod.apply()
+            # Should NOT have patched — pytest detected
+            self.assertIsNot(builtins.open, shim_mod._shim_open)
+        finally:
+            sys.argv = orig_argv
+            if orig_pytest is not None:
+                os.environ["PYTEST_CURRENT_TEST"] = orig_pytest
+            shim_mod.remove()
+
+    def test_apply_patches_when_script_has_test_in_path(self):
+        """apply() patches when script path contains 'test' but isn't pytest."""
+        orig_argv = sys.argv[:]
+        orig_pytest = os.environ.pop("PYTEST_CURRENT_TEST", None)
+        orig_enabled = shim_mod._ENABLED
+        shim_mod._ENABLED = True
+        try:
+            sys.argv = ["/home/user/my_test_script.py"]
+            shim_mod.remove()
+            shim_mod.apply()
+            # Should have patched — 'test' in path but not pytest basename
+            self.assertIs(builtins.open, shim_mod._shim_open)
+        finally:
+            sys.argv = orig_argv
+            if orig_pytest is not None:
+                os.environ["PYTEST_CURRENT_TEST"] = orig_pytest
+            shim_mod._ENABLED = orig_enabled
+            shim_mod.remove()
+
+    # ─── Bug 5 fix: Popen is no longer patched (was a no-op) ───
+
+    def test_popen_not_patched_by_apply(self):
+        """apply() no longer touches Popen (was a no-op)."""
+        import subprocess
+        original_popen = subprocess.Popen
+        shim_mod.apply()
+        self.assertIs(subprocess.Popen, original_popen)
+        shim_mod.remove()
 
 
 if __name__ == "__main__":

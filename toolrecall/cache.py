@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS terminal_cache (
     command_hash TEXT PRIMARY KEY,
     command TEXT NOT NULL,
     output TEXT NOT NULL,
+    stderr TEXT NOT NULL DEFAULT '',
     exit_code INTEGER NOT NULL,
     cached_at REAL NOT NULL,
     expires_at REAL NOT NULL,
@@ -666,9 +667,9 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
         try:
             cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
             result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, subprocess.TimeoutExpired) as e:
             return {"error": f"Cannot parse command: {e}", "exit_code": -1, "cached": False}
-        return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+        return {"output": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "cached": False}
 
     # Normalize command for cache key when enabled
     cmd_key = normalize_command(cmd) if config.get("norm", "enabled", default=False) else cmd
@@ -678,13 +679,13 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT output, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
+                "SELECT output, stderr, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
                 (cmd_hash,)
             ).fetchone()
             if row and row["expires_at"] > now:
                 conn.execute("UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,))
                 _record("terminal_cache", hit=True)
-                return {"output": row["output"], "exit_code": row["exit_code"], "cached": True}
+                return {"output": row["output"], "stderr": row["stderr"], "exit_code": row["exit_code"], "cached": True}
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal read failed: {e}")
 
@@ -694,7 +695,7 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     try:
         cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
         result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
-    except (ValueError, OSError):
+    except (ValueError, OSError, subprocess.TimeoutExpired):
         # SECURITY: shlex.split failed — do NOT fall back to shell=True.
         # Return an error instead of risking command injection.
         if _LOG_SHELL_FALLBACK:
@@ -705,15 +706,15 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     try:
         with _db() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, cached_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (cmd_hash, cmd, result.stdout, result.returncode, now, expires))
+                INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, stderr, cached_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (cmd_hash, cmd, result.stdout, result.returncode, result.stderr, now, expires))
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal persist failed: {e}")
 
     _record_tokens_read_from_disk("terminal_cache", _estimate_tokens(result.stdout))
 
-    return {"output": result.stdout, "exit_code": result.returncode, "cached": False}
+    return {"output": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "cached": False}
 
 
 # ─── SCRIPT CACHE (SQLite + mtime) ─────────────────────────

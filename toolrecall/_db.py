@@ -279,3 +279,8 @@ def _init(schema: str = ""):
             conn.execute("ALTER TABLE cache_stats ADD COLUMN context_tokens_saved INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # column already exists (idempotent)
+        # Migration: v0.x → v0.y — add stderr column to terminal_cache
+        try:
+            conn.execute("ALTER TABLE terminal_cache ADD COLUMN stderr TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # column already exists (idempotent)

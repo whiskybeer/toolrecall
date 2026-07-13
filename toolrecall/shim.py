@@ -128,7 +128,7 @@ def _shim_open(path, mode='r', *args, **kwargs):
             return _original_open(path_str, mode, *args, **kwargs)
 
         tr = _get_tr()
-        if tr and 'r' in mode and 'b' not in mode:
+        if tr and mode in ('r', 'rt'):
             try:
                 result = tr["read"](path_str)
                 # Only serve from shim if it was a cache HIT.
@@ -146,38 +146,53 @@ def _shim_open(path, mode='r', *args, **kwargs):
 
 
 # ─── Patch subprocess ───
-try:
-    import subprocess as _sp
-    _original_run = _sp.run
-    _original_popen = _sp.Popen
-except ImportError:
-    _sp = None
+import re
+import shlex
+import subprocess as _sp
+_original_run = _sp.run
+_original_popen = _sp.Popen
+
+# Shell metacharacters that indicate a string command is not a simple
+# single-word call — routing it through cached_terminal would mangle it.
+_SHELL_METACHARS = re.compile(r'[|;&><$`*?()\[\]{}#!~^]')
+
+
+def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
+    """Check if a string command is safe to route through cached_terminal.
+
+    Safe = no kwargs that change subprocess semantics AND no shell
+    metacharacters that would be mangled by shlex.split.
+    """
+    # Kwargs that cached_terminal can't preserve
+    if any(k in kwargs for k in ('cwd', 'env', 'input', 'check', 'capture_output')):
+        return False
+    # Shell metacharacters would be mangled by shlex.split
+    if _SHELL_METACHARS.search(cmd):
+        return False
+    return True
+
 
 def _shim_run(*args, **kwargs):
     tr = _get_tr()
     if tr and args:
         cmd = args[0] if args else kwargs.get("args", "")
-        # Only route string commands through cached_terminal.
-        # List-form commands (e.g. ["python3", "-c", code]) are passed
-        # through to the original subprocess.run — cached_terminal expects
-        # a shell string and shlex.split would mangle quoting in code strings.
-        if isinstance(cmd, str):
+        if isinstance(cmd, str) and _is_safe_string_command(cmd, kwargs):
             try:
                 result = tr["terminal"](cmd)
                 if result and "output" in result and "exit_code" in result:
                     from subprocess import CompletedProcess
+
+                    stdout = result.get("output", "")
+                    stderr = result.get("error", result.get("stderr", ""))
                     return CompletedProcess(
                         args=args[0] if args else kwargs.get("args", []),
                         returncode=result["exit_code"],
-                        stdout=result["output"],
-                        stderr=result.get("error", ""),
+                        stdout=stdout,
+                        stderr=stderr,
                     )
             except Exception:
                 pass
     return _original_run(*args, **kwargs)
-
-# Popen stays original (background/captured output can't cache)
-_shim_popen = _original_popen if _sp else None
 
 
 def apply():
@@ -190,26 +205,23 @@ def apply():
         return
     # Don't patch when running under pytest — interferes with stdout/stderr capture.
     # At .pth load time, pytest isn't in sys.modules yet. Detection:
-    # - pytest binary: sys.argv[0] contains 'pytest' (e.g. /usr/local/bin/pytest)
+    # - pytest binary: sys.argv[0] basename starts with 'pytest'
     # - python3 -m pytest: sys.argv[0] is '-m' (module mode — can't tell which module)
     # - PYTEST_CURRENT_TEST env var is set during test execution
-    # For the '-m' case, we can't distinguish pytest from other modules at .pth time,
-    # so we also check if any arg looks like a test path.
     _argv = sys.argv[:5] if sys.argv else []
-    if any("pytest" in str(a) for a in _argv):
+    if any(os.path.basename(str(a)).startswith("pytest") for a in _argv[:1]):
         return
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return
-    # For 'python3 -m pytest tests/...' — check for test-like args
+    # For 'python3 -m pytest tests/...' — check for pytest in remaining args
     if _argv and _argv[0] == "-m" and any(
-        str(a).startswith("test") or "pytest" in str(a)
+        "pytest" in str(a)
         for a in _argv[1:]
     ):
         return
     builtins.open = _shim_open
     if _sp:
         _sp.run = _shim_run
-        _sp.Popen = _shim_popen
 
 
 def remove():
@@ -217,7 +229,6 @@ def remove():
     builtins.open = _original_open
     if _sp:
         _sp.run = _original_run
-        _sp.Popen = _original_popen
 
 
 # ─── Auto-apply on .pth import ───

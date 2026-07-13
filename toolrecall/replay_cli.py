@@ -83,12 +83,10 @@ def _cmd_record(rest: list[str]) -> None:
         print("Error: Missing scenario name. Usage: toolrecall replay record <name>")
         return
     scenario = rest[0]
-    from toolrecall.replay import start_recording
-    result = start_recording(scenario)  # noqa: F841 — intentional discard
-    print(f"🟡 Recording started: {scenario}")
-    print("   All tool calls will be recorded.")
-    print("   Run 'toolrecall replay stop' to stop recording.")
-    print(f"   Run 'toolrecall replay replay {scenario}' to replay.")
+    print("⚠ Replay recording is not yet wired into the daemon.")
+    print("   This command stores no tool-call data currently.")
+    print("   See: https://github.com/whiskybeer/toolrecall/issues (planned feature)")
+    print(f"   Scenario name saved: {scenario} (for future use)")
 
 
 def _cmd_replay(rest: list[str]) -> None:
