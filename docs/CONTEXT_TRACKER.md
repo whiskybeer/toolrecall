@@ -57,7 +57,7 @@ Agent                                    ToolRecall Daemon
   │  read_file("daemon.py") → CACHE HIT (0ms)  │
 ```
 
-### Three MCP Tools
+### Four MCP Tools (Available in the MCP Bridge)
 
 | Tool | Purpose | Request | Response |
 |------|---------|---------|----------|

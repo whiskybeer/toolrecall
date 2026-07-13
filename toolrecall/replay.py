@@ -16,9 +16,10 @@ scenario name + tool call hash. Each scenario is a collection of
 
 Architecture:
     ReplayManager is the core — it manages scenarios, records calls, and
-    replays them. The daemon checks Replay mode before calling the real cache.
-    When recording, all tool outputs are stored. When replaying, matching
-    calls return cached responses without executing anything.
+    replays them. The daemon does NOT yet check Replay mode — this is a
+    planned integration (see replay_cli.py for status). When wired,
+    recording stores all tool outputs and replay returns cached responses
+    without executing anything.
 
 Usage:
     >>> from toolrecall.replay import ReplayManager, start_recording, start_replay
@@ -73,6 +74,9 @@ class _Mode:
 
 
 # Module-level singleton — daemon and CLI share this
+# NOTE: This is in-process only. Daemon and CLI are separate processes,
+# so the mode state does not cross process boundaries. This is a known
+# limitation — see replay_cli.py for status.
 _active = _Mode()
 
 
