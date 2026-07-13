@@ -518,6 +518,23 @@ class TestShimSubprocess(unittest.TestCase):
         shim_mod._TR["terminal"].assert_called_once_with("git status")
         shim_mod._original_run.assert_not_called()
 
+    def test_universal_newlines_routes_to_cache(self):
+        """capture_output=True, universal_newlines=True routes through cache (old alias)."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={
+                "output": "result",
+                "stderr": "",
+                "exit_code": 0,
+            }),
+        }
+        shim_mod._original_run = MagicMock()
+
+        result = shim_mod._shim_run("git status", capture_output=True, universal_newlines=True)
+
+        shim_mod._TR["terminal"].assert_called_once_with("git status")
+        shim_mod._original_run.assert_not_called()
+
     def test_string_command_includes_stderr(self):
         """cached_terminal stderr is passed through to CompletedProcess."""
         shim_mod._TR = {

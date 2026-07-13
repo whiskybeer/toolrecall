@@ -42,6 +42,11 @@ MAX_BODY_SIZE = 5 * 1024 * 1024
 # and any whitespace variation providers might send.
 _STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 
+# Upstream HTTPS connection timeout. Configurable via TOOLRECALL_FORWARD_TIMEOUT
+# env var (seconds). Default: 30s for normal API calls, 300s for streaming SSE.
+_FORWARD_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_TIMEOUT", "30"))
+_FORWARD_STREAM_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_STREAM_TIMEOUT", "300"))
+
 # Known LLM API hosts that the forward proxy routes requests for.
 FORWARD_HOSTS = {
     "api.openai.com",
@@ -238,7 +243,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # silently sending Authorization headers over unencrypted transport.
         # All hosts in FORWARD_HOSTS are HTTPS-only.
         try:
-            conn = http.client.HTTPSConnection(host, timeout=30)
+            conn = http.client.HTTPSConnection(host, timeout=_FORWARD_TIMEOUT)
         except Exception as e:
             log.error("Cannot establish HTTPS connection to %s: %s", host, e)
             return 502, [("Content-Type", "application/json")], json.dumps({
@@ -300,7 +305,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         """
         import http.client
         try:
-            conn = http.client.HTTPSConnection(host, timeout=30)
+            conn = http.client.HTTPSConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
         except Exception as e:
             log.error("Cannot establish HTTPS connection to %s: %s", host, e)
             self.send_response(502)

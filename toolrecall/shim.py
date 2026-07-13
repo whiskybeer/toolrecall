@@ -177,8 +177,8 @@ def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
     if not capture and stdout is not subprocess.PIPE:
         return False
 
-    # Must have text=True — cached_terminal returns str, not bytes
-    if not kwargs.get("text", False):
+    # Must have text=True or universal_newlines=True — cached_terminal returns str, not bytes
+    if not kwargs.get("text", False) and not kwargs.get("universal_newlines", False):
         return False
 
     # Kwargs that cached_terminal can't preserve
