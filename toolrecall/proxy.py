@@ -115,6 +115,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         body_bytes = b""
         content_length = int(self.headers.get("Content-Length", 0))
+        is_streaming = False
         if content_length > 0:
             if content_length > MAX_BODY_SIZE:
                 self.send_response(413)
@@ -122,11 +123,23 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error":"Request too large"}')
                 return
             body_bytes = self.rfile.read(content_length)
+            # Detect streaming requests — bypass cache, use chunked relay
+            if body_bytes and b'"stream": true' in body_bytes:
+                is_streaming = True
 
         # Build cache key: hash(method + host + path + body)
         body_hash = hashlib.sha256(body_bytes).hexdigest()
         request_str = f"{method}:{target_host}:{target_path}:{body_hash}"
         request_hash = hashlib.sha256(request_str.encode()).hexdigest()
+
+        # Streaming requests: bypass cache entirely, use chunked passthrough
+        if is_streaming:
+            log.info(
+                "🔴 STREAM: %s %s%s — bypassing cache, chunked relay",
+                method, target_host, target_path,
+            )
+            self._forward_streaming(method, target_host, target_path, target_scheme, body_bytes)
+            return
 
         # Check cache — only serve cached 2xx responses
         cached = self._client.send({
@@ -270,6 +283,66 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         # Body is now bytes — write directly.
         self.wfile.write(body if isinstance(body, bytes) else body.encode("utf-8"))
+
+    def _forward_streaming(self, method: str, host: str, path: str,
+                           scheme: str, body: bytes):
+        """Forward request and relay response as chunked/streaming.
+
+        Reads the upstream response line by line (SSE) and writes each
+        chunk to the client immediately. No caching, no buffering.
+        """
+        import http.client
+        try:
+            conn = http.client.HTTPSConnection(host, timeout=30)
+        except Exception as e:
+            log.error("Cannot establish HTTPS connection to %s: %s", host, e)
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": f"HTTPS connection failed: {e}"}).encode())
+            return
+
+        headers = {}
+        skip_headers = {"host", "connection", "proxy-connection",
+                        "transfer-encoding", "content-length"}
+        for k, v in self.headers.items():
+            if k.lower() not in skip_headers:
+                headers[k] = v
+
+        try:
+            conn.request(method, path, body=body or None, headers=headers)
+            resp = conn.getresponse()
+
+            # Relay status line
+            self.send_response(resp.status)
+
+            # Relay headers, dropping transfer-encoding (we'll use chunked)
+            for k, v in resp.getheaders():
+                if k.lower() not in ("transfer-encoding", "content-encoding",
+                                     "content-length", "connection"):
+                    self.send_header(k, v)
+            self.send_header("X-ToolRecall-Cache", "STREAM")
+            self.send_header("X-ToolRecall-Stream", "passthrough")
+            self.end_headers()
+
+            # Relay body chunk by chunk — SSE lines or raw bytes
+            buf = resp if hasattr(resp, "readline") else resp
+            while True:
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+
+            conn.close()
+        except Exception as e:
+            log.error("Streaming forward failed for %s %s%s: %s", method, host, path, e)
+            # If we already sent headers, we can't change status
+            # Log the error and let the connection drop
+            try:
+                self.wfile.write(b"\n\n[ToolRecall streaming error]\n")
+            except Exception:
+                pass
 
     def log_message(self, format, *args):
         log.debug("ForwardProxy: " + format, *args)
