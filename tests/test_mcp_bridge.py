@@ -11,7 +11,7 @@ Tests cover:
   - MCPBridge handles mcp_call and mcp_list_servers
   - MCPBridge returns -32601 for unknown tools/methods
   - MCPBridge silently ignores notifications/initialized
-  - TOOL_DEFINITIONS contain correct schemas for all 14 tools (10 original + 4 native-named aliases)
+  - TOOL_DEFINITIONS contain correct schemas for all 18 tools (14 original + 4 context tracker)
   - CMD_TO_MCP mapping covers all tool names (native aliases map to cached_* daemon commands)
   - main() exits with error when daemon unavailable
 
@@ -152,7 +152,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     # ── Tools/List ─────────────────────────────────────────
 
     def test_tools_list_returns_all_with_gates_open(self):
-        """When all gates enabled, all 14 tools are listed (10 original + 4 native aliases)."""
+        """When all gates enabled, all 18 tools are listed (14 original + 4 context tracker)."""
         resp = self.bridge.handle_request({
             "jsonrpc": "2.0", "method": "tools/list", "id": 1
         })
@@ -174,7 +174,12 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         self.assertIn("write_file", names)
         self.assertIn("patch", names)
         self.assertIn("terminal", names)
-        self.assertEqual(len(tools), 14)
+        # Context tracker tools
+        self.assertIn("context_set_checkpoint", names)
+        self.assertIn("context_get_dirty", names)
+        self.assertIn("context_get_stats", names)
+        self.assertIn("context_reset", names)
+        self.assertEqual(len(tools), 18)
 
     def test_tools_list_hides_terminal_when_disabled(self):
         """cached_terminal and terminal are hidden when daemon has allow_terminal=False."""
@@ -358,6 +363,76 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         })
         self.assertIn("result", resp)
 
+    # ── Tools/Call: Context Tracker ──────────────────────
+
+    def test_tool_call_context_set_checkpoint(self):
+        """context_set_checkpoint calls daemon with cmd=context_set_checkpoint."""
+        resp = self.bridge.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
+            "params": {
+                "name": "context_set_checkpoint",
+                "arguments": {"name": "before_edit"}
+            }
+        })
+        self.assertIn("result", resp)
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn("context_set_checkpoint", text)
+
+    def test_tool_call_context_get_dirty(self):
+        """context_get_dirty calls daemon with cmd=context_get_dirty."""
+        resp = self.bridge.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
+            "params": {
+                "name": "context_get_dirty",
+                "arguments": {"checkpoint": 1}
+            }
+        })
+        self.assertIn("result", resp)
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn("context_get_dirty", text)
+
+    def test_tool_call_context_get_stats(self):
+        """context_get_stats calls daemon with cmd=context_get_stats."""
+        resp = self.bridge.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
+            "params": {"name": "context_get_stats", "arguments": {}}
+        })
+        self.assertIn("result", resp)
+
+    def test_tool_call_context_reset(self):
+        """context_reset calls daemon with cmd=context_reset."""
+        resp = self.bridge.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
+            "params": {"name": "context_reset", "arguments": {}}
+        })
+        self.assertIn("result", resp)
+
+    # ── Tools/Call: source=agent_tool tracking ───────────
+
+    def test_tool_call_cached_read_sends_source_agent_tool(self):
+        """cached_read adds source=agent_tool to the daemon request."""
+        daemon2 = MockDaemonServer(self.sock_path)
+        daemon2.start(call_responses={
+            "cached_read": {"result": {"echo": "cached_read", "source": "agent_tool"}},
+        })
+        resp = self.bridge.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
+            "params": {"name": "cached_read", "arguments": {"path": "/tmp/test.txt"}}
+        })
+        self.assertIn("result", resp)
+
+    def test_tool_call_read_file_sends_source_agent_tool(self):
+        """read_file (native alias) adds source=agent_tool to the daemon request."""
+        daemon2 = MockDaemonServer(self.sock_path)
+        daemon2.start(call_responses={
+            "cached_read": {"result": {"echo": "cached_read", "source": "agent_tool"}},
+        })
+        resp = self.bridge.handle_request({
+            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
+            "params": {"name": "read_file", "arguments": {"path": "/tmp/test.txt"}}
+        })
+        self.assertIn("result", resp)
+
     # ── Error handling ─────────────────────────────────────
 
     def test_unknown_tool_returns_error(self):
@@ -408,11 +483,11 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
 
 class TestToolDefinitions(unittest.TestCase):
-    """TOOL_DEFINITIONS contains valid schemas for all 14 tools."""
+    """TOOL_DEFINITIONS contains valid schemas for all 18 tools."""
 
-    def test_has_all_14_tools(self):
-        """There are exactly 14 tool definitions (10 original + 4 native-named aliases)."""
-        self.assertEqual(len(TOOL_DEFINITIONS), 14)
+    def test_has_all_18_tools(self):
+        """There are exactly 18 tool definitions (14 original + 4 context tracker)."""
+        self.assertEqual(len(TOOL_DEFINITIONS), 18)
 
     def test_each_tool_has_valid_schema(self):
         """Every tool has name, description, and inputSchema with properties."""

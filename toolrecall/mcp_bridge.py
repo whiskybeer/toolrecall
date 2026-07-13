@@ -212,6 +212,56 @@ TOOL_DEFINITIONS = [
             "required": []
         }
     },
+    # ── Context Tracker tools (checkpoint → get_dirty → drop clean files) ──
+    {
+        "name": "context_set_checkpoint",
+        "description": "Mark current file state as a checkpoint. "
+                       "Call this before reading files — files dirtied after this "
+                       "point are tracked. Returns {checkpoint_id, name, dirty_before}.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Optional label for this checkpoint"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "context_get_dirty",
+        "description": "Get files dirtied (written/patched) and files that are still "
+                       "clean (read-only) since a checkpoint. "
+                       "Use to determine which files to drop from context: drop files "
+                       "in the 'clean' list, keep files in the 'dirty' list. "
+                       "Returns {dirty: [...], clean: [...], total_dirty, total_clean}.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "checkpoint": {"type": "integer", "description": "Checkpoint ID to diff against (default: current)"}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "context_get_stats",
+        "description": "Full status of the context tracker: all dirty and clean files, "
+                       "checkpoint ID, and total read count.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "context_reset",
+        "description": "Reset the context tracker: clear all checkpoints, dirty files, "
+                       "and read tracking. After reset, call context_set_checkpoint "
+                       "before starting work.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
 ]
 
 CMD_TO_MCP = {
@@ -231,6 +281,10 @@ CMD_TO_MCP = {
     "cache_refresh_file": "cache_refresh_file",
     "mcp_call": "mcp_call",
     "mcp_list_servers": "mcp_list_servers",
+    "context_set_checkpoint": "context_set_checkpoint",
+    "context_get_dirty": "context_get_dirty",
+    "context_get_stats": "context_get_stats",
+    "context_reset": "context_reset",
 }
 
 
@@ -292,18 +346,23 @@ class MCPBridge:
                     "security": security,
                 },
                 "instructions": (
-                                    "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
-                                    "This bridge connects to the ToolRecall daemon. "
-                                    "All file read/write tools are transparently cached.\n"
-                                    "  read_file / cached_read: path-allowlisted (bypass_cache=true for fresh read)\n"
-                                    "  write_file: write content, invalidates cache\n"
-                                    "  patch: find-and-replace, invalidates cache\n"
-                                    "  cache_refresh_file: re-read a single file from disk (safe)\n"
-                                    "  cache_status: view cache statistics\n"
-                                    "  terminal / cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
-                                    "  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n\n"
-                                    "Start daemon: toolrecall daemon &"
-                                ),
+                                                    "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\\n\\n"
+                                                    "This bridge connects to the ToolRecall daemon. "
+                                                    "All file read/write tools are transparently cached.\\n"
+                                                    "  read_file / cached_read: path-allowlisted (bypass_cache=true for fresh read)\\n"
+                                                    "  write_file: write content, invalidates cache\\n"
+                                                    "  patch: find-and-replace, invalidates cache\\n"
+                                                    "  cache_refresh_file: re-read a single file from disk (safe)\\n"
+                                                    "  cache_status: view cache statistics\\n"
+                                                    "  terminal / cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\\n"
+                                                    "  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\\n"
+                                                    "  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\\n"
+                                                    "    Context Tracker — bound your context window.\\n"
+                                                    "    Pattern: context_set_checkpoint → read files → work → "
+                                                    "context_get_dirty → drop 'clean' files from context → "
+                                                    "context_set_checkpoint again.\\n\\n"
+                                                    "Start daemon: toolrecall daemon &"
+                                                ),
             }
         }
 
