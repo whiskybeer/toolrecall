@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.8.8"
+version = "0.8.9"
 description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
 readme = "README.md"
 authors = [{name = "Robin Schultka", email = "robin@nousresearch.com"}]
@@ -52,4 +52,4 @@ toolrecall = "toolrecall.cli:main"
 include = ["toolrecall*"]
 
 [tool.setuptools.package-data]
-toolrecall = ["config.toml", "tr_shim.pth"]
+toolrecall = ["config.toml", "tr_shim.pth", "adapters/README.md"]

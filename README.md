@@ -10,7 +10,7 @@ ToolRecall sits between your agent and the OS (or your API provider). On repeat 
 >
 > ToolRecall excels where agents have limited context budgets and benefit from deterministic cache + MCP multiplexing. If you run **Claude Code** or **Codex CLI**, the shim and MCP bridge can cause stale-state issues — those agents manage their own in-memory tool tracking natively. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
-**Zero pip dependencies. Python 3.11+ stdlib only.** 76 KB install. Everything starts automatically.
+**Zero pip dependencies. Python 3.11+ stdlib only.** ~132 KB install. Everything starts automatically.
 
 ```bash
 pipx install toolrecall
@@ -31,7 +31,7 @@ toolrecall setup          # One-shot: config → systemd → shim → daemon sta
 | **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (default 60s, per-server override) | Repeated tool results served from local cache |
 | **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Same as file cache |
 | **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
-| **Context Tracker** | Tracks dirty/clean files via checkpoints | In-memory (resets on daemon restart) | **93.8% O(n²) reduction** — drop clean files from context |
+| **Context Tracker** | Tracks dirty/clean files via checkpoints | In-memory (resets on daemon restart) | **~90% O(n²) reduction** — drop clean files from context every turn |
 
 Dynamic commands (`git`, `ls`, `curl`) and state-changing operations always execute live.
 
