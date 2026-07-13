@@ -327,8 +327,8 @@ class TestShimSubprocess(unittest.TestCase):
         shim_mod._TR = self._orig_tr
         shim_mod._original_run = self._orig_run
 
-    def test_string_command_routed_to_cache(self):
-        """String-form commands go through cached_terminal."""
+    def test_string_command_without_capture_bypasses_cache(self):
+        """String command without capture_output=True bypasses cache (falls through to original)."""
         shim_mod._TR = {
             "read": MagicMock(),
             "terminal": MagicMock(return_value={
@@ -336,14 +336,12 @@ class TestShimSubprocess(unittest.TestCase):
                 "exit_code": 0,
             }),
         }
-        shim_mod._original_run = MagicMock()
+        shim_mod._original_run = MagicMock(return_value="direct result")
 
         result = shim_mod._shim_run("ls -la")
 
-        shim_mod._TR["terminal"].assert_called_once_with("ls -la")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "file1.txt\nfile2.txt")
-        shim_mod._original_run.assert_not_called()
+        shim_mod._TR["terminal"].assert_not_called()
+        shim_mod._original_run.assert_called_once_with("ls -la")
 
     def test_list_command_bypasses_cache(self):
         """List-form commands bypass cache (avoids shlex mangling)."""
@@ -385,7 +383,7 @@ class TestShimSubprocess(unittest.TestCase):
     # ─── Bug 2 fix: safe string command routing ───
 
     def test_safe_string_command_routed_to_cache(self):
-        """Simple string command with no kwargs routes through cached_terminal."""
+        """Simple string command with capture_output=True routes through cached_terminal."""
         shim_mod._TR = {
             "read": MagicMock(),
             "terminal": MagicMock(return_value={
@@ -396,7 +394,7 @@ class TestShimSubprocess(unittest.TestCase):
         }
         shim_mod._original_run = MagicMock()
 
-        result = shim_mod._shim_run("ls -la")
+        result = shim_mod._shim_run("ls -la", capture_output=True, text=True)
 
         shim_mod._TR["terminal"].assert_called_once_with("ls -la")
         self.assertEqual(result.returncode, 0)
@@ -473,6 +471,53 @@ class TestShimSubprocess(unittest.TestCase):
         shim_mod._shim_run("echo hello", env={"FOO": "bar"})
         shim_mod._TR["terminal"].assert_not_called()
 
+    def test_capture_with_text_routes_to_cache(self):
+        """capture_output=True, text=True routes through cached_terminal."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={
+                "output": "result",
+                "stderr": "",
+                "exit_code": 0,
+            }),
+        }
+        shim_mod._original_run = MagicMock()
+
+        result = shim_mod._shim_run("git status", capture_output=True, text=True)
+
+        shim_mod._TR["terminal"].assert_called_once_with("git status")
+        shim_mod._original_run.assert_not_called()
+        self.assertEqual(result.returncode, 0)
+
+    def test_capture_without_text_bypasses_cache(self):
+        """capture_output=True without text=True bypasses (bytes vs str mismatch)."""
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={"output": "cached", "exit_code": 0}),
+        }
+        shim_mod._original_run = MagicMock(return_value="real")
+
+        shim_mod._shim_run("git status", capture_output=True)
+        shim_mod._TR["terminal"].assert_not_called()
+
+    def test_stdout_pipe_with_text_routes_to_cache(self):
+        """stdout=subprocess.PIPE, text=True routes through cached_terminal."""
+        import subprocess
+        shim_mod._TR = {
+            "read": MagicMock(),
+            "terminal": MagicMock(return_value={
+                "output": "result",
+                "stderr": "",
+                "exit_code": 0,
+            }),
+        }
+        shim_mod._original_run = MagicMock()
+
+        result = shim_mod._shim_run("git status", stdout=subprocess.PIPE, text=True)
+
+        shim_mod._TR["terminal"].assert_called_once_with("git status")
+        shim_mod._original_run.assert_not_called()
+
     def test_string_command_includes_stderr(self):
         """cached_terminal stderr is passed through to CompletedProcess."""
         shim_mod._TR = {
@@ -485,7 +530,7 @@ class TestShimSubprocess(unittest.TestCase):
         }
         shim_mod._original_run = MagicMock()
 
-        result = shim_mod._shim_run("git status")
+        result = shim_mod._shim_run("git status", capture_output=True, text=True)
 
         self.assertEqual(result.stdout, "stdout content")
         self.assertEqual(result.stderr, "warning: something")

@@ -6,6 +6,7 @@ This is what the proxy ultimately does, minus the HTTP server layer.
 """
 import json
 import os
+import re
 import sys
 import unittest
 
@@ -144,45 +145,49 @@ class TestProxyCacheE2E(unittest.TestCase):
 
 
 class TestStreamingDetection(unittest.TestCase):
-    """Test that stream: true detection works correctly.
+    """Test that stream: true detection works correctly using regex.
 
-    The proxy reads the request body and checks for the stream: true marker
-    before deciding whether to cache or stream. These tests verify the
-    detection logic independently of the HTTP server layer.
+    The proxy uses _STREAM_RE to detect streaming requests in the body.
+    These tests use the same pattern independently of the HTTP server.
     """
+
+    _STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 
     def test_standard_request_not_streaming(self):
         """Body without stream:true is not detected as streaming."""
         body = b'{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]}'
-        self.assertNotIn(b'"stream": true', body)
+        self.assertIsNone(self._STREAM_RE.search(body))
 
     def test_chat_completion_streaming(self):
         """OpenAI-style streaming request body is detected as streaming."""
         body = b'{"model": "gpt-4", "stream": true, "messages": [{"role": "user", "content": "Hello"}]}'
-        self.assertIn(b'"stream": true', body)
+        self.assertIsNotNone(self._STREAM_RE.search(body))
 
     def test_anthropic_streaming(self):
         """Anthropic-style streaming request body is detected."""
         body = b'{"model": "claude-3", "stream": true, "messages": [{"role": "user", "content": "Hi"}]}'
-        self.assertIn(b'"stream": true', body)
+        self.assertIsNotNone(self._STREAM_RE.search(body))
 
     def test_stream_false_not_detected(self):
         """stream: false should not be detected as streaming."""
         body = b'{"model": "gpt-4", "stream": false, "messages": [{"role": "user", "content": "Hello"}]}'
-        self.assertNotIn(b'"stream": true', body)
+        self.assertIsNone(self._STREAM_RE.search(body))
 
-    def test_standard_streaming_format(self):
-        """Canonical JSON format {'stream': true} is detected."""
-        # The proxy checks for b'"stream": true' (canonical format from all major providers).
-        # Variations like {"stream":true} (no space) are also caught.
+    def test_whitespace_variants(self):
+        """All whitespace variations of stream: true are detected via regex."""
         bodies = [
-            b'{"stream": true}',
-            b'{"stream":true}',
+            b'{"stream": true}',      # canonical JSON
+            b'{"stream":true}',       # compact (no space)
+            b'{"stream":  true}',     # extra space
+            b'{"stream":\ttrue}',     # tab
+            b'{"stream":\n true}',    # newline
         ]
         for body in bodies:
             with self.subTest(body=body):
-                has_stream = b'"stream": true' in body or b'"stream":true' in body
-                self.assertTrue(has_stream, f"Failed to detect stream:true in {body}")
+                self.assertIsNotNone(
+                    self._STREAM_RE.search(body),
+                    f"Failed to detect stream:true in {body}",
+                )
 
 
 if __name__ == "__main__":

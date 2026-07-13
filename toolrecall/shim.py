@@ -160,12 +160,31 @@ _SHELL_METACHARS = re.compile(r'[|;&><$`*?()\[\]{}#!~^]')
 def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
     """Check if a string command is safe to route through cached_terminal.
 
-    Safe = no kwargs that change subprocess semantics AND no shell
-    metacharacters that would be mangled by shlex.split.
+    Safe = the caller wants captured output (capture_output=True or
+    stdout=PIPE, text=True) so we can return a CompletedProcess with
+    stdout/stderr, AND no kwargs that cached_terminal can't preserve.
+
+    Calls without capture (e.g. shell=True with no capture) expect
+    output on the console and stdout=None — routing them through
+    cached_terminal would silently change semantics.
     """
-    # Kwargs that cached_terminal can't preserve
-    if any(k in kwargs for k in ('cwd', 'env', 'input', 'check', 'capture_output')):
+    import subprocess
+
+    # Must have capturing enabled — otherwise the caller expects
+    # console output and stdout=None, not a str.
+    capture = kwargs.get("capture_output", False)
+    stdout = kwargs.get("stdout", None)
+    if not capture and stdout is not subprocess.PIPE:
         return False
+
+    # Must have text=True — cached_terminal returns str, not bytes
+    if not kwargs.get("text", False):
+        return False
+
+    # Kwargs that cached_terminal can't preserve
+    if any(k in kwargs for k in ('cwd', 'env', 'input', 'check')):
+        return False
+
     # Shell metacharacters would be mangled by shlex.split
     if _SHELL_METACHARS.search(cmd):
         return False

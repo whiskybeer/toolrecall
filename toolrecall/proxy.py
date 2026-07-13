@@ -25,6 +25,7 @@ import http.server
 import json
 import logging
 import os
+import re
 import sys
 
 from toolrecall.transport import TransportClient
@@ -34,6 +35,12 @@ log = logging.getLogger("toolrecall.proxy")
 # Maximum POST body size (5 MB) — prevents OOM from malicious payloads
 # or misconfigured clients sending multi-GB blobs to a localhost process.
 MAX_BODY_SIZE = 5 * 1024 * 1024
+
+# Regex to detect streaming requests in JSON body.
+# Matches "stream": true with any whitespace (including none) around the colon.
+# Catches canonical JSON ({"stream": true}), compact ({"stream":true}),
+# and any whitespace variation providers might send.
+_STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 
 # Known LLM API hosts that the forward proxy routes requests for.
 FORWARD_HOSTS = {
@@ -124,7 +131,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             body_bytes = self.rfile.read(content_length)
             # Detect streaming requests — bypass cache, use chunked relay
-            if body_bytes and b'"stream": true' in body_bytes:
+            if body_bytes and _STREAM_RE.search(body_bytes):
                 is_streaming = True
 
         # Build cache key: hash(method + host + path + body)
