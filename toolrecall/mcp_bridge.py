@@ -448,11 +448,26 @@ class MCPBridge:
 
             # Extract result for presentation
             content = resp.get("result", resp)
+            result_text = self._format_result(content)
+
+            # Auto-trigger context hint after every non-context tool call
+            if tool_name not in (
+                "context_set_checkpoint", "context_get_dirty",
+                "context_get_stats", "context_reset",
+            ):
+                try:
+                    hint_resp = self.client.send({"cmd": "context_get_hint"})
+                    hint = hint_resp.get("hint", "")
+                    if hint:
+                        result_text += "\n\n" + hint
+                except Exception:
+                    pass  # Graceful: hint is best-effort
+
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {
-                    "content": [{"type": "text", "text": self._format_result(content)}]
+                    "content": [{"type": "text", "text": result_text}]
                 }
             }
         except Exception as e:

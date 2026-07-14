@@ -953,6 +953,8 @@ class DaemonServer:
                 return self._handle_context_set_checkpoint(request)
             elif cmd == "context_get_dirty":
                 return self._handle_context_get_dirty(request)
+            elif cmd == "context_get_hint":
+                return self._handle_context_get_hint(request)
             elif cmd == "context_get_stats":
                 return self._handle_context_get_stats(request)
             elif cmd == "context_reset":
@@ -1318,10 +1320,45 @@ class DaemonServer:
             checkpoint (int, optional): Checkpoint ID. None = current.
 
         Returns:
-            {dirty: [...], clean: [...], checkpoint: int, ...}
+            {dirty: [...], clean: [...], checkpoint: int, ...,
+             _agent_hint: str}
         """
         checkpoint = req.get("checkpoint")
-        return self._context.get_dirty(checkpoint=checkpoint)
+        result = self._context.get_dirty(checkpoint=checkpoint)
+        result["_agent_hint"] = self._format_context_hint(result)
+        return result
+
+    def _handle_context_get_hint(self, req: dict) -> dict:
+        """Get a context hint without fetching the full dirty/clean list.
+
+        Returns:
+            {hint: str, has_dirty: bool, has_clean: bool}
+        """
+        result = self._context.get_dirty()
+        hint = self._format_context_hint(result)
+        return {
+            "hint": hint,
+            "has_dirty": bool(result.get("dirty")),
+            "has_clean": bool(result.get("clean")),
+        }
+
+    def _format_context_hint(self, result: dict) -> str:
+        """Format a context management hint from dirty/clean data."""
+        dirty = result.get("dirty", [])
+        clean = result.get("clean", [])
+        if not dirty and not clean:
+            return ""
+        lines = []
+        if clean:
+            lines.append("🧹 Drop these clean files from context "
+                         "(re-read from cache if needed):")
+            for p in clean:
+                lines.append(f"  - {p}")
+        if dirty:
+            lines.append("📝 Keep dirty files (you edited them):")
+            for p in dirty:
+                lines.append(f"  - {p}")
+        return "\n".join(lines)
 
     def _handle_context_get_stats(self, req: dict) -> dict:
         """Full status of the context tracker.
