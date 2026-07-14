@@ -141,28 +141,29 @@ See [Go Client](go-client/README.md) for full details.
 
 ## Architecture
 
-```
-┌─────────────┐  ┌─────────────┐  ┌──────────────┐
-│ Python Shim  │  │  MCP Bridge │  │ Forward Proxy │
-│ open() → uds │  │ stdio → uds │  │  HTTP :8569   │
-└──────┬───────┘  └──────┬──────┘  └───────┬───────┘
-       └─────────────────┼─────────────────┘
-                         ▼
-              ┌─────────────────────┐
-              │   ToolRecall Daemon  │
-              │  ┌─────┐ ┌───────┐  │
-              │  │ LRU │ │ SQLite│  │
-              │  └─────┘ └───────┘  │
-              │  ┌───────────────┐  │
-              │  │ MCP Multiplex │  │
-              │  └───────────────┘  │
-              │  ┌───────────────┐  │
-              │  │ Security Gate  │  │
-              │  └───────────────┘  │
-              │  ┌───────────────┐  │
-              │  │Context Tracker│  │
-              │  └───────────────┘  │
-              └─────────────────────┘
+```mermaid
+flowchart TB
+    subgraph EntryPoints["Entry Points"]
+        S["Python Shim<br/>open() → UDS"]
+        B["MCP Bridge<br/>stdio → UDS"]
+        F["Forward Proxy<br/>HTTP :8569"]
+    end
+    subgraph Daemon["ToolRecall Daemon"]
+        LRU["In-Memory LRU"]
+        SQ["SQLite Cache"]
+        MP["MCP Multiplexer"]
+        SG["Security Gate"]
+        CT["Context Tracker"]
+    end
+    subgraph OSLayer["OS Layer"]
+        O["Filesystem / Disk / Network"]
+    end
+
+    S --> Daemon
+    B --> Daemon
+    F --> Daemon
+    Daemon --> O
+    LRU <--> SQ
 ```
 
 **Shim layer (at the OS level):** When `tr_shim.pth` is in `site-packages`, Python processes auto-patch `builtins.open()` and `subprocess.run()` — no imports needed. Hermes, Aider, Cline transparently benefit. (Claude Code, Codex CLI, and OpenCode are Node.js — the Python shim doesn't apply.)
