@@ -29,32 +29,29 @@ The file content from turns 1-2 is still in context, even though the agent has l
 
 The Context Tracker is a lightweight module in the ToolRecall daemon that records which files have been **written** (made "dirty") since a user-defined checkpoint.
 
-```
-Agent                                    ToolRecall Daemon
-  │                                            │
-  │  context_set_checkpoint("start")           │
-  │  ─────────────────────────────────────►     │  Stored: checkpoint 1
-  │                                            │
-  │  read_file("cache.py")                     │
-  │  read_file("daemon.py")                    │  Not tracked (read-only)
-  │  patch("cache.py", ...)                    │
-  │  ─────────────────────────────────────►     │  Marked dirty: cache.py
-  │                                            │
-  │  context_get_dirty()                       │
-  │  ─────────────────────────────────────►     │
-  │  ◄─────────────────────────────────────    │
-  │  {                                         │
-  │    dirty: ["cache.py"],                    │
-  │    clean: ["daemon.py", ...],              │
-  │    checkpoint: 1                           │
-  │  }                                         │
-  │                                            │
-  │  Agent decides:                            │
-  │  "daemon.py is clean → drop from context"  │
-  │  "cache.py is dirty  → keep (my edits)"    │
-  │                                            │
-  │  (If agent later needs daemon.py again)    │
-  │  read_file("daemon.py") → CACHE HIT (0ms)  │
+```mermaid
+sequenceDiagram
+    participant Agent as Agent
+    participant Daemon as ToolRecall Daemon
+    
+    Agent->>Daemon: context_set_checkpoint("start")
+    Daemon-->>Daemon: Stored: checkpoint 1
+    
+    Agent->>Daemon: read_file("cache.py")
+    Agent->>Daemon: read_file("daemon.py")
+    Note over Daemon: Not tracked (read-only)
+    
+    Agent->>Daemon: patch("cache.py", ...)
+    Daemon-->>Daemon: Marked dirty: cache.py
+    
+    Agent->>Daemon: context_get_dirty()
+    Daemon-->>Agent: {dirty: ["cache.py"], clean: ["daemon.py", ...], checkpoint: 1}
+    
+    Note over Agent: "daemon.py is clean → drop from context"
+    Note over Agent: "cache.py is dirty → keep (my edits)"
+    
+    Note over Agent,Daemon: (If agent later needs daemon.py again)
+    Agent->>Daemon: read_file("daemon.py") → CACHE HIT (0ms)
 ```
 
 ### Five MCP Tools + Auto-Hint (Available in the MCP Bridge)
@@ -105,35 +102,43 @@ The dirty/clean split solves the problem of "what can I safely forget?"
 
 ### The Agent Pattern (How It Works in Practice)
 
-```
-Turn 1-3: Agent reads task, project files
-Turn 3:   context_set_checkpoint("after_initial_read")
-          → Checkpoint 1: everything is clean
-
-Turn 4-7: Agent edits cache.py, reads daemon.py again, runs tests
-          → Dirty: cache.py (written)
-          → Clean: daemon.py, config.py, client.py (read but unchanged)
-
-Turn 7:   context_get_dirty()
-          → dirty: ["cache.py"]
-          → clean: ["daemon.py", "config.py", "client.py", ...]
-
-Turn 7:   Agent drops all clean files from context statement:
-          " Dropping from context (clean — re-read from cache if needed):
-            - daemon.py (11,528 tokens)
-            - config.py (4,301 tokens)
-            - client.py (2,396 tokens)
-            - README.md (2,979 tokens)
-            Total reclaimed: ~21,204 tokens
-            Keeping (dirty — has my edits):
-            - cache.py (12,466 tokens) "
-
-Turn 7:   context_set_checkpoint("after_drop")
-          → Checkpoint 2: everything is clean again
-
-Turn 8+:  Agent continues, dirty set resets for next cycle
-          If daemon.py is needed again:
-          read_file("daemon.py") → CACHE HIT → content in 0.1ms
+```mermaid
+sequenceDiagram
+    participant Agent as Agent
+    participant Daemon as ToolRecall Daemon
+    
+    rect rgb(200, 230, 200)
+        Note over Agent,Daemon: Turn 1-3: Initial read phase
+        Agent->>Daemon: read_file("task.md")
+        Agent->>Daemon: read_file("cache.py")
+        Agent->>Daemon: read_file("daemon.py")
+    end
+    
+    Agent->>Daemon: context_set_checkpoint("after_initial_read")
+    Daemon-->>Daemon: Checkpoint 1: everything is clean
+    
+    rect rgb(230, 200, 200)
+        Note over Agent,Daemon: Turn 4-7: Edit phase
+        Agent->>Daemon: read_file("daemon.py")
+        Agent->>Daemon: patch("cache.py", ...)
+        Daemon-->>Daemon: Dirty: cache.py
+        Agent->>Daemon: terminal("pytest")
+    end
+    
+    Agent->>Daemon: context_get_dirty()
+    Daemon-->>Agent: dirty: ["cache.py"], clean: ["daemon.py", "config.py", "client.py", ...]
+    
+    Note over Agent: Drops clean files from context (~21K tokens reclaimed)
+    Note over Agent: Keeps dirty file (cache.py) — has my edits
+    
+    Agent->>Daemon: context_set_checkpoint("after_drop")
+    Daemon-->>Daemon: Checkpoint 2: everything is clean again
+    
+    rect rgb(200, 230, 200)
+        Note over Agent,Daemon: Turn 8+: Continue
+        Note over Agent: If daemon.py is needed again:
+        Agent->>Daemon: read_file("daemon.py") → CACHE HIT (0.1ms)
+    end
 ```
 
 ## Architecture
@@ -250,26 +255,37 @@ Same as baseline — the tracker gives you the information, but you have to act 
 
 ### How ToolRecall and Context Tracker Complement Each Other
 
-```
-Without ToolRecall cache:
-  Agent drops file → needs it again → reads from disk (1.5ms I/O)
-  → Cost per re-read: ~1.5ms I/O + file content in context
-  → Context drop is PAINFUL: re-read is slow
+```mermaid
+flowchart TB
+    subgraph Without["Without ToolRecall cache"]
+        W1["Agent drops file"]
+        W2["Needs it again → reads from disk (1.5ms I/O)"]
+        W3["Cost per re-read: 1.5ms I/O + file content in context"]
+        W4["→ Context drop is PAINFUL: re-read is slow"]
+        W1 --> W2 --> W3 --> W4
+    end
 
-With ToolRecall cache:
-  Agent drops file → needs it again → reads from cache (0.1ms)
-  → Cost per re-read: 0.1ms + file content in context
-  → Context drop is FREE: re-read is instant
+    subgraph With["With ToolRecall cache"]
+        C1["Agent drops file"]
+        C2["Needs it again → reads from cache (0.1ms)"]
+        C3["Cost per re-read: 0.1ms + file content in context"]
+        C4["→ Context drop is FREE: re-read is instant"]
+        C1 --> C2 --> C3 --> C4
+    end
 
-Without Context Tracker:
-  Agent doesn't know which files are safe to drop
-  → Keeps EVERYTHING in context "just in case"
-  → O(n²) growth continues
+    subgraph NoTracker["Without Context Tracker"]
+        N1["Agent doesn't know which files are safe to drop"]
+        N2["→ Keeps EVERYTHING in context 'just in case'"]
+        N3["→ O(n²) growth continues"]
+        N1 --> N2 --> N3
+    end
 
-With Context Tracker:
-  Agent knows: clean = safe to drop, dirty = must keep
-  → Drops all clean files at end of each turn
-  → Context STAYS BOUNDED
+    subgraph WithTracker["With Context Tracker"]
+        T1["Agent knows: clean = safe to drop, dirty = must keep"]
+        T2["→ Drops all clean files at end of each turn"]
+        T3["→ Context STAYS BOUNDED"]
+        T1 --> T2 --> T3
+    end
 ```
 
 ## Comparison: Context Tracker vs Other Approaches

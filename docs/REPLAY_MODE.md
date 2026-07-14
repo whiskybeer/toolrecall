@@ -20,10 +20,11 @@ Think of it like [VCR.py (the HTTP recording library)](https://github.com/kevin1
 
 ## How It Works
 
-```
-Normal Mode:     Agent → Tool Call → Real Execution → Response
-Record Mode:     Agent → Tool Call → Real Execution → Response + Saved to SQLite
-Replay Mode:    Agent → Tool Call → SQLite Lookup → Cached Response (no execution)
+```mermaid
+flowchart LR
+    N["Normal Mode:<br/>Agent → Tool Call → Real Execution → Response"]
+    R["Record Mode:<br/>Agent → Tool Call → Real Execution → Response + Saved to SQLite"]
+    P["Replay Mode:<br/>Agent → Tool Call → SQLite Lookup → Cached Response (no execution)"]
 ```
 
 ### Recording
