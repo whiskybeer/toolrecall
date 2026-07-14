@@ -8,7 +8,7 @@ Not all agents benefit equally from ToolRecall. This document explains **who win
 
 || Agent | Caching Value | Use Shim? | Use MCP Bridge? | Notes |
 |---|---|---|---|---|---|
-|| **Hermes** | ✅ High | ✅ Yes | ✅ Yes | Stateless, small context → biggest win |
+|| **Hermes** | ✅ High | ✅ Yes | ✅ Yes | Stateless, small context → biggest win. Context Tracker auto-hint after every tool call. |
 || **OpenCode** | ✅ High | ❌ N/A (Node.js) | ✅ Yes | MCP multiplex is the killer feature |
 || **Cline** | ✅ High | ✅ Yes | ✅ Yes | Benefits from both layers |
 || **Aider** | ✅ Medium | ✅ Yes | ⚠️ Via `--mcp-toolrecall` | Aider is diff-patch based, fewer tool re-reads |

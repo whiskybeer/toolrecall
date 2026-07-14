@@ -1,6 +1,6 @@
 # ToolRecall Caching Architecture
 
-> **Based on:** v0.7.0 (Commit `8757694`)
+> **Based on:** v0.8.10 (Commit `e5d5161`) — Context Tracker auto-hint, MCP bridge auto-trigger, Forward Proxy streaming
 > **Status:** 28 June 2026
 
 ## Overview

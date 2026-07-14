@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.8.11] — 2026-07-14
+
+### Added
+- **Auto-checkpoint on daemon start** — daemon calls `set_checkpoint(name="daemon_start")` at boot, so context tracker starts with checkpoint=1 instead of 0. Dirty/clean tracking is meaningful from the first tool call.
+- **Context tracker stats in ping response** — `toolrecall daemon --status` and `{"cmd": "ping"}` now include `context_tracker: {checkpoint, dirty, clean, total_read}` for live monitoring.
+- **7 new integration tests** for context tracker daemon integration (auto-checkpoint, read tracking, write tracking, ping stats, hint endpoint, status output).
+
+### Fixed
+- **Pipx editable install** — symlinked pipx venv `toolrecall` package to source directory, so daemon picks up code changes immediately without manual `cp`.
+- **Pytest crash** — downgraded from 9.1.0 to 8.0.0 (capture plugin crash in this environment).
+- **Context tracker tests** — test suite now handles shared daemon state correctly (path-based assertions instead of count-based).
+
+### Documentation
+- `docs/CLI.md` — `--remove` → `--uninstall` (matches actual CLI).
+- `docs/HERMES_TRANSPARENT_CACHE.md` — `--remove` → `--uninstall` (2 occurrences).
+- `docs/ARCHITECTURE.md` — `93.8% O(n²) reduction` → `~90% reduction`.
+- `docs/APPENDIX.md` — `76 KB` → `~132 KB install`; `v0.6.0 roadmap` → `v0.8.10 roadmap delivered` with 7 items.
+- `docs/TESTING.md` — `~330 tests (v0.7.5)` → `550+ tests across 38 files (v0.8.10)`.
+- `tests/README.md` — `~150+ tests across 30 files` → `550+ tests across 38 files (v0.8.10)`.
+- `docs/BENCHMARK.md` — `v0.3.0` → `v0.8.8+`.
+- `docs/ARCHITECTURE_DIAGRAM.md` — `v0.7.0` → `v0.8.10`.
+- `docs/AGENT_COMPATIBILITY.md` — Hermes row notes Context Tracker auto-hint.
+- `README.md` — `default_ttl` under `[mcp]` → `terminal_default_ttl` under `[cache]` matching actual config structure.
+- `CHANGELOG.md` — previous entry `138+` → `550+`.
+
 ## [0.8.10] — 2026-07-14
 
 ### Added
@@ -41,7 +66,7 @@
 - `toolrecall/replay.py` — docstring corrected to reflect planned (not wired) daemon integration.
 - `toolrecall/adapters/herdr.py` — context tracker listing now accurate (tools are live).
 - `explainer.html` — SVG chart green path changed to oscillation pattern; label `~268K flat · −93.3%` → `~65K bounded · −90%`.
-- `index.html` — FAQ Q4 test count updated to 138+.
+- `index.html` — FAQ Q4 test count updated to 550+.
 
 ## [0.8.8] — 2026-07-10
 

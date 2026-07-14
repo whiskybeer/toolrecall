@@ -53,7 +53,7 @@ python3 -m pytest tests/test_cli.py -v --tb=short
 | `test_e2e_cli.py` | 2 | E2E | CLI via subprocess (daemon --foreground) |
 | `test_e2e_stress.py` | 2 | E2E | 10 concurrent requests, 5x rapid restart |
 
-**Total:** ~150+ tests across 30 files.
+**Total:** 550+ tests across 38 files (as of v0.8.10).
 
 ## Naming Conventions
 

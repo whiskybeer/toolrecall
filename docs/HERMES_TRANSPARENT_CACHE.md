@@ -46,7 +46,7 @@ starts afterwards auto-imports `toolrecall.shim`. No per-agent config or
 ```bash
 TOOLRECALL_SHIM_DISABLE=1   # per-process env var
 # or
-toolrecall shim --remove     # uninstall the shim entirely
+toolrecall shim --uninstall     # uninstall the shim entirely
 ```
 
 ## Risks
@@ -55,7 +55,7 @@ toolrecall shim --remove     # uninstall the shim entirely
 
 If the cache gets corrupted (rare SQLite issues), file reads can return stale
 data. Disable the shim (`TOOLRECALL_SHIM_DISABLE=1` or `toolrecall shim
---remove`) to fall back to uncached behavior.
+--uninstall`) to fall back to uncached behavior.
 
 **Recovery:** `rm ~/.toolrecall/cache.db && toolrecall daemon restart`
 

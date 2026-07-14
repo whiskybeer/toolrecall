@@ -29,7 +29,7 @@ python -m pytest tests/ -k "registry"
 
 **Requirements:** Python 3.11+, `pytest` (included via `.[dev]`).
 
-**Current count:** ~330 tests (as of v0.7.5).
+**Current count:** 550+ tests across 38 files (as of v0.8.10).
 
 ## Test File Organization
 

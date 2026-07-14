@@ -11,7 +11,7 @@ Both cache file reads but at fundamentally different layers.
 | **What is cached** | `read_file` calls only | Files, terminal output, skills, docs, MCP |
 | **Persistence** | Lost when `claude` exits | Survives reboots, daemon restarts, agent switches |
 | **All agents share?** | No — isolated per CLI session | Yes — single daemon serves Hermes + OpenCode + Cline |
-| **Dependencies** | Node.js + 100MB+ | Zero — pure Python stdlib (76 KB) |
+| **Dependencies** | Node.js + 100MB+ | Zero — pure Python stdlib (~132 KB install) |
 | **MCP multiplex** | Each server = new subprocess | Single daemon, lazy-load (~0.01s), idle timeout 15min |
 | **Auto-heal** | Manual restart | systemd + watchdog + IPC shutdown/restart |
 | **Security** | OS-level only | WAF: path allowlist, `.env` air-gap, terminal blackhole, cognitive scan |
@@ -117,7 +117,7 @@ Two distinct mechanisms:
 - **Zero-penalty context switching:** ~0.6ms latency means no cost to drop/reacquire context
 - **100% ecosystem penetration via MCP stdio**
 
-**v0.6.0 roadmap:** (1) Active cache invalidation via MCP mutation tracking, (2) Real-time `ttl=0` bypass for dynamic tools, (3) Context management guidelines, (4) `asyncio` event loop + zombie MCP cleanup.
+**v0.8.10 roadmap delivered:** (1) Context Tracker auto-hint + MCP bridge auto-trigger, (2) Replay mode for CI/CD, (3) Hermes transparent cache via OS-level .pth shim, (4) Forward proxy streaming, (5) MCP multiplexer with idle timeout, (6) Context drop detection via daemon ping, (7) 550+ test suite.
 
 **Beyond v0.6.0:** Multi-tenant team gateway → shared VPC cache → Developer B gets Developer A's cache milliseconds later. Synthetic data flywheel → frozen trajectories for DPO training. Empirical alignment via deterministic `[Intent → Action → OS Observation → Human Correction]` pairs. High-speed RL (AlphaGo paradigm for OS agents) → train against cache instead of physical OS time.
 

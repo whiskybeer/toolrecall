@@ -131,7 +131,7 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **What it does:** Installs a `.pth` file in site-packages that auto-imports `toolrecall.shim`, monkey-patching `open()` and `subprocess.run()` in every Python process.
 - **Usage:**
   - `toolrecall shim --install` — install the shim
-  - `toolrecall shim --remove` — remove the shim
+  - `toolrecall shim --uninstall` — remove the shim
   - `toolrecall shim --status` — check if shim is installed
 
 ### `toolrecall nginx`

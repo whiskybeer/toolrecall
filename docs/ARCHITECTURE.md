@@ -256,7 +256,7 @@ import toolrecall.shim
 | **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (default 60s, per-server override) | Repeated tool results served from local cache |
 | **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Same as file cache |
 | **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
-| **Context Tracker** | Tracks dirty/clean files via checkpoints | In-memory (resets on daemon restart) | **93.8% O(n²) reduction** — drop clean files from context |
+| **Context Tracker** | Tracks dirty/clean files via checkpoints | In-memory (resets on daemon restart) | **~90% reduction** — drop clean files from context |
 
 ### Script & Code Cache (Python API)
 

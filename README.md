@@ -344,11 +344,12 @@ enabled = false
 [mcp]
 allowed_paths = ["/home/user/projects"]  # Add your project dirs — default-deny!
 allow_terminal = false
-
-# Terminal command allowlist — only commands matching these regex patterns
-# are eligible for caching. See config.toml for the full list.
 allow_invalidate = false
-default_ttl = 60
+
+[cache]
+# Terminal cache default TTL (seconds) — commands matching the terminal
+# command allowlist will be cached for this duration.
+terminal_default_ttl = 60
 
 [mcp_multiplex]
 enabled = true

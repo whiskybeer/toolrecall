@@ -770,6 +770,7 @@ class DaemonServer:
         self.security = SecurityGate(self.cfg)
         self.multiplexer = MCPMultiplexer(self.cfg)
         self._context = ContextTracker()
+        self._context.set_checkpoint(name="daemon_start")
         self._server = None
         self._running = False
         # ⚠ ThreadPoolExecutor is NOT created here — it must be created AFTER
@@ -966,6 +967,7 @@ class DaemonServer:
             return {"error": str(e)}
 
     def _handle_ping(self, req: dict) -> dict:
+        ctx = self._context.get_stats()
         return {
             "pong": True,
             "pid": os.getpid(),
@@ -974,6 +976,12 @@ class DaemonServer:
             "allow_invalidate": self.security.allow_invalidate,
             "multiplex_enabled": self.security.allow_multiplex,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
+            "context_tracker": {
+                "checkpoint": ctx.get("checkpoint", 0),
+                "dirty": ctx.get("total_dirty", 0),
+                "clean": ctx.get("total_clean", 0),
+                "total_read": ctx.get("total_read", 0),
+            },
         }
 
     def _handle_shutdown(self) -> None:
@@ -1542,6 +1550,9 @@ def daemon_status():
                 servers = resp.get('multiplex_servers', [])
                 if servers:
                     print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
+                ctx = resp.get('context_tracker', {})
+                if ctx:
+                    print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}")
                 status = _sp.run(["systemctl", "--user", "show", "-P", "ActiveEnterTimestamp", "toolrecall-daemon"],
                                  capture_output=True, text=True, timeout=5)
                 if status.returncode == 0 and status.stdout.strip():
