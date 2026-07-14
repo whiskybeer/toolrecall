@@ -57,14 +57,29 @@ Agent                                    ToolRecall Daemon
   │  read_file("daemon.py") → CACHE HIT (0ms)  │
 ```
 
-### Four MCP Tools (Available in the MCP Bridge)
+### Five MCP Tools + Auto-Hint (Available in the MCP Bridge)
 
 | Tool | Purpose | Request | Response |
 |------|---------|---------|----------|
 | `context_set_checkpoint` | Mark the current file state as "clean" | `{name?: str}` | `{checkpoint: 2}` |
-| `context_get_dirty` | List changed files since last checkpoint | `{checkpoint?: int}` | `{dirty: [...], clean: [...], checkpoint: N}` |
+| `context_get_dirty` | List changed files since last checkpoint | `{checkpoint?: int}` | `{dirty: [...], clean: [...], checkpoint: N, _agent_hint: str}` |
 | `context_get_stats` | Full status — current dirty list and checkpoint | `{}` | `{dirty: [...], clean: [...], checkpoint: N, total_files: N}` |
 | `context_reset` | Clear all checkpoints and dirty state | `{}` | `{reset: true, checkpoint: 0}` |
+
+### Auto-Hint: Every Tool Response Includes Context Guidance
+
+The MCP bridge automatically calls `context_get_hint` after every tool call (except context tools themselves) and appends the hint to the result. This means **every tool response** tells the agent what to drop from context:
+
+```
+🧹 Drop these clean files from context (re-read from cache if needed):
+  - /tmp/config.py
+📝 Keep dirty files (you edited them):
+  - /tmp/cache.py
+```
+
+The hint only appears when there's data to report — empty dirty/clean lists produce no hint. The hint is best-effort: if the daemon isn't running, the MCP bridge silently skips it.
+
+The daemon also includes `_agent_hint` in the `context_get_dirty` response directly, so agents that call `context_get_dirty` explicitly get the same guidance.
 
 ### What Gets Tracked
 
@@ -157,12 +172,14 @@ class ContextTracker:
 | File | Change |
 |------|--------|
 | `toolrecall/context_tracker.py` | **New file** — the ContextTracker class |
-| `toolrecall/daemon.py` | + Import ContextTracker, instantiate in DaemonServer.__init__ |
-| | + Call `self._context.mark_dirty(path)` in `_handle_write` and `_handle_patch` |
-| | + 4 new handlers: `_handle_context_set_checkpoint`, `_handle_context_get_dirty`, `_handle_context_get_stats`, `_handle_context_reset` |
-| | + 4 new routes in `_route()` |
-| `toolrecall/client.py` | + `context_set_checkpoint(name="")`, `context_get_dirty(checkpoint=None)`, `context_get_stats()`, `context_reset()` |
-| `toolrecall/mcp_bridge.py` | + 4 new MCP tools — exposed as MCP tools for any MCP agent |
+| `toolrecall/daemon.py` | + Import ContextTracker, instantiate in DaemonServer.__init__ | |
+| | + Call `self._context.mark_dirty(path)` in `_handle_write` and `_handle_patch` | |
+| | + 5 new handlers: `_handle_context_set_checkpoint`, `_handle_context_get_dirty`, `_handle_context_get_stats`, `_handle_context_reset`, `_handle_context_get_hint` | |
+| | + 5 new routes in `_route()` | |
+| | + `_format_context_hint()` — shared helper for hint generation | |
+| `toolrecall/client.py` | + `context_set_checkpoint(name="")`, `context_get_dirty(checkpoint=None)`, `context_get_stats()`, `context_reset()` | |
+| `toolrecall/mcp_bridge.py` | + 4 new MCP tools — exposed as MCP tools for any MCP agent | |
+| | + Auto-trigger `context_get_hint` after every non-context tool call | |
 | `tests/test_context_tracker.py` | **New file** — tests for all tracker operations |
 | `hermes-agent` skill | Update pattern section |
 
@@ -173,6 +190,8 @@ elif cmd == "context_set_checkpoint":
     return self._handle_context_set_checkpoint(request)
 elif cmd == "context_get_dirty":
     return self._handle_context_get_dirty(request)
+elif cmd == "context_get_hint":
+    return self._handle_context_get_hint(request)
 elif cmd == "context_get_stats":
     return self._handle_context_get_stats(request)
 elif cmd == "context_reset":

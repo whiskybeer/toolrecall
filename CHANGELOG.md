@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.10] — 2026-07-14
+
+### Added
+- **Context Tracker auto-hint** — daemon injects `_agent_hint` in `context_get_dirty` response with clean/dirty file lists. New `context_get_hint` daemon command for lightweight hint-only queries.
+- **MCP bridge auto-trigger** — after every non-context tool call, the bridge calls `context_get_hint` and appends the hint to the tool response. Agents get context guidance on every turn without explicit tracker calls.
+- `_format_context_hint()` — shared helper in daemon for emoji-coded hint generation.
+
+### Documentation
+- `docs/CONTEXT_TRACKER.md` — updated to document auto-hint, context_get_hint endpoint, and MCP bridge auto-trigger behavior.
+- `README.md` — Context Tracker feature row updated to mention auto-hint.
+
 ## [0.8.9] — 2026-07-13
 
 ### Added
