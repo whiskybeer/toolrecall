@@ -981,6 +981,7 @@ class DaemonServer:
                 "dirty": ctx.get("total_dirty", 0),
                 "clean": ctx.get("total_clean", 0),
                 "total_read": ctx.get("total_read", 0),
+                "ctx_dropped_tokens": ctx.get("ctx_dropped_tokens_total", 0),
             },
         }
 
@@ -1552,7 +1553,7 @@ def daemon_status():
                     print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
                 ctx = resp.get('context_tracker', {})
                 if ctx:
-                    print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}")
+                    print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}")
                 status = _sp.run(["systemctl", "--user", "show", "-P", "ActiveEnterTimestamp", "toolrecall-daemon"],
                                  capture_output=True, text=True, timeout=5)
                 if status.returncode == 0 and status.stdout.strip():

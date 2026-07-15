@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.12] — 2026-07-15
+
+### Added
+- **ctx_dropped_tokens metric** — Context Tracker now estimates tokens dropped from LLM context. When `get_dirty()` or `get_hint()` returns clean files, their size is estimated (file bytes / 4) and accumulated. Exposed in `toolrecall daemon --status`, ping response, and `context_get_stats`.
+- **3 new tests** for `ctx_dropped_tokens` (tracking, accumulation, reset).
+- **Healthcheck reports ctx_dropped** — hourly healthcheck output now includes `ctx_dropped=N` showing estimated tokens the agent saved by dropping clean files.
+
+### Changed
+- `context_tracker.py`: `get_stats()` no longer calls `get_dirty()` internally to avoid double-counting `ctx_dropped_tokens`.
+
 ## [0.8.11] — 2026-07-14
 
 ### Added

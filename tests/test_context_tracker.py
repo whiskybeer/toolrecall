@@ -43,7 +43,7 @@ class TestContextTrackerBasics:
     """Core operations — set_checkpoint, mark_dirty, get_dirty."""
 
     def test_empty_tracker(self):
-        """Fresh tracker: no dirty, no clean, checkpoint = 0."""
+        """Fresh tracker: no dirty, no clean, checkpoint = 0, ctx_dropped = 0."""
         ct = ContextTracker()
         assert ct.checkpoint == 0
 
@@ -52,6 +52,7 @@ class TestContextTrackerBasics:
         assert stats["total_clean"] == 0
         assert stats["total_read"] == 0
         assert stats["checkpoint"] == 0
+        assert stats["ctx_dropped_tokens_total"] == 0
 
     def test_checkpoint_creates_new_id(self):
         """Each set_checkpoint increments the checkpoint ID."""
@@ -271,6 +272,63 @@ class TestContextTrackerReset:
         finally:
             os.unlink(path)
 
+    def test_ctx_dropped_tokens_tracks_clean_file_sizes(self):
+        """get_dirty() accumulates ctx_dropped_tokens from clean file sizes."""
+        ct = ContextTracker()
+        ct.set_checkpoint("start")
+
+        # Create a file with known size
+        content = "X" * 1000  # 1000 bytes
+        path = make_temp_file(content)
+        try:
+            ct.mark_read(path)  # Read-only = clean
+
+            result = ct.get_dirty()
+            assert path in result["clean"]
+            # 1000 bytes / 4 chars-per-token = 250 tokens
+            assert result["ctx_dropped_tokens"] == 250
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 250
+        finally:
+            os.unlink(path)
+
+    def test_ctx_dropped_tokens_accumulates(self):
+        """ctx_dropped_tokens_total accumulates across multiple get_dirty calls."""
+        ct = ContextTracker()
+        ct.set_checkpoint("start")
+
+        p1 = make_temp_file("hello" * 200)  # 1000 bytes
+        p2 = make_temp_file("world" * 200)  # 1000 bytes
+        try:
+            ct.mark_read(p1)
+            r1 = ct.get_dirty()
+            t1 = r1["ctx_dropped_tokens"]
+            assert t1 == 250  # 1000 / 4
+
+            ct.mark_read(p2)
+            r2 = ct.get_dirty()
+            t2 = r2["ctx_dropped_tokens"]
+            # Both p1 and p2 are clean (p1 still in read_set, not dirty)
+            assert t2 == 500  # 250 from p1 + 250 from p2
+
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == t1 + t2
+        finally:
+            os.unlink(p1)
+            os.unlink(p2)
+
+    def test_reset_clears_ctx_dropped_tokens(self):
+        """Reset clears ctx_dropped_tokens_total."""
+        ct = ContextTracker()
+        ct.set_checkpoint("start")
+        path = make_temp_file("X" * 400)
+        try:
+            ct.mark_read(path)
+            ct.get_dirty()
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 100
+            ct.reset()
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 0
+        finally:
+            os.unlink(path)
+
 
 class TestContextTrackerThreadSafety:
     """Multi-threaded access should not corrupt state."""
@@ -404,7 +462,7 @@ class TestContextTrackerDaemonIntegration:
             pytest.skip("ToolRecall daemon not running — skipping integration tests")
 
     def test_daemon_ping_includes_context_tracker(self):
-        """Daemon ping response includes context_tracker stats."""
+        """Daemon ping response includes context_tracker stats with ctx_dropped_tokens."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
         tc = TransportClient(DEFAULT_PATH)
         resp = tc.send({"cmd": "ping"})
@@ -415,6 +473,7 @@ class TestContextTrackerDaemonIntegration:
         assert "dirty" in ctx
         assert "clean" in ctx
         assert "total_read" in ctx
+        assert "ctx_dropped_tokens" in ctx
 
     def test_daemon_auto_checkpoint_on_start(self):
         """Daemon auto-sets checkpoint=1 on start (not 0)."""

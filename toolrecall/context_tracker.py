@@ -44,12 +44,18 @@ class ContextTracker:
 
       self._checkpoint_counter: int
         — monotonically increasing checkpoint ID
+
+      self._ctx_dropped_tokens: int
+        — cumulative estimate of tokens dropped from context
+        Incremented each time get_dirty()/get_hint() returns clean files.
+        Estimated as sum(len(content)/4) for each clean file.
     """
 
     def __init__(self):
         self._dirty: dict[str, dict] = {}
         self._read_set: dict[str, float] = {}
         self._checkpoint_counter: int = 0
+        self._ctx_dropped_tokens: int = 0
         self._lock = RLock()
 
     def set_checkpoint(self, name: str = "") -> dict:
@@ -152,12 +158,24 @@ class ContextTracker:
                 ]
             clean_list = list(set(read_but_not_dirty))
 
+            # Estimate tokens for clean files (content length / 4 chars-per-token)
+            clean_tokens = 0
+            for p in clean_list:
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    size = 0
+                clean_tokens += size // 4
+
+            self._ctx_dropped_tokens += clean_tokens
+
             return {
                 "dirty": sorted(dirty_list),
                 "clean": sorted(clean_list),
                 "checkpoint": self._checkpoint_counter,
                 "total_dirty": len(dirty_list),
                 "total_clean": len(clean_list),
+                "ctx_dropped_tokens": clean_tokens,
             }
 
     def get_stats(self) -> dict:
@@ -171,12 +189,28 @@ class ContextTracker:
                 "total_dirty": int,
                 "total_clean": int,
                 "total_read": int,
+                "ctx_dropped_tokens_total": int,
             }
         """
         with self._lock:
-            result = self.get_dirty()
-            result["total_read"] = len(self._read_set)
-            return result
+            # Directly compute from internal state without calling get_dirty()
+            # to avoid double-counting ctx_dropped_tokens.
+            target = self._checkpoint_counter
+            dirty_list = list(self._dirty.keys())
+            read_but_not_dirty = [
+                p for p in self._read_set
+                if p not in self._dirty
+            ]
+            clean_list = list(set(read_but_not_dirty))
+            return {
+                "dirty": sorted(dirty_list),
+                "clean": sorted(clean_list),
+                "checkpoint": target,
+                "total_dirty": len(dirty_list),
+                "total_clean": len(clean_list),
+                "total_read": len(self._read_set),
+                "ctx_dropped_tokens_total": self._ctx_dropped_tokens,
+            }
 
     def reset(self) -> dict:
         """Clear all checkpoints and dirty state.
@@ -191,6 +225,7 @@ class ContextTracker:
             self._dirty.clear()
             self._read_set.clear()
             self._checkpoint_counter = 0
+            self._ctx_dropped_tokens = 0
             return {"reset": True, "checkpoint": 0}
 
     @property
