@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.8.13] — 2026-07-16
+
+### Added
+- **Proxy header-based routing tiebreaker** — when path-based routing matches OpenAI's generic `/v1` fallback for ambiguous paths (`/v1/models`, `/v1/embeddings`, `/v1/files`), checks `anthropic-version`, `x-api-key`, and `Authorization: Bearer sk-ant-` headers to route to Anthropic instead.
+- **`TOOLRECALL_UDS_PATH` alias** — `_default_socket_path()` now checks `TOOLRECALL_TRANSPORT` first, then `TOOLRECALL_UDS_PATH` as backward-compat fallback. Docker/docs env vars now work.
+
+### Changed
+- **README repositioning** — from speed-first to determinism-first. Problem statement leads with MCP sprawl, unrepeatable runs, API costs, no sandboxing. Feature priority table ranked by defensible value (MCP Multiplexer #1, Replay #2, Proxy #3, Security Gate #4, Caching #5-6). Quickstart now leads with MCP Bridge (was buried). Replay Mode promoted to its own section with CI example.
+- **`DEFAULT_CACHEABLE` trimmed** — removed `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `fd`, `git status`, `git diff`, `git log`, `ps`, `du`, `df`, `date`, `cal`, `which`, `python3 --version`, `node --version`, `pip list`. Only 8 static commands remain: `hostname`, `whoami`, `pwd`, `uname -a`, `uptime`, `free -h`, `df -h /`, `crontab -l`. Matches documented README contract.
+- **`cached_terminal` ttl=0 bypass** — ported from `cached_mcp_check` logic. `ttl=0` now skips cache lookup and storage entirely.
+- **Cognitive scan scoped to MCP args only** — removed from `_handle_write` and `_handle_patch` handlers. File content scanning was scope creep; the scan was designed for MCP tool arguments per SECURITY.md.
+- **Version bump** — 0.8.12 → 0.8.13.
+- **Benchmark provenance** — labeled with actual version it ran on (v0.8.8+), not v0.8.12. README benchmark section now includes caveat that numbers were measured with original `DEFAULT_CACHEABLE`.
+- **Proxy threading** — replaced single-threaded `HTTPServer` with `ThreadedHTTPServer` (ThreadingMixIn). One streaming request no longer blocks all other proxy traffic.
+- **`cmd_serve`** — now checks if daemon is running before binding. Prints message and returns early when daemon manages the proxy, preventing EADDRINUSE.
+- **AGENT_COMPATIBILITY.md** — rewritten with decision-table framing (agent per row, integration layer per column). Claude Code section updated: no longer warns about stale-state risk from file caching (dynamic commands are un-cached, writes fail-closed). Recommends forward proxy + multiplex-only.
+- **`ctx_dropped_tokens`** — `get_stats()` now returns only confirmed cumulative total from `get_dirty()` calls, not inflated by pending tokens. Double-counting regression fixed.
+
+### Fixed
+- **Daemon shutdown zombie** — `os.kill(os.getpid(), SIGTERM)` replaces `sys.exit(0)` in daemon thread. `sys.exit()` in a non-main thread only kills the thread, leaving the process as an orphan.
+- **Client write/patch fallback** — `cached_write` and `cached_patch` now fail closed when daemon is unavailable (consistent with `cached_terminal`). Previously bypassed the path allowlist.
+- **`normalize_json`/`normalize_tool_args`/`normalize_command` lazy import** — replaced `locals()[name]` (raises `KeyError`) with explicit `_alias_map` dict (raises `AttributeError` as expected). Added `invalidate_file` and `refresh_file` to `__all__`.
+- **`docs_get_page` argument swap** — daemon.py called `_docs_get_page(source, path)` but `docs.py` defines `(path, source)`. Fixed all call sites + client.py signature.
+- **`docs_get_page` literal `\\n` bug** — exact-match branch used `\\n` (escaped backslash-n) instead of actual newlines.
+- **Proxy Content-Encoding** — `Accept-Encoding` stripped from outgoing requests; `Content-Encoding` stripped from stored headers. Prevents gzipped responses being stored as corrupted UTF-8.
+- **Proxy routing specificity** — `/v1beta` (Google) checked before `/v1`; `/v1/messages` (Anthropic) checked before `/v1/chat/completions` (OpenAI). Ordered tuple list replaces unordered dict iteration.
+
+### Security
+- **Fail-closed write/patch** — client refuses write operations when daemon is unreachable, enforcing the daemon's path allowlist as single source of truth.
+- **Daemon shutdown** — `os.kill(SIGTERM)` triggers the registered signal handler which does proper cleanup (multiplexer, socket, PID file) before exiting.
+
+### Documentation
+- README: proxy disclaimer — X-Target-Host header needed for DeepSeek, xAI, Mistral, Groq, Together, OpenRouter (path routing can't distinguish OpenAI-compatible providers).
+- README: scrubbed strategy-doc voice — removed "strategic error", "(the wedge feature)", "Competition" column (→ "When you need it"), "Three docs sections confirm this behavior".
+- README: removed phantom `caching = false` claim (config key doesn't exist).
+- README: `"1 tick instead of 4"` restored alongside `"warm daemon"` framing.
+- README: fabricated cost numbers ($4.20 → $0.31) removed.
+- README: shim marked experimental, moved to Layer 3 under Agent Integration.
+- Benchmarks now caveated with original DEFAULT_CACHEABLE scope.
+- `docs/BENCHMARK.md` version label corrected to v0.8.8+.
+- Various docs: version bumps (v0.8.10 → v0.8.12), CONTEXT_TRACKER.md mermaid cleanup, removed 'Files to Create/Modify' planning sections.
+
 ## [0.8.12] — 2026-07-15
 
 ### Added
