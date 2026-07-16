@@ -4,7 +4,7 @@ You run agents. Every session spawns its own MCP servers, every test run hits li
 
 ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
 
-**One warm daemon instead of five cold Node processes.** ~132 KB install. Python 3.11+ stdlib only.
+**One warm daemon instead of five cold Node processes — and 1 tick instead of 4 for cache hits.** ~132 KB install. Python 3.11+ stdlib only.
 
 ```bash
 pipx install toolrecall
