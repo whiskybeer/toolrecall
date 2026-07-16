@@ -127,9 +127,7 @@ export OPENAI_BASE_URL=http://localhost:8569/v1
 | **Any OpenAI-compatible client** | Set base URL to `http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
 | **Custom port** | `toolrecall serve --port 9090` | Same |
 
-Supported providers: OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, Mistral, Groq, Together, OpenRouter.
-
-**Real numbers from a real session:** If your CI agent loop costs $4.20/day in API calls, the proxy brings it to $0.31/day — the same requests on re-read hit the local cache. See [Forward Proxy](docs/FORWARD_PROXY.md).
+Supported providers: OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, Mistral, Groq, Together, OpenRouter. See [Forward Proxy](docs/FORWARD_PROXY.md) for the full provider list and usage examples.
 
 ---
 
