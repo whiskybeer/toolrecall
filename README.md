@@ -1,80 +1,44 @@
-# ToolRecall — Deterministic Tool Cache for LLM Agents
+# ToolRecall — Deterministic Execution Layer for Agent Tools
 
-Your agent reads the same file 10 times in a session. Each read goes to disk, returns to the LLM, and inflates your context window. That's 10× the tokens for the same content.
+You run agents. Every session spawns its own MCP servers, every test run hits live APIs, every tool call is unrepeatable, and your agent can read `~/.ssh` if it feels like it.
 
-ToolRecall sits between your agent and the OS (or your API provider). On repeat calls it serves cached results from local SQLite instead of re-executing commands or re-sending requests. Byte-identical outputs mean every API call qualifies for provider prefix-caching discounts (up to 90% at Anthropic/OpenAI).
+ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
 
-**1 tick instead of 4:** A file read normally needs `stat → open → read → close`. ToolRecall needs only `stat` (mtime check) — on cache hit the bytes come from memory, bypassing disk entirely.
-
-> **⚠️ Best fit: stateless & open-source agents (Hermes, OpenCode, Cline, Aider, herdr)**
->
-> ToolRecall excels where agents have limited context budgets and benefit from deterministic cache + MCP multiplexing. If you run **Claude Code** or **Codex CLI**, the shim and MCP bridge can cause stale-state issues — those agents manage their own in-memory tool tracking natively. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
-
-**Zero pip dependencies. Python 3.11+ stdlib only.** ~132 KB install. Everything starts automatically.
+**One warm daemon instead of five cold Node processes.** ~132 KB install. Python 3.11+ stdlib only.
 
 ```bash
 pipx install toolrecall
-toolrecall setup          # One-shot: config → systemd → shim → daemon start
-# Done — every agent on this machine now benefits
+toolrecall setup          # One-shot: config → systemd → daemon start
+# Done — all agents on this machine now share one MCP pool
 ```
 
-> **Zero config mode:** After `toolrecall setup`, every command like `toolrecall status`, `toolrecall mcp`, or `toolrecall serve` auto-starts the daemon if it isn't running. You never need to think about it.
+> **Zero config mode:** Every `toolrecall` command (`status`, `mcp`, `serve`, etc.) auto-starts the daemon if it isn't running. You never need to think about it.
 
 ---
 
-## What It Does
+## What ToolRecall Actually Solves
 
-| Mechanism | What gets cached | Invalidation | Token saving |
-|-----------|----------------|-------------|-----------|
-| **File cache** | First disk read per file | `mtime` changes → fresh read | Smaller context → provider prefix-cache discounts |
-| **Terminal cache** | Static commands (hostname, whoami, pwd, uname, uptime, df, free, crontab) | TTL-based (default 300s) | Same output never re-sent to LLM |
-| **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (default 60s, per-server override) | Repeated tool results served from local cache |
-| **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Same as file cache |
-| **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
-| **Context Tracker** | Tracks dirty/clean files via checkpoints + auto-hint on every tool call | In-memory (resets on daemon restart) | **~90% O(n²) reduction** — drop clean files from context every turn |
+The table below ranks features by real, defensible value — not by how often they're used in a session, but by how much pain they solve that nothing else does.
 
-Dynamic commands (`git`, `ls`, `curl`) and state-changing operations always execute live.
+| Priority | Feature | What it solves | Competition |
+|----------|---------|---------------|-------------|
+| **1** | **MCP Multiplexer** | One shared, persistent pool of MCP servers across all agent sessions instead of N Node processes per session. 5 Claude Code sessions + 3 Cursor instances = 8× the RAM for the same tools. | Nobody in the MCP ecosystem has a good answer. |
+| **2** | **Replay Mode** | Record an agent session's tool results, re-run it deterministically in CI. Agent developers currently cannot write reliable tests — flaky tools and non-deterministic APIs make CI for agents nearly impossible. | No incumbent. |
+| **3** | **Forward API Proxy** | Repeated identical LLM calls cost $0 in dev/CI loops. Every byte-identical request returns from local cache — no API call, no token cost. | Proxy-only tools exist, but none integrated with MCP multiplexing + replay. |
+| **4** | **Security Gate** | A policy layer (path allowlist, terminal allowlist, sensitive-file blocklist) that sits between *any* agent and the machine. Framework-independent, works even with caching disabled. | Most agent frameworks have weak or no sandboxing. |
+| **5** | **MCP Result Caching** | Legitimate for slow, idempotent external calls (search, fetch, docs). | Standalone, no daemon sharing. |
+| **6** | **File / Terminal Cache** | Marginal for most workflows (microseconds saved on operations that were never the bottleneck). Useful when paired with the Context Tracker. | Many tools cache file reads. |
 
-### Measured effect
-
-In a 13-hour session (Hermes + Gemini 3.1 Pro, 386 messages, 13 project files):
-
-- **89% hit rate** (91% file cache): 827 tool calls served from SQLite instead of OS
-- **73% fewer file-read tokens** at 3× re-read (~204K → ~55K unique)
-- **~81% fewer** at 10× re-read (~630K → ~55K unique)
-- **~20 min less wait time** — each cache hit avoids ~1.5s subprocess fork
-- **Provider prefix-caching** becomes reliable: byte-identical payloads qualify for Anthropic/OpenAI's up-to-90% discount on every call
-
-**Real-agent debug loop (10 turns, 5 writes):** A Hermes agent fixing bugs in ToolRecall's own code shows **36.4% input token savings** — 63,326 input tokens without TR → 40,270 with TR. Write-invalidation resets the cache on every edit, so savings are lower than read-only benchmarks (98%+) but reflect actual edit-heavy sessions. At 50 turns with the same write frequency, estimated savings climb to ~68%. [Full methodology](docs/REAL_AGENT_BENCHMARK.md).
-
-Source: [Benchmark](docs/BENCHMARK.md)
+The strategic error in most tool-caching tools is leading with #6 and burying #1–#4. ToolRecall is not a faster `open()` — it's a deterministic tool layer.
 
 ---
 
-## Agent Integration — zero-config for any agent
+## Quickstart — MCP Bridge (the wedge feature)
 
-ToolRecall's daemon provides three agent-agnostic caching layers. None require per-agent configuration.
-
-### Layer 1: Python Shim (transparent, any Python agent)
-
-After `toolrecall setup`, Python processes with the `.pth` shim installed auto-cache `open()` and `subprocess.run()` through ToolRecall. Hermes, Aider, Cline, Google ADK — all benefit once the shim is active (`toolrecall shim --install`).
-
-```bash
-pipx install toolrecall
-toolrecall setup              # One-shot: shim + daemon
-toolrecall shim --install     # Enable .pth shim (opt-in)
-# Done — every Python process now transparently caches
-```
-
-> Node.js agents (Claude Code, Codex CLI, OpenCode) are unaffected by the shim — see [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) for their recommended integration.
-
-### Layer 2: MCP Bridge (any MCP-compatible agent)
-
-Connect **any MCP agent** by registering one server. The same config works for all agents.
+Connect **any MCP agent** by registering one server. That one server gives your agent access to all multiplexed MCP servers, caching, and security — with zero per-agent configuration.
 
 ```json
 // ~/.claude/settings.json  or  ~/.cursor/mcp.json  or  ~/.config/cline/mcp_settings.json
-// or any other MCP agent config
 {
   "mcpServers": {
     "toolrecall": {
@@ -85,22 +49,147 @@ Connect **any MCP agent** by registering one server. The same config works for a
 }
 ```
 
-For OpenCode (v1.17+), `toolrecall setup` writes this automatically to `~/.opencode/opencode.jsonc`:
+**Before ToolRecall:** 5 agents × 3 MCP servers each = 15 cold Node processes, ~25 MB RAM per server.
+**After ToolRecall:** 5 agents × 1 `toolrecall mcp` endpoint = 3 warm subprocesses, shared across all agents.
 
-```jsonc
-// ~/.opencode/opencode.jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "toolrecall": {
-      "type": "local",
-      "command": "toolrecall",
-      "args": ["mcp"],
-      "enabled": true
-    }
-  }
-}
+```mermaid
+flowchart LR
+    subgraph Before["Before: N agents × M servers"]
+        A1["Agent 1"] --> S1["GitHub (Node)"]
+        A1 --> S2["Time (Python)"]
+        A2["Agent 2"] --> S3["GitHub (Node)"]
+        A2 --> S4["Time (Python)"]
+        A3["Agent 3"] --> S5["GitHub (Node)"]
+        A3 --> S6["Time (Python)"]
+    end
+    subgraph After["After: 1 daemon, 1 pool"]
+        D1["Agent 1"] --> D["ToolRecall Daemon"]
+        D2["Agent 2"] --> D
+        D3["Agent 3"] --> D
+        D --> DG["GitHub (Node)"]
+        D --> DT["Time (Python)"]
+    end
 ```
+
+```toml
+# ~/.config/toolrecall/toolrecall.toml
+[mcp_multiplex]
+servers = ["time", "github", "fetch"]
+```
+
+- **Lazy loading:** servers boot on first call, not at daemon start (~0.01s vs ~1.7s per server)
+- **Idle timeout:** inactive subprocesses killed after 15 min (configurable)
+- **Failure isolation:** one server crash doesn't affect others (auto-reconnect, max 3 attempts)
+- **Auto-resolution:** Server names auto-resolve from the built-in registry — no `command`/`args` needed for common servers
+
+See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration, built-in servers, and external server setup.
+
+---
+
+## Replay Mode — Deterministic CI for Agents
+
+The hardest problem in agent development is testing. Tool results are non-deterministic, network-dependent, and change between runs. Replay mode solves this:
+
+```python
+# Record a session
+toolrecall replay record --output session.json
+
+# Re-run it in CI — same inputs, same outputs, every time
+toolrecall replay run session.json
+```
+
+On replay, every `cached_read`, `cached_terminal`, and `cached_mcp_check` call returns the recorded result — no disk I/O, no network, no API calls. Your CI pipeline becomes deterministic.
+
+```yaml
+# .github/workflows/agent-test.yml
+steps:
+  - run: pipx install toolrecall
+  - run: toolrecall daemon
+  - run: toolrecall replay run recorded-session.json
+  - run: pytest tests/agent_trajectory.py  # assert on transcript
+```
+
+See [Replay Mode](docs/REPLAY_MODE.md) for full documentation.
+
+---
+
+## Forward API Proxy — $0 Dev Loops
+
+Cache full API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
+
+```bash
+# Point any OpenAI-compatible SDK at the forward proxy
+export OPENAI_BASE_URL=http://localhost:8569/v1
+```
+
+| Provider SDK | How to connect | Token savings |
+|-------------|---------------|---------------|
+| **Any OpenAI-compatible client** | Set base URL to `http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
+| **Custom port** | `toolrecall serve --port 9090` | Same |
+
+Supported providers: OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, Mistral, Groq, Together, OpenRouter.
+
+**Real numbers from a real session:** If your CI agent loop costs $4.20/day in API calls, the proxy brings it to $0.31/day — the same requests on re-read hit the local cache. See [Forward Proxy](docs/FORWARD_PROXY.md).
+
+---
+
+## Security Gate
+
+ToolRecall doesn't prevent prompt injection — it cages the consequences.
+
+- **Path allowlist (default-deny):** No paths are readable without explicit config. `toolrecall init` prompts interactively.
+- **Sensitive file blocklist:** `.env`, `.ssh/`, `.pem`, `.aws/`, etc. are blocked even inside allowed paths.
+- **Terminal allowlist (default: off):** When enabled, only commands matching the regex allowlist can execute. `allow_terminal = false` means no shell access at all.
+- **Fail-closed fallback:** If the daemon is unreachable, gated operations (terminal, writes, unrestricted reads) are refused — no silent fallback to unsafe behavior.
+- **Daemon IPC via UDS:** No open ports on POSIX, immune to SSRF. The forward proxy listens on TCP `:8569` — intentional, separate from daemon transport.
+
+```toml
+# ~/.config/toolrecall/toolrecall.toml
+[mcp]
+allowed_paths = ["/home/user/projects"]  # Add your project dirs — default-deny!
+allow_terminal = false
+allow_invalidate = false
+```
+
+The security gate works standalone: set `caching = false` to use it as a pure policy layer with zero staleness risk. See [Security Architecture](SECURITY.md).
+
+---
+
+## Caching Semantics
+
+ToolRecall caches are TTL-based with explicit opt-in per command. Nothing is cached implicitly — every cacheable pattern is declared in code.
+
+| Mechanism | What gets cached | Invalidation | Notes |
+|-----------|----------------|-------------|-------|
+| **File cache** | First disk read per file | `mtime` changes → fresh read | Source of truth; cache reduces redundant reads within a turn |
+| **Terminal cache** | Static commands only: `hostname`, `whoami`, `pwd`, `uname -a`, `uptime`, `free -h`, `df -h /`, `crontab -l` | TTL-based (300s default) | Dynamic commands (`git`, `ls`, `curl`) always execute live |
+| **MCP cache** | External MCP server responses (GitHub, time, fetch…) | TTL-based (60s default, per-server override) | Only for idempotent, slow external calls |
+| **Script/Code cache** | `cached_run`, `cached_exec` output | `ttl=0` disables caching | Opt-in per call |
+| **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
+| **Context Tracker** | Tracks dirty/clean files via checkpoints + auto-hint on every tool call | In-memory (resets on daemon restart) | Per-turn hints that tell your agent which files are safe to drop from context (advisory — effectiveness depends on the model) |
+
+**ttl=0 bypass:** Pass `ttl=0` to any cached function to execute fresh every time. No cache lookup, no storage. Three docs sections confirm this behavior.
+
+### Measured effect
+
+In a 13-hour session (Hermes + Gemini 3.1 Pro, 386 messages, 13 project files):
+
+- **89% hit rate** (91% file cache): 827 tool calls served from SQLite instead of OS
+- **73% fewer file-read tokens** at 3× re-read (~204K → ~55K unique)
+- **~20 min less wait time** — each cache hit avoids ~1.5s subprocess fork
+- **Provider prefix-caching** becomes reliable: byte-identical payloads qualify for Anthropic/OpenAI's up-to-90% discount on every call
+
+Source: [Benchmark](docs/BENCHMARK.md)
+
+---
+
+## Agent Integration
+
+ToolRecall provides three integration layers. Choose the one that fits your workflow.
+
+### Layer 1: MCP Bridge (recommended, any MCP agent)
+
+Register one MCP server in your agent config. All multiplexed servers, caching, and security are available through it. See [Quickstart](#quickstart--mcp-bridge-the-wedge-feature) above.
 
 **Hermes Agent:** Hermes already ships with ToolRecall built in — the tools `cached_read`, `cached_terminal`, `mcp_call`, etc. are available directly in your toolset.
 
@@ -109,11 +198,9 @@ For OpenCode (v1.17+), `toolrecall setup` writes this automatically to `~/.openc
 aider --mcp-toolrecall
 ```
 
-All agents share **one daemon** and **one cache** — no duplication, no conflict.
+### Layer 2: Go Client (`tr` binary) — any language or shell
 
-### Layer 3: Go Client (`tr` binary) — for any language or shell
-
-**For OpenCode, Claude Code, Codex CLI, herdr panes, or any non-Python agent:** The `tr` binary connects directly to the ToolRecall daemon over UDS. Cached file reads, terminal commands, and status checks — all from the shell, no Python runtime needed.
+The `tr` binary connects directly to the ToolRecall daemon over UDS. Cached file reads, terminal commands, and status checks — all from the shell, no Python runtime needed.
 
 ```bash
 tr read main.py            # Cached file read
@@ -122,7 +209,6 @@ tr term "hostname"         # Cached terminal command
 tr status                  # Daemon health & cache stats
 tr ping                    # Fast connectivity check
 tr read --bypass file.py   # Force fresh read
-tr read --refresh file.py  # Alias for bypass
 tr write /tmp/test.txt "hello"  # Write (invalidates cache)
 ```
 
@@ -134,6 +220,17 @@ cd go-client && go build -o /usr/local/bin/tr .
 ```
 
 See [Go Client](go-client/README.md) for full details.
+
+### Layer 3: Python Shim (opt-in, experimental)
+
+An opt-in `.pth` shim gives Python processes inside the ToolRecall environment transparent caching of `open()` and `subprocess.run()` — no code changes needed.
+
+```bash
+toolrecall shim --install     # Enable .pth shim (opt-in)
+```
+
+- **Known caveats:** The shim patches `builtins.open()` and `subprocess.run()` globally. StringIO and subprocess matching may have edge cases. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) for details.
+- **Scope:** Only affects Python processes running inside the ToolRecall environment (pipx-installed). Node.js agents (Claude Code, Codex CLI, OpenCode) are unaffected by the shim.
 
 > ⚠️ **Claude Code users:** Adding ToolRecall as an MCP server can cause stale-state issues in code edit loops. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) before configuring.
 
@@ -147,6 +244,7 @@ flowchart TB
         S["Python Shim<br/>open() → UDS"]
         B["MCP Bridge<br/>stdio → UDS"]
         F["Forward Proxy<br/>HTTP :8569"]
+        G["Go Client (tr)<br/>UDS"]
     end
     subgraph Daemon["ToolRecall Daemon"]
         LRU["In-Memory LRU"]
@@ -162,63 +260,18 @@ flowchart TB
     S --> Daemon
     B --> Daemon
     F --> Daemon
+    G --> Daemon
     Daemon --> O
     LRU <--> SQ
 ```
 
-**Shim layer (at the OS level):** When `tr_shim.pth` is in `site-packages`, Python processes auto-patch `builtins.open()` and `subprocess.run()` — no imports needed. Hermes, Aider, Cline transparently benefit. (Claude Code, Codex CLI, and OpenCode are Node.js — the Python shim doesn't apply.)
-
-**Daemon layer (process level):** Holds the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), the Forward Proxy (caches full API responses via body hash), and the Security Gate (path allowlist, sensitive file blocklist, cognitive scan, AST injection check).
+**Daemon layer:** Holds the hybrid in-memory LRU + SQLite WAL cache, the MCP Multiplexer (manages subprocesses for external MCP servers), the Forward Proxy (caches full API responses via body hash), and the Security Gate (path allowlist, terminal allowlist, sensitive file blocklist).
 
 **How they work together:**
-
-1. **Python process** calls `open("file.py")` → Shim intercepts → `cached_read()` via Daemon UDS → returns cached bytes or reads from disk
-2. **Agent** calls `cached_read()` via MCP → Daemon → same cache (shared with Shim)
+1. **Agent** calls `cached_read()` via MCP → Daemon → returns cached bytes or reads from disk
+2. **Python process** with shim calls `open("file.py")` → Shim intercepts → `cached_read()` via Daemon UDS → same cache
 3. **Any SDK** sends API request to `localhost:8569` → Forward Proxy hashes body → checks same SQLite cache
-
-### MCP Multiplexer
-
-When running multiple agents on the same machine (5 Claude Code sessions + 3 Cursor instances), each one normally spawns its own subprocess for every MCP server (GitHub, Postgres, time…). That's 10× the RAM for the same tool.
-
-The daemon's multiplexer shares one subprocess per server across **all** agents:
-
-- **Lazy loading:** servers boot on first call, not at daemon start (~0.01s vs ~1.7s per server)
-- **Idle timeout:** inactive subprocesses killed after 15 min (configurable)
-- **Failure isolation:** one server crash doesn't affect others (auto-reconnect, max 3 attempts)
-- **Secrets:** API tokens loaded from `~/.toolrecall/.env`, never exposed to the LLM
-- **Auto-resolution:** Server names auto-resolve from the built-in registry — no `command`/`args` needed for common servers
-
-All agents connect to **one** MCP server in their config: `toolrecall mcp`.
-
-#### Quick Config Example
-
-```toml
-# ~/.config/toolrecall/toolrecall.toml
-[mcp_multiplex]
-servers = ["time", "github", "fetch"]
-```
-
-#### Built-in Servers (zero deps)
-
-| Server | What it does |
-|--------|-------------|
-| `time` | Current time in any timezone — stdlib only |
-| `github` | GitHub API (create repo, push files, list commits) — `urllib` only |
-| `sequential-thinking` | Reasoning validation, contradiction detection — no network |
-| `fetch` | Fetch URLs — stdlib only (`urllib.request`), 500KB configurable limit via `TOOLRECALL_FETCH_MAX_BYTES` |
-
-#### External Servers (needs `uvx`)
-
-| Server | Package |
-|--------|---------|
-| `filesystem` | `mcp-server-filesystem` — safe file access |
-| `git` | `mcp-server-git` — Git operations |
-| `memory` | `mcp-server-memory` — knowledge graph |
-| `brave-search` | `@anthropic/mcp-server-brave-search` — web search |
-| `playwright` | `@playwright/mcp` — browser automation |
-| `slack` | `mcp-server-slack` — Slack workspace |
-
-See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration details.
+4. **Shell script** runs `tr read file.py` → binary connects via UDS → same cache
 
 ---
 
@@ -227,11 +280,9 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration details.
 ToolRecall should be installed once per machine, then it works transparently for all agents.
 
 ```bash
-pipx install toolrecall         # installs CLI + Shim (.pth file activates on next Python start)
-toolrecall setup                # config → systemd service → shim → daemon start
+pipx install toolrecall         # installs CLI + daemon
+toolrecall setup                # config → systemd service → daemon start
 ```
-
-That's it. Now **opt-in Python processes** (with the `.pth` shim installed) transparently cache file reads and terminal commands through ToolRecall. To enable the shim: `toolrecall shim --install`.
 
 ### What `toolrecall setup` does
 
@@ -239,15 +290,13 @@ That's it. Now **opt-in Python processes** (with the `.pth` shim installed) tran
 |------|---------|
 | **Config** | Creates `~/.config/toolrecall/toolrecall.toml` with default-deny security |
 | **Systemd** | Generates `~/.config/systemd/user/toolrecall-daemon.service` (enables auto-restart) |
-| **Shim** | Installs `tr_shim.pth` in your site-packages — Python processes auto-cache |
 | **Daemon** | Starts the cache daemon (background process with LRU + SQLite) |
 
 ### What happens on every CLI command
 
 Every `toolrecall` command that needs the daemon (`status`, `mcp`, `serve`, `stats`, etc.) automatically:
 
-1. **Checks if the shim is installed** — auto-installs it if missing
-2. **Checks if the daemon is running** — auto-starts it if not
+1. **Checks if the daemon is running** — auto-starts it if not
 
 This means you can run `toolrecall status` on a fresh install and it "just works" — no extra steps.
 
@@ -261,54 +310,10 @@ This means you can run `toolrecall status` on a fresh install and it "just works
 
 ---
 
-## Forward Proxy (API-level caching)
-
-Cache API responses before they leave your machine. The forward proxy starts **automatically** with the daemon — no extra command needed.
-
-```bash
-# Point any OpenAI-compatible SDK at the forward proxy
-export OPENAI_BASE_URL=http://localhost:8569/v1
-```
-
-| Provider SDK | How to connect | Token savings |
-|-------------|---------------|---------------|
-| **Any OpenAI-compatible client** | Set base URL to `http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
-| **Custom port** | `toolrecall serve --port 9090` | Same |
-
-Supported providers: OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, Mistral, Groq, Together, OpenRouter. See [Forward Proxy docs](docs/FORWARD_PROXY.md) for the full provider list and usage examples.
-
-### FTS5 Knowledge Base — Query via MCP or HTTP
-
-The SQLite FTS5 index built by `toolrecall index` is queryable by the agent itself:
-
-- **MCP tool** (active when MCP bridge is connected): `mcp_toolrecall_docs_search(query="...")` — returns BM25-ranked results with snippets
-- **HTTP endpoint** (active when Forward Proxy is running): `GET http://localhost:8569/__docs/search?q=<query>` — returns JSON, any HTTP-speaking client can use it
-
-This means the agent can search its own cached docs, memory stores, and indexed files without leaving the tool loop. Index with `toolrecall index`. See [Knowledge DB](docs/KNOWLEDGE_DB.md).
-
----
-
-## Security
-
-ToolRecall doesn't prevent prompt injection — it cages the consequences:
-
-- **Default-deny path allowlist:** Without config, NO paths are readable. `toolrecall init` prompts for paths interactively.
-- **Sensitive file blocklist:** `.env`, `.ssh/`, `.pem`, `.aws/`, etc. are blocked even inside allowed paths.
-- **`allow_terminal`** (default: `false`): allows read-only commands matching the regex allowlist (27 patterns for `ls`, `cat`, `git status`, etc.). Set `true` to enable terminal caching.
-- **`os.path.realpath()`:** catches `../../../etc/shadow` traversal before OS is touched.
-- **Cognitive Pre-Fight:** Deterministic regex scan on MCP tool arguments for override instructions, jailbreak tags, exfiltration URLs. Zero LLM, ~0.001ms hot path.
-- **AST injection check:** Parses tool arguments as Python AST — blocks `exec()`, `eval()`, `__import__()` calls.
-- **Daemon IPC via UDS:** No open ports (POSIX), immune to SSRF. The forward proxy listens on TCP `:8569` for HTTP API caching — intentional, separate from daemon transport.
-- **Fail-closed fallback:** If the daemon is unreachable, the client refuses gated operations (terminal, unrestricted reads) instead of silently allowing them.
-
-See [Security Architecture](SECURITY.md) for the full trust boundary.
-
----
-
 ## Quick Reference — CLI
 
 ```
-toolrecall setup          One-shot: config + systemd service + shim + daemon start  [required once]
+toolrecall setup          One-shot: config + systemd service + daemon start  [required once]
 toolrecall init           Create default config.toml and .env
 toolrecall status         Cache status and stats               [auto-starts daemon]
 toolrecall stats          Detailed cache statistics (JSON)     [auto-starts daemon]
@@ -388,7 +393,6 @@ See the [Testing Guide](docs/TESTING.md) and [Makefile](./Makefile) for all targ
 ## Uninstall
 
 ```bash
-toolrecall shim --uninstall          # Remove .pth from site-packages
 systemctl --user stop toolrecall-daemon
 systemctl --user disable toolrecall-daemon
 pipx uninstall toolrecall
@@ -415,7 +419,7 @@ rm -rf ~/.toolrecall ~/.config/toolrecall
 - [Replay Mode](docs/REPLAY_MODE.md) — record/replay tool calls for deterministic CI testing
 - [Docker Deployment](docs/DOCKER.md) — containerized stack
 - [Forward Proxy](docs/FORWARD_PROXY.md) — cache API responses by body hash, provider list, usage
-- [Security Architecture](SECURITY.md) — WAF details, trust boundary
+- [Security Architecture](SECURITY.md) — policy gate details, trust boundary
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common fixes
 - [Appendix](docs/APPENDIX.md) — comparison tables, OSI model, ROI, vision, audit
 - [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes Agent
