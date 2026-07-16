@@ -4,18 +4,20 @@ Not all agents benefit equally from ToolRecall. This document explains **who win
 
 ---
 
-## Quick Reference
+## Decision Table
 
-|| Agent | Caching Value | Use Shim? | Use MCP Bridge? | Notes |
-|---|---|---|---|---|---|
-|| **Hermes** | ✅ High | ✅ Yes | ✅ Yes | Stateless, small context → biggest win. Context Tracker auto-hint after every tool call. |
-|| **OpenCode** | ✅ High | ❌ N/A (Node.js) | ✅ Yes | MCP multiplex is the killer feature |
-|| **Cline** | ✅ High | ✅ Yes | ✅ Yes | Benefits from both layers |
-|| **Aider** | ✅ Medium | ✅ Yes | ⚠️ Via `--mcp-toolrecall` | Aider is diff-patch based, fewer tool re-reads |
-|| **Google ADK** | ✅ High | ✅ Yes | ✅ Yes | Python SDK, no built-in tool caching; transparent shim catches `open()` in tools |
-|| **Claude Code** | ⚠️ **Low / Negative** | ❌ **Avoid** | ⚠️ Use with caution | See detailed section below |
-|| **Codex CLI** | ⚠️ Mixed | ❌ N/A (Node.js) | ⚠️ Multiplex only | MCP bridge for static tool multiplexing only |
-|| **Cursor** | ⚠️ Mixed | ⚠️ Shim safe | ⚠️ Configurable | Cursor manages its own tool state; MCP optional |
+Pick your agent and integration layer. The table tells you what value to expect and any caveats.
+
+| Agent | MCP Bridge | Forward Proxy | Shim | Value | Notes |
+|-------|-----------|---------------|------|-------|-------|
+| **Hermes** | ✅ | ✅ | ✅ | **High** | Built-in native. Stateless, small context — biggest win. Context Tracker auto-hint after every tool call. |
+| **OpenCode** | ✅ | ✅ | ❌ N/A (Node.js) | **High** | MCP multiplex is the killer feature. |
+| **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
+| **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
+| **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
+| **Claude Code** | ⚠️ Multiplex only | ✅ | ❌ N/A | **Selective** | MCP bridge for multiplex only — do NOT enable file/terminal caching. Forward proxy is safe and orthogonal. |
+| **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
+| **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
 
 ---
 
@@ -26,12 +28,11 @@ ToolRecall is **built into Hermes** — the tools `read_file`, `terminal`, `mcp_
 **Why it works:**
 - Hermes is a stateless agent with limited context budget
 - Repeated file reads and terminal calls inflate prompt size fast
-- Deterministic cache → stable prompt prefixes → provider prefix-caching discount
+- Context Tracker provides per-turn hints for which files to drop
 
 **Config:**
 ```bash
 pipx install toolrecall && toolrecall setup
-# or: pip install toolrecall && toolrecall setup  (if not using pipx)
 # Tools available natively in Hermes — no extra config needed.
 ```
 
@@ -118,27 +119,36 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 
 ---
 
-## Claude Code — ⚠️ Low / Negative value (use with caution)
+## Claude Code — ⚠️ Use selectively
 
-ToolRecall's caching model **conflicts** with Claude Code's architecture in several ways:
+ToolRecall and Claude Code have different strengths. The cache adds little value for Claude Code's workflow, but two features are safe and useful:
 
-| Issue | Why it happens |
-|---|---|
-| **Stale file state** | Claude Code reads a file, edits it, reads it again. An aggressive cache may serve the old content, causing Claude to "see" changes it already made — leading to edit loops or redundant fixes. |
-| **Native state tracking** | Claude Code maintains its own in-memory task trees, directory snapshots, and recent terminal output. External caching is redundant at best, destructive at worst. |
-| **Tool rejection errors** | Placing a proxy between Claude Code's stdio tool execution and the OS can trigger internal sanitization checks, causing unexpected tool execution failures. |
-| **Node.js binary** | The Python shim `.pth` file doesn't affect Claude Code at all. |
+**What works:**
+- **Forward proxy** — caching API responses via `:8569` is orthogonal to Claude Code's tool loop and saves real cost.
+- **MCP multiplexer only** — if you run 5+ MCP servers (GitHub, Postgres, fetch, time), TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point.
 
-### When *might* it still make sense?
+**What to avoid:**
+- **File/terminal caching** — Claude Code maintains its own in-memory state tracking. External caching adds staleness risk with no benefit.
+- **Python shim** — Claude Code is Node.js; the shim doesn't apply.
 
-- **MCP multiplex only** — if you run 5+ MCP servers (GitHub, Postgres, fetch, time), TR's multiplexer shares one subprocess per server across all sessions. Add TR as the *single MCP entry point* but **do not enable** `mcp_multiplex` servers that cache file content.
-- **Forward proxy only** — caching API responses (OpenAI/Anthropic) via `:8569` is safe and orthogonal to Claude Code's tool loop.
+**Config:**
+```json
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
-> **Bottom line:** If you use Claude Code alone, you don't need ToolRecall. If you run Claude Code alongside Hermes/OpenCode, use TR only for the MCP multiplex and forward proxy — not for file/terminal caching.
+> **Bottom line:** Add TR for the forward proxy and MCP multiplex benefits. Skip file/terminal caching — Claude Code manages those itself.
 
 ---
 
-## Codex CLI — ⚠️ Mixed
+## Codex CLI — ⚠️ Use selectively
 
 Codex CLI is Node.js (shim N/A). The MCP bridge is useful for multiplexing static tool servers.
 
@@ -148,36 +158,19 @@ Codex CLI is Node.js (shim N/A). The MCP bridge is useful for multiplexing stati
 
 ---
 
-## Cursor — ⚠️ Mixed
+## Cursor — ⚠️ Low value
 
-Cursor has its own tool-execution plumbing. The shim is safe (Python process) and can help with file read caching, but Cursor manages its own state aggressively.
+Cursor has its own tool-execution plumbing. The shim is safe (Python process) but largely redundant — Cursor manages its own state aggressively.
 
-**Recommended:** Add MCP server for multiplex benefits, skip the shim for dynamic code files. Use `TOOLRECALL_SHIM_DISABLE=1` for Cursor's Python processes if you hit stale-state issues.
+**Recommended:** Skip ToolRecall for Cursor sessions. The forward proxy is the only feature that adds value (API cost savings).
 
 ---
 
-## Design Rationale
+## Integration Layer Reference
 
-### Why stateless agents win
-
-Open-source / stateless agent pipelines generally:
-- Operate on smaller or more expensive context windows
-- Have noticeable latency for tool execution (local models, self-hosted)
-- Lack built-in MCP multiplexing
-
-ToolRecall addresses all three: **smaller context** (cached tool outputs), **lower latency** (0.6ms vs 1.5s subprocess), **shared multiplexer** (one subprocess per MCP server for all agents).
-
-### Why stateful agents push back
-
-Proprietary terminal agents (Claude Code, Codex CLI) are heavily optimized around:
-1. **Anti-idempotency** — coding environments are in constant flux; they *demand* live file state
-2. **Native state tracking** — they compress and manage their own tool history within context
-3. **Strict session monitoring** — stdio proxies can break internal error-handling and tool sanitization
-
-### The verdict
-
-| Architecture | Examples | ToolRecall Value |
-|---|---|---|
-| Stateless, Python, MCP-native | Hermes, Cline, Aider | ✅ High |
-| Node.js, open models, no native MCP multiplex | OpenCode | ✅ High (MCP bridge) |
-| Proprietary, stateful, self-tracking | Claude Code, Codex CLI | ⚠️ Low / Use selectively |
+| Layer | What it does | Requires | Best for |
+|-------|-------------|----------|----------|
+| **MCP Bridge** (`toolrecall mcp`) | Single MCP entry point → daemon → multiplexed servers + caching | MCP-compatible agent | Any agent. The default. |
+| **Forward Proxy** (`:8569`) | Caches API responses by body hash | SDK pointed at `http://localhost:8569` | Any agent making API calls. Saves $ in dev loops. |
+| **Python Shim** (`.pth` file) | Transparently caches `open()` and `subprocess.run()` | Python agent, pipx or `toolrecall shim --install` | Python agents without native TR support. Marked experimental. |
+| **Go Client** (`tr` binary) | Direct UDS connection to daemon | `go build` in `go-client/` | Shell scripts, CI/CD, non-Python agents, herdr panes. |

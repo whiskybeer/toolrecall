@@ -2,7 +2,7 @@
 
 **Date:** June 7, 2026  
 **Environment:** GCP e2-medium (4GB RAM), Hermes Agent + Gemini 3.1 Pro Preview  
-**ToolRecall Version:** v0.8.12 (MCP Multiplexer, Context Tracker, Forward Proxy, `ctx_dropped_tokens`)
+**ToolRecall Version:** v0.8.8+ (MCP Multiplexer, Context Tracker, Forward Proxy)
 
 In a single 13-hour development session building the ToolRecall MCP Multiplexer, ToolRecall achieved a **91% file cache hit rate**, intercepting **827 tool calls** locally that would have otherwise triggered full OS execution.
 
