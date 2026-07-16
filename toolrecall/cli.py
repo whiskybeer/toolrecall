@@ -445,7 +445,12 @@ def cmd_config_set():
         print(f"❌ Failed to write {cfg_path}")
 
 def cmd_serve():
-    """Start the forward proxy (caches LLM API responses)."""
+    """Start the forward proxy (caches LLM API responses).
+
+    Note: The daemon already starts the forward proxy automatically.
+    This command is only needed if you want a standalone instance
+    on a different port while the daemon is NOT running.
+    """
     # Parse --port from argv
     port_override = None
     clean_argv = []
@@ -485,6 +490,19 @@ def cmd_serve():
         print("Use with:")
         print("  export OPENAI_BASE_URL=http://localhost:8569")
         print("  export ANTHROPIC_BASE_URL=http://localhost:8569")
+        return
+
+    # Check if daemon is already running (it starts the proxy on default port)
+    from toolrecall.transport import TransportClient
+    daemon_check = TransportClient()
+    daemon_ping = daemon_check.send({"cmd": "ping"})
+    daemon_running = daemon_ping.get("pong", False)
+
+    if daemon_running and (port_override is None or port_override == int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))):
+        print("The daemon already manages the forward proxy on port 8569.")
+        print("To run a standalone proxy on a different port, use:")
+        print("  toolrecall serve --port <PORT>")
+        print("while the daemon is stopped.")
         return
 
     from toolrecall.proxy import run_forward_proxy

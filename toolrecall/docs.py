@@ -182,8 +182,8 @@ def docs_get_page(path: str, source: str = "") -> str:
         ).fetchone()
 
         if row:
-            conn.close()
-            return f"### {row['title']}\\nURL: {row['url']}\\n\\n{row['content']}"
+                    conn.close()
+                    return f"### {row['title']}\nURL: {row['url']}\n\n{row['content']}"
 
         # Fuzzy
         fuzzy = f"%{path}%"

@@ -28,16 +28,29 @@ IS_WINDOWS = sys.platform == "win32"
 
 def _default_socket_path() -> str:
     """Determine the default transport path.
-    
+
+    Env var priority:
+      1. TOOLRECALL_TRANSPORT (read by both client and daemon)
+      2. TOOLRECALL_UDS_PATH (alias for backward compat with Docker/docs)
+      3. Platform default: ~/.toolrecall/toolrecall.sock (POSIX) or
+         tcp://127.0.0.1:8568 (Windows)
+
     POSIX: Unix Domain Socket at ~/.toolrecall/toolrecall.sock
     Windows: TCP on 127.0.0.1:port
-    
+
     Returns string: file path on POSIX, "tcp://127.0.0.1:PORT" on Windows.
     """
     if IS_WINDOWS:
         port = int(os.environ.get("TOOLRECALL_PORT", "8568"))
         return f"tcp://127.0.0.1:{port}"
-    
+
+    # TOOLRECALL_TRANSPORT is the canonical env var — read by both client
+    # and daemon. TOOLRECALL_UDS_PATH is kept as an alias for Docker/docs
+    # backward compatibility (deprecated).
+    env_path = os.environ.get("TOOLRECALL_TRANSPORT") or os.environ.get("TOOLRECALL_UDS_PATH")
+    if env_path:
+        return env_path
+
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     if xdg:
         # Verify that XDG_RUNTIME_DIR matches the actual user UID.

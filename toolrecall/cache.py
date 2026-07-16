@@ -548,56 +548,7 @@ DEFAULT_CACHEABLE = {
     "uptime": 300,
     "free -h": 300,
     "df -h /": 300,
-    "crontab -l": 3600,
-
-    # ── File listing (60s — directory contents stable)
-    "ls": 60,
-    "ls -la": 60,
-    "ls -1": 60,
-    "ls -l": 60,
-    "ls -lh": 60,
-
-    # ── File reading (30s — avoids re-reads during same reasoning step)
-    "cat": 30,
-    "head": 30,
-    "tail": 30,
-    "wc": 30,
-
-    # ── Searching (60s — results stable within agent turn)
-    "grep": 60,
-    "rg": 60,
-    "find": 60,
-    "fd": 60,
-
-    # ── Git read-only (30s — changes frequently, short TTL)
-    "git status": 30,
-    "git diff": 30,
-    "git diff --stat": 30,
-    "git log --oneline": 30,
-    "git log --oneline -5": 30,
-    "git branch": 300,
-    "git stash list": 300,
-
-    # ── Process snapshots (15s — changes every second)
-    "ps aux": 15,
-    "ps afx": 15,
-    "lsof": 15,
-
-    # ── Disk / memory (120s — changes slowly)
-    "du -sh": 120,
-    "du -sh *": 120,
-    "df -h": 120,
-
-    # ── Environment queries (static within session)
-    "which": 3600,
-    "python3 --version": 3600,
-    "node --version": 3600,
-    "pip list": 600,
-
-    # ── Date / time (60s — predictable)
-    "date": 60,
-    "date +%s": 60,
-    "cal": 60,
+    "crontab -l": 300,
 }
 
 
@@ -639,12 +590,23 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
 
     Only commands that match a known-cacheable pattern exactly are cached.
     All other commands execute every time (no cache, no delay).
+
+    Set ttl=0 to bypass the cache entirely (execute every time, no storage).
     """
     import subprocess
     import shlex
 
     cmd = " ".join(command.strip().split())
     cacheable_ttl = ttl
+
+    # ttl=0 means bypass cache entirely — execute fresh, don't store
+    if ttl is not None and ttl <= 0:
+        try:
+            cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
+            result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
+        except (ValueError, OSError, subprocess.TimeoutExpired) as e:
+            return {"error": f"Cannot parse command: {e}", "exit_code": -1, "cached": False}
+        return {"output": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "cached": False}
 
     all_ttls = dict(DEFAULT_CACHEABLE)
     config_ttls = config.get("cache", "terminal_ttls", default={})

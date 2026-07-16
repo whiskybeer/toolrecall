@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import sys
+from socketserver import ThreadingMixIn
 
 from toolrecall.transport import TransportClient
 
@@ -60,19 +61,64 @@ FORWARD_HOSTS = {
     "openrouter.ai",
 }
 
-# Path-based routing: maps path prefixes to API hosts.
+# Path-based routing: maps distinctive path prefixes to API hosts.
 # Used when the SDK sends Host: localhost (OPENAI_BASE_URL=http://localhost:8569).
-PATH_ROUTES = {
-    "api.openai.com": "/v1",
-    "api.anthropic.com": "/v1",
-    "api.deepseek.com": "/v1",
-    "api.x.ai": "/v1",
-    "api.mistral.ai": "/v1",
-    "api.groq.com": "/v1",
-    "api.together.xyz": "/v1",
-    "openrouter.ai": "/v1",
-    "generativelanguage.googleapis.com": "/v1beta",
-}
+# Ordered by specificity — more specific paths checked first.
+# /v1beta (Google) must be checked before /v1 to avoid matching /v1/... wrongly.
+PATH_ROUTES: list[tuple[str, str]] = [
+    ("generativelanguage.googleapis.com", "/v1beta"),
+    ("api.anthropic.com", "/v1/messages"),
+    ("api.anthropic.com", "/v1/complete"),
+    ("api.openai.com", "/v1/chat/completions"),
+    ("api.openai.com", "/v1/embeddings"),
+    ("api.openai.com", "/v1/models"),
+    ("api.openai.com", "/v1/images"),
+    ("api.openai.com", "/v1/audio"),
+    ("api.openai.com", "/v1/moderations"),
+    ("api.openai.com", "/v1/files"),
+    ("api.openai.com", "/v1/fine_tuning"),
+    ("api.openai.com", "/v1/assistants"),
+    ("api.openai.com", "/v1/threads"),
+    ("api.openai.com", "/v1/vector_stores"),
+    ("api.openai.com", "/v1/batches"),
+    ("api.openai.com", "/v1/organization"),
+    ("api.openai.com", "/v1/projects"),
+    ("api.openai.com", "/v1/realtime"),
+    ("api.openai.com", "/v1/responses"),
+    ("api.deepseek.com", "/v1/chat/completions"),
+    ("api.deepseek.com", "/v1/models"),
+    ("api.deepseek.com", "/v1/user"),
+    ("api.deepseek.com", "/v1/dashboard"),
+    ("api.x.ai", "/v1/chat/completions"),
+    ("api.x.ai", "/v1/embeddings"),
+    ("api.x.ai", "/v1/models"),
+    ("api.mistral.ai", "/v1/chat/completions"),
+    ("api.mistral.ai", "/v1/embeddings"),
+    ("api.mistral.ai", "/v1/models"),
+    ("api.mistral.ai", "/v1/fim"),
+    ("api.mistral.ai", "/v1/agents"),
+    ("api.mistral.ai", "/v1/files"),
+    ("api.groq.com", "/v1/chat/completions"),
+    ("api.groq.com", "/v1/embeddings"),
+    ("api.groq.com", "/v1/models"),
+    ("api.groq.com", "/v1/audio"),
+    ("api.together.xyz", "/v1/chat/completions"),
+    ("api.together.xyz", "/v1/embeddings"),
+    ("api.together.xyz", "/v1/models"),
+    ("api.together.xyz", "/v1/images"),
+    ("api.together.xyz", "/v1/files"),
+    ("openrouter.ai", "/v1/chat/completions"),
+    ("openrouter.ai", "/v1/models"),
+    # Fallback /v1 for any provider not listed above (e.g. custom endpoints)
+    ("api.openai.com", "/v1"),
+    ("api.anthropic.com", "/v1"),
+    ("api.deepseek.com", "/v1"),
+    ("api.x.ai", "/v1"),
+    ("api.mistral.ai", "/v1"),
+    ("api.groq.com", "/v1"),
+    ("api.together.xyz", "/v1"),
+    ("openrouter.ai", "/v1"),
+]
 
 
 class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -110,8 +156,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Path-based routing fallback: when Host is localhost (SDK redirect),
         # infer the real API host from the path prefix.
+        # PATH_ROUTES is ordered by specificity — first match wins.
         if not target_host or target_host.split(":")[0] in ("localhost", "127.0.0.1"):
-            for known_host, path_prefix in PATH_ROUTES.items():
+            for known_host, path_prefix in PATH_ROUTES:
                 if target_path.startswith(path_prefix):
                     target_host = known_host
                     break
@@ -193,7 +240,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             for k, v in resp_headers:
                 if k.lower() not in headers_dict:
                     headers_dict[k] = v  # first wins (preserves Content-Type etc.)
+            # Strip content-encoding — we stripped Accept-Encoding from the
+            # outgoing request, so the upstream response is uncompressed.
+            # Storing Content-Encoding would cause the client to try to decode
+            # plain text as gzip/deflate on replay.
+            headers_dict.pop("Content-Encoding", None)
+            headers_dict.pop("content-encoding", None)
             # Body must be str for JSON transport (api_cache schema stores TEXT)
+            # Since we stripped Accept-Encoding, the response is guaranteed
+            # uncompressed plain text.
             body_str = resp_body.decode("utf-8", errors="replace") if isinstance(resp_body, bytes) else resp_body
             self._client.send({
                 "cmd": "cached_api_store",
@@ -253,7 +308,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Copy headers, dropping the ones we shouldn't forward
         headers = {}
         skip_headers = {"host", "connection", "proxy-connection",
-                        "transfer-encoding", "content-length"}
+                        "transfer-encoding", "content-length",
+                        "accept-encoding"}
         for k, v in self.headers.items():
             if k.lower() not in skip_headers:
                 headers[k] = v
@@ -360,6 +416,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         log.debug("ForwardProxy: " + format, *args)
 
 
+class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
+    """Threaded HTTP server — handles requests in parallel threads.
+    One streaming request no longer blocks all other proxy traffic.
+    """
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
     """Start the ToolRecall forward proxy (caching API responses).
 
@@ -374,7 +438,7 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
     if port is None:
         port = int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
     try:
-        server = http.server.HTTPServer((bind, port), ForwardProxyHandler)
+        server = ThreadedHTTPServer((bind, port), ForwardProxyHandler)
         actual_port = server.server_port
     except OSError as e:
         import errno
@@ -485,7 +549,7 @@ def run_debug_server(bind: str = "127.0.0.1", port: int = 8570):
       GET /health        → daemon status
     """
     try:
-        server = http.server.HTTPServer((bind, port), DebugHandler)
+        server = ThreadedHTTPServer((bind, port), DebugHandler)
         actual_port = server.server_port
     except OSError as e:
         if e.errno == 98:

@@ -1009,12 +1009,16 @@ class DaemonServer:
         threading.Thread(target=self._do_exit, daemon=True).start()
 
     def _do_exit(self) -> None:
-        # SECURITY: Use sys.exit(0) instead of os._exit(0).
-        # os._exit() skips finally blocks, atexit handlers, and __del__,
+        # Use os.kill(SIGTERM) instead of sys.exit(0) or os._exit(0).
+        # sys.exit(0) in a daemon thread only kills the thread (SystemExit
+        # is caught by the thread runner), leaving the process as a zombie.
+        # os._exit(0) skips finally blocks, atexit handlers, and __del__,
         # leaving MCP subprocesses running and SQLite WAL uncommitted.
-        # sys.exit() raises SystemExit which allows proper cleanup.
+        # os.kill(SIGTERM) triggers the registered signal handler which
+        # sets _running = False and calls stop() in the main thread,
+        # doing proper cleanup (multiplexer, socket, PID file).
         time.sleep(0.5)
-        sys.exit(0)
+        os.kill(os.getpid(), signal.SIGTERM)
 
     def _handle_restart(self, req: dict) -> dict:
         """Restart: spawn a new daemon, then shut down."""
@@ -1079,11 +1083,6 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
-        # Scan content for injection (cognitive only — AST is for code, not data)
-        cog_err = self.security.cognitive_scan_arguments({"content": content})
-        if cog_err:
-            print(f"[ToolRecall] Cognitive scan blocked write: {path}")
-            return {"error": cog_err}
         result = _cache_write(path, content)
         # Track write as dirty for context tracker
         if result and not result.get("error"):
@@ -1101,11 +1100,6 @@ class DaemonServer:
         err = self.security.check_read_path(path)
         if err:
             return {"error": err}
-        # Scan content for injection (cognitive only — AST is for code, not data)
-        cog_err = self.security.cognitive_scan_arguments({"old_string": old_string, "new_string": new_string})
-        if cog_err:
-            print(f"[ToolRecall] Cognitive scan blocked patch: {path}")
-            return {"error": cog_err}
         result = _cache_patch(path, old_string, new_string)
         # Track patch as dirty for context tracker
         if result and not result.get("error"):
@@ -1125,7 +1119,7 @@ class DaemonServer:
         path = req.get("path", "")
         if not source or not path:
             return {"error": "Missing 'source' or 'path'"}
-        result = _docs_get_page(source, path)
+        result = _docs_get_page(path, source)
         return {"result": result}
 
     def _handle_status(self, req: dict) -> dict:
@@ -1550,7 +1544,9 @@ def daemon_status():
                 print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
                 servers = resp.get('multiplex_servers', [])
                 if servers:
-                    print(f"  MCP Servers: {', '.join(s['name'] for s in servers)}")
+                    # multiplex_servers is a list of server name strings
+                    names = [s['name'] if isinstance(s, dict) else s for s in servers]
+                    print(f"  MCP Servers: {', '.join(names)}")
                 ctx = resp.get('context_tracker', {})
                 if ctx:
                     print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}")

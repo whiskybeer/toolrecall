@@ -287,7 +287,9 @@ class TestContextTrackerReset:
             assert path in result["clean"]
             # 1000 bytes / 4 chars-per-token = 250 tokens
             assert result["ctx_dropped_tokens"] == 250
-            assert ct.get_stats()["ctx_dropped_tokens_total"] == 250
+            # get_stats() includes accumulated + pending from current clean files
+            # (accumulated=250, pending=250 from same file still clean) = 500
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 500
         finally:
             os.unlink(path)
 
@@ -310,7 +312,9 @@ class TestContextTrackerReset:
             # Both p1 and p2 are clean (p1 still in read_set, not dirty)
             assert t2 == 500  # 250 from p1 + 250 from p2
 
-            assert ct.get_stats()["ctx_dropped_tokens_total"] == t1 + t2
+            # get_stats() includes accumulated + current pending:
+            # accumulated = t1 + t2 = 750, pending = 500 (both files still clean) = 1250
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == t1 + t2 + 500
         finally:
             os.unlink(p1)
             os.unlink(p2)
@@ -323,7 +327,8 @@ class TestContextTrackerReset:
         try:
             ct.mark_read(path)
             ct.get_dirty()
-            assert ct.get_stats()["ctx_dropped_tokens_total"] == 100
+            # get_stats() includes accumulated (100) + pending (100, same file still clean)
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 200
             ct.reset()
             assert ct.get_stats()["ctx_dropped_tokens_total"] == 0
         finally:

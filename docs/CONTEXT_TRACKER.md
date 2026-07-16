@@ -107,23 +107,19 @@ sequenceDiagram
     participant Agent as Agent
     participant Daemon as ToolRecall Daemon
     
-    rect rgb(200, 230, 200)
-        Note over Agent,Daemon: Turn 1-3: Initial read phase
-        Agent->>Daemon: read_file("task.md")
-        Agent->>Daemon: read_file("cache.py")
-        Agent->>Daemon: read_file("daemon.py")
-    end
+    Note over Agent,Daemon: Turn 1-3: Initial read phase
+    Agent->>Daemon: read_file("task.md")
+    Agent->>Daemon: read_file("cache.py")
+    Agent->>Daemon: read_file("daemon.py")
     
     Agent->>Daemon: context_set_checkpoint("after_initial_read")
     Daemon-->>Daemon: Checkpoint 1: everything is clean
     
-    rect rgb(230, 200, 200)
-        Note over Agent,Daemon: Turn 4-7: Edit phase
-        Agent->>Daemon: read_file("daemon.py")
-        Agent->>Daemon: patch("cache.py", ...)
-        Daemon-->>Daemon: Dirty: cache.py
-        Agent->>Daemon: terminal("pytest")
-    end
+    Note over Agent,Daemon: Turn 4-7: Edit phase
+    Agent->>Daemon: read_file("daemon.py")
+    Agent->>Daemon: patch("cache.py", ...)
+    Daemon-->>Daemon: Dirty: cache.py
+    Agent->>Daemon: terminal("pytest")
     
     Agent->>Daemon: context_get_dirty()
     Daemon-->>Agent: dirty: ["cache.py"], clean: ["daemon.py", "config.py", "client.py", ...]
@@ -134,11 +130,9 @@ sequenceDiagram
     Agent->>Daemon: context_set_checkpoint("after_drop")
     Daemon-->>Daemon: Checkpoint 2: everything is clean again
     
-    rect rgb(200, 230, 200)
-        Note over Agent,Daemon: Turn 8+: Continue
-        Note over Agent: If daemon.py is needed again:
-        Agent->>Daemon: read_file("daemon.py") → CACHE HIT (0.1ms)
-    end
+    Note over Agent,Daemon: Turn 8+: Continue
+    Note over Agent: If daemon.py is needed again:
+    Agent->>Daemon: read_file("daemon.py") → CACHE HIT (0.1ms)
 ```
 
 ## Architecture
@@ -259,31 +253,31 @@ Same as baseline — the tracker gives you the information, but you have to act 
 flowchart TB
     subgraph Without["Without ToolRecall cache"]
         W1["Agent drops file"]
-        W2["Needs it again → reads from disk (1.5ms I/O)"]
+        W2["Needs it again reads from disk"]
         W3["Cost per re-read: 1.5ms I/O + file content in context"]
-        W4["→ Context drop is PAINFUL: re-read is slow"]
+        W4["Context drop is PAINFUL: re-read is slow"]
         W1 --> W2 --> W3 --> W4
     end
 
     subgraph With["With ToolRecall cache"]
         C1["Agent drops file"]
-        C2["Needs it again → reads from cache (0.1ms)"]
+        C2["Needs it again reads from cache"]
         C3["Cost per re-read: 0.1ms + file content in context"]
-        C4["→ Context drop is FREE: re-read is instant"]
+        C4["Context drop is FREE: re-read is instant"]
         C1 --> C2 --> C3 --> C4
     end
 
     subgraph NoTracker["Without Context Tracker"]
         N1["Agent doesn't know which files are safe to drop"]
-        N2["→ Keeps EVERYTHING in context 'just in case'"]
-        N3["→ O(n²) growth continues"]
+        N2["Keeps EVERYTHING in context just in case"]
+        N3["O(n²) growth continues"]
         N1 --> N2 --> N3
     end
 
     subgraph WithTracker["With Context Tracker"]
         T1["Agent knows: clean = safe to drop, dirty = must keep"]
-        T2["→ Drops all clean files at end of each turn"]
-        T3["→ Context STAYS BOUNDED"]
+        T2["Drops all clean files at end of each turn"]
+        T3["Context STAYS BOUNDED"]
         T1 --> T2 --> T3
     end
 ```
@@ -311,28 +305,7 @@ flowchart TB
 | **`cached_terminal` with state-changing commands:** `terraform apply`, `npm install` change many files. TR can't know which ones. | Medium | Documented. Agent should checkpoint after such commands. |
 | **Multiple agents sharing one daemon:** If two agents write the same file, both see it as dirty, but each only knows about their own checkpoints. | Low | Multi-agent scenarios must coordinate checkpoints or use separate daemons. |
 
-## Files to Create
 
-| File | Purpose | LOC |
-|------|---------|-----|
-| `toolrecall/context_tracker.py` | **New** — ContextTracker class | ~100 |
-| `tests/test_context_tracker.py` | **New** — Unit tests | ~150 |
-| `docs/CONTEXT_TRACKER.md` | **New** — This document | — |
-
-## Files to Modify
-
-| File | Change | LOC |
-|------|--------|-----|
-| `toolrecall/daemon.py` | Import + instantiate ContextTracker, 4 new handlers, 4 new routes, track writes in `_handle_write`/`_handle_patch` | ~80 |
-| `toolrecall/client.py` | 4 new public functions: `context_set_checkpoint`, `context_get_dirty`, `context_get_stats`, `context_reset` | ~40 |
-| `toolrecall/mcp_bridge.py` | 4 new MCP tools registered in the MCP interface | ~30 |
-| `SKILL.md` (toolrecall skill) | Add context tracker usage section | ~20 |
-| `hermes-agent` skill | Add context-drop agent pattern | ~30 |
-| `README.md` | Add Context Tracker to feature list | ~10 |
-
-Total new code: ~450 lines. Not bad for solving the O(n²) problem.
-
-## Verification
 
 After implementation, run:
 

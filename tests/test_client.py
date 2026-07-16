@@ -337,7 +337,9 @@ class TestClientFallbackDirect(unittest.TestCase):
         from toolrecall.client import cached_write
         path = os.path.join(self.tmpdir, "written.txt")
         result = cached_write(path, "fallback content")
-        self.assertIn("path", result)
+        # SECURITY: fail-closed — write requires the daemon
+        self.assertIn("error", result)
+        self.assertIn("daemon_unavailable", result["error"])
 
     def test_cached_patch_fallback(self):
         from toolrecall.client import cached_patch
@@ -345,9 +347,9 @@ class TestClientFallbackDirect(unittest.TestCase):
         with open(path, "w") as f:
             f.write("old content")
         result = cached_patch(path, "old", "new")
-        self.assertIn("path", result)
-        with open(path) as f:
-            self.assertIn("new content", f.read())
+        # SECURITY: fail-closed — patch requires the daemon
+        self.assertIn("error", result)
+        self.assertIn("daemon_unavailable", result["error"])
 
     def test_cache_status_fallback(self):
         from toolrecall.client import cache_status

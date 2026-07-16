@@ -117,7 +117,7 @@ Two distinct mechanisms:
 - **Zero-penalty context switching:** ~0.6ms latency means no cost to drop/reacquire context
 - **100% ecosystem penetration via MCP stdio**
 
-**v0.8.10 roadmap delivered:** (1) Context Tracker auto-hint + MCP bridge auto-trigger, (2) Replay mode for CI/CD, (3) Hermes transparent cache via OS-level .pth shim, (4) Forward proxy streaming, (5) MCP multiplexer with idle timeout, (6) Context drop detection via daemon ping, (7) 550+ test suite.
+**v0.8.12 roadmap delivered:** (1) Context Tracker auto-hint + MCP bridge auto-trigger, (2) Replay mode for CI/CD, (3) Hermes transparent cache via OS-level .pth shim, (4) Forward proxy streaming, (5) MCP multiplexer with idle timeout, (6) Context drop detection via daemon ping, (7) `ctx_dropped_tokens` tracking in healthcheck, (8) 560+ test suite.
 
 **Beyond v0.6.0:** Multi-tenant team gateway → shared VPC cache → Developer B gets Developer A's cache milliseconds later. Synthetic data flywheel → frozen trajectories for DPO training. Empirical alignment via deterministic `[Intent → Action → OS Observation → Human Correction]` pairs. High-speed RL (AlphaGo paradigm for OS agents) → train against cache instead of physical OS time.
 

@@ -193,23 +193,32 @@ class ContextTracker:
             }
         """
         with self._lock:
-            # Directly compute from internal state without calling get_dirty()
-            # to avoid double-counting ctx_dropped_tokens.
-            target = self._checkpoint_counter
             dirty_list = list(self._dirty.keys())
             read_but_not_dirty = [
                 p for p in self._read_set
                 if p not in self._dirty
             ]
             clean_list = list(set(read_but_not_dirty))
+
+            # Estimate pending tokens from current clean files (same logic as
+            # get_dirty) so the cumulative total is visible even when get_dirty
+            # hasn't been called yet (e.g. via daemon --status / healthcheck).
+            pending_tokens = 0
+            for p in clean_list:
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    size = 0
+                pending_tokens += size // 4
+
             return {
                 "dirty": sorted(dirty_list),
                 "clean": sorted(clean_list),
-                "checkpoint": target,
+                "checkpoint": self._checkpoint_counter,
                 "total_dirty": len(dirty_list),
                 "total_clean": len(clean_list),
                 "total_read": len(self._read_set),
-                "ctx_dropped_tokens_total": self._ctx_dropped_tokens,
+                "ctx_dropped_tokens_total": self._ctx_dropped_tokens + pending_tokens,
             }
 
     def reset(self) -> dict:

@@ -170,30 +170,40 @@ def cached_skill(name: str) -> dict:
 
 
 def cached_write(path: str, content: str) -> dict:
-    """Write file via daemon or direct — skips write if content matches disk.
+    """Write file via daemon or fail closed.
 
     Uses daemon's diff-check to skip writes when file content is unchanged.
-    Fallback to direct write when daemon is unavailable.
+    When daemon is unavailable, returns an error (fail-closed) — the daemon
+    is the single source of truth for the path allowlist.
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_write", "path": path, "content": content})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _get_direct_cache().cached_write(path, content)
+    # SECURITY: fail-closed on daemon unavailable — write is a gated
+    # operation that requires the daemon's SecurityGate. Without the
+    # daemon, we cannot enforce the path allowlist.
+    # The user must restart the daemon to use this feature.
+    return {"error": "daemon_unavailable: cached_write requires the daemon. Restart with 'toolrecall daemon'."}
 
 
 def cached_patch(path: str, old_string: str, new_string: str) -> dict:
-    """Apply patch via daemon or direct — skips if already applied.
+    """Apply patch via daemon or fail closed.
 
     Uses daemon's diff engine for idempotent patching.
-    Falls back to direct patching when daemon is unavailable.
+    When daemon is unavailable, returns an error (fail-closed) — the daemon
+    is the single source of truth for the path allowlist.
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_patch", "path": path,
                          "old_string": old_string, "new_string": new_string})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
-    return _get_direct_cache().cached_patch(path, old_string, new_string)
+    # SECURITY: fail-closed on daemon unavailable — patch is a gated
+    # operation that requires the daemon's SecurityGate. Without the
+    # daemon, we cannot enforce the path allowlist.
+    # The user must restart the daemon to use this feature.
+    return {"error": "daemon_unavailable: cached_patch requires the daemon. Restart with 'toolrecall daemon'."}
 
 
 def docs_search(query: str, source: str = None) -> str:
@@ -212,7 +222,7 @@ def docs_search(query: str, source: str = None) -> str:
     return _get_direct_docs().docs_search(query, source=source)
 
 
-def docs_get_page(source: str, path: str) -> str:
+def docs_get_page(path: str, source: str = "") -> str:
     """Get indexed page via daemon or direct SQLite.
 
     Retrieves a specific page from the daemon's docs index.
@@ -222,7 +232,7 @@ def docs_get_page(source: str, path: str) -> str:
     resp = client.send({"cmd": "docs_get_page", "source": source, "path": path})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp.get("result", str(resp))
-    return _get_direct_docs().docs_get_page(source, path)
+    return _get_direct_docs().docs_get_page(path, source)
 
 
 def cache_status() -> str:

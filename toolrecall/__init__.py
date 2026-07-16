@@ -30,8 +30,13 @@ def __getattr__(name):
         from toolrecall.cli import main
         return main
     if name in ("normalize_json", "normalize_tool_args", "normalize_command"):
-        from toolrecall.normalizer import normalize_json as _nj, normalize_tool_args as _nta, normalize_command as _nc  # noqa: F401 — lazy attr dispatch via locals()
-        return locals()[name]
+        from toolrecall.normalizer import normalize_json as _nj, normalize_tool_args as _nta, normalize_command as _nc  # noqa: F401 — lazy attr dispatch
+        _alias_map = {
+            "normalize_json": _nj,
+            "normalize_tool_args": _nta,
+            "normalize_command": _nc,
+        }
+        return _alias_map[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -40,6 +45,6 @@ __all__ = [
     "cached_run", "cached_exec", "cached_write", "cached_patch",
     "cached_mcp_check", "cached_mcp_store", "cached_mcp",
     "docs_search", "docs_get_page",
-    "invalidate_all", "get_stats",
+    "invalidate_all", "invalidate_file", "refresh_file", "get_stats",
     "Config", "cli_main",
 ]
