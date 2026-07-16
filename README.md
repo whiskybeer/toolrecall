@@ -423,3 +423,4 @@ rm -rf ~/.toolrecall ~/.config/toolrecall
   - [Google ADK](docs/google-adk.md) — `@cached_tool` decorator + forward proxy + runtime patch
   - [LangChain / LangGraph](docs/langchain.md) — `ToolRecallCache` BaseCache + callback handler
   - [herdr](docs/herdr.md) — `tr` binary + MCP bridge for any agent in any pane
+  - [Odysseus](docs/odysseus.md) — `cached_tool` decorator + MCP server caching

@@ -7,7 +7,7 @@ name = "toolrecall"
 version = "0.8.13"
 description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
 readme = "README.md"
-authors = [{name = "Robin Schultka", email = "robin@nousresearch.com"}]
+authors = [{name = "Robin Schultka", email = "robin@robka.de"}]
 license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",

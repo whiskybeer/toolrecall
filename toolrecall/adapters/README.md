@@ -31,7 +31,7 @@ The decorator wraps any `@tool` function. On repeat calls with identical args, t
 - **Namespace:** `adk` — keys don't collide with other adapters
 - **Graceful bypass:** Daemon not running → function executes live, no crash
 
-[Full docs →](docs/google-adk.md)
+[Full docs →](../../docs/google-adk.md)
 
 ---
 
@@ -94,7 +94,7 @@ repeat calls with identical arguments.
 - **Async-safe:** `@cached_async_tool` decorator for async tool functions
 - **No new dependencies:** uses `toolrecall.cache` — already installed
 
-[Full docs →](docs/odysseus.md)
+[Full docs →](../../docs/odysseus.md)
 
 ### Tool Cache (Callback Handler)
 
@@ -119,7 +119,7 @@ The module is importable **without** `langchain_core` installed. Base class inhe
 
 **Namespace:** `langchain`
 
-[Full docs →](docs/langchain.md)
+[Full docs →](../../docs/langchain.md)
 
 ---
 
@@ -140,7 +140,7 @@ toolrecall mcp              # Exposes cached tools via MCP
 - **MCP bridge:** `toolrecall setup` writes config automatically for Hermes, OpenCode, etc.
 - **Shared cache:** What one pane caches, another can hit.
 
-[Full docs →](docs/herdr.md)
+[Full docs →](../../docs/herdr.md)
 
 ---
 
