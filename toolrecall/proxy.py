@@ -157,11 +157,32 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Path-based routing fallback: when Host is localhost (SDK redirect),
         # infer the real API host from the path prefix.
         # PATH_ROUTES is ordered by specificity — first match wins.
+        # For ambiguous paths (/v1/models, /v1/embeddings) that exist at
+        # multiple providers, use header-based tiebreakers:
+        #   - anthropic-version → Anthropic
+        #   - x-api-key (no Bearer prefix) → Anthropic
+        #   - Authorization: Bearer sk-ant- → Anthropic
+        #   - Authorization: Bearer sk- (other) → OpenAI
+        #   - Authorization: Bearer (no prefix) → falls through to path-based
         if not target_host or target_host.split(":")[0] in ("localhost", "127.0.0.1"):
             for known_host, path_prefix in PATH_ROUTES:
                 if target_path.startswith(path_prefix):
                     target_host = known_host
                     break
+
+            # Header-based tiebreaker for ambiguous paths: if the path
+            # matched a generic /v1 fallback, re-check headers to see
+            # if a specific provider is identifiable.
+            if target_host == "api.openai.com" and target_path in ("/v1/models", "/v1/embeddings", "/v1/files"):
+                anthro_key = self.headers.get("x-api-key", "")
+                auth = self.headers.get("Authorization", "")
+                anthro_version = self.headers.get("anthropic-version", "")
+                if anthro_version:
+                    target_host = "api.anthropic.com"
+                elif anthro_key and not auth.startswith("Bearer "):
+                    target_host = "api.anthropic.com"
+                elif auth.startswith("Bearer sk-ant-"):
+                    target_host = "api.anthropic.com"
 
         target_scheme = "https"
 

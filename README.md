@@ -16,24 +16,20 @@ toolrecall setup          # One-shot: config → systemd → daemon start
 
 ---
 
-## What ToolRecall Actually Solves
+## What ToolRecall Solves
 
-The table below ranks features by real, defensible value — not by how often they're used in a session, but by how much pain they solve that nothing else does.
-
-| Priority | Feature | What it solves | Competition |
-|----------|---------|---------------|-------------|
-| **1** | **MCP Multiplexer** | One shared, persistent pool of MCP servers across all agent sessions instead of N Node processes per session. 5 Claude Code sessions + 3 Cursor instances = 8× the RAM for the same tools. | Nobody in the MCP ecosystem has a good answer. |
-| **2** | **Replay Mode** | Record an agent session's tool results, re-run it deterministically in CI. Agent developers currently cannot write reliable tests — flaky tools and non-deterministic APIs make CI for agents nearly impossible. | No incumbent. |
-| **3** | **Forward API Proxy** | Repeated identical LLM calls cost $0 in dev/CI loops. Every byte-identical request returns from local cache — no API call, no token cost. | Proxy-only tools exist, but none integrated with MCP multiplexing + replay. |
-| **4** | **Security Gate** | A policy layer (path allowlist, terminal allowlist, sensitive-file blocklist) that sits between *any* agent and the machine. Framework-independent, works even with caching disabled. | Most agent frameworks have weak or no sandboxing. |
-| **5** | **MCP Result Caching** | Legitimate for slow, idempotent external calls (search, fetch, docs). | Standalone, no daemon sharing. |
-| **6** | **File / Terminal Cache** | Marginal for most workflows (microseconds saved on operations that were never the bottleneck). Useful when paired with the Context Tracker. | Many tools cache file reads. |
-
-The strategic error in most tool-caching tools is leading with #6 and burying #1–#4. ToolRecall is not a faster `open()` — it's a deterministic tool layer.
+| Feature | What it solves | When you need it |
+|---------|---------------|------------------|
+| **MCP Multiplexer** | One shared, persistent pool of MCP servers across all agent sessions instead of N Node processes per session. 5 Claude Code sessions + 3 Cursor instances = 8× the RAM for the same tools. | You run multiple agents or sessions that need the same MCP servers |
+| **Replay Mode** | Record an agent session's tool results, re-run it deterministically in CI. Agent developers currently cannot write reliable tests — flaky tools and non-deterministic APIs make CI for agents nearly impossible. | You write tests for agent behavior and need reproducible runs |
+| **Forward API Proxy** | Repeated identical LLM calls cost $0 in dev/CI loops. Every byte-identical request returns from local cache — no API call, no token cost. | You iterate on prompts or tools that make repeated API calls |
+| **Security Gate** | A policy layer (path allowlist, terminal allowlist, sensitive-file blocklist) that sits between *any* agent and the machine. Framework-independent, works even with caching disabled. | You need a guardrail between agents and your filesystem/shell |
+| **MCP Result Caching** | Legitimate for slow, idempotent external calls (search, fetch, docs). | Your MCP servers make expensive or rate-limited external calls |
+| **File / Terminal Cache** | Reduces redundant reads within a turn. Useful when paired with the Context Tracker. | Your agent re-reads files or reruns static commands frequently in the same session |
 
 ---
 
-## Quickstart — MCP Bridge (the wedge feature)
+## Quickstart — MCP Bridge
 
 Connect **any MCP agent** by registering one server. That one server gives your agent access to all multiplexed MCP servers, caching, and security — with zero per-agent configuration.
 
@@ -149,7 +145,7 @@ allow_terminal = false
 allow_invalidate = false
 ```
 
-The security gate works standalone: set `caching = false` to use it as a pure policy layer with zero staleness risk. See [Security Architecture](SECURITY.md).
+The security gate works standalone: the daemon enforces path and terminal policy regardless of whether caching is enabled. See [Security Architecture](SECURITY.md).
 
 ---
 
@@ -166,7 +162,7 @@ ToolRecall caches are TTL-based with explicit opt-in per command. Nothing is cac
 | **Forward proxy** | Full API responses (chat completions to OpenAI, Anthropic, DeepSeek…) | Body hash — same request → same response | **Zero tokens consumed** — cache hit never reaches the provider |
 | **Context Tracker** | Tracks dirty/clean files via checkpoints + auto-hint on every tool call | In-memory (resets on daemon restart) | Per-turn hints that tell your agent which files are safe to drop from context (advisory — effectiveness depends on the model) |
 
-**ttl=0 bypass:** Pass `ttl=0` to any cached function to execute fresh every time. No cache lookup, no storage. Three docs sections confirm this behavior.
+**ttl=0 bypass:** Pass `ttl=0` to any cached function to execute fresh every time. No cache lookup, no storage.
 
 ### Measured effect
 
@@ -176,6 +172,8 @@ In a 13-hour session (Hermes + Gemini 3.1 Pro, 386 messages, 13 project files):
 - **73% fewer file-read tokens** at 3× re-read (~204K → ~55K unique)
 - **~20 min less wait time** — each cache hit avoids ~1.5s subprocess fork
 - **Provider prefix-caching** becomes reliable: byte-identical payloads qualify for Anthropic/OpenAI's up-to-90% discount on every call
+
+> **Note:** These benchmarks were measured with the original `DEFAULT_CACHEABLE` (which included `ls`, `cat`, `git status`, etc.). The current version caches only static commands — hit rates for terminal caching will be lower, but file cache performance is unaffected.
 
 Source: [Benchmark](docs/BENCHMARK.md)
 
@@ -187,7 +185,7 @@ ToolRecall provides three integration layers. Choose the one that fits your work
 
 ### Layer 1: MCP Bridge (recommended, any MCP agent)
 
-Register one MCP server in your agent config. All multiplexed servers, caching, and security are available through it. See [Quickstart](#quickstart--mcp-bridge-the-wedge-feature) above.
+Register one MCP server in your agent config. All multiplexed servers, caching, and security are available through it. See [Quickstart](#quickstart--mcp-bridge) above.
 
 **Hermes Agent:** Hermes already ships with ToolRecall built in — the tools `cached_read`, `cached_terminal`, `mcp_call`, etc. are available directly in your toolset.
 

@@ -181,16 +181,9 @@ class ContextTracker:
     def get_stats(self) -> dict:
         """Full status of the tracker.
 
-        Returns:
-            {
-                "dirty": [...],
-                "clean": [...],
-                "checkpoint": int,
-                "total_dirty": int,
-                "total_clean": int,
-                "total_read": int,
-                "ctx_dropped_tokens_total": int,
-            }
+        Returns confirmed cumulative state only — ctx_dropped_tokens_total
+        counts files that were actually returned as clean by get_dirty().
+        For the current pending estimate, use get_dirty().
         """
         with self._lock:
             dirty_list = list(self._dirty.keys())
@@ -200,17 +193,6 @@ class ContextTracker:
             ]
             clean_list = list(set(read_but_not_dirty))
 
-            # Estimate pending tokens from current clean files (same logic as
-            # get_dirty) so the cumulative total is visible even when get_dirty
-            # hasn't been called yet (e.g. via daemon --status / healthcheck).
-            pending_tokens = 0
-            for p in clean_list:
-                try:
-                    size = os.path.getsize(p)
-                except OSError:
-                    size = 0
-                pending_tokens += size // 4
-
             return {
                 "dirty": sorted(dirty_list),
                 "clean": sorted(clean_list),
@@ -218,7 +200,7 @@ class ContextTracker:
                 "total_dirty": len(dirty_list),
                 "total_clean": len(clean_list),
                 "total_read": len(self._read_set),
-                "ctx_dropped_tokens_total": self._ctx_dropped_tokens + pending_tokens,
+                "ctx_dropped_tokens_total": self._ctx_dropped_tokens,
             }
 
     def reset(self) -> dict:
