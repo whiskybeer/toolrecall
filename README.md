@@ -123,7 +123,7 @@ export OPENAI_BASE_URL=http://localhost:8569/v1
 | **Any OpenAI-compatible client** | Set base URL to `http://localhost:8569/v1` | **Zero tokens consumed** — cache hit never reaches the provider |
 | **Custom port** | `toolrecall serve --port 9090` | Same |
 
-Supported providers: OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, Mistral, Groq, Together, OpenRouter. See [Forward Proxy](docs/FORWARD_PROXY.md) for the full provider list and usage examples.
+Supported providers: OpenAI, Anthropic, Google Gemini. For DeepSeek, xAI, Mistral, Groq, Together, and OpenRouter, set the `X-Target-Host` header to the API hostname — otherwise requests route to OpenAI (these providers are OpenAI-compatible and path routing can't distinguish them). See [Forward Proxy](docs/FORWARD_PROXY.md) for the full provider list and usage examples.
 
 ---
 
