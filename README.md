@@ -9,6 +9,10 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 ```bash
 pipx install toolrecall
 toolrecall setup          # One-shot: config → systemd → daemon start
+
+# Optional: libSQL backend for multi-writer, vector search & cloud sync
+pip install toolrecall[libsql]  # replaces stdlib sqlite3 with libSQL
+# See docs/LIBSQL_COMPARISON.md for details
 # Done — all agents on this machine now share one MCP pool
 ```
 
@@ -415,6 +419,7 @@ rm -rf ~/.toolrecall ~/.config/toolrecall
 - [Replay Mode](docs/REPLAY_MODE.md) — record/replay tool calls for deterministic CI testing
 - [Docker Deployment](docs/DOCKER.md) — containerized stack
 - [Forward Proxy](docs/FORWARD_PROXY.md) — cache API responses by body hash, provider list, usage
+- [libSQL Backend](docs/LIBSQL_COMPARISON.md) — multi-writer, vector search, cloud sync comparison
 - [Security Architecture](SECURITY.md) — policy gate details, trust boundary
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — common fixes
 - [Appendix](docs/APPENDIX.md) — comparison tables, OSI model, ROI, vision, audit

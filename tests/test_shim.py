@@ -172,11 +172,15 @@ class TestShimOpenRouting(unittest.TestCase):
         self._orig_open = builtins.open
         self._orig_tr = shim_mod._TR
         self._orig_original_open = shim_mod._original_open
+        self._orig_skip_prefixes = shim_mod._SKIP_PREFIXES
+        self._orig_enabled = shim_mod._ENABLED
 
     def tearDown(self):
         builtins.open = self._orig_open
         shim_mod._TR = self._orig_tr
         shim_mod._original_open = self._orig_original_open
+        shim_mod._SKIP_PREFIXES = self._orig_skip_prefixes
+        shim_mod._ENABLED = self._orig_enabled
         shim_mod._thread_local.active = False
 
     def test_cache_hit_returns_stringio(self):
@@ -199,6 +203,7 @@ class TestShimOpenRouting(unittest.TestCase):
             "read": lambda p: {"error": "not found"},
             "terminal": MagicMock(),
         }
+        shim_mod._SKIP_PREFIXES = []  # prevent config-load calls
         real_file = io.StringIO("real file content")
         shim_mod._original_open = MagicMock(return_value=real_file)
 
@@ -247,6 +252,8 @@ class TestShimOpenRouting(unittest.TestCase):
     def test_tr_none_falls_back(self):
         """When _TR is None (client not loaded), fall back to original open."""
         shim_mod._TR = None
+        shim_mod._ENABLED = False  # prevent lazy import (which triggers config reads)
+        shim_mod._SKIP_PREFIXES = []  # prevent config-load calls in _should_skip
         real_file = io.StringIO("direct content")
         shim_mod._original_open = MagicMock(return_value=real_file)
 

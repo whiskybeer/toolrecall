@@ -1337,6 +1337,7 @@ def main():
         print("  daemon          Start/stop/manage cache daemon")
         print("  shim            Install/uninstall transparent cache shim (.pth)")
         print("  replay          Record/replay tool call scenarios (Replay mode)")
+        print("  turso           Turso Cloud sync: init, status")
         return
 
     if sys.argv[1] in ("--version", "-V", "-v"):
@@ -1381,6 +1382,9 @@ def main():
     elif cmd == "replay":
         from toolrecall.replay_cli import cmd_replay
         cmd_replay(sys.argv[2:])
+    elif cmd == "turso":
+        from toolrecall.turso_cli import cmd_turso
+        cmd_turso(sys.argv[2:])
     else:
         print(f"Unknown command: {cmd}")
         print("Available: status, stats, invalidate, index, serve, nginx, mcp, daemon")

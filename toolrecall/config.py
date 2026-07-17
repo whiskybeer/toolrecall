@@ -42,6 +42,10 @@ ENV_MAP = {
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
     "TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL": ("mcp_multiplex", "default_ttl"),
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
+    "TOOLRECALL_LIBSQL_DB_PATH": ("storage", "libsql_db"),
+    "TOOLRECALL_SYNC_URL": ("storage", "sync_url"),
+    "TOOLRECALL_SYNC_TOKEN": ("storage", "sync_token"),
+    "TOOLRECALL_SYNC_INTERVAL": ("storage", "sync_interval"),
     "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
     "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
     "TOOLRECALL_NORM_ENABLED": ("norm", "enabled"),
@@ -218,6 +222,33 @@ class Config:
         """Storage backend for caching. Default: 'sqlite'. Future: 'redis', 'postgres'."""
         val = self.get("storage", "backend", default="sqlite")
         return str(val).lower() if val else "sqlite"
+
+    @property
+    def libsql_db_path(self) -> str:
+        """Path to libSQL database file. Defaults to a separate file from sqlite3 cache.db."""
+        val = self.get("storage", "libsql_db", default=None)
+        if val:
+            return os.path.expanduser(val)
+        # Separate file so switching back to sqlite3 doesn't corrupt cache
+        base = os.path.dirname(os.path.expanduser(self.cache_db))
+        return os.path.join(base, "cache-libsql.db")
+
+    @property
+    def libsql_sync_url(self) -> str | None:
+        """Turso sync URL for libSQL embedded replica (optional)."""
+        val = self.get("storage", "sync_url", default=None)
+        return val.strip() if val else None
+
+    @property
+    def libsql_sync_token(self) -> str | None:
+        """Turso auth token for libSQL sync (optional)."""
+        val = self.get("storage", "sync_token", default=None)
+        return val.strip() if val else None
+
+    @property
+    def libsql_sync_interval(self) -> int:
+        """Seconds between libSQL sync rounds. 0 = disabled. Default: 60."""
+        return int(self.get("storage", "sync_interval", default=60))
 
     @property
     def file_ttl(self) -> int:

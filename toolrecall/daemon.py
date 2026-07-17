@@ -792,6 +792,38 @@ class DaemonServer:
             except Exception:
                 pass
 
+    def _start_sync_worker(self):
+        """Start libSQL sync background thread (if configured)."""
+        cfg = self.cfg
+        if cfg.storage_backend != "libsql":
+            return  # sync only applies to libSQL backend
+
+        sync_url = cfg.libsql_sync_url
+        sync_token = cfg.libsql_sync_token
+        if not sync_url or not sync_token:
+            return  # sync not configured
+
+        interval = cfg.libsql_sync_interval
+        if interval <= 0:
+            return  # sync disabled
+
+        def _sync_loop():
+            """Periodically sync libSQL embedded replica with Turso Cloud."""
+            import libsql_experimental as libsql
+            db_path = cfg.libsql_db_path
+            logger = logging.getLogger("toolrecall.daemon.sync")
+
+            while True:
+                try:
+                    libsql.sync(db_path, sync_url, sync_token)
+                except Exception as e:
+                    logger.warning("Sync failed: %s", e)
+                time.sleep(interval)
+
+        thread = threading.Thread(target=_sync_loop, daemon=True, name="LibSQL-Sync")
+        thread.start()
+        print(f"  libSQL sync: every {interval}s → {sync_url}")
+
     def start(self):
         """Start the IPC server (blocking). Must be called AFTER fork()."""
         # Lazy-init ThreadPoolExecutor AFTER fork — avoids corrupted locks
@@ -834,6 +866,9 @@ class DaemonServer:
             # Start periodic GC background thread
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
             self._gc_thread.start()
+
+            # Start libSQL sync background worker (if configured)
+            self._start_sync_worker()
 
             # Set a accept timeout so the main loop periodically checks
             # self._running instead of blocking forever on accept().

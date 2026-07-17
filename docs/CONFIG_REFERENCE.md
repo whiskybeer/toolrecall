@@ -53,7 +53,11 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `knowledge_db` | Path to FTS5 knowledge DB | `~/.toolrecall/knowledge.db` |
 | `agent_home` | Agent's home directory | `~/.hermes` |
 | `skill_dirs` | Where to search for skills | `agent_home/skills` |
-| `storage_backend` | Cache backend engine | `sqlite` |
+| `storage_backend` | Cache backend engine | `sqlite` | `libsql` for multi-writer, vector search & cloud sync |
+| `libsql_db` | libSQL DB path (defaults to `~/.toolrecall/cache-libsql.db` — separate from sqlite3) | `None` | `~/.toolrecall/cache-libsql.db` |
+| `sync_url` | Turso Cloud sync URL | `None` | `libs://my-db.turso.io` |
+| `sync_token` | Turso Cloud auth token | `None` | Turso API token |
+| `sync_interval` | Sync interval in seconds (`0` = disabled) | `60` | `300` |
 | `file_ttl` | File cache TTL (seconds) | `-1` (infinite) |
 | `terminal_default_ttl` | Default terminal TTL | `300` (5 min) |
 | `mcp_allowed_paths` | Default-deny read allowlist | `[]` |
@@ -83,6 +87,10 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE` | `mcp_multiplex.transparent_cache` | |
 | `TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL` | `mcp_multiplex.default_ttl` | |
 | `TOOLRECALL_STORAGE_BACKEND` | `storage.backend` | |
+| `TOOLRECALL_LIBSQL_DB_PATH` | `storage.libsql_db` | `TOOLRECALL_LIBSQL_DB_PATH=~/.toolrecall/cache-libsql.db` |
+| `TOOLRECALL_SYNC_URL` | `storage.sync_url` | `TOOLRECALL_SYNC_URL=libs://my-db.turso.io` |
+| `TOOLRECALL_SYNC_TOKEN` | `storage.sync_token` | |
+| `TOOLRECALL_SYNC_INTERVAL` | `storage.sync_interval` | `TOOLRECALL_SYNC_INTERVAL=300` |
 | `TOOLRECALL_HASH_ALGORITHM` | `cache.hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM=sha256` |
 | `TOOLRECALL_LOG_SHELL_FALLBACK` | `cache.log_shell_fallback` | |
 | `TOOLRECALL_FORWARD_PORT` | (not in config.toml) | `TOOLRECALL_FORWARD_PORT=9090` |

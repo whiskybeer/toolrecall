@@ -1131,6 +1131,20 @@ def get_stats() -> dict:
     except Exception:
         stats["recent"] = []
 
+    # Storage backend info
+    try:
+        stats["storage_backend"] = config.storage_backend
+        if config.storage_backend == "libsql":
+            stats["sync_url"] = config.libsql_sync_url or "not configured"
+            stats["sync_interval"] = config.libsql_sync_interval
+        else:
+            stats["sync_url"] = None
+            stats["sync_interval"] = None
+    except Exception:
+        stats["storage_backend"] = "unknown"
+        stats["sync_url"] = None
+        stats["sync_interval"] = None
+
     return stats
 
 
