@@ -136,6 +136,25 @@ def cached_read(path: str) -> dict:
     return _get_direct_cache().cached_read(path, source="agent_tool")
 
 
+def cached_shell_exec(command: str) -> dict:
+    """Execute a wrapped shell command, stripping infrastructure, caching the inner command.
+
+    Agent-agnostic: detects common shell wrappers (source, cd, eval, printf markers, exit)
+    from any agent (Hermes, Codex, Claude Code, etc.), strips them, and routes the real
+    command through cached_terminal with allowlist security.
+
+    Falls back to direct cached_terminal when daemon is unavailable.
+    """
+    client = _get_client()
+    payload = {"cmd": "cached_shell_exec", "command": command}
+    resp = client.send(payload)
+    if "error" not in resp or resp["error"] != "daemon_unavailable":
+        return resp
+    # Fall back to direct wrapper stripping + cached_terminal
+    from toolrecall.cache import cached_shell_exec as _direct_shell_exec
+    return _direct_shell_exec(command)
+
+
 def cached_terminal(command: str, ttl: int = None) -> dict:
     """Run command via daemon or direct SQLite.
 

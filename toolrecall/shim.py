@@ -10,6 +10,14 @@ every Python process startup. Zero imports needed from the
 calling code — any Python process (Hermes, Codex, Aider,
 Cursor, scripts) transparently benefits.
 
+The Popen shim automatically detects and strips common agent
+shell wrappers (source snapshot, cd, eval, printf cwd markers,
+exit code capture) and routes the inner command through the
+daemon's `cached_terminal` with allowlist security. This works
+agent-agnostically — Hermes, Codex, Claude Code, and any other
+agent that wraps commands in a bash -c infrastructure layer are
+all covered without agent-side code changes.
+
 Uninstall:
     toolrecall shim --uninstall
 
@@ -63,8 +71,9 @@ def _get_tr():
             from .client import (
                 cached_read as cr,
                 cached_terminal as ct,
+                cached_shell_exec as cse,
             )
-            _TR = {"read": cr, "terminal": ct}
+            _TR = {"read": cr, "terminal": ct, "shell_exec": cse}
         except ImportError:
             _TR = False
     return _TR
@@ -191,6 +200,61 @@ def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
     return True
 
 
+def _is_safe_popen_call(args: tuple, kwargs: dict) -> str | None:
+    """Check if a Popen call can be routed through cached_terminal.
+
+    Popen is often called with list args like [bash, "-c", "the command"].
+    When the last element is a safe string command and stdout=PIPE + text=True,
+    we can extract the command and route through cached_terminal.
+
+    Returns the extracted command string, or None if unsafe.
+    """
+    import subprocess
+
+    # Must have capturing enabled
+    stdout = kwargs.get("stdout", None)
+    if stdout is not subprocess.PIPE:
+        return None
+
+    # Must have text=True or universal_newlines=True
+    if not kwargs.get("text", False) and not kwargs.get("universal_newlines", False):
+        return None
+
+    # Kwargs that cached_terminal can't preserve
+    if any(k in kwargs for k in ('cwd', 'env', 'input', 'check')):
+        return None
+
+    # shell=True with a string command
+    if kwargs.get("shell", False):
+        cmd = args[0] if args else kwargs.get("args", "")
+        if isinstance(cmd, str) and not _SHELL_METACHARS.search(cmd):
+            return cmd
+        return None
+
+    # List args: must end with a safe string command.
+    # Common patterns: [bash, "-c", "cmd"] or [sh, "-c", "cmd"]
+    cmd_list = args[0] if args else kwargs.get("args", [])
+    if not isinstance(cmd_list, (list, tuple)) or len(cmd_list) < 2:
+        return None
+
+    last = cmd_list[-1]
+    # The last arg must be a string (the actual command)
+    if not isinstance(last, str):
+        return None
+
+    # Check for a shell-exec pattern where the second-to-last is "-c"
+    shell_flags = {"-c", "-l", "-lc", "-cl"}
+    if len(cmd_list) >= 3 and cmd_list[-2] in shell_flags:
+        # It's a shell -c invocation — return the last arg as-is.
+        # Wrapped commands contain metacharacters (source, cd, eval, printf, exit).
+        # The metacharacter check is bypassed here because _shim_popen Step 1
+        # routes through cached_shell_exec which strips wrappers internally,
+        # and the daemon's allowed_terminal_commands regex allowlist provides
+        # the real security gate.
+        return last
+    return None
+
+
 def _shim_run(*args, **kwargs):
     tr = _get_tr()
     if tr and args:
@@ -212,6 +276,84 @@ def _shim_run(*args, **kwargs):
             except Exception:
                 pass
     return _original_run(*args, **kwargs)
+
+
+class _CachedPopen:
+    """Lightweight Popen-compatible wrapper for cached terminal output.
+
+    Provides the interface that _wait_for_process (Hermes's BaseEnvironment)
+    and other Popen consumers expect: .stdout, .poll(), .wait(), .pid, .returncode.
+    """
+
+    def __init__(self, cmd: str, output: str, exit_code: int, stderr: str = ""):
+        import io
+
+        self.stdout = io.StringIO(output)
+        self.stderr = io.StringIO(stderr)
+        self.pid = -1
+        self.args = cmd
+        self._returncode = exit_code
+        self._polled = False
+        self._communicated = False
+
+    def poll(self):
+        if not self._polled:
+            self._polled = True
+        return self._returncode
+
+    def wait(self, timeout=None):
+        return self._returncode
+
+    def communicate(self, input=None, timeout=None):
+        if self._communicated:
+            return ("", "")
+        self._communicated = True
+        out = self.stdout.getvalue() if hasattr(self.stdout, "getvalue") else ""
+        err = self.stderr.getvalue() if hasattr(self.stderr, "getvalue") else ""
+        return (out, err)
+
+    def kill(self):
+        pass
+
+    def terminate(self):
+        pass
+
+    @property
+    def returncode(self):
+        return self._returncode
+
+    def __repr__(self):
+        return f"<_CachedPopen returncode={self._returncode}>"
+
+
+def _shim_popen(*args, **kwargs):
+    tr = _get_tr()
+    if tr:
+        cmd = _is_safe_popen_call(args, kwargs)
+        if cmd:
+            try:
+                # Step 1: try cached_shell_exec — strips agent wrappers
+                # (source, cd, eval, printf cwd markers, self.exit) and caches
+                # the inner command via cached_terminal with allowlist security.
+                result = tr["shell_exec"](cmd)
+                if result and "output" in result and "exit_code" in result:
+                    output = result.get("output", "")
+                    exit_code = result["exit_code"]
+                    stderr = result.get("error", result.get("stderr", ""))
+                    return _CachedPopen(cmd, output, exit_code, stderr)
+            except Exception:
+                pass
+            try:
+                # Step 2: fall back to direct cached_terminal (no wrapper stripping)
+                result = tr["terminal"](cmd)
+                if result and "output" in result and "exit_code" in result:
+                    output = result.get("output", "")
+                    exit_code = result["exit_code"]
+                    stderr = result.get("error", result.get("stderr", ""))
+                    return _CachedPopen(cmd, output, exit_code, stderr)
+            except Exception:
+                pass
+    return _original_popen(*args, **kwargs)
 
 
 def apply():
@@ -241,6 +383,7 @@ def apply():
     builtins.open = _shim_open
     if _sp:
         _sp.run = _shim_run
+        _sp.Popen = _shim_popen
 
 
 def remove():
@@ -248,6 +391,7 @@ def remove():
     builtins.open = _original_open
     if _sp:
         _sp.run = _original_run
+        _sp.Popen = _original_popen
 
 
 # ─── Auto-apply on .pth import ───

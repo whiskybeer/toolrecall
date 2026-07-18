@@ -793,36 +793,47 @@ class DaemonServer:
                 pass
 
     def _start_sync_worker(self):
-        """Start libSQL sync background thread (if configured)."""
+        """Start the storage-sync background thread (backend-agnostic).
+
+        Whether sync applies at all is the storage layer's call — the
+        daemon only asks storage.sync_configured(cfg), which encodes the
+        full opt-in policy (capability AND explicit enable, default off,
+        AND credentials). The daemon never imports a backend module.
+        """
+        from toolrecall.storage import sync_configured
+
         cfg = self.cfg
-        if cfg.storage_backend != "libsql":
-            return  # sync only applies to libSQL backend
-
-        sync_url = cfg.libsql_sync_url
-        sync_token = cfg.libsql_sync_token
-        if not sync_url or not sync_token:
-            return  # sync not configured
-
+        if not sync_configured(cfg):
+            return  # backend has no sync, or user hasn't opted in
         interval = cfg.libsql_sync_interval
         if interval <= 0:
-            return  # sync disabled
+            return
 
         def _sync_loop():
-            """Periodically sync libSQL embedded replica with Turso Cloud."""
-            import libsql_experimental as libsql
-            db_path = cfg.libsql_db_path
+            """Periodically sync the embedded replica via the singleton connection."""
+            from toolrecall._db import db_sync
             logger = logging.getLogger("toolrecall.daemon.sync")
+            backoff = interval
 
-            while True:
+            while self._running:
                 try:
-                    libsql.sync(db_path, sync_url, sync_token)
+                    if db_sync():
+                        backoff = interval  # reset after success
                 except Exception as e:
-                    logger.warning("Sync failed: %s", e)
-                time.sleep(interval)
+                    logger.warning(
+                        "storage sync failed (%s: %.120s) — retrying in %ds",
+                        type(e).__name__, str(e), backoff)
+                    backoff = min(backoff * 2, 3600)  # exponential backoff, cap 1h
+                # Sleep in 1s slices so daemon shutdown isn't delayed
+                # by up to a full sync interval.
+                slept = 0
+                while self._running and slept < backoff:
+                    time.sleep(1)
+                    slept += 1
 
-        thread = threading.Thread(target=_sync_loop, daemon=True, name="LibSQL-Sync")
+        thread = threading.Thread(target=_sync_loop, daemon=True, name="Storage-Sync")
         thread.start()
-        print(f"  libSQL sync: every {interval}s → {sync_url}")
+        print(f"  storage sync: enabled, every {interval}s")
 
     def start(self):
         """Start the IPC server (blocking). Must be called AFTER fork()."""
@@ -867,7 +878,7 @@ class DaemonServer:
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
             self._gc_thread.start()
 
-            # Start libSQL sync background worker (if configured)
+            # Start storage sync background worker (backend decides; opt-in)
             self._start_sync_worker()
 
             # Set a accept timeout so the main loop periodically checks
@@ -942,6 +953,10 @@ class DaemonServer:
         try:
             if cmd == "cached_read":
                 return self._handle_read(request)
+            elif cmd == "cached_shell_exec":
+                from toolrecall.cache import cached_shell_exec
+                result = cached_shell_exec(request.get("command", ""))
+                return result
             elif cmd == "cached_terminal":
                 return self._handle_terminal(request)
             elif cmd == "cached_skill":

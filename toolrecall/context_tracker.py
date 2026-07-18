@@ -61,6 +61,11 @@ class ContextTracker:
     def set_checkpoint(self, name: str = "") -> dict:
         """Set a checkpoint — everything clean after this point.
 
+        Auto-accumulates ctx_dropped_tokens: files that were read since the
+        last checkpoint but never dirtied are estimated as tokens the agent
+        "dropped" from context. This happens automatically — no explicit
+        get_dirty() call needed from either the agent or the daemon.
+
         Args:
             name: Optional human-readable label for the checkpoint.
 
@@ -70,8 +75,22 @@ class ContextTracker:
         with self._lock:
             self._checkpoint_counter += 1
             dirty_count = len(self._dirty)
-            # Don't clear dirty/read — they accumulate until the agent
-            # asks. The checkpoint is just a timestamp reference.
+
+            # Auto-accumulate ctx_dropped_tokens: files read but never
+            # dirtied since the last checkpoint have been "dropped" from
+            # the agent's context. Estimate their token cost so the
+            # healthcheck metric is always live.
+            clean_read = [
+                p for p in self._read_set
+                if p not in self._dirty
+            ]
+            for p in clean_read:
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    size = 0
+                self._ctx_dropped_tokens += size // 4
+
             result = {
                 "checkpoint": self._checkpoint_counter,
                 "name": name,

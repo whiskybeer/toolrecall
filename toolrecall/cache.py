@@ -26,6 +26,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 (English ~4 chars/token, code ~2 char/token → weighted average ~3)
 """
 import os
+import re
 import time
 import warnings
 from datetime import datetime
@@ -552,25 +553,34 @@ DEFAULT_CACHEABLE = {
 }
 
 
+_SHELL_METACHARS = (";", "&", "|", "`", "$(", ">", "<", "\\n")
+
+
 def _match_terminal(cmd: str, pattern: str) -> bool:
     """Match a command against a cacheable pattern.
 
-    - Multi-word patterns (e.g. "git status") require exact match.
-    - Single-word patterns (e.g. "hostname", "ls") match by prefix.
-      This means "ls -la" matches "ls", "cat /etc/hostname" matches "cat".
+    - Multi-word patterns (e.g. "df -h /") require exact match.
+    - Single-word patterns (e.g. "hostname", "uptime") match by prefix.
+      This means "uptime -p" matches "uptime".
+    - Commands containing shell metacharacters are never cacheable, even when
+      their first token is allowlisted. "whoami && ./deploy.sh" has the prefix
+      "whoami " but is not the static command the allowlist describes.
     - Safe because DEFAULT_CACHEABLE only contains read-only commands.
       Dangerous commands (rm, sudo, mv, git push, kill) are NOT in the list.
       Users can always bypass with ttl=0.
     """
     cmd_norm = " ".join(cmd.strip().split())
     pattern_norm = " ".join(pattern.strip().split())
+    # Compound or redirected commands are not static — never cache them.
+    if any(ch in cmd_norm for ch in _SHELL_METACHARS):
+        return False
     if " " in pattern_norm:
         # Multi-word pattern: exact match only
         return cmd_norm == pattern_norm
     # Single-word pattern: match by prefix
-    # "cat /etc/hostname" starts with "cat " — matches
-    # "ls -la" starts with "ls " — matches
-    # "lsof" matches "ls"? No: "lsof " doesn't start with "ls ", and "lsof" != "ls"
+    # "uptime -p" starts with "uptime " — matches
+    # "hostnamectl" matches "hostname"? No: "hostnamectl" != "hostname"
+    #   and "hostnamectl" doesn't start with "hostname "
     return cmd_norm == pattern_norm or cmd_norm.startswith(pattern_norm + " ")
 
 
@@ -677,6 +687,87 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     _record_tokens_read_from_disk("terminal_cache", _estimate_tokens(result.stdout))
 
     return {"output": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "cached": False}
+
+
+# ─── SHELL WRAPPER STRIPPER (agent-agnostic) ─────────────
+
+# Pattern: every agent (Hermes, Codex, Claude Code, Cursor, Aider)
+# wraps its commands in a bash script with infrastructure lines:
+#   source snapshot, cd, eval 'real command', export -p, printf cwd, exit
+# This module strips those and routes the actual command through
+# cached_terminal with allowlist security.
+
+# Lines that are agent infrastructure, not the user's command.
+_INFRA_PREFIXES = (
+    "set ", "source ", ". ", "builtin cd ", "cd ", "export ", "umask ",
+    "printf ", "__hermes_ec", "__HERMES_CWD__", "exit ", ">/dev/null",
+    "trap ", "|| true", "|| exit ", ")} || true",
+    # Hermes cwd marker extraction
+    'sed -n',
+    # Atomic write prefix (write_file)
+    'd=' , 't=', 'tmp="$(mktemp',
+)
+
+
+def _strip_shell_wrapper(cmd: str) -> str:
+    """Strip known agent shell wrappers from a bash -c command string.
+
+    Strips infrastructure lines (source, cd, export, umask, printf markers,
+    exit, trap), then looks for eval '...' patterns to extract the real command.
+    Returns the inner command if stripping changed anything, or the original
+    if no wrapper was found.
+    """
+    lines = cmd.strip().split("\n")
+    stripped = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Skip infrastructure lines
+        if any(line.startswith(p) for p in _INFRA_PREFIXES):
+            continue
+        stripped.append(line)
+
+    if not stripped:
+        return ""
+
+    # Join stripped lines (should be just the eval line + exit code capture)
+    joined = "\n".join(stripped)
+
+    # Try to extract from eval '...' pattern
+    # Patterns: eval 'the command', eval "the command", eval the command
+    import re as _re
+    m = _re.search(r"""eval\s+['"](?P<inner>[^'"]+)['"]""", joined)
+    if m:
+        inner = m.group("inner").strip()
+        # Unescape single quotes if they were escaped for eval
+        inner = inner.replace("'\\''", "'")
+        if inner:
+            return inner
+
+    # Also check for bare eval (no quotes) — rare but possible
+    m2 = _re.search(r"""eval\s+(?P<inner>[\w/.@_-][\w/.@_ -]*)""", joined)
+    if m2:
+        return m2.group("inner").strip()
+
+    return joined
+
+
+def cached_shell_exec(wrapped_cmd: str) -> dict:
+    """Execute a wrapped shell command, stripping infrastructure, caching the real command.
+
+    Agent-agnostic: strips known wrapper patterns (Hermes, Codex, Claude Code, etc.)
+    and routes the inner command through cached_terminal with its allowlist security.
+
+    The security gate is still the `allowed_terminal_commands` regex allowlist —
+    even after stripping, only read-only commands are cached/executed.
+    """
+    inner = _strip_shell_wrapper(wrapped_cmd)
+    if inner and inner != wrapped_cmd:
+        # Wrapper detected — route the inner command through cached_terminal
+        return cached_terminal(inner)
+    # No wrapper detected — pass through as-is (existing behavior)
+    return cached_terminal(wrapped_cmd)
 
 
 # ─── SCRIPT CACHE (SQLite + mtime) ─────────────────────────
@@ -1131,17 +1222,13 @@ def get_stats() -> dict:
     except Exception:
         stats["recent"] = []
 
-    # Storage backend info
+    # Storage backend info — delegated so cache.py stays backend-agnostic
     try:
-        stats["storage_backend"] = config.storage_backend
-        if config.storage_backend == "libsql":
-            stats["sync_url"] = config.libsql_sync_url or "not configured"
-            stats["sync_interval"] = config.libsql_sync_interval
-        else:
-            stats["sync_url"] = None
-            stats["sync_interval"] = None
+        from toolrecall.storage import stats_info
+        stats.update(stats_info(config))
     except Exception:
         stats["storage_backend"] = "unknown"
+        stats["sync_enabled"] = False
         stats["sync_url"] = None
         stats["sync_interval"] = None
 
