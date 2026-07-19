@@ -17,6 +17,7 @@
 - **Proxy 401 on OpenRouter requests** — path routing sent all `/v1/chat/completions` to `api.openai.com`. OpenRouter keys now correctly route to `openrouter.ai`.
 - **Proxy 404 on OpenRouter requests** — path `/v1/chat/completions` forwarded as-is, but OpenRouter expects `/api/v1/chat/completions`.
 - **Proxy timeout on all requests** — responses lacked `Content-Length`, causing HTTP/1.0 clients (Python `http.client`, some SDKs) to hang indefinitely.
+- **Proxy STREAM logging** — prompt token estimates and body SHA-256 hash on streamed responses, so proxy logs and CSV are useful for SSE/non-parseable responses.
 
 ### Documentation
 - `docs/FORWARD_PROXY.md` — fully rewritten with auth routing table, path rewrite table, agent-agnostic setup, provider list with routing method.
