@@ -422,12 +422,14 @@ class MCPBridge:
                     resp = self.client.send({
                         "cmd": "cache_refresh_file",
                         "path": arguments.get("path", ""),
+                        "mcp_origin": True,
                     })
                 elif tool_name == "write_file":
                     resp = self.client.send({
                         "cmd": "cached_write",
                         "path": arguments.get("path", ""),
                         "content": arguments.get("content", ""),
+                        "mcp_origin": True,
                     })
                 elif tool_name == "patch":
                     resp = self.client.send({
@@ -435,13 +437,14 @@ class MCPBridge:
                         "path": arguments.get("path", ""),
                         "old_string": arguments.get("old_string", ""),
                         "new_string": arguments.get("new_string", ""),
+                        "mcp_origin": True,
                     })
                 else:
                     # Mark agent-tool reads so context_tokens_saved counts
                     if tool_name in ("cached_read", "read_file"):
-                        resp = self._uds_request(uds_cmd, **arguments, source="agent_tool")
+                        resp = self._uds_request(uds_cmd, **arguments, source="agent_tool", mcp_origin=True)
                     else:
-                        resp = self._uds_request(uds_cmd, **arguments)
+                        resp = self._uds_request(uds_cmd, **arguments, mcp_origin=True)
 
             if "error" in resp:
                 return self._error(req_id, -32603, resp["error"])

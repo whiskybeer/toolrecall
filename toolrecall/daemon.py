@@ -56,6 +56,7 @@ from toolrecall.cache import (
     _is_sensitive_path,
     invalidate_all,
     get_stats,
+    _record as _cache_record,
 )
 from toolrecall.transport import (
     TransportClient, create_socket, bind_socket, send_message,
@@ -1105,6 +1106,9 @@ class DaemonServer:
         result = _cache_read(path, source=source)
         if result and not result.get("error"):
             self._context.mark_read(path)
+        # Record mcp_cache stats when request originates from MCP bridge
+        if req.get("mcp_origin"):
+            _cache_record("mcp_cache", hit=result.get("cached", False), path=path)
         return result
 
     def _handle_terminal(self, req: dict) -> dict:
@@ -1115,7 +1119,11 @@ class DaemonServer:
         if not command:
             return {"error": "Missing 'command'"}
         ttl = req.get("ttl")
-        return _cache_terminal(command, ttl=ttl)
+        result = _cache_terminal(command, ttl=ttl)
+        # Record mcp_cache stats when request originates from MCP bridge
+        if req.get("mcp_origin"):
+            _cache_record("mcp_cache", hit=result.get("cached", False), path=command)
+        return result
 
     def _handle_skill(self, req: dict) -> dict:
         name = req.get("name", "")
@@ -1137,6 +1145,9 @@ class DaemonServer:
         # Track write as dirty for context tracker
         if result and not result.get("error"):
             self._context.mark_dirty(path)
+        # Record mcp_cache stats when request originates from MCP bridge
+        if req.get("mcp_origin"):
+            _cache_record("mcp_cache", hit=result.get("unchanged", False), path=path)
         return result
 
     def _handle_patch(self, req: dict) -> dict:
@@ -1154,6 +1165,9 @@ class DaemonServer:
         # Track patch as dirty for context tracker
         if result and not result.get("error"):
             self._context.mark_dirty(path)
+        # Record mcp_cache stats when request originates from MCP bridge
+        if req.get("mcp_origin"):
+            _cache_record("mcp_cache", hit=result.get("unchanged", False), path=path)
         return result
 
     def _handle_docs_search(self, req: dict) -> dict:

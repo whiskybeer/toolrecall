@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.14] — 2026-07-19
+
+### Added
+- **Forward proxy auth-based routing** — detects upstream provider from API key prefix in the `Authorization` header. `Bearer sk-or-*` → `openrouter.ai`, `Bearer sk-ant-*` → `api.anthropic.com`, `Bearer xai-*` → `api.x.ai`. All three override path-based routing for any path.
+- **OpenRouter path rewrite** — proxy rewrites `/v1/...` → `/api/v1/...` when routing to `openrouter.ai` (OpenRouter's API lives at `/api/v1`, not `/v1`).
+- **Content-Length on proxy responses** — `resp.read()` handles upstream chunked encoding, but the response was sent without `Content-Length` and with `Connection: keep-alive`. Clients hung forever waiting for EOF. Now every non-streaming response includes `Content-Length`.
+- **Agent-agnostic env vars** — `OPENAI_BASE_URL=http://localhost:8569/v1` and `ANTHROPIC_BASE_URL=http://localhost:8569` added to `~/.profile` and `~/.bashrc`. Any agent reading these routes through the proxy automatically.
+- **Hermes config integration** — `model.base_url: http://localhost:8569/v1` set in Hermes config. New Hermes sessions route through the proxy by default.
+
+### Changed
+- `toolrecall/proxy.py`: header-based tiebreaker replaced with general auth-based routing (key prefix detection). Old Anthropic-only check (`x-api-key`, `anthropic-version`) kept as fallback.
+
+### Fixed
+- **Proxy 401 on OpenRouter requests** — path routing sent all `/v1/chat/completions` to `api.openai.com`. OpenRouter keys now correctly route to `openrouter.ai`.
+- **Proxy 404 on OpenRouter requests** — path `/v1/chat/completions` forwarded as-is, but OpenRouter expects `/api/v1/chat/completions`.
+- **Proxy timeout on all requests** — responses lacked `Content-Length`, causing HTTP/1.0 clients (Python `http.client`, some SDKs) to hang indefinitely.
+
+### Documentation
+- `docs/FORWARD_PROXY.md` — fully rewritten with auth routing table, path rewrite table, agent-agnostic setup, provider list with routing method.
+
+---
+
 ## [0.8.13] — 2026-07-16
 
 ### Added
@@ -37,7 +59,7 @@
 - **Client write/patch fallback** — `cached_write` and `cached_patch` now fail closed when daemon is unavailable (consistent with `cached_terminal`). Previously bypassed the path allowlist.
 - **`normalize_json`/`normalize_tool_args`/`normalize_command` lazy import** — replaced `locals()[name]` (raises `KeyError`) with explicit `_alias_map` dict (raises `AttributeError` as expected). Added `invalidate_file` and `refresh_file` to `__all__`.
 - **`docs_get_page` argument swap** — daemon.py called `_docs_get_page(source, path)` but `docs.py` defines `(path, source)`. Fixed all call sites + client.py signature.
-- **`docs_get_page` literal `\\n` bug** — exact-match branch used `\\n` (escaped backslash-n) instead of actual newlines.
+- **`docs_get_page` literal `\n` bug** — exact-match branch used `\n` (escaped backslash-n) instead of actual newlines.
 - **Proxy Content-Encoding** — `Accept-Encoding` stripped from outgoing requests; `Content-Encoding` stripped from stored headers. Prevents gzipped responses being stored as corrupted UTF-8.
 - **Proxy routing specificity** — `/v1beta` (Google) checked before `/v1`; `/v1/messages` (Anthropic) checked before `/v1/chat/completions` (OpenAI). Ordered tuple list replaces unordered dict iteration.
 
