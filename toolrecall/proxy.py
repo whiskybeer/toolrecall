@@ -115,7 +115,8 @@ def _csv_escape(s: str) -> str:
 
 
 def _log_proxy_usage(cache_status: str, target_host: str, target_path: str,
-                     request_hash: str, body: str = "") -> None:
+                     request_hash: str, body: str = "",
+                     prompt_tokens_override: int = 0) -> None:
     """Append one usage row to the proxy_usage.csv log.
 
     Thread-safe via lock. Best-effort — never raises, never blocks
@@ -127,9 +128,10 @@ def _log_proxy_usage(cache_status: str, target_host: str, target_path: str,
         target_path: upstream API path (e.g. /v1/chat/completions)
         request_hash: SHA-256 cache key (first 16 chars logged)
         body: response body to extract usage from (optional)
+        prompt_tokens_override: if > 0, use this instead of parsing (for STREAM)
     """
     usage = _try_parse_usage(body)
-    pt = usage.get("prompt_tokens", 0) or 0
+    pt = prompt_tokens_override if prompt_tokens_override > 0 else (usage.get("prompt_tokens", 0) or 0)
     ct = usage.get("completion_tokens", 0) or 0
     crt = (usage.get("cache_read_input_tokens", 0) or
            usage.get("cache_read_tokens", 0) or 0)
@@ -541,9 +543,17 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        # Log STREAM usage — prompt tokens from request body estimate,
+        # Log STREAM usage — prompt tokens estimated from request body,
         # completion tokens unavailable (SSE chunks, not parseable here).
-        _log_proxy_usage("STREAM", host, path, request_hash="")
+        import hashlib
+        stream_body_hash = hashlib.sha256(body).hexdigest() if body else ""
+        pt_est = max(1, len(body) // 4) if body else 0
+        log.info(
+            "STREAM: %s %s%s (body=%d bytes, ~%d est prompt tokens)",
+            method, host, path, len(body or b""), pt_est,
+        )
+        _log_proxy_usage("STREAM", host, path, request_hash=stream_body_hash,
+                         prompt_tokens_override=pt_est)
 
     def log_message(self, format, *args):
         log.debug("ForwardProxy: " + format, *args)
