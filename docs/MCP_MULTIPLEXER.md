@@ -73,6 +73,12 @@ Server names are auto-resolved:
 | `default_ttl` | `60` | Default cache TTL (seconds) for responses |
 | `transparent_cache` | `true` | Cache responses transparently (same key = same result) |
 
+### MCP Cache Stats
+
+When the MCP bridge routes tool calls (`read_file`, `write_file`, `patch`, `terminal`), the daemon records `mcp_cache` hits/misses alongside the primary file/terminal cache stats. This appears in `toolrecall stats` and the healthcheck output as `mcp_hits=N, mcp_missed=N`.
+
+**Agent-agnostic:** Every MCP client (Hermes, Claude Code, Cline, OpenCode) that connects through the bridge automatically contributes to `mcp_cache` stats. No per-agent configuration needed.
+
 ### Custom Server Override
 
 To override a registry entry or add a server not in the registry:

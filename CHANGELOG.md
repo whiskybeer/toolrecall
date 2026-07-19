@@ -3,6 +3,7 @@
 ## [0.8.14] — 2026-07-19
 
 ### Added
+- **MCP bridge mcp_cache tracking** — bridge tags all UDS tool calls (`read_file`, `write_file`, `patch`, `terminal`) with `mcp_origin=True`. Daemon records `mcp_cache` hit/miss stats alongside primary `file_cache`/`terminal_cache` stats. `toolrecall stats` and healthcheck output now show non-zero `mcp_hits`.
 - **Forward proxy auth-based routing** — detects upstream provider from API key prefix in the `Authorization` header. `Bearer sk-or-*` → `openrouter.ai`, `Bearer sk-ant-*` → `api.anthropic.com`, `Bearer xai-*` → `api.x.ai`. All three override path-based routing for any path.
 - **OpenRouter path rewrite** — proxy rewrites `/v1/...` → `/api/v1/...` when routing to `openrouter.ai` (OpenRouter's API lives at `/api/v1`, not `/v1`).
 - **Content-Length on proxy responses** — `resp.read()` handles upstream chunked encoding, but the response was sent without `Content-Length` and with `Connection: keep-alive`. Clients hung forever waiting for EOF. Now every non-streaming response includes `Content-Length`.
