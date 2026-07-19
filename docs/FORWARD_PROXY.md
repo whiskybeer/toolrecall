@@ -94,6 +94,12 @@ curl -X POST http://localhost:8569/v1/chat/completions \
 
 Requests to hosts not in this list are forwarded uncached (no caching).
 
+### Content-Length Fix
+
+Proxy responses now include `Content-Length`. Previously, `resp.read()` consumed the upstream body (handling chunked transfer encoding), but the response was sent without `Content-Length` and with `Connection: keep-alive`. HTTP/1.0 clients (Python `http.client`, some SDKs) hung indefinitely waiting for the body boundary. Now every non-streaming response includes `Content-Length`.
+
+Note: Streaming responses (SSE for LLM chat completions) bypass caching entirely and are relayed chunk-by-chunk — they do not get `Content-Length`.
+
 ## Cache Key
 
 Cache key = `SHA256(method + host + path + SHA256(body))`

@@ -78,6 +78,19 @@ The hint only appears when there's data to report — empty dirty/clean lists pr
 
 The daemon also includes `_agent_hint` in the `context_get_dirty` response directly, so agents that call `context_get_dirty` explicitly get the same guidance.
 
+### ctx_dropped_tokens — Measuring Context Savings
+
+The Context Tracker estimates how many tokens the agent saved by dropping clean files. Every time `get_dirty()` or `get_hint()` returns a list of clean files, their size is estimated (file bytes / 4) and accumulated in `ctx_dropped_tokens`.
+
+Additionally, on `set_checkpoint()`, files that were read since the last checkpoint but never dirtied are automatically accumulated — capturing context savings from files the agent read without modifying.
+
+This metric is visible in:
+
+- `toolrecall daemon --status` — shows `ctx_dropped=N`
+- `context_get_stats()` — returns `ctx_dropped_tokens_total`
+- Daemon ping response — includes `ctx_dropped_tokens` in `context_tracker` section
+- Healthcheck output — reported as `tokens_saved` / `ctx_recent`
+
 ### What Gets Tracked
 
 | Operation | Tracked as dirty? | Mechanism |
