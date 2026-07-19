@@ -25,11 +25,11 @@ toolrecall shim --install
 # Disable per-process: TOOLRECALL_SHIM_DISABLE=1 python my_script.py
 ```
 
-This works with **any** Python-based agent — Hermes, Aider, Cline, custom scripts — zero imports, zero config per tool. (OpenCode, Claude Code, and Codex CLI are Node.js binaries — the shim doesn't apply to them. See [Agent Compatibility](AGENT_COMPATIBILITY.md) for their recommended integration.) The shim monkey-patches `builtins.open` and `subprocess.run` to check the cache before touching the OS.
+This works with **any** Python-based agent — Hermes, Aider, Cline, custom scripts — zero imports, zero config per tool. (OpenCode, Claude Code, and Codex CLI are Node.js binaries — the shim doesn't apply to them. See [Agent Compatibility](AGENT_COMPATIBILITY.md) for their recommended integration.) The shim monkey-patches `builtins.open`, `subprocess.run`, and `subprocess.Popen` to check the cache before touching the OS.
 
 ```python
 # Equivalent of what the .pth file does:
-import toolrecall.shim  # auto-patches open() + subprocess.run()
+import toolrecall.shim  # auto-patches open(), subprocess.run(), subprocess.Popen()
 toolrecall.shim.apply()
 ```
 

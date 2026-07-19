@@ -12,7 +12,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | Section | Purpose | Key Options |
 |---------|---------|-------------|
 | `[paths]` | Data file locations | `cache_db`, `knowledge_db`, `skill_dirs` |
-| `[storage]` | Backend engine | `backend` (`sqlite` default) |
+| `[storage]` | Backend engine + Turso sync | `backend`, `libsql_db`, `sync_enabled`, `sync_url`, `sync_token`, `sync_interval`, `turso_api_base` | `sqlite`, `libsql`, or `libsql-sync` |
 | `[cache]` | Cache TTLs and hashing | `file_ttl`, `terminal_default_ttl`, `hash_algorithm`, `log_shell_fallback` |
 | `[cache.terminal_ttls]` | Per-command TTL overrides | Any command as key, TTL in seconds as value |
 | `[nginx]` | Optional nginx config generation | `site_name`, `domain`, `ssl` |
@@ -53,11 +53,13 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `knowledge_db` | Path to FTS5 knowledge DB | `~/.toolrecall/knowledge.db` |
 | `agent_home` | Agent's home directory | `~/.hermes` |
 | `skill_dirs` | Where to search for skills | `agent_home/skills` |
-| `storage_backend` | Cache backend engine | `sqlite` | `libsql` for multi-writer, vector search & cloud sync |
+| `storage_backend` | Cache backend engine | `sqlite` | `libsql` for multi-writer/vector search; `libsql-sync` for Turso Cloud sync via pyturso |
 | `libsql_db` | libSQL DB path (defaults to `~/.toolrecall/cache-libsql.db` — separate from sqlite3) | `None` | `~/.toolrecall/cache-libsql.db` |
-| `sync_url` | Turso Cloud sync URL | `None` | `libs://my-db.turso.io` |
+| `sync_enabled` | Master switch for Turso sync (opt-in, default false) | `False` | Must be explicitly `true` for sync to run |
+| `sync_url` | Turso Cloud sync URL | `None` | `libsql://my-db.turso.io` |
 | `sync_token` | Turso Cloud auth token | `None` | Turso API token |
 | `sync_interval` | Sync interval in seconds (`0` = disabled) | `60` | `300` |
+| `turso_api_base` | Turso Platform API base URL | `https://api.turso.tech` | Customizable for self-hosted/proxy |
 | `file_ttl` | File cache TTL (seconds) | `-1` (infinite) |
 | `terminal_default_ttl` | Default terminal TTL | `300` (5 min) |
 | `mcp_allowed_paths` | Default-deny read allowlist | `[]` |
@@ -86,11 +88,13 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_MCP_MULTIPLEX_SERVERS` | `mcp_multiplex.servers` | `TOOLRECALL_MCP_MULTIPLEX_SERVERS=time,github` |
 | `TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE` | `mcp_multiplex.transparent_cache` | |
 | `TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL` | `mcp_multiplex.default_ttl` | |
-| `TOOLRECALL_STORAGE_BACKEND` | `storage.backend` | |
+| `TOOLRECALL_STORAGE_BACKEND` | `storage.backend` | `TOOLRECALL_STORAGE_BACKEND=libsql` or `TOOLRECALL_STORAGE_BACKEND=libsql-sync` |
 | `TOOLRECALL_LIBSQL_DB_PATH` | `storage.libsql_db` | `TOOLRECALL_LIBSQL_DB_PATH=~/.toolrecall/cache-libsql.db` |
-| `TOOLRECALL_SYNC_URL` | `storage.sync_url` | `TOOLRECALL_SYNC_URL=libs://my-db.turso.io` |
+| `TOOLRECALL_SYNC_ENABLED` | `storage.sync_enabled` | `TOOLRECALL_SYNC_ENABLED=true` |
+| `TOOLRECALL_SYNC_URL` | `storage.sync_url` | `TOOLRECALL_SYNC_URL=libsql://my-db.turso.io` |
 | `TOOLRECALL_SYNC_TOKEN` | `storage.sync_token` | |
 | `TOOLRECALL_SYNC_INTERVAL` | `storage.sync_interval` | `TOOLRECALL_SYNC_INTERVAL=300` |
+| `TOOLRECALL_TURSO_API_BASE` | `storage.turso_api_base` | `TOOLRECALL_TURSO_API_BASE=https://turso.internal.example` |
 | `TOOLRECALL_HASH_ALGORITHM` | `cache.hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM=sha256` |
 | `TOOLRECALL_LOG_SHELL_FALLBACK` | `cache.log_shell_fallback` | |
 | `TOOLRECALL_FORWARD_PORT` | (not in config.toml) | `TOOLRECALL_FORWARD_PORT=9090` |
@@ -106,4 +110,5 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 
 - [MCP Multiplexer](MCP_MULTIPLEXER.md) — server registry, auto-resolution, `servers_config`
 - [Security Architecture](../SECURITY.md) — `allowed_paths`, `tool_access_control`, cognitive scan
+- [libSQL Backend](LIBSQL_COMPARISON.md) — backend comparison, opt-in cloud sync, security implications
 - [Hermes Transparent Cache](HERMES_TRANSPARENT_CACHE.md) — OS-level .pth shim details

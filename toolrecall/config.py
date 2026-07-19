@@ -43,9 +43,11 @@ ENV_MAP = {
     "TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL": ("mcp_multiplex", "default_ttl"),
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
     "TOOLRECALL_LIBSQL_DB_PATH": ("storage", "libsql_db"),
+    "TOOLRECALL_SYNC_ENABLED": ("storage", "sync_enabled"),
     "TOOLRECALL_SYNC_URL": ("storage", "sync_url"),
     "TOOLRECALL_SYNC_TOKEN": ("storage", "sync_token"),
     "TOOLRECALL_SYNC_INTERVAL": ("storage", "sync_interval"),
+    "TOOLRECALL_TURSO_API_BASE": ("storage", "turso_api_base"),
     "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
     "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
     "TOOLRECALL_NORM_ENABLED": ("norm", "enabled"),
@@ -61,7 +63,7 @@ def _apply_env_overrides(config: dict) -> dict:
         "allow_terminal", "allow_invalidate", "enabled",
         "transparent_cache", "cognitive_check_enabled",
         "ast_check_enabled", "tool_access_control",
-        "sort_lists", "strip_strings",
+        "sort_lists", "strip_strings", "sync_enabled",
     })
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
@@ -249,6 +251,30 @@ class Config:
     def libsql_sync_interval(self) -> int:
         """Seconds between libSQL sync rounds. 0 = disabled. Default: 60."""
         return int(self.get("storage", "sync_interval", default=60))
+
+    @property
+    def libsql_sync_enabled(self) -> bool:
+        """Master switch for Turso Cloud sync. Default: False (opt-in).
+
+        Sync replicates the entire cache (file contents, terminal output,
+        MCP responses) to Turso Cloud, so it must be explicitly enabled --
+        having sync_url/sync_token configured is NOT enough.
+        Env override: TOOLRECALL_SYNC_ENABLED=true
+        """
+        val = self.get("storage", "sync_enabled", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
+    @property
+    def turso_api_base(self) -> str:
+        """Turso Platform API base URL. Customizable for self-hosted/proxy.
+        Default: https://api.turso.tech
+        """
+        val = self.get("storage", "turso_api_base", default=None)
+        # strip + rstrip("/"): a trailing slash in config would otherwise
+        # produce "https://base//v1/..." URLs; empty string falls back too.
+        return val.strip().rstrip("/") if val and val.strip() else "https://api.turso.tech"
 
     @property
     def file_ttl(self) -> int:

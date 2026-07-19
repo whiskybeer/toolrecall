@@ -171,16 +171,27 @@ def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
 
     Safe = the caller wants captured output (capture_output=True or
     stdout=PIPE, text=True) so we can return a CompletedProcess with
-    stdout/stderr, AND no kwargs that cached_terminal can't preserve.
+    stdout/stderr.
 
-    Calls without capture (e.g. shell=True with no capture) expect
-    output on the console and stdout=None — routing them through
-    cached_terminal would silently change semantics.
+    Security model:
+    - cwd: Safe — passed through to daemon, changes execution context
+      but NOT the command content. Different cwd = different cache key
+      (executed fresh, not cached when cwd differs).
+    - check: Safe — just changes error handling, not command behavior.
+      The shim returns the exit code; caller can check it.
+    - timeout: Safe — affects how long we wait, not what the command does.
+      Passed through to daemon.
+    - env: UNSAFE — custom environment changes command behavior.
+      BLOCKED from caching. Executes fresh every time.
+    - input: UNSAFE — stdin data changes command behavior.
+      BLOCKED from caching. Executes fresh every time.
+
+    Shell metacharacters cause a fallthrough to the original subprocess,
+    since shlex.split would mangle them.
     """
     import subprocess
 
-    # Must have capturing enabled — otherwise the caller expects
-    # console output and stdout=None, not a str.
+    # Must have capturing enabled
     capture = kwargs.get("capture_output", False)
     stdout = kwargs.get("stdout", None)
     if not capture and stdout is not subprocess.PIPE:
@@ -190,11 +201,20 @@ def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
     if not kwargs.get("text", False) and not kwargs.get("universal_newlines", False):
         return False
 
-    # Kwargs that cached_terminal can't preserve
-    if any(k in kwargs for k in ('cwd', 'env', 'input', 'check')):
+    # env: custom environment changes command behavior — BLOCKED from cache
+    if "env" in kwargs:
         return False
 
-    # Shell metacharacters would be mangled by shlex.split
+    # input: stdin data changes command behavior — BLOCKED from cache
+    if "input" in kwargs:
+        return False
+
+    # cwd and check and timeout are safe — they affect execution context,
+    # not command content. Handled in _shim_run.
+    # check and timeout are ignored by cached_terminal (it always captures).
+    # cwd is passed to the daemon.
+
+    # Shell metacharacters
     if _SHELL_METACHARS.search(cmd):
         return False
     return True
@@ -220,9 +240,12 @@ def _is_safe_popen_call(args: tuple, kwargs: dict) -> str | None:
     if not kwargs.get("text", False) and not kwargs.get("universal_newlines", False):
         return None
 
-    # Kwargs that cached_terminal can't preserve
-    if any(k in kwargs for k in ('cwd', 'env', 'input', 'check')):
+    # env and input change command behavior — BLOCKED from cache
+    if any(k in kwargs for k in ('env', 'input')):
         return None
+
+    # cwd is safe (execution context, not content) — pass through.
+    # check/timeout are safe — caller's error/preference handling.
 
     # shell=True with a string command
     if kwargs.get("shell", False):

@@ -274,11 +274,7 @@ def _record(category, hit: bool, tokens_read: int = 0, path: str = "", tokens_sa
                     INSERT INTO access_log (category, path, hit, tokens, cached_at)
                     VALUES (?, ?, ?, ?, ?)
                 """, (category, path, 1 if hit else 0, tokens_saved if hit else tokens_read, time.time()))
-                conn.execute("""
-                    DELETE FROM access_log WHERE id NOT IN (
-                        SELECT id FROM access_log ORDER BY cached_at DESC LIMIT 1000
-                    )
-                """)
+                conn.execute("""                    DELETE FROM access_log WHERE id NOT IN (                        SELECT id FROM access_log ORDER BY cached_at DESC LIMIT 50000                    )                """)
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
 

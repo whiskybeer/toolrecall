@@ -115,6 +115,49 @@ class TestCacheSafety(unittest.TestCase):
         self.assertFalse(res2.get("cached"),
                          "Dynamic command second run should NOT be cached (git status is not in DEFAULT_CACHEABLE)")
 
+    def test_compound_commands_are_not_cacheable(self):
+        """Commands with shell metacharacters must not match an allowlisted prefix.
+
+        "whoami && ./deploy.sh" shares the prefix "whoami " with an allowlisted
+        static command, but it is not a static command. Caching it would return
+        stale output for a command the caller believes it re-ran.
+        """
+        from toolrecall.cache import _match_terminal
+
+        compound = [
+            ("whoami && ./deploy.sh", "whoami"),
+            ("pwd; git push", "pwd"),
+            ("whoami | tee out.txt", "whoami"),
+            ("uptime > /tmp/uptime.log", "uptime"),
+            ("whoami $(rm -rf /tmp/x)", "whoami"),
+            ("hostname `id`", "hostname"),
+        ]
+        for cmd, pattern in compound:
+            self.assertFalse(
+                _match_terminal(cmd, pattern),
+                f"Compound command '{cmd}' must not match allowlist pattern '{pattern}'",
+            )
+
+    def test_static_commands_still_match(self):
+        """The metacharacter guard must not break legitimate allowlist matches."""
+        from toolrecall.cache import _match_terminal
+
+        allowed = [
+            ("hostname", "hostname"),
+            ("uptime -p", "uptime"),
+            ("df -h /", "df -h /"),
+            ("free -h", "free -h"),
+            ("crontab -l", "crontab -l"),
+        ]
+        for cmd, pattern in allowed:
+            self.assertTrue(
+                _match_terminal(cmd, pattern),
+                f"Static command '{cmd}' should match allowlist pattern '{pattern}'",
+            )
+
+        # Prefix matching must not admit a longer binary name
+        self.assertFalse(_match_terminal("hostnamectl", "hostname"))
+
 
 if __name__ == "__main__":
     unittest.main()

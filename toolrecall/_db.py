@@ -7,13 +7,7 @@ from threading import RLock
 from contextlib import contextmanager
 from toolrecall.config import load_config, Config
 
-try:
-    import libsql_experimental as libsql
-
-    _HAS_LIBSQL = True
-except ImportError:
-    libsql = None
-    _HAS_LIBSQL = False
+from toolrecall import storage
 
 config = load_config()
 
@@ -107,6 +101,14 @@ SENSITIVE_FILE_PATTERNS = [
 
     # Session/cookies
     r"(^|/)cookie\.txt$",                         # session cookies
+
+    # ToolRecall's OWN secrets — the config may contain the Turso sync
+    # token, and the cache DBs contain everything ever cached. Reading
+    # them back through the cache layer would let an agent exfiltrate
+    # both. (The daemon accesses the DB directly, not via cached_read,
+    # so this does not break normal operation.)
+    r"(^|/)\.config/toolrecall/",                 # toolrecall.toml (sync token), .env
+    r"(^|/)\.toolrecall/.*\.db(-wal|-shm)?$",     # cache.db, cache-libsql.db + sidecars
 ]
 
 # Sensitive file extensions (checked on splitext basename)
@@ -172,169 +174,34 @@ def _is_sensitive_path(path: str) -> bool:
     return False
 
 
-# ─── DB Connection Factory (backend-agnostic) ────────────────
+# ─── DB Connection Factory (delegates to toolrecall.storage) ──────
+#
+# All backend-specific code lives in toolrecall/storage/ (see
+# docs/ARCHITECTURE.md §5b). This module keeps ONLY what the docs say
+# it owns: the singleton connection, the RLock, and the blocklist.
+# The names below are re-exported for backward compatibility — tests
+# and older call sites import them from toolrecall._db.
+
+from toolrecall.storage import (          # noqa: E402
+    active_db_path as _active_db_path,
+    open_backend as _open_db_backend,
+    restrict_db_perms as _restrict_db_perms,
+)
+from toolrecall.storage.libsql import (   # noqa: E402  (import-safe w/o extra)
+    _LibSQLConnection,
+    _LibSQLCursor,
+    _LibSQLRow,
+    _LibSQLRowIter,
+)
 
 
-class _LibSQLRow:
-    """Thin wrapper: make libSQL cursor rows subscriptable by column name.
+def _open_db(cfg):
+    """Factory: return a connection for the configured backend.
 
-    sqlite3.Row supports both row[0] and row["colname"]. libSQL returns plain
-    tuples. This wrapper uses cursor.description to map column names to indices,
-    so callers accessing row["column_name"] work the same way.
+    Kept as a thin shim over toolrecall.storage.open_backend() for
+    backward compatibility (tests and external callers import it here).
     """
-
-    __slots__ = ("_row", "_cols")
-
-    def __init__(self, row: tuple, description: list):
-        self._row = row
-        self._cols = {d[0]: i for i, d in enumerate(description)} if description else {}
-
-    def __getitem__(self, key):
-        if isinstance(key, str):
-            return self._row[self._cols[key]]
-        return self._row[key]
-
-    def __len__(self):
-        return len(self._row)
-
-    def __repr__(self):
-        return repr(self._row)
-
-
-def _open_db(cfg) -> sqlite3.Connection:
-    """Factory: return a connection based on cfg.storage_backend."""
-    backend = cfg.storage_backend
-    db_path = cfg.libsql_db_path if backend == "libsql" else cfg.cache_db
-
-    if backend == "libsql":
-        if not _HAS_LIBSQL:
-            raise ImportError(
-                "storage_backend='libsql' requires libsql-experimental.\n"
-                "  Install: pip install toolrecall[libsql]"
-            )
-        conn = libsql.connect(db_path)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-        return _LibSQLConnection(conn)  # type: ignore
-
-    # Fallback: stdlib sqlite3
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute("PRAGMA busy_timeout=5000;")
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-class _LibSQLConnection:
-    """Wraps a libSQL Connection so execute() returns cursors with row-like results.
-
-    libSQL's C extension types (Connection, Cursor) are immutable and cannot
-    have attributes set. This proxy wraps execute() to return a cursor whose
-    fetchone()/fetchall() return _LibSQLRow objects supporting both int and
-    string key access (matching sqlite3.Row's interface).
-    """
-
-    __slots__ = ("_conn", "_changes")
-
-    def __init__(self, conn):
-        self._conn = conn
-        self._changes = 0
-
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
-
-    @property
-    def total_changes(self) -> int:
-        """Track INSERT/UPDATE/DELETE row counts (sqlite3.Connection compatibility)."""
-        return self._changes
-
-    def execute(self, sql, parameters=None):
-        c = self._conn.execute(sql) if parameters is None else self._conn.execute(sql, parameters)
-        # Track rowcount for total_changes compatibility
-        try:
-            rc = c.rowcount
-            if rc is not None and rc > 0:
-                self._changes += rc
-            elif rc == -1 and sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
-                # rowcount=-1 with DML usually means at least one row affected in libSQL
-                self._changes += 1
-        except Exception:
-            pass
-        return _LibSQLCursor(c)
-
-    def executemany(self, sql, seq):
-        c = self._conn.executemany(sql, seq)
-        try:
-            rc = c.rowcount
-            if rc is not None and rc > 0:
-                self._changes += rc
-        except Exception:
-            pass
-        return _LibSQLCursor(c)
-
-    def cursor(self):
-        return _LibSQLCursor(self._conn.cursor())
-
-    def close(self):
-        self._conn.close()
-
-    def commit(self):
-        self._conn.commit()
-
-    def rollback(self):
-        self._conn.rollback()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self._conn.close()
-
-
-class _LibSQLCursor:
-    """Wraps a libSQL Cursor so fetchone/fetchall return _LibSQLRow objects."""
-
-    __slots__ = ("_cursor", "_description")
-
-    def __init__(self, cursor):
-        self._cursor = cursor
-        self._description = cursor.description
-
-    def __getattr__(self, name):
-        return getattr(self._cursor, name)
-
-    @property
-    def description(self):
-        return self._description
-
-    def fetchone(self):
-        row = self._cursor.fetchone()
-        return _LibSQLRow(row, self._description) if row is not None else None
-
-    def fetchall(self):
-        return [_LibSQLRow(r, self._description) for r in self._cursor.fetchall()]
-
-    def __iter__(self):
-        return _LibSQLRowIter(self._cursor, self._description)
-
-
-class _LibSQLRowIter:
-    """Iterator for _LibSQLCursor — makes `for row in cursor` work like sqlite3."""
-
-    __slots__ = ("_cursor", "_description")
-
-    def __init__(self, cursor, description):
-        self._cursor = cursor
-        self._description = description
-
-    def __next__(self):
-        row = self._cursor.fetchone()
-        if row is None:
-            raise StopIteration
-        return _LibSQLRow(row, self._description)
+    return _open_db_backend(cfg)
 
 
 # ─── Singleton SQLite Connection (thread-safe, context-managed) ────
@@ -376,27 +243,27 @@ def _db():
     _should_commit = False  # Initialize before try — always in scope
     try:
         cfg = _get_cached_config()
-        db_path = os.path.expanduser(cfg.cache_db)
-        # Detect DB path change (e.g. tests switching TOOLRECALL_CACHE_DB).
-        # If the path changed, close the old connection AND reload config
-        # so the new db path is picked up.
+        db_path = _active_db_path(cfg)
+        # Detect DB path change (e.g. tests switching TOOLRECALL_CACHE_DB or
+        # TOOLRECALL_LIBSQL_DB_PATH). If the path changed, close the old
+        # connection AND reload config so the new db path is picked up.
+        # _active_db_path() tracks the path of the ACTIVE backend, so
+        # switching backends also triggers a clean reconnect.
         if _db_real is not None:
             try:
-                # sqlite3 exposes the DB path via .execute("PRAGMA database_list")
                 if _db_path_cached != db_path:
                     _db_real.close()
                     _db_real = None
                     # Force config reload on DB path change — env var or
-                    # test fixture may have changed TOOLRECALL_CACHE_DB.
+                    # test fixture may have changed the path or backend.
                     global _cached_config
                     _cached_config = None
                     cfg = _get_cached_config()
-                    db_path = os.path.expanduser(cfg.cache_db)
+                    db_path = _active_db_path(cfg)
             except Exception:
                 pass
         if _db_real is None:
-            if cfg.storage_backend not in ("sqlite", "libsql"):
-                warnings.warn(f"ToolRecall: Unknown storage_backend '{cfg.storage_backend}'. Falling back to 'sqlite'.")
+            # Unknown-backend warning + fallback handled in storage.resolve_backend_name()
             _db_real = _open_db(cfg)
             _db_path_cached = db_path
         _db_refcount += 1
@@ -421,6 +288,30 @@ def _db():
         _db_lock.release()
 
 
+def db_sync() -> bool:
+    """Sync the shared libSQL embedded replica with Turso Cloud.
+
+    Preconditions (checked via storage.sync_configured() — callers can
+    invoke unconditionally):
+      - the active backend supports sync at all
+      - sync is explicitly enabled (opt-in, default False)
+      - credentials are configured
+
+    Runs against the SAME singleton connection used for all reads/writes,
+    under _db_lock — no second file handle, no WAL contention with the
+    daemon's own writes.
+
+    Returns True if a sync was performed, False if skipped (not configured).
+    Raises on actual sync errors so the caller can log/backoff.
+    """
+    cfg = _get_cached_config()
+    if not storage.sync_configured(cfg):
+        return False
+    with _db() as conn:
+        conn.sync()
+    return True
+
+
 def _init(schema: str = ""):
     """Initialize DB schema. Pass SCHEMA from cache.py."""
     with _db() as conn:
@@ -430,34 +321,34 @@ def _init(schema: str = ""):
         # Migration: v0.3.x → v0.4.0 — rename tokens_intercepted to tokens_read_from_disk
         try:
             conn.execute("ALTER TABLE cache_stats RENAME COLUMN tokens_intercepted TO tokens_read_from_disk")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already renamed (idempotent)
         # Migration: v0.7.5 → v0.8.0 — add tokens_saved column
         try:
             conn.execute("ALTER TABLE cache_stats ADD COLUMN tokens_saved INTEGER DEFAULT 0")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)
         # Migration: v0.8.x → v0.9.0 — add updated_at column for cache_stats freshness
         try:
             conn.execute("ALTER TABLE cache_stats ADD COLUMN updated_at REAL DEFAULT 0")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)
         # Migration: v0.9.4 → v0.10.0 — add context_tokens_saved column
         try:
             conn.execute("ALTER TABLE cache_stats ADD COLUMN context_tokens_saved INTEGER DEFAULT 0")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)
         # Migration: v0.x → v0.y — add stderr column to terminal_cache
         try:
             conn.execute("ALTER TABLE terminal_cache ADD COLUMN stderr TEXT NOT NULL DEFAULT ''")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)
         # Migration: v0.10.x → v0.11.0 — add embedding column for vector search (libSQL)
         try:
             conn.execute("ALTER TABLE file_cache ADD COLUMN embedding BLOB")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)
         try:
             conn.execute("ALTER TABLE terminal_cache ADD COLUMN embedding BLOB")
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)

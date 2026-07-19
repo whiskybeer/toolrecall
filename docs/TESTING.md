@@ -46,8 +46,9 @@ Each test file covers a distinct module or feature:
 
 | File | Module Under Test | What It Tests |
 |------|------------------|---------------|
+| `tests/test_shim.py` | `toolrecall/shim.py` | Re-entrancy guard, open() routing, subprocess.run() routing, subprocess.Popen() bash -c wrapper stripping via cached_shell_exec, _CachedPopen, apply/remove round-trip |
 | `tests/test_daemon_pid_guard.py` | `toolrecall/daemon.py` | PID file fallback: stop on stale PID, status without PID file |
-| `tests/test_transport.py` | `toolrecall/transport.py` | UDS socket lifecycle, TCP fallback, framed message protocol (large messages, message boundaries, pings, timeouts, daemon-unavailable handling) |
+| `tests/test_transport.py` | `toolrecall/transport.py` | UDS socket lifecycle, TCP fallback, framed message protocol, large messages, pings, daemon-unavailable handling |
 
 ### Client & Proxy
 

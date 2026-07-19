@@ -14,8 +14,14 @@ knowledge_db = "~/.toolrecall/knowledge.db" # FTS5 knowledge base
 backend = "sqlite"  # "sqlite" or "libsql" (pip install toolrecall[libsql])
 # libsql_db = "~/.toolrecall/cache-libsql.db"  # separate file — switching back to sqlite3 is safe
 
-# Sync to Turso Cloud (optional, libsql backend only)
-# sync_url = "libs://my-db.turso.io"
+# -- Turso Cloud sync (optional, libsql backend only) --
+# SECURITY: sync replicates the ENTIRE cache -- including cached file
+#   contents, terminal stdout/stderr, and MCP responses -- to Turso Cloud.
+#   Only enable if you are comfortable with that data leaving this machine.
+# Sync is OFF by default. All three of sync_enabled, sync_url and sync_token
+# must be set for sync to run.
+# sync_enabled = false          # master switch -- explicit opt-in required
+# sync_url = "libsql://my-db.turso.io"
 # sync_token = "..."  # Turso auth token
 # sync_interval = 60   # seconds between syncs, 0 = disabled
 

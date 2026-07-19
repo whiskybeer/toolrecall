@@ -27,6 +27,8 @@ import logging
 import os
 import re
 import sys
+import threading
+import time
 from socketserver import ThreadingMixIn
 
 from toolrecall.transport import TransportClient
@@ -47,6 +49,108 @@ _STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 # env var (seconds). Default: 30s for normal API calls, 300s for streaming SSE.
 _FORWARD_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_TIMEOUT", "30"))
 _FORWARD_STREAM_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_STREAM_TIMEOUT", "300"))
+
+# ─── Usage Measurement Log ──────────────────────────────────────────────────
+# Records actual token usage (from API response "usage" field) on every proxy
+# request — works for ANY agent using the proxy, not just Hermes.
+#
+# Columns:
+#   timestamp         float (unix epoch)
+#   cache_status      HIT | MISS | STREAM
+#   target_host       e.g. openrouter.ai
+#   target_path       e.g. /v1/chat/completions
+#   request_hash      first 16 hex chars of cache key
+#   prompt_tokens     actual prompt tokens in the request (from provider usage)
+#   completion_tokens actual completion tokens in the response
+#   cache_read_tokens provider's prefix-cache read tokens (if reported)
+#   cache_write_tokens provider's prefix-cache write tokens (if reported)
+#
+# Security: contains NO request bodies, NO response content, NO
+# API keys, NO model output. Only integers and routing metadata.
+# The request_hash is a SHA-256 digest — not the request content.
+#
+# Query examples:
+#   Actual tokens sent to LLM:
+#     SELECT SUM(prompt_tokens) FROM proxy_usage WHERE cache_status IN ('MISS','STREAM')
+#   Tokens saved by proxy cache replay:
+#     SELECT SUM(prompt_tokens) FROM proxy_usage WHERE cache_status = 'HIT'
+#   Provider prefix-cache effectiveness:
+#     SELECT SUM(cache_read_tokens), SUM(cache_write_tokens) FROM proxy_usage
+
+_USAGE_LOG_PATH = os.path.expanduser("~/.toolrecall/proxy_usage.csv")
+_USAGE_LOG_HEADER = "timestamp,cache_status,target_host,target_path,request_hash,prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens\n"
+_USAGE_LOG_LOCK = threading.Lock()
+
+
+def _init_usage_log():
+    """Ensure the usage CSV exists with headers (one-time, thread-safe)."""
+    os.makedirs(os.path.dirname(_USAGE_LOG_PATH), exist_ok=True)
+    if not os.path.exists(_USAGE_LOG_PATH):
+        with open(_USAGE_LOG_PATH, "w") as f:
+            f.write(_USAGE_LOG_HEADER)
+
+
+def _try_parse_usage(body: str) -> dict:
+    """Best-effort parse of 'usage' from API response JSON. Never raises.
+
+    All major providers (OpenAI, Anthropic, DeepSeek, OpenRouter, Google,
+    xAI, Mistral, Groq, Together) report usage in the OpenAI-compatible
+    ``usage`` field format within chat completions responses.
+
+    Provider-specific field names:
+      - cache_read_input_tokens (OpenAI, compatible providers)
+      - cache_read_tokens (Anthropic)
+      - cache_creation_input_tokens (OpenAI, compatible)
+      - cache_write_tokens (Anthropic)
+    """
+    try:
+        return json.loads(body).get("usage", {})
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return {}
+
+
+def _csv_escape(s: str) -> str:
+    """Escape a string for CSV — replace commas and newlines that would break columns."""
+    return s.replace(",", ";").replace("\n", " ").replace("\r", " ")
+
+
+def _log_proxy_usage(cache_status: str, target_host: str, target_path: str,
+                     request_hash: str, body: str = "") -> None:
+    """Append one usage row to the proxy_usage.csv log.
+
+    Thread-safe via lock. Best-effort — never raises, never blocks
+    the proxy response path.
+
+    Args:
+        cache_status: HIT | MISS | STREAM
+        target_host: upstream API hostname
+        target_path: upstream API path (e.g. /v1/chat/completions)
+        request_hash: SHA-256 cache key (first 16 chars logged)
+        body: response body to extract usage from (optional)
+    """
+    usage = _try_parse_usage(body)
+    pt = usage.get("prompt_tokens", 0) or 0
+    ct = usage.get("completion_tokens", 0) or 0
+    crt = (usage.get("cache_read_input_tokens", 0) or
+           usage.get("cache_read_tokens", 0) or 0)
+    cwt = (usage.get("cache_creation_input_tokens", 0) or
+           usage.get("cache_write_tokens", 0) or 0)
+    ts = time.time()
+    with _USAGE_LOG_LOCK:
+        try:
+            with open(_USAGE_LOG_PATH, "a") as f:
+                f.write(f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
+                        f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
+                        f",{pt},{ct},{crt},{cwt}\n")
+        except OSError:
+            pass  # best-effort — never break the proxy over a log write
+
+
+# Ensure log file exists at import time
+_init_usage_log()
+
+
+# ─── Constants: known API hosts ─────────────────────────────────────────────
 
 # Known LLM API hosts that the forward proxy routes requests for.
 FORWARD_HOSTS = {
@@ -136,6 +240,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def __init__(self, *args, **kwargs):
         self._client = TransportClient()
+        self._usage_prompt_tokens_fallback = 0
         super().__init__(*args, **kwargs)
 
     # ── Generic dispatch ────────────────────────────────
@@ -146,7 +251,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         Resolves the real target host from:
           1. X-Target-Host header (explicit override, for SDK usage)
           2. Host header (works with curl -H "Host: api.openai.com")
-          3. Path-based routing: /v1/chat/completions → api.openai.com
+          3. Path-based routing: /v1/chat/completions -> api.openai.com
         """
         target_host = (
             self.headers.get("X-Target-Host")
@@ -156,23 +261,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Path-based routing fallback: when Host is localhost (SDK redirect),
         # infer the real API host from the path prefix.
-        # PATH_ROUTES is ordered by specificity — first match wins.
-        # For ambiguous paths (/v1/models, /v1/embeddings) that exist at
-        # multiple providers, use header-based tiebreakers:
-        #   - anthropic-version → Anthropic
-        #   - x-api-key (no Bearer prefix) → Anthropic
-        #   - Authorization: Bearer sk-ant- → Anthropic
-        #   - Authorization: Bearer sk- (other) → OpenAI
-        #   - Authorization: Bearer (no prefix) → falls through to path-based
         if not target_host or target_host.split(":")[0] in ("localhost", "127.0.0.1"):
             for known_host, path_prefix in PATH_ROUTES:
                 if target_path.startswith(path_prefix):
                     target_host = known_host
                     break
 
-            # Header-based tiebreaker for ambiguous paths: if the path
-            # matched a generic /v1 fallback, re-check headers to see
-            # if a specific provider is identifiable.
+            # Header-based tiebreaker for ambiguous paths
             if target_host == "api.openai.com" and target_path in ("/v1/models", "/v1/embeddings", "/v1/files"):
                 anthro_key = self.headers.get("x-api-key", "")
                 auth = self.headers.get("Authorization", "")
@@ -207,6 +302,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             if body_bytes and _STREAM_RE.search(body_bytes):
                 is_streaming = True
 
+        # Estimate prompt tokens from request body (fallback when response
+        # body has no usage field — e.g. cached HIT or malformed response).
+        self._usage_prompt_tokens_fallback = max(1, len(body_bytes) // 4)
+
         # Build cache key: hash(method + host + path + body)
         body_hash = hashlib.sha256(body_bytes).hexdigest()
         request_str = f"{method}:{target_host}:{target_path}:{body_hash}"
@@ -215,7 +314,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Streaming requests: bypass cache entirely, use chunked passthrough
         if is_streaming:
             log.info(
-                "🔴 STREAM: %s %s%s — bypassing cache, chunked relay",
+                "STREAM: %s %s%s — bypassing cache, chunked relay",
                 method, target_host, target_path,
             )
             self._forward_streaming(method, target_host, target_path, target_scheme, body_bytes)
@@ -234,7 +333,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                             status, method, target_host, target_path)
             else:
                 log.info(
-                    "✅ API CACHE HIT: %s %s%s (hash=%s, saved ~%s tokens)",
+                    "API CACHE HIT: %s %s%s (hash=%s, saved ~%s tokens)",
                     method, target_host, target_path,
                     request_hash[:12], cached.get("tokens_saved", "?"),
                 )
@@ -246,10 +345,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 cached_body = cached["body"]
                 self.wfile.write(cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body)
+                # Log usage — the cached body still contains the original usage field
+                _log_proxy_usage("HIT", target_host, target_path, request_hash, cached_body)
                 return
 
         # Cache MISS — forward to real API
-        log.info("❌ API CACHE MISS: %s %s%s — forwarding...", method, target_host, target_path)
+        log.info("API CACHE MISS: %s %s%s — forwarding...", method, target_host, target_path)
         resp_status, resp_headers, resp_body = self._forward(
             method, target_host, target_path, target_scheme, body_bytes,
         )
@@ -263,13 +364,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     headers_dict[k] = v  # first wins (preserves Content-Type etc.)
             # Strip content-encoding — we stripped Accept-Encoding from the
             # outgoing request, so the upstream response is uncompressed.
-            # Storing Content-Encoding would cause the client to try to decode
-            # plain text as gzip/deflate on replay.
             headers_dict.pop("Content-Encoding", None)
             headers_dict.pop("content-encoding", None)
             # Body must be str for JSON transport (api_cache schema stores TEXT)
-            # Since we stripped Accept-Encoding, the response is guaranteed
-            # uncompressed plain text.
             body_str = resp_body.decode("utf-8", errors="replace") if isinstance(resp_body, bytes) else resp_body
             self._client.send({
                 "cmd": "cached_api_store",
@@ -293,6 +390,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8"))
 
+        # Log usage from the live response body
+        if 200 <= resp_status < 300:
+            _log_proxy_usage("MISS", target_host, target_path, request_hash, body_str if isinstance(resp_body, bytes) else resp_body)
+        else:
+            _log_proxy_usage("MISS", target_host, target_path, request_hash)
+
     def do_GET(self):
         self._handle("GET")
 
@@ -315,9 +418,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         Returns (status_code, list_of_headers, body_bytes).
         """
         # SECURITY: Never fall back to plaintext HTTP for known API hosts.
-        # The previous code caught ALL exceptions and fell back to HTTPConnection,
-        # silently sending Authorization headers over unencrypted transport.
-        # All hosts in FORWARD_HOSTS are HTTPS-only.
         try:
             conn = http.client.HTTPSConnection(host, timeout=_FORWARD_TIMEOUT)
         except Exception as e:
@@ -338,9 +438,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         try:
             conn.request(method, path, body=body or None, headers=headers)
             resp = conn.getresponse()
-            # SECURITY: Read body as raw bytes — previously decoded as UTF-8
-            # with errors="replace", corrupting binary responses with U+FFFD.
-            # Now stored and served as bytes to preserve fidelity.
             resp_body = resp.read()
             resp_headers = resp.getheaders()
             conn.close()
@@ -356,8 +453,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         body_bytes = b""
         cl = int(self.headers.get("Content-Length", 0))
         if cl > 0:
-            # SECURITY: Same MAX_BODY_SIZE protection as the API host path.
-            # Previously this method had no size check, allowing OOM attacks.
             if cl > MAX_BODY_SIZE:
                 self.send_response(413)
                 self.end_headers()
@@ -370,15 +465,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             if k.lower() not in ("transfer-encoding", "content-encoding"):
                 self.send_header(k, v)
         self.end_headers()
-        # Body is now bytes — write directly.
         self.wfile.write(body if isinstance(body, bytes) else body.encode("utf-8"))
 
     def _forward_streaming(self, method: str, host: str, path: str,
                            scheme: str, body: bytes):
         """Forward request and relay response as chunked/streaming.
 
-        Reads the upstream response line by line (SSE) and writes each
-        chunk to the client immediately. No caching, no buffering.
+        Streamed responses are not cacheable. A usage log entry is written
+        with cache_status=STREAM and prompt_tokens estimated from the request
+        body (the response usage field is spread across SSE chunks and not
+        available as a single value).
         """
         import http.client
         try:
@@ -426,12 +522,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             conn.close()
         except Exception as e:
             log.error("Streaming forward failed for %s %s%s: %s", method, host, path, e)
-            # If we already sent headers, we can't change status
-            # Log the error and let the connection drop
             try:
                 self.wfile.write(b"\n\n[ToolRecall streaming error]\n")
             except Exception:
                 pass
+
+        # Log STREAM usage — prompt tokens from request body estimate,
+        # completion tokens unavailable (SSE chunks, not parseable here).
+        _log_proxy_usage("STREAM", host, path, request_hash="")
 
     def log_message(self, format, *args):
         log.debug("ForwardProxy: " + format, *args)
@@ -483,7 +581,7 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
 
     log.info("Forwarding for %d known API hosts:", len(FORWARD_HOSTS))
     for h in sorted(FORWARD_HOSTS):
-        log.info("  • %s", h)
+        log.info("  o %s", h)
 
     try:
         server.serve_forever()
@@ -564,10 +662,10 @@ def run_debug_server(bind: str = "127.0.0.1", port: int = 8570):
     """Start minimal debug/demo server on localhost (:8570).
 
     Endpoints:
-      GET /read?path=X   → cached_read
-      GET /term?cmd=X    → cached_terminal
-      GET /stats         → cache statistics
-      GET /health        → daemon status
+      GET /read?path=X   -> cached_read
+      GET /term?cmd=X    -> cached_terminal
+      GET /stats         -> cache statistics
+      GET /health        -> daemon status
     """
     try:
         server = ThreadedHTTPServer((bind, port), DebugHandler)

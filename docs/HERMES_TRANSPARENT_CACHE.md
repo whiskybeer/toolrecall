@@ -19,7 +19,7 @@ documented here never actually loaded. The shim is the agent-agnostic
 mechanism that works for Hermes, Codex CLI, Aider, OpenCode, and any other
 Python-based agent.
 
-The shim monkey-patches `builtins.open` and `subprocess.run` at the Python
+The shim monkey-patches `builtins.open`, `subprocess.run`, and `subprocess.Popen` at the Python
 interpreter level. The agent still calls native tools — but the underlying
 file reads and subprocess executions are served from the cache.
 **The agent never notices.**
@@ -69,7 +69,7 @@ modified while the cache still holds the old hash.
 
 ### 3. Global scope
 
-The shim patches `open()` and `subprocess.run()` for **every** Python process
+The shim patches `open()`, `subprocess.run()`, and `subprocess.Popen()` for **every** Python process
 on the machine — not just the agent. This is by design (zero agent-side
 config) but means a buggy shim affects all Python scripts. Use
 `TOOLRECALL_SHIM_DISABLE=1` to bypass per-process.
@@ -97,7 +97,7 @@ Empty list = bypass NOTHING. Add your framework's internal paths as needed.
 
 ### 5. Visibility into agent behavior
 
-Because the shim intercepts every `open()` and `subprocess.run()` call, the
+Because the shim intercepts every `open()`, `subprocess.run()`, and `subprocess.Popen()` call, the
 ToolRecall healthcheck and stats (`toolrecall stats`) provide a real-time
 dashboard of what the agent is doing:
 

@@ -3,8 +3,22 @@
 ## [0.8.13] — 2026-07-16
 
 ### Added
-- **Proxy header-based routing tiebreaker** — when path-based routing matches OpenAI's generic `/v1` fallback for ambiguous paths (`/v1/models`, `/v1/embeddings`, `/v1/files`), checks `anthropic-version`, `x-api-key`, and `Authorization: Bearer sk-ant-` headers to route to Anthropic instead.
-- **`TOOLRECALL_UDS_PATH` alias** — `_default_socket_path()` now checks `TOOLRECALL_TRANSPORT` first, then `TOOLRECALL_UDS_PATH` as backward-compat fallback. Docker/docs env vars now work.
+- **Storage backend refactor** — backend code extracted from `_db.py` to `toolrecall/storage/` package. `sqlite.py` (stdlib, default) and `libsql.py` (optional extra) behind an `open_backend(cfg)` factory. The daemon and cache modules contain zero backend-specific imports.
+- **`tr turso` subcommand** — `init`, `enable`, `disable`, `status` for Turso Cloud setup via the Platform REST API (no Turso CLI binary required). Sync stays off by default (`sync_enabled = false`). Tokens default to expiring (30d). Config files written with 0600 perms.
+- **daemon sync worker** — background thread calls `db_sync()` on the shared singleton connection, with exponential backoff on failure. Never opens a separate file handle.
+- **Documentation:**
+  - `docs/ARCHITECTURE.md` — new §5b with storage-backend-layer mermaid diagram + design-decisions table
+  - `docs/LIBSQL_COMPARISON.md` — backend comparison, selection flow, security section on what sync uploads
+  - `docs/ARCHITECTURE_DIAGRAM.md` — cache storage label updated
+  - `SECURITY.md` — §6.3 updated: "Never by default" with Turso caveat
+  - `docs/CONFIG_REFERENCE.md` — all [storage] keys documented
+
+### Changed
+- **`_db.py`** — slimmed from ~600 to 353 lines. Singleton/RLock/blocklist stays; backend code delegates to `toolrecall.storage` with backward-compat re-exports.
+- **`daemon.py`** — sync worker uses `storage.sync_configured()` instead of three inline backend-specific conditions.
+- **`cache.py`** — `get_stats()` delegates to `storage.stats_info()`.
+- **`pyproject.toml`** — `libsql` extra pinned `libsql-experimental>=0.0.55,<0.1`.
+- **config.toml** — full security warning restored in ASCII.
 
 ### Changed
 - **README repositioning** — from speed-first to determinism-first. Problem statement leads with MCP sprawl, unrepeatable runs, API costs, no sandboxing. Feature priority table ranked by defensible value (MCP Multiplexer #1, Replay #2, Proxy #3, Security Gate #4, Caching #5-6). Quickstart now leads with MCP Bridge (was buried). Replay Mode promoted to its own section with CI example.

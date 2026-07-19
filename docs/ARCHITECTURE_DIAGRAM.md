@@ -28,7 +28,7 @@ flowchart TB
         A["🤖 LLM Agent<br/>(Aider - Codex - Hermes)"]
         CT["📋 Context Tracker"]
         S["⚡ ToolRecall Shim"]
-        SQ["💾 SQLite Cache"]
+        SQ["Cache Storage<br/>(sqlite default | libsql optional)"]
     end
     subgraph ModelSystem
         M["🧠 LLM Model"]

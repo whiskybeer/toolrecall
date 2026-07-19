@@ -28,7 +28,7 @@ flowchart TB
     subgraph Daemon["ToolRecall Daemon"]
         direction TB
         LRU["In-Memory LRU<br/>20MB, warm"]
-        SQL["Singleton SQLite<br/>RLock-guarded<br/>WAL + cache.db"]
+        SQL["Singleton Connection<br/>RLock-guarded, WAL<br/>storage backend: sqlite | libsql"]
         IPC["IPC Server<br/>UDS Socket<br/>/run/user/$UID/tc.sock"]
     end
 
@@ -113,7 +113,7 @@ flowchart TB
 |--------|-------|--------|
 | **Architecture** | 3 equal processes | 1 Center + 3 Bridges |
 | **Cache-Sharing** | Only SQLite (7ms) | LRU + SQLite (0.001ms + 7ms) |
-| **RAM** | ~60MB (3 × LRU) | ~25MB (1 × LRU + Bridges) |
+| **RAM** | ~60MB (3 × LRU) | **~11MB idle** (measured), ~130MB with MCP servers loaded |
 | **MCP Startup** | ~200ms (uv run python -m ...) | ~5ms (Python stdio → socket) |
 | **Language Binding**| Python only | Any language via UDS |
 | **Fault Tolerance** | One process dies → others live | Daemon dies → all dead (requires systemd) |
@@ -141,10 +141,11 @@ The Daemon architecture sacrifices 0.1ms UDS overhead for a Shared Cache. In pra
 | Multi Process (Hermes + MCP + HTTP) | Daemon — otherwise 3× RAM + 3× cold |
 | CI/CD / Microservices | Daemon — otherwise never a warm cache |
 
-## 5. Singleton SQLite Connection & Thread Safety
+## 5. Singleton Connection & Thread Safety
 
-The daemon uses a **singleton SQLite connection** wrapped in a `_DBConnection` class,
-protected by a `threading.RLock()`. This design emerged from a real problem:
+The daemon uses a **singleton connection** wrapped in a `_DBConnection` class,
+protected by a `threading.RLock()`. The backend storage layer (sqlite by default,
+libSQL optional) is isolated in `toolrecall/storage/` — see §5b below.
 
 ### Before (v0.7.0–v0.7.2): Connection-per-call
 
@@ -190,6 +191,64 @@ flowchart LR
 - Direct Python CLI calls (`cached_read()` from terminal) still open their own connection
   and may block — that's by design: the daemon owns the cache
 
+
+## 5b. Storage Backend Layer (v0.8.14+)
+
+The singleton from §5 no longer opens sqlite3 directly. Connection
+creation is delegated to `toolrecall/storage/` — the single swap
+point below the singleton. Everything above it (daemon, bridges, all 38
+call sites) sees one sqlite3-compatible connection and never imports a
+backend module.
+
+```mermaid
+flowchart TB
+    subgraph Above["Above the seam (backend-agnostic)"]
+        direction LR
+        D["Daemon<br/>sync worker asks:<br/>storage.sync_configured()?"]
+        C["cache.py<br/>get_stats() asks:<br/>storage.stats_info()"]
+        DB["_db()<br/>singleton + RLock<br/>(unchanged, §5)"]
+    end
+
+    subgraph Storage["toolrecall/storage/ -- the swap point"]
+        F["open_backend(cfg)<br/>resolve name -> makedirs<br/>-> connect -> chmod 0600"]
+        SQ["sqlite.py<br/>stdlib, DEFAULT<br/>SUPPORTS_SYNC = false"]
+        LS["libsql.py<br/>OPTIONAL extra<br/>pip install toolrecall[libsql]<br/>SUPPORTS_SYNC = true"]
+        LSS["libsql_sync.py<br/>OPTIONAL extra<br/>pip install toolrecall[libsql-sync]<br/>SUPPORTS_SYNC = true<br/>REQUIRES sync_url + token"]
+    end
+
+    subgraph Disk["Disk"]
+        F1["cache.db"]
+        F2["cache-libsql.db<br/>(separate file -- switching<br/>back is always safe)"]
+    end
+
+    T["Turso Cloud<br/>(triple opt-in: backend<br/>+ sync_enabled + credentials)"]
+
+    D --> DB
+    C --> Storage
+    DB --> F
+    F -->|"backend = sqlite (default)"| SQ --> F1
+    F -->|"backend = libsql"| LS --> F2
+    F -->|"backend = libsql-sync"| LSS --> F2
+    LS -. "db_sync() -- only when<br/>sync_configured()" .-> T
+    LSS -. "db_sync() -- only when<br/>sync_configured()" .-> T
+    F -. "unknown backend:<br/>warn + fall back to sqlite" .-> SQ
+```
+
+**Design decisions:**
+
+| Decision | Why |
+|----------|-----|
+| Swap at connection creation | The docs' layering (§2, §5) puts one connection under the daemon — so the backend choice belongs exactly there, not in a repository layer the two SQL-compatible backends don't need |
+| Lazy backend import | storage/__init__.py imports a backend module only when selected — `pip install toolrecall` never touches libsql-experimental |
+| Everything optional | sqlite is the default and always works; libsql is an extra; Turso sync is a further opt-in (`sync_enabled = false` by default) even when libsql is installed and credentialed |
+| `sync_configured()` as single source of truth | Daemon and db_sync() ask the same function — the opt-in policy can't drift between call sites |
+| Not in `adapters/` | Adapters face frameworks (LangChain, ADK) *above* the daemon; storage faces disk *below* it — separate taxonomy, separate package |
+| Separate DB file per backend | cache-libsql.db != cache.db — switching backends can never corrupt the other's file |
+
+**Adding a backend:** one module in storage/ exposing connect(cfg, db_path),
+`SUPPORTS_SYNC`, and optionally sync_configured(cfg) / stats_info(cfg),
+plus one entry in `_BACKENDS`. daemon.py and cache.py need zero changes.
+
 ## 6. OS-level Shim (4th Bridge, added in v0.7.0)
 
 In addition to the three bridged paths, v0.7.0 introduces a **4th access path**: the OS-level shim.
@@ -202,6 +261,7 @@ This installs `tr_shim.pth` into site-packages. Every Python process that starts
 
 - `builtins.open` → checks `cached_read` before touching disk
 - `subprocess.run` → checks `cached_terminal` before forking
+- `subprocess.Popen` → checks `cached_shell_exec` (strips agent wrappers) before forking
 
 **Key difference from the three bridges:** The shim works at the Python interpreter level — zero agent-side configuration. Aider, Codex CLI, scripts, even Hermes itself benefit immediately after `toolrecall shim --install`.
 
@@ -210,8 +270,9 @@ This installs `tr_shim.pth` into site-packages. Every Python process that starts
 import toolrecall.shim
 
 # shim.py then:
-#   builtins.open = _shim_open       # routes through cache
-#   subprocess.run = _shim_run       # routes through cache
+#   builtins.open = _shim_open           # routes through cache
+#   subprocess.run = _shim_run           # routes through cache
+#   subprocess.Popen = _shim_popen       # routes through cached_shell_exec
 #   TOOLRECALL_SHIM_DISABLE=1  → skip shim per-process
 ```
 

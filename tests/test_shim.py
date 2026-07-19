@@ -7,8 +7,9 @@ Tests cover:
   - _shim_open routes read-mode through cached_read when not re-entered
   - Binary mode bypasses cache
   - subprocess.run string routing through cached_terminal
-  - subprocess.run list-form bypasses cache
-  - apply() / remove() round-trip
+    - subprocess.Popen list-form (bash -c pattern) routing through cached_shell_exec
+    - _CachedPopen wrapper: .stdout, .poll(), .wait(), .returncode
+    - apply() / remove() round-trip
 
 All cache interactions are mocked — no daemon needed.
 """
@@ -659,15 +660,15 @@ class TestApplyRemove(unittest.TestCase):
             shim_mod._ENABLED = orig_enabled
             shim_mod.remove()
 
-    # ─── Bug 5 fix: Popen is no longer patched (was a no-op) ───
-
-    def test_popen_not_patched_by_apply(self):
-        """apply() no longer touches Popen (was a no-op)."""
+    def test_popen_is_patched_by_apply(self):
+        """apply() patches subprocess.Popen via _shim_popen."""
         import subprocess
         original_popen = subprocess.Popen
         shim_mod.apply()
-        self.assertIs(subprocess.Popen, original_popen)
+        self.assertIs(subprocess.Popen, shim_mod._shim_popen)
         shim_mod.remove()
+        # Should restore original after remove()
+        self.assertIs(subprocess.Popen, original_popen)
 
 
 if __name__ == "__main__":

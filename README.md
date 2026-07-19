@@ -10,10 +10,11 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 pipx install toolrecall
 toolrecall setup          # One-shot: config → systemd → daemon start
 
-# Optional: libSQL backend for multi-writer, vector search & cloud sync
-pip install toolrecall[libsql]  # replaces stdlib sqlite3 with libSQL
-# See docs/LIBSQL_COMPARISON.md for details
-# Done — all agents on this machine now share one MCP pool
+# Storage: SQLite by default (stdlib, no deps).
+# For local multi-writer or Turso Cloud sync:
+pip install toolrecall[libsql]       # libSQL backend (local, multi-writer)
+pip install toolrecall[libsql-sync]  # Turso Cloud sync via pyturso
+# See docs/LIBSQL_COMPARISON.md for backend comparison
 ```
 
 > **Zero config mode:** Every `toolrecall` command (`status`, `mcp`, `serve`, etc.) auto-starts the daemon if it isn't running. You never need to think about it.
@@ -137,7 +138,8 @@ ToolRecall doesn't prevent prompt injection — it cages the consequences.
 
 - **Path allowlist (default-deny):** No paths are readable without explicit config. `toolrecall init` prompts interactively.
 - **Sensitive file blocklist:** `.env`, `.ssh/`, `.pem`, `.aws/`, etc. are blocked even inside allowed paths.
-- **Terminal allowlist (default: off):** When enabled, only commands matching the regex allowlist can execute. `allow_terminal = false` means no shell access at all.
+- **Terminal allowlist (default: on):** Only commands matching the regex allowlist are cached. All other commands execute fresh — no security risk. Use `allow_terminal = false` to disable shell access entirely.
+- **Shim (default: on via .pth):** Monkey-patches `open()`, `subprocess.run()`, and `subprocess.Popen()` for transparent caching. `cwd` and `timeout` kwargs are safe (passed through), `env` and `input` are blocked (change command behavior).
 - **Fail-closed fallback:** If the daemon is unreachable, gated operations (terminal, writes, unrestricted reads) are refused — no silent fallback to unsafe behavior.
 - **Daemon IPC via UDS:** No open ports on POSIX, immune to SSRF. The forward proxy listens on TCP `:8569` — intentional, separate from daemon transport.
 
@@ -223,16 +225,16 @@ See [Go Client](go-client/README.md) for full details.
 
 ### Layer 3: Python Shim (opt-in, experimental)
 
-An opt-in `.pth` shim gives Python processes inside the ToolRecall environment transparent caching of `open()` and `subprocess.run()` — no code changes needed.
+An opt-in `.pth` shim gives Python processes inside the ToolRecall environment transparent caching of `open()`, `subprocess.run()`, and `subprocess.Popen()` — no code changes needed.
 
 ```bash
 toolrecall shim --install     # Enable .pth shim (opt-in)
 ```
 
-- **Known caveats:** The shim patches `builtins.open()` and `subprocess.run()` globally. StringIO and subprocess matching may have edge cases. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) for details.
+- **Known caveats:** The shim patches `builtins.open()`, `subprocess.run()`, and `subprocess.Popen()` globally. The Popen shim auto-detects agent shell wrappers (source, cd, eval, printf cwd markers, exit) and routes the inner command through `cached_shell_exec` with allowlist security. StringIO and subprocess matching may have edge cases. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) for details.
 - **Scope:** Only affects Python processes running inside the ToolRecall environment (pipx-installed). Node.js agents (Claude Code, Codex CLI, OpenCode) are unaffected by the shim.
 
-> ⚠️ **Claude Code users:** Adding ToolRecall as an MCP server can cause stale-state issues in code edit loops. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) before configuring.
+> **Claude Code users:** The stale-state risk in code edit loops was closed in v0.8.13 — dynamic commands are no longer cached and writes fail closed. Recommended setup is the forward proxy plus multiplex-only. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
 ---
 
@@ -328,6 +330,7 @@ toolrecall config-set     Set a config value
 toolrecall daemon         Start/stop/manage cache daemon
 toolrecall shim           Install/uninstall OS-level cache shim (.pth file)
 toolrecall nginx          Generate nginx config
+toolrecall turso          Turso Cloud sync: init, enable, disable, status
 ```
 
 ---

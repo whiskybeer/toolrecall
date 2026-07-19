@@ -83,7 +83,7 @@ Cline is a Python agent that benefits from both the shim and MCP bridge.
 }
 ```
 
-The `.pth` shim auto-caches `open()` and `subprocess.run()` in every Cline session.
+The `.pth` shim auto-caches `open()`, `subprocess.run()`, and `subprocess.Popen()` in every Cline session.
 
 ---
 
@@ -105,7 +105,7 @@ aider --mcp-toolrecall
 Google's Agent Development Kit (ADK) is a Python framework with no built-in tool-output caching. Every tool call runs through `run_async()` fresh — even repeated reads of the same file.
 
 **Why it works:**
-- ADK tools are plain Python functions, so the `.pth` shim transparently caches `open()` and `subprocess.run()` calls inside them.
+- ADK tools are plain Python functions, so the `.pth` shim transparently caches `open()`, `subprocess.run()`, and `subprocess.Popen()` calls inside them.
 - The MCP Bridge gives ADK access to shared, persistent MCP server subprocesses (time, fetch, GitHub, etc.).
 - For deepest integration, wrap tools with `cached_read`, `cached_write`, etc.
 
@@ -172,5 +172,5 @@ Cursor has its own tool-execution plumbing. The shim is safe (Python process) bu
 |-------|-------------|----------|----------|
 | **MCP Bridge** (`toolrecall mcp`) | Single MCP entry point → daemon → multiplexed servers + caching | MCP-compatible agent | Any agent. The default. |
 | **Forward Proxy** (`:8569`) | Caches API responses by body hash | SDK pointed at `http://localhost:8569` | Any agent making API calls. Saves $ in dev loops. |
-| **Python Shim** (`.pth` file) | Transparently caches `open()` and `subprocess.run()` | Python agent, pipx or `toolrecall shim --install` | Python agents without native TR support. Marked experimental. |
+| **Python Shim** (`.pth` file) | Transparently caches `open()`, `subprocess.run()`, and `subprocess.Popen()`, auto-strips agent shell wrappers | Python agent, pipx or `toolrecall shim --install` | Python agents without native TR support. Marked experimental. |
 | **Go Client** (`tr` binary) | Direct UDS connection to daemon | `go build` in `go-client/` | Shell scripts, CI/CD, non-Python agents, herdr panes. |

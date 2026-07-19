@@ -109,8 +109,9 @@ The Daemon does not open any TCP ports for its IPC layer. All daemon-to-bridge c
 |---|---|
 | `allowed_paths` security | **Default-deny:** empty list = NO readable paths. The blocklist (.env, .ssh, .pem) applies even within allowed paths as a secondary safety net. The allowlist is the primary trust boundary — the blocklist catches slips. |
 | `tool_access_control = true` | **Substring match on tool names** — not an OS sandbox. A tool named `post_message` passes through even if it modifies state. The keyword list (`write`, `delete`, `push`, etc.) is a best-effort allowlist. For real OS isolation, pair with Docker/gVisor. |
+| Python shim (`toolrecall.shim`) | **Monkey-patches `open()`, `subprocess.run()`, `subprocess.Popen()`** for transparent caching. Security model: `cwd`/`check`/`timeout` kwargs are safe (execution context, not content). `env`/`input` kwargs are blocked (change command behavior). The shim auto-detects agent shell wrappers and strips them before caching the inner command. Only affects Python processes where the `.pth` is installed. Node.js agents (Claude Code, Codex, Cursor) are unaffected. |
 | Deterministic injection detection | **Regex + AST scan, not ML.** Covers ~86% of patterns in the labeled test corpus (70 injection, 50 legitimate). Remaining 14% are encoding-evasion variants, fabricated URLs, and zero-day patterns. The ONNX classifier (cold path fallback) is optional and unverified. |
-| Token reduction | **73-81% fewer input tokens** is measured on a specific workload (13-file project, 3-10x re-reads). At 3× re-read: 73% measured. At 10+ re-reads: ~81%. Your mileage varies with project structure and agent behavior. |
+| Token reduction | **73-81% fewer input tokens** is measured on a specific workload (13-file project, 3-10x re-reads). At 3× re-read: 73% measured. At 10+ re-reads: ~81%. Real cost savings depend on provider prefix caching and context window management — see docs/BENCHMARK.md for realistic estimates. |
 | Server-side prompt caching | **Requires same-temperature, same-model runs** across turns. Agent-imposed randomness (sampling params, multi-turn conversation drift) busts this. The daemon freezes OS output, but cannot control the LLM API's internal cache policy. |
 | Micro-RAG | **Agent must actively drop and re-fetch cache entries.** ToolRecall provides the cache backend — it doesn't enforce eviction. The agent (or its system prompt) decides when to re-fetch. |
 
@@ -142,7 +143,7 @@ ToolRecall stores cached data in a local SQLite database. This section describes
 | `api_cache` | TTL-based | 300s (5 min) |
 | `browser_cache` | Hash-based — re-cached when page DOM changes | Until next page load with different hash |
 | `cache_stats` | Auto-reset by periodic GC | Reset after 24h of inactivity |
-| `access_log` | Rolling window | Last 1000 entries (approximate — FIFO eviction) |
+| `access_log` | Rolling window | Last 50000 entries (approx ~5 days, FIFO eviction) |
 
 **Cache entries survive daemon restarts.** The SQLite database persists on disk until explicitly invalidated. See §6.4 for invalidation commands.
 
@@ -151,8 +152,8 @@ ToolRecall stores cached data in a local SQLite database. This section describes
 - **Database file:** `~/.toolrecall/cache.db` (or `$XDG_RUNTIME_DIR/toolrecall.db`)
 - **Permissions:** `600` (owner read/write only)
 - **Encryption at rest:** No. The SQLite database is unencrypted. Any process running under your user account can read it directly (`sqlite3 ~/.toolrecall/cache.db`).
-- **Network transmission:** Never. The cache never leaves your machine. ToolRecall makes no outbound network calls except when explicitly configured to forward API requests (the forward proxy).
-- **Cloud / third-party access:** None. No telemetry, no analytics, no crash reporting.
+- **Network transmission:** Never by default. When the storage backend is set to libSQL with sync enabled (opt-in), cache contents are replicated to Turso Cloud. See [LIBSQL_COMPARISON.md](docs/LIBSQL_COMPARISON.md) for the security implications.
+- **Cloud / third-party access:** None by default. Turso syncing (when explicitly enabled) sends the full cache to Turso Cloud. No telemetry, no analytics, no crash reporting.
 
 ### 6.4 User Control
 
