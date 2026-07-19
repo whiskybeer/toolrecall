@@ -252,6 +252,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
           1. X-Target-Host header (explicit override, for SDK usage)
           2. Host header (works with curl -H "Host: api.openai.com")
           3. Path-based routing: /v1/chat/completions -> api.openai.com
+          4. Authorization header override: API key prefix tells us the real provider
         """
         target_host = (
             self.headers.get("X-Target-Host")
@@ -267,17 +268,26 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     target_host = known_host
                     break
 
-            # Header-based tiebreaker for ambiguous paths
-            if target_host == "api.openai.com" and target_path in ("/v1/models", "/v1/embeddings", "/v1/files"):
+            # Header-based routing: API key prefix tells us the real provider.
+            # This overrides path-based routing for any path — essential for
+            # providers that reuse OpenAI-compatible paths (OpenRouter, xAI, etc.)
+            auth = self.headers.get("Authorization", "")
+            if auth.startswith("Bearer sk-or-"):
+                target_host = "openrouter.ai"
+            elif auth.startswith("Bearer sk-ant-"):
+                target_host = "api.anthropic.com"
+            elif auth.startswith("Bearer xai-"):
+                target_host = "api.x.ai"
+            # Legacy Anthropic tiebreaker for x-api-key / anthropic-version headers
+            elif target_host == "api.openai.com" and target_path in ("/v1/models", "/v1/embeddings", "/v1/files"):
                 anthro_key = self.headers.get("x-api-key", "")
-                auth = self.headers.get("Authorization", "")
                 anthro_version = self.headers.get("anthropic-version", "")
-                if anthro_version:
+                if anthro_version or (anthro_key and not auth.startswith("Bearer ")):
                     target_host = "api.anthropic.com"
-                elif anthro_key and not auth.startswith("Bearer "):
-                    target_host = "api.anthropic.com"
-                elif auth.startswith("Bearer sk-ant-"):
-                    target_host = "api.anthropic.com"
+
+        # Path rewrite: OpenRouter API lives under /api/v1, not /v1
+        if target_host == "openrouter.ai" and target_path.startswith("/v1"):
+            target_path = "/api" + target_path
 
         target_scheme = "https"
 
@@ -339,7 +349,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
                 self.send_response(status)
                 for hdr_key, hdr_val in cached.get("headers", {}).items():
-                    if hdr_key.lower() not in ("transfer-encoding", "content-encoding", "content-length"):
+                    if hdr_key.lower() not in ("transfer-encoding", "content-encoding"):
                         self.send_header(hdr_key, hdr_val)
                 self.send_header("X-ToolRecall-Cache", "HIT")
                 self.end_headers()
@@ -381,14 +391,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 "ttl": 300,
             })
 
-        # Respond
+        # Respond with Content-Length (body is flat from .read())
+        resp_body_bytes = resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8")
         self.send_response(resp_status)
+        self.send_header("Content-Length", str(len(resp_body_bytes)))
         for k, v in resp_headers:
             if k.lower() not in ("transfer-encoding", "content-encoding"):
                 self.send_header(k, v)
         self.send_header("X-ToolRecall-Cache", "MISS")
         self.end_headers()
-        self.wfile.write(resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8"))
+        self.wfile.write(resp_body_bytes)
 
         # Log usage from the live response body
         if 200 <= resp_status < 300:
@@ -460,12 +472,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 return
             body_bytes = self.rfile.read(cl)
         status, headers, body = self._forward(method, host, path, scheme, body_bytes)
+        body_bytes = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(status)
+        self.send_header("Content-Length", str(len(body_bytes)))
         for k, v in headers:
             if k.lower() not in ("transfer-encoding", "content-encoding"):
                 self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body if isinstance(body, bytes) else body.encode("utf-8"))
+        self.wfile.write(body_bytes)
 
     def _forward_streaming(self, method: str, host: str, path: str,
                            scheme: str, body: bytes):
