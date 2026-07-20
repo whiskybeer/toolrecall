@@ -9,12 +9,6 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 ```bash
 pipx install toolrecall
 toolrecall setup          # One-shot: config → systemd → daemon start
-
-# Storage: SQLite by default (stdlib, no deps).
-# For local multi-writer or Turso Cloud sync:
-pip install toolrecall[libsql]       # libSQL backend (local, multi-writer)
-pip install toolrecall[libsql-sync]  # Turso Cloud sync via pyturso
-# See docs/LIBSQL_COMPARISON.md for backend comparison
 ```
 
 > **Zero config mode:** Every `toolrecall` command (`status`, `mcp`, `serve`, etc.) auto-starts the daemon if it isn't running. You never need to think about it.
