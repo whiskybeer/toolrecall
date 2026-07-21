@@ -5,12 +5,15 @@ Runs arms in rotation: naive → prefix → toolrecall → naive → ...
 Two-arm comparison: full history (naive) vs context dropping (toolrecall).
 
 Usage:
-    /tmp/bench-env/bin/python3 bench/interleave.py <workload> [--seeds 3] [--max-turns 500] [--dry-run]
+    /tmp/bench-env/bin/python3 bench/interleave.py <workload> [--seeds 3] [--max-turns 500] [--provider PROVIDER] [--model MODEL] [--delay SECS] [--dry-run]
 
 Flags:
     --dry-run    Skip LLM calls — tests the plumbing without spending money
     --seeds N    Run each arm with N different seeds (default 3, for variance)
     --max-turns  Max turns per run (default 500)
+    --provider   LLM provider: openrouter (default) or anthropic
+    --model      Model override (uses provider default if unset)
+    --delay      Seconds between turns to avoid rate limits (default: 0.0)
 
 Output:
     - Writes turn_log rows to benchmark.db
@@ -28,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run_arm import run_arm
 
-ARMS = ["naive", "toolrecall"]
+ARMS = ["naive", "prefix", "toolrecall"]
 
 
 def main():
@@ -40,14 +43,24 @@ def main():
     parser.add_argument("--seeds", type=int, default=3,
                         help="Number of seeds per arm (default 3)")
     parser.add_argument("--max-turns", type=int, default=500)
+    parser.add_argument("--provider", default="openrouter",
+                        choices=["openrouter", "anthropic"],
+                        help="LLM provider (default: openrouter)")
+    parser.add_argument("--model", default=None,
+                        help="Model name override (uses provider default if unset)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip LLM calls — dry-run only")
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="Seconds between turns to avoid rate limits (default: 0.0)")
     args = parser.parse_args()
 
     print(f"Interleaved benchmark: {args.workload}")
     print(f"  Arms: {', '.join(ARMS)}")
     print(f"  Seeds per arm: {args.seeds}")
     print(f"  Max turns: {args.max_turns}")
+    print(f"  Provider: {args.provider}")
+    print(f"  Model: {args.model or '(default)'}")
+    print(f"  Delay: {args.delay}s")
     print(f"  Dry run: {args.dry_run}")
     print()
 
@@ -55,7 +68,7 @@ def main():
 
     for round_num in range(args.seeds):
         for arm in ARMS:
-            seed = 42 + round_num * 10 + (0 if arm == "naive" else 7)
+            seed = 42 + round_num * 10  # same seed for all arms in this round
             label = f"{arm}/{args.workload}/s{seed}"
 
             print(f"[{round_num + 1}/{args.seeds}] {label}  ", end="", flush=True)
@@ -67,6 +80,9 @@ def main():
                 seed=seed,
                 max_turns=args.max_turns,
                 dry_run=args.dry_run,
+                provider=args.provider,
+                model=args.model,
+                delay=args.delay,
             )
             elapsed = time.time() - t0
 
