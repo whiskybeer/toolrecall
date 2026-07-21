@@ -64,7 +64,11 @@ from toolrecall.transport import (
 )
 from toolrecall.docs import docs_search as _docs_search, docs_get_page as _docs_get_page
 from toolrecall.config import load_config
-from toolrecall.context_tracker import ContextTracker
+from toolrecall.context_tracker import (
+    ContextTracker,
+    sanitize_path_for_hint as _sanitize_path_for_hint,
+    MAX_HINT_PATHS as _MAX_HINT_PATHS,
+)
 
 # ─── Defaults ─────────────────────────────────────────────
 
@@ -872,8 +876,9 @@ class DaemonServer:
                 )
                 fp_thread.start()
                 print("  Forward proxy: http://127.0.0.1:8569 (caches API responses)")
-            except Exception:
-                pass  # Forward proxy is best-effort
+            except Exception as e:
+                print(f"  ⚠️  Forward proxy failed to start: {e}")
+                print(f"     API response caching on :8569 is unavailable.")
 
             # Start periodic GC background thread
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
@@ -1007,6 +1012,8 @@ class DaemonServer:
                 return self._handle_context_get_dirty(request)
             elif cmd == "context_get_hint":
                 return self._handle_context_get_hint(request)
+            elif cmd == "context_get_stale":
+                return self._handle_context_get_stale(request)
             elif cmd == "context_get_stats":
                 return self._handle_context_get_stats(request)
             elif cmd == "context_reset":
@@ -1425,6 +1432,46 @@ class DaemonServer:
             lines.append("📝 Keep dirty files (you edited them):")
             for p in dirty:
                 lines.append(f"  - {p}")
+        return "\n".join(lines)
+
+    def _handle_context_get_stale(self, req: dict) -> dict:
+        """Files read and later overwritten — provably stale in context.
+
+        Provider-agnostic: returns file paths. The caller decides how to
+        act on them (Anthropic context editing, harness compaction,
+        manual eviction, or nothing at all).
+
+        Returns:
+            {stale: [...], paths: [...], total_stale: int,
+             est_reclaimable_tokens: int, _agent_hint: str}
+        """
+        result = self._context.get_stale()
+        result["_agent_hint"] = self._format_stale_hint(result)
+        return result
+
+    def _format_stale_hint(self, result: dict) -> str:
+        """Format an eviction hint from stale-file data.
+
+        Paths are sanitized and capped: this string is injected into an
+        agent's context, and filenames are attacker-influenceable.
+        """
+        entries = result.get("stale", [])
+        if not entries:
+            return ""
+        safe = [(_sanitize_path_for_hint(e["path"]), e) for e in entries]
+        safe = [(p, e) for p, e in safe if p]
+        if not safe:
+            return ""
+        tokens = result.get("est_reclaimable_tokens", 0)
+        lines = [
+            "♻️  These files changed on disk after you read them. "
+            "The copies in your context are out of date — "
+            f"evict or re-read them (~{tokens:,} tokens):"
+        ]
+        for path, e in safe[:_MAX_HINT_PATHS]:
+            lines.append(f"  - {path} (~{e['est_tokens']:,} tok)")
+        if len(safe) > _MAX_HINT_PATHS:
+            lines.append(f"  ... and {len(safe) - _MAX_HINT_PATHS} more")
         return "\n".join(lines)
 
     def _handle_context_get_stats(self, req: dict) -> dict:

@@ -23,6 +23,7 @@ import sys
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 from toolrecall import __version__
+from toolrecall.context_tracker import format_stale_block
 
 
 # ─── MCP Tool Definitions ────────────────────────────────
@@ -242,6 +243,21 @@ TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "context_get_stale",
+        "description": "Get files you READ and that were LATER OVERWRITTEN. "
+                       "The copy of these files in your conversation is out of date — "
+                       "the daemon witnessed the write, so this is a fact, not a guess. "
+                       "Evict those file blocks from your context or re-read them. "
+                       "Distinct from context_get_dirty: 'clean' files are safe to drop "
+                       "(optimisation), 'stale' files are WRONG to keep (correctness). "
+                       "Returns {paths: [...], total_stale, est_reclaimable_tokens}.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
         "name": "context_get_stats",
         "description": "Full status of the context tracker: all dirty and clean files, "
                        "checkpoint ID, and total read count.",
@@ -283,6 +299,7 @@ CMD_TO_MCP = {
     "mcp_list_servers": "mcp_list_servers",
     "context_set_checkpoint": "context_set_checkpoint",
     "context_get_dirty": "context_get_dirty",
+    "context_get_stale": "context_get_stale",
     "context_get_stats": "context_get_stats",
     "context_reset": "context_reset",
 }
@@ -456,7 +473,7 @@ class MCPBridge:
             # Auto-trigger context hint after every non-context tool call
             if tool_name not in (
                 "context_set_checkpoint", "context_get_dirty",
-                "context_get_stats", "context_reset",
+                "context_get_stale", "context_get_stats", "context_reset",
             ):
                 try:
                     hint_resp = self.client.send({"cmd": "context_get_hint"})
@@ -465,6 +482,18 @@ class MCPBridge:
                         result_text += "\n\n" + hint
                 except Exception:
                     pass  # Graceful: hint is best-effort
+
+                # Machine-parseable stale-file markers. Any agent loop can
+                # regex these out without an explicit tool call, regardless
+                # of provider. Paths are sanitized and capped by
+                # format_stale_block — filenames are attacker-controlled.
+                try:
+                    stale_resp = self.client.send({"cmd": "context_get_stale"})
+                    block = format_stale_block(stale_resp.get("paths", []))
+                    if block:
+                        result_text += "\n\n" + block
+                except Exception:
+                    pass  # Graceful: never break a tool call over a hint
 
             return {
                 "jsonrpc": "2.0",

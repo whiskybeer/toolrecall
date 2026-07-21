@@ -231,11 +231,15 @@ def cmd_status():
             continue
         if isinstance(v, dict):
             saved = v.get("tokens_saved", 0)
+            read = v.get("tokens_read_from_disk", 0)
             context = v.get("context_tokens_saved", 0)
+            content_tokens = v.get("cached_content_tokens", 0)
             saved_str = f", tokens_saved={saved:,}" if saved else ""
+            read_str = f", tokens_read_from_disk={read:,}" if read else ""
             context_str = f", context_tokens_saved={context:,}" if context else ""
-            print(f"  {k}: {v['hits']} hits, {v['misses']} misses, " +
-                  f"hit_rate={v['hit_rate']}, tokens_read_from_disk={v['tokens_read_from_disk']:,}{saved_str}{context_str}")
+            content_str = f", cached_content_tokens={content_tokens:,}" if content_tokens else ""
+            print(f"  {k}: {v['hits']} hits, {v['misses']} misses, "
+                  f"hit_rate={v['hit_rate']}{read_str}{saved_str}{context_str}{content_str}")
         else:
             print(f"  {k}: {v}")
     # Recent activity
@@ -1314,6 +1318,94 @@ def cmd_restart():
     print("=" * 56)
 
 
+def cmd_context():
+    """Context tracker inspection: `toolrecall context <status|stale>`.
+
+    Local-only: talks to the daemon over the UDS. No network, no deps.
+    """
+    import json as _json
+    from toolrecall import client
+
+    args = sys.argv[2:]
+    sub = args[0] if args else ""
+
+    if sub in ("", "--help", "-h", "help"):
+        print("Usage: toolrecall context <command>")
+        print("")
+        print("Commands:")
+        print("  status              Checkpoint, dirty/clean/stale counts")
+        print("  stale               Files read then overwritten (stale in context)")
+        print("")
+        print("Options for 'stale':")
+        print("  --format json|table   Output format (default: table)")
+        print("  --quiet, -q           Bare paths, one per line (pipeable)")
+        print("")
+        print("Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error")
+        return
+
+    def _call(fn):
+        try:
+            resp = fn()
+        except Exception as e:
+            print(f"  \u26a0\ufe0f  Could not reach daemon: {e}", file=sys.stderr)
+            sys.exit(2)
+        if isinstance(resp, dict) and resp.get("error"):
+            print(f"  \u26a0\ufe0f  {resp['error']}", file=sys.stderr)
+            sys.exit(2)
+        return resp
+
+    if sub == "status":
+        stats = _call(client.context_get_stats)
+        stale = _call(client.context_get_stale)
+        print("=" * 50)
+        print("  Context Tracker")
+        print("=" * 50)
+        print(f"  checkpoint:          {stats.get('checkpoint', 0)}")
+        print(f"  files read:          {stats.get('total_read', 0)}")
+        print(f"  dirty (written):     {stats.get('total_dirty', 0)}")
+        print(f"  clean (droppable):   {stats.get('total_clean', 0)}")
+        print(f"  stale (WRONG):       {stale.get('total_stale', 0)}")
+        print(f"  reclaimable:         {stale.get('est_reclaimable_tokens', 0):,} tokens")
+        print(f"  dropped (cumulative):{stats.get('ctx_dropped_tokens_total', 0):,} tokens")
+        return
+
+    if sub == "stale":
+        fmt = "table"
+        if "--format" in args:
+            i = args.index("--format")
+            if i + 1 < len(args):
+                fmt = args[i + 1]
+        if "--quiet" in args or "-q" in args:
+            fmt = "quiet"
+
+        data = _call(client.context_get_stale)
+        stale = data.get("stale", [])
+
+        if fmt == "json":
+            print(_json.dumps(data, indent=2))
+        elif fmt == "quiet":
+            for e in stale:
+                print(e["path"])
+        elif not stale:
+            print("  \u2705 No stale files \u2014 every file you read is current on disk.")
+        else:
+            total = data.get("est_reclaimable_tokens", 0)
+            print(f"  {len(stale)} stale file(s), ~{total:,} reclaimable tokens:")
+            print("")
+            for n, e in enumerate(stale, 1):
+                print(f"  {n:>3}. {e['path']}")
+                print(f"       read at op {e['read_seq']}, overwritten at op "
+                      f"{e['write_seq']} \u2014 ~{e['est_tokens']:,} tok")
+            print("")
+            print("  These copies in your context are out of date. Evict or re-read.")
+
+        sys.exit(1 if stale else 0)
+
+    print(f"Unknown context command: {sub}")
+    print("Available: status, stale")
+    sys.exit(2)
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h"):
         print("Usage: toolrecall <command>")
@@ -1351,7 +1443,7 @@ def main():
     _DAEMON_REQUIRED = {
         "status", "stats", "invalidate", "reset-stats",
         "serve", "debug", "mcp", "restart", "index",
-        "index-memory", "index-dir",
+        "index-memory", "index-dir", "context",
     }
     if cmd in _DAEMON_REQUIRED:
         if not _ensure_daemon():
@@ -1375,6 +1467,7 @@ def main():
         "mcp": cmd_mcp,
         "daemon": cmd_daemon,
         "shim": cmd_shim,
+        "context": cmd_context,
     }
 
     if cmd in commands:

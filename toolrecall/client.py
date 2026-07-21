@@ -387,6 +387,35 @@ def context_get_dirty(checkpoint: int = None) -> dict:
     return resp
 
 
+def context_get_stale() -> dict:
+    """Files read and later overwritten — provably stale in context.
+
+    The content of these files as it sits in the agent's conversation
+    history no longer matches disk. Unlike context_get_dirty()'s
+    "clean" list (an optimisation — that content is still correct),
+    evicting these is a correctness fix.
+
+    Provider-agnostic: returns paths. Feed them to Anthropic's
+    context editing, your harness's compaction step, or your own
+    eviction logic.
+
+    Returns:
+        {
+            "stale": [{"path", "read_seq", "write_seq",
+                       "size", "est_tokens", "mtime"}, ...],
+            "paths": ["/abs/path", ...],
+            "total_stale": int,
+            "est_reclaimable_tokens": int,
+            "checkpoint": int,
+            "seq": int,
+        }
+    """
+    client = _get_client()
+    payload = {"cmd": "context_get_stale"}
+    resp = client.send(payload)
+    return resp
+
+
 def context_get_stats() -> dict:
     """Full status of the context tracker.
 
