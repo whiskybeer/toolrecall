@@ -17,15 +17,24 @@ The Go client exists for agents and tools that **don't run on Python**:
 | **Rust / Ruby / Java** | Any | Shell out to `tr` for cached reads — no Python runtime needed |
 | **herdr panes** | Any | Every agent in a herdr pane can call `tr read`, `tr term` directly — same daemon, shared cache |
 
-## Install
+## Build (recommended)
+
+Requires Go 1.19+. Install Go from [go.dev](https://go.dev/dl/) or your package manager.
 
 ```bash
-# Download the binary (Linux amd64)
+cd go-client
+go build -o /usr/local/bin/tr .
+```
+
+The binary is statically linked. No runtime dependencies.
+
+## Install (pre-built)
+
+Download the latest release binary for Linux amd64:
+
+```bash
 curl -L https://github.com/whiskybeer/toolrecall/releases/latest/download/tr -o /usr/local/bin/tr
 chmod +x /usr/local/bin/tr
-
-# Or build from source
-cd go-client && go build -o /usr/local/bin/tr .
 ```
 
 ## Usage
@@ -76,15 +85,6 @@ echo -n '{"cmd":"cached_read","path":"main.py"}' | \
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TOOLRECALL_TRANSPORT` | auto-detect | Override UDS socket path |
-
-## Building
-
-```bash
-cd go-client
-go build -o tr .
-```
-
-The binary is statically linked (Go 1.19+). No runtime dependencies.
 
 ## Related
 

@@ -22,3 +22,4 @@ vscode-extension/*.vsix
 vscode-extension/package-lock.json
 vscode-extension/benchmark_on2_results.json
 Dockerfile.test
+go-client/tr
