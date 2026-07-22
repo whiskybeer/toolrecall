@@ -564,7 +564,7 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
       5. Strips clean file content from assistant messages
       6. Tracks ctx_dropped_tokens for the report
     """
-    from toolrecall.client import cached_read, context_set_checkpoint, context_get_dirty
+    from toolrecall.client import cached_read, cached_write, context_set_checkpoint, context_get_dirty
 
     t0 = time.time()
     tool_hits = 0
@@ -613,7 +613,14 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
 
     usage = resp.get("usage", {})
 
-    # Step 4: Get dirty/clean from context tracker
+    # Step 4: Write files listed in step.writes so context tracker sees dirty
+    for write_path in getattr(step, "writes", []):
+        try:
+            cached_write(write_path, "")
+        except Exception:
+            pass  # non-fatal — content doesn't matter, dirty flag does
+
+    # Step 5: Get dirty/clean from context tracker
     clean_paths = set()
     dropped_tokens = 0
     try:

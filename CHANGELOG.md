@@ -18,6 +18,7 @@
 - **ARCHITECTURE.md restructured** — merged architecture diagrams, added design principles section, full README restructuring.
 
 ### Fixed
+- **Benchmark write simulation** — `bench/agent.py`'s toolrecall arm now calls `cached_write()` for files in `step.writes` after the LLM responds, so the context tracker sees real dirty state. Previously all files were always "clean" (never written through the daemon), causing all file content to be stripped every turn regardless of write metadata — making the bugfix workload behave identically to the read-only review workload.
 - **`context_get_dirty()` returns checkpoint-scoped results** — no-argument branch (use current checkpoint) returned ALL dirty files since `reset()` instead of only those since the current checkpoint. Unified both branches into a single filtered path. Also fixed `target` computation that silently replaced checkpoint=0 (valid post-reset ID) with the current counter.
 - **Daemon forward proxy silent failure** — `except Exception: pass` in `DaemonServer.start()` now prints a visible warning when proxy fails to start (port in use, import error).
 - **Benchmark marker formatting** — correct marker tags, DB path resolution, seed isolation across runs, schema alignment.
