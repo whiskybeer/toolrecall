@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.16] — 2026-07-22
+
+### Added
+- **`toolrecall/storage/README.md`** — documents the pluggable storage backend layer: architecture, backend table (sqlite/libsql/libsql-sync), the contract for adding a new backend.
+
+### Changed
+- **`docs/ARCHITECTURE.md` §5.1** — 3 plain-text sequence diagrams converted to mermaid (`sequenceDiagram` block). No content change.
+
+---
+
 ## [0.8.15] — 2026-07-22
 
 ### Added
