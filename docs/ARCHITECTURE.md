@@ -482,14 +482,20 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    End User->>LLM Agent: Prompt requiring file.py
-    LLM Agent->>ToolRecall Shim: open("file.py", "r")
-    ToolRecall Shim->>SQLite Cache: Hash(path) → Lookup
-    SQLite Cache-->>ToolRecall Shim: Return Cached Content
-    ToolRecall Shim->>LLM Agent: Return Content (0 tokens, no disk I/O)
-    LLM Agent->>LLM Model: Inference (file already in context)
-    LLM Model-->>LLM Agent: Generated Response
-    LLM Agent->>End User: Final Answer
+    participant User as "End User"
+    participant Agent as "LLM Agent"
+    participant Model as "LLM Model"
+    participant Shim as "ToolRecall Shim"
+    participant SQLite as "SQLite Cache"
+
+    User->>Agent: Prompt requiring file.py
+    Agent->>Shim: open("file.py", "r")
+    Shim->>SQLite: Hash(path) → Lookup
+    SQLite-->>Shim: Return Cached Content
+    Shim->>Agent: Return Content (0 tokens, no disk I/O)
+    Agent->>Model: Inference (file already in context)
+    Model-->>Agent: Generated Response
+    Agent->>User: Final Answer
 ```
 
 Result: **0 tokens** for the file. ~0.6ms (LRU) / ~7ms (SQLite).
@@ -498,17 +504,23 @@ Result: **0 tokens** for the file. ~0.6ms (LRU) / ~7ms (SQLite).
 
 ```mermaid
 sequenceDiagram
-    End User->>LLM Agent: Prompt requiring file.py
-    LLM Agent->>ToolRecall Shim: open("file.py", "r")
-    ToolRecall Shim->>SQLite Cache: Hash(path) → Lookup
-    SQLite Cache-->>ToolRecall Shim: Cache Miss
-    ToolRecall Shim->>OS: Execute native open()
-    OS-->>ToolRecall Shim: Return File Content
-    ToolRecall Shim->>SQLite Cache: Store(hash, content)
-    ToolRecall Shim->>LLM Agent: Return Content
-    LLM Agent->>LLM Model: Inference (file in context)
-    LLM Model-->>LLM Agent: Generated Response
-    LLM Agent->>End User: Final Answer
+    participant User as "End User"
+    participant Agent as "LLM Agent"
+    participant Shim as "ToolRecall Shim"
+    participant SQLite as "SQLite Cache"
+    participant OS as "OS"
+
+    User->>Agent: Prompt requiring file.py
+    Agent->>Shim: open("file.py", "r")
+    Shim->>SQLite: Hash(path) → Lookup
+    SQLite-->>Shim: Cache Miss
+    Shim->>OS: Execute native open()
+    OS-->>Shim: Return File Content
+    Shim->>SQLite: Store(hash, content)
+    Shim->>Agent: Return Content
+    Agent->>Model: Inference (file in context)
+    Model-->>Agent: Generated Response
+    Agent->>User: Final Answer
 ```
 
 Result: **file_size x ~0.25 tokens** consumed. Disk I/O + first write to cache.
@@ -517,15 +529,21 @@ Result: **file_size x ~0.25 tokens** consumed. Disk I/O + first write to cache.
 
 ```mermaid
 sequenceDiagram
-    End User->>LLM Agent: Prompt to edit file.py
-    LLM Agent->>ToolRecall Shim: open("file.py", "w")
-    ToolRecall Shim->>OS: Execute native write to disk
-    OS-->>ToolRecall Shim: Success
-    ToolRecall Shim->>SQLite Cache: Invalidate(hash)
-    ToolRecall Shim->>LLM Agent: Return Success
-    LLM Agent->>LLM Model: Inference (modified file in context)
-    LLM Model-->>LLM Agent: Generated Response
-    LLM Agent->>End User: Final Answer
+    participant User as "End User"
+    participant Agent as "LLM Agent"
+    participant Shim as "ToolRecall Shim"
+    participant OS as "OS"
+    participant SQLite as "SQLite Cache"
+
+    User->>Agent: Prompt to edit file.py
+    Agent->>Shim: open("file.py", "w")
+    Shim->>OS: Execute native write to disk
+    OS-->>Shim: Success
+    Shim->>SQLite: Invalidate(hash)
+    Shim->>Agent: Return Success
+    Agent->>Model: Inference (modified file in context)
+    Model-->>Agent: Generated Response
+    Agent->>User: Final Answer
 ```
 
 Result: **file_size x ~0.25 tokens** consumed. Cache entry invalidated.
@@ -534,13 +552,19 @@ Result: **file_size x ~0.25 tokens** consumed. Cache entry invalidated.
 
 ```mermaid
 sequenceDiagram
-    End User->>LLM Agent: Prompt
-    LLM Agent->>LLM Agent: Tool calls produce result
-    LLM Agent->>Context Tracker: What can I drop?
-    Context Tracker-->>LLM Agent: Clean: main.py, utils.py / Dirty: api.py
-    LLM Agent->>LLM Model: Drop clean files, keep dirty in context
-    LLM Model-->>LLM Agent: Generated Response
-    LLM Agent->>End User: Final Answer
+    participant User as "End User"
+    participant Agent as "LLM Agent"
+    participant CT as "Context Tracker"
+    participant Model as "LLM Model"
+
+    User->>Agent: Prompt
+    Agent->>Agent: Tool calls produce result
+    Agent->>CT: What can I drop?
+    CT-->>Agent: Clean: main.py, utils.py / Dirty: api.py
+    Agent->>Agent: Drop clean files, keep dirty in context
+    Agent->>Model: Inference (reduced context)
+    Model-->>Agent: Generated Response
+    Agent->>User: Final Answer
 ```
 
 Result: **~90% context reduction** on clean files. Re-read from SQLite if needed (~7ms).
@@ -549,12 +573,17 @@ Result: **~90% context reduction** on clean files. Re-read from SQLite if needed
 
 ```mermaid
 sequenceDiagram
-    End User->>LLM Agent: Prompt (uses LLM API)
-    LLM Agent->>Forward Proxy: API call via base_url redirect
-    Forward Proxy->>SQLite Cache: Check body hash
-    SQLite Cache-->>Forward Proxy: Cache HIT — return cached response
-    Forward Proxy->>LLM Agent: Cached response (zero tokens, no upstream call)
-    LLM Agent->>End User: Final Answer
+    participant User as "End User"
+    participant Agent as "LLM Agent"
+    participant FP as "Forward Proxy"
+    participant SQLite as "SQLite Cache"
+
+    User->>Agent: Prompt (uses LLM API)
+    Agent->>FP: API call via base_url redirect
+    FP->>SQLite: Check body hash
+    SQLite-->>FP: Cache HIT — return cached response
+    FP->>Agent: Cached response (zero tokens, no upstream call)
+    Agent->>User: Final Answer
 ```
 
 Result: **0 tokens consumed**. Provider never contacted. ~7ms local cache lookup.
@@ -563,13 +592,19 @@ Result: **0 tokens consumed**. Provider never contacted. ~7ms local cache lookup
 
 ```mermaid
 sequenceDiagram
-    End User->>LLM Agent: Prompt (streams LLM response)
-    LLM Agent->>Forward Proxy: API call with stream:true
-    Forward Proxy->>SQLite Cache: Check body hash — MISS
-    Forward Proxy->>OS: Forward to upstream API
-    OS-->>Forward Proxy: SSE stream relayed chunk-by-chunk
-    Forward Proxy->>LLM Agent: Streamed response (usage logged from final SSE event)
-    LLM Agent->>End User: Streamed answer
+    participant User as "End User"
+    participant Agent as "LLM Agent"
+    participant FP as "Forward Proxy"
+    participant SQLite as "SQLite Cache"
+    participant OS as "OS"
+
+    User->>Agent: Prompt (streams LLM response)
+    Agent->>FP: API call with stream:true
+    FP->>SQLite: Check body hash — MISS
+    FP->>OS: Forward to upstream API
+    OS-->>FP: SSE stream relayed chunk-by-chunk
+    FP->>Agent: Streamed response (usage logged from final SSE event)
+    Agent->>User: Streamed answer
 ```
 
 Result: Full token cost. SSE relayed with accurate usage logging from final event.
