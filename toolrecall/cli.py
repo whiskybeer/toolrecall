@@ -274,12 +274,10 @@ def cmd_status():
 
 def cmd_stats():
     """Detailed statistics as JSON."""
-    try:
-        from toolrecall.client import cache_status
-        print(cache_status())  # String output for CLI
-    except Exception:
-        from toolrecall.cache import get_stats
-        print(json.dumps(get_stats(), indent=2))
+    from toolrecall.cache import get_stats
+    import json as _json
+    stats = get_stats()
+    print(_json.dumps(stats, indent=2))
 
 def cmd_invalidate():
     """Clear cache via Daemon or direct SQLite fallback."""
