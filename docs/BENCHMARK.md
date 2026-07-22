@@ -1,6 +1,6 @@
 # Benchmark — Context Efficiency (Three-Arm Controlled Benchmark)
 
-**Generated:** 2026-07-21
+**Generated:** 2026-07-21 (v0.8.14 — review workload only; write simulation fix in v0.8.15 does not affect read-only results)
 **Model:** `deepseek/deepseek-v4-flash` via OpenRouter
 **Workload:** `review` (repeated reads of 4 core files: cache.py, daemon.py, config.py, client.py — ~42K tokens)
 **Arms:** naive (full history), prefix (full history + provider prefix caching), toolrecall (context tracker drops clean files)
@@ -12,6 +12,9 @@
 
 ## Headline
 
+**ToolRecall doesn't save money — it enables work that naive/prefix cannot complete.**  
+At equal work, TR sends fewer tokens and survives more turns. Below the context wall, prefix caching beats context dropping on cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
+
 | Metric | naive | prefix | toolrecall | Advantage |
 |--------|-------|--------|------------|-----------|
 | Turns to exhaustion | 17 | 19 | **140** | **7.4× longer** |
@@ -19,9 +22,9 @@
 | Request tokens @ turn 17 (naive exhausts) | 134,570 | ~125K | **11,723** | **11.5× less** |
 | Per-turn growth | ~8,000 | ~7,700 | **~580** | **14× slower** |
 | Cache hit rate (benchmark tool cache) | 100% | 100% | **99.3%** | — |
-| Billed cost per turn | — | $0.00284 | **$0.00167** | **41% cheaper** |
+| Billed cost per turn | — | $0.00284 | **$0.00167** | reference only |
 
-**Key finding:** ToolRecall doesn't save money — it enables work that naive/prefix cannot complete. At equal work (turn 10), TR sends 9.5× fewer tokens. It survives 140 turns vs naive's 17 — 7.4× longer — because clean file content is dropped after each turn, keeping context bounded.
+The cost per turn is lower, but this is a **secondary effect** — the primary value is endurance. TR survives 140 turns vs naive's 17 (7.4× longer) because clean file content is dropped after each turn, keeping context bounded. Without TR, sessions hit the context wall at ~17-19 turns regardless of prefix caching savings.
 
 ---
 
