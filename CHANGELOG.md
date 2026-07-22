@@ -1,15 +1,5 @@
 # Changelog
 
-## [0.8.16] — 2026-07-22
-
-### Added
-- **`toolrecall/storage/README.md`** — documents the pluggable storage backend layer: architecture, backend table (sqlite/libsql/libsql-sync), the contract for adding a new backend.
-
-### Changed
-- **`docs/ARCHITECTURE.md` §5.1** — 3 plain-text sequence diagrams converted to mermaid (`sequenceDiagram` block). No content change.
-
----
-
 ## [0.8.15] — 2026-07-22
 
 ### Added
@@ -19,28 +9,44 @@
 - **Per-run benchmark databases** — each benchmark run gets its own `.db` file under `bench-runs/<run_id>.db`, eliminating WAL corruption from concurrent writes to a shared `benchmark.db`.
 - **Honest token accounting** — `get_stats()` now exposes `tokens_saved_cumulative` (raw DB accumulator) alongside `tokens_saved` (real cumulative savings). New metrics: `cached_content_tokens` (byte sum / 4 heuristic) for file_cache capacity, `unique_files` count.
 - **Agent-tool source tagging** — `cached_read` requests tagged with `source: "agent_tool"`, enabling per-source tracking of context tokens saved.
+- **`toolrecall/storage/README.md`** — documents the pluggable storage backend layer: architecture, backend table (sqlite/libsql/libsql-sync), the contract for adding a new backend.
+
+### Benchmark Fixes & Improvements
+- **Benchmark write simulation** — `bench/agent.py`'s toolrecall arm now calls `cached_write()` for files in `step.writes` after the LLM responds, so the context tracker sees real dirty state. Previously all files were always "clean" (never written through the daemon), causing all file content to be stripped every turn regardless of write metadata — making the bugfix workload behave identically to the read-only review workload.
+- **`context_get_dirty()` returns checkpoint-scoped results** — no-argument branch (use current checkpoint) returned ALL dirty files since `reset()` instead of only those since the current checkpoint. Unified both branches into a single filtered path. Also fixed `target` computation that silently replaced checkpoint=0 (valid post-reset ID) with the current counter.
+- **Benchmark marker formatting** — correct marker tags, DB path resolution, seed isolation across runs, schema alignment.
+- **Context tokens_saved inflation** — distinguished shim reads from agent-tool reads so the counter doesn't double-count.
+- **Critique-driven benchmark report fixes**:
+  - **Dynamic column headers** — `analyze.py` no longer hardcodes `naive|prefix|toolrecall` columns; renders whatever arms are present, preventing cost values from appearing under wrong column headers.
+  - **Wilcoxon paired test** — now pairs on `(workload_id, turn_index)` instead of `(run_id, turn_index)`. Run_ids differ across arms so the old pairing always returned an empty intersection (`n=0`).
+  - **Claims table auto-populated** — C1 (growth rates), C2 (ratio widening), C3 (exhaustion comparison), C4 (probe recall) filled from computed data. C5 remains placeholder pending micro-benchmark fix.
+  - **Honest positioning** — moved from buried text to headline: "ToolRecall doesn't save money — it enables work that naive/prefix cannot complete."
+- **`cmd_stats` returns JSON always** — CLI no longer returns a formatted string when daemon is unreachable; consistent JSON response regardless of daemon state.
+- **Remove go-client/tr binary from tracking** — 3.1MB unstripped binary no longer committed to repo; replaced with build-from-source instructions.
+- **Mermaid participant declarations** — added `participant` lines to all `sequenceDiagram` blocks (GitHub Mermaid requires explicit declarations when `End` is a reserved keyword).
+- **Stale benchmark artifacts removed** — `BENCHMARK_REPORT.md`, `benchmark_stats.txt` cleaned from repo root.
 
 ### Changed
-- **docs/BENCHMARK.md fully rewritten** — old single-session case study replaced with three-arm controlled benchmark (naive vs prefix vs toolrecall). 6 runs, 239 turns, DeepSeek V4 Flash, seed=42 interleaved. Key finding: TR survives 140 turns vs naive's 17 (7.4× longer), sends 9.5× fewer tokens at turn-matched comparison.
+- **docs/BENCHMARK.md fully rewritten** — old single-session case study replaced with three-arm controlled benchmark (naive vs prefix vs toolrecall). 6 runs, 239 turns, DeepSeek V4 Flash, seed=42 interleaved. Key finding: TR survives 140 turns vs naive's 17 (7.4× longer), sends 9.5× fewer tokens at turn-matched comparison. Version caveat added: generated with v0.8.14 (review workload only — write-simulation fix in v0.8.15 does not affect read-only results).
 - **Benchmark provider consolidation** — `bench/run_arm.py` provider choices expanded to `openrouter`, `anthropic`, `gemini`, `deepseek`. Default switched to `openai/gpt-4o-mini` (was `deepseek/deepseek-v4-flash`).
 - **Per-run DB directory** — `bench/analyze.py`, `turnlog.py`, `interleave.py` all migrated to per-run DBs under `~/.toolrecall/bench-runs/`.
 - **Workload file validation** — `tests/benchmark_workload.py` now fails fast with clear error if any source file is missing. Reduced file set: removed `docs.py`, `mcp_server.py`, `BOTTLENECK_SOLVED.md`.
-- **ARCHITECTURE.md restructured** — merged architecture diagrams, added design principles section, full README restructuring.
+- **ARCHITECTURE.md restructured** — merged architecture diagrams, added design principles section, full README restructuring. 3 plain-text sequence diagrams converted to mermaid (`sequenceDiagram` block).
 
 ### Fixed
-- **Benchmark write simulation** — `bench/agent.py`'s toolrecall arm now calls `cached_write()` for files in `step.writes` after the LLM responds, so the context tracker sees real dirty state. Previously all files were always "clean" (never written through the daemon), causing all file content to be stripped every turn regardless of write metadata — making the bugfix workload behave identically to the read-only review workload.
-- **`context_get_dirty()` returns checkpoint-scoped results** — no-argument branch (use current checkpoint) returned ALL dirty files since `reset()` instead of only those since the current checkpoint. Unified both branches into a single filtered path. Also fixed `target` computation that silently replaced checkpoint=0 (valid post-reset ID) with the current counter.
 - **Daemon forward proxy silent failure** — `except Exception: pass` in `DaemonServer.start()` now prints a visible warning when proxy fails to start (port in use, import error).
-- **Benchmark marker formatting** — correct marker tags, DB path resolution, seed isolation across runs, schema alignment.
 
 ### Removed
 - `tests/benchmark_mcp.py` — obsolete MCP benchmark (superseded by per-run system)
 - `tests/benchmark_on2.py` — obsolete O(N²) benchmark (replaced by three-arm)
+- `BENCHMARK_REPORT.md`, `benchmark_stats.txt` — stale auto-generated artifacts
+- `go-client/tr` — 3.1MB unstripped binary (build instructions replace it)
 
 ### Documentation
-- `docs/BENCHMARK.md` — complete rewrite with three-arm controlled benchmark data
-- `docs/ARCHITECTURE.md` — merged diagrams, design principles, README restructure
+- `docs/BENCHMARK.md` — complete rewrite with three-arm controlled benchmark data + honest positioning + version caveat
+- `docs/ARCHITECTURE.md` — merged diagrams, mermaid conversion, design principles, README restructure
 - `docs/README.md` — removed Turso mention from hero section
+- `toolrecall/storage/README.md` — pluggable storage backend layer documentation
 
 ---
 
@@ -106,7 +112,7 @@
 - **Client write/patch fallback** — `cached_write` and `cached_patch` now fail closed when daemon is unavailable (consistent with `cached_terminal`). Previously bypassed the path allowlist.
 - **`normalize_json`/`normalize_tool_args`/`normalize_command` lazy import** — replaced `locals()[name]` (raises `KeyError`) with explicit `_alias_map` dict (raises `AttributeError` as expected). Added `invalidate_file` and `refresh_file` to `__all__`.
 - **`docs_get_page` argument swap** — daemon.py called `_docs_get_page(source, path)` but `docs.py` defines `(path, source)`. Fixed all call sites + client.py signature.
-- **`docs_get_page` literal `\\n` bug** — exact-match branch used `\\n` (escaped backslash-n) instead of actual newlines.
+- **`docs_get_page` literal `\\\\n` bug** — exact-match branch used `\\\\n` (escaped backslash-n) instead of actual newlines.
 - **Proxy Content-Encoding** — `Accept-Encoding` stripped from outgoing requests; `Content-Encoding` stripped from stored headers. Prevents gzipped responses being stored as corrupted UTF-8.
 - **Proxy routing specificity** — `/v1beta` (Google) checked before `/v1`; `/v1/messages` (Anthropic) checked before `/v1/chat/completions` (OpenAI). Ordered tuple list replaces unordered dict iteration.
 
@@ -125,6 +131,8 @@
 - `docs/BENCHMARK.md` version label corrected to v0.8.8+.
 - Various docs: version bumps (v0.8.10 → v0.8.12), CONTEXT_TRACKER.md mermaid cleanup, removed 'Files to Create/Modify' planning sections.
 
+---
+
 ## [0.8.12] — 2026-07-15
 
 ### Added
@@ -134,6 +142,8 @@
 
 ### Changed
 - `context_tracker.py`: `get_stats()` no longer calls `get_dirty()` internally to avoid double-counting `ctx_dropped_tokens`.
+
+---
 
 ## [0.8.11] — 2026-07-14
 
@@ -160,6 +170,8 @@
 - `README.md` — `default_ttl` under `[mcp]` → `terminal_default_ttl` under `[cache]` matching actual config structure.
 - `CHANGELOG.md` — previous entry `138+` → `550+`.
 
+---
+
 ## [0.8.10] — 2026-07-14
 
 ### Added
@@ -170,6 +182,8 @@
 ### Documentation
 - `docs/CONTEXT_TRACKER.md` — updated to document auto-hint, context_get_hint endpoint, and MCP bridge auto-trigger behavior.
 - `README.md` — Context Tracker feature row updated to mention auto-hint.
+
+---
 
 ## [0.8.9] — 2026-07-13
 
@@ -202,6 +216,8 @@
 - `toolrecall/adapters/herdr.py` — context tracker listing now accurate (tools are live).
 - `explainer.html` — SVG chart green path changed to oscillation pattern; label `~268K flat · −93.3%` → `~65K bounded · −90%`.
 - `index.html` — FAQ Q4 test count updated to 550+.
+
+---
 
 ## [0.8.8] — 2026-07-10
 
