@@ -240,29 +240,21 @@ class ContextTracker:
             }
         """
         with self._lock:
-            target = checkpoint if checkpoint else self._checkpoint_counter
+            target = checkpoint if checkpoint is not None else self._checkpoint_counter
 
-            # Filter dirty files: if a specific checkpoint is given, only
-            # return files dirtied at or after that checkpoint.
-            # If checkpoint is None (use current), return ALL dirty files
-            # (everything written since the last reset).
-            if checkpoint:
-                dirty_list = [
-                    path for path, info in self._dirty.items()
-                    if info.get("tick", 0) >= target
-                ]
-                read_but_not_dirty = [
-                    p for p in self._read_set
-                    if p not in self._dirty
-                    or self._dirty[p].get("tick", 0) < target
-                ]
-            else:
-                dirty_list = list(self._dirty.keys())
-                # Clean = was read but never written
-                read_but_not_dirty = [
-                    p for p in self._read_set
-                    if p not in self._dirty
-                ]
+            # All callers get checkpoint-scoped results:
+            # - checkpoint=None → use current checkpoint
+            # - checkpoint=N     → scope to checkpoint N
+            # - checkpoint=0     → scope to checkpoint 0 (post-reset)
+            dirty_list = [
+                path for path, info in self._dirty.items()
+                if info.get("tick", 0) >= target
+            ]
+            read_but_not_dirty = [
+                p for p in self._read_set
+                if p not in self._dirty
+                or self._dirty[p].get("tick", 0) < target
+            ]
             clean_list = list(set(read_but_not_dirty))
 
             # Estimate tokens for clean files (content length / 4 chars-per-token)

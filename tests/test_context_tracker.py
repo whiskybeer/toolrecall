@@ -159,19 +159,81 @@ class TestContextTrackerBasics:
         The dirty list persists until the agent processes it or calls reset.
         """
         ct = ContextTracker()
-        ct.set_checkpoint("start")
+        cp1 = ct.set_checkpoint("start")["checkpoint"]
 
         path = make_temp_file()
         try:
             ct.mark_dirty(path)
             ct.set_checkpoint("still_dirty")  # Checkpoint just marks time
 
-            result = ct.get_dirty()
+            # Must pass cp1 explicitly now — get_dirty() without args scopes
+            # to current checkpoint (cp2), which has no new dirty files.
+            result = ct.get_dirty(checkpoint=cp1)
             assert result["total_dirty"] == 1
             assert path in result["dirty"]
         finally:
             os.unlink(path)
 
+
+
+    def test_get_dirty_no_arg_is_checkpoint_scoped(self):
+        """get_dirty() without args scopes to current checkpoint, not since reset.
+
+        Regression test for the bug where get_dirty(None) returned ALL dirty
+        files since reset() instead of only those since the current checkpoint.
+        """
+        ct = ContextTracker()
+        cp1 = ct.set_checkpoint("phase1")["checkpoint"]
+        assert cp1 == 1
+
+        p1 = make_temp_file("phase1_data")
+        try:
+            ct.mark_dirty(p1)
+
+            # get_dirty() with explicit checkpoint 1 should see p1
+            result_cp1 = ct.get_dirty(checkpoint=cp1)
+            assert p1 in result_cp1["dirty"],                 f"Expected {p1} in dirty for cp1, got {result_cp1['dirty']}"
+            assert result_cp1["total_dirty"] == 1
+
+            # Now advance checkpoint without clearing
+            cp2 = ct.set_checkpoint("phase2")["checkpoint"]
+            assert cp2 == 2
+
+            # get_dirty() without args — should see NOTHING dirty
+            # because no files were written since cp2
+            result_none = ct.get_dirty()
+            assert result_none["total_dirty"] == 0,                 f"Expected 0 dirty for current checkpoint, got {result_none['total_dirty']}: {result_none['dirty']}"
+            assert p1 not in result_none["dirty"],                 f"{p1} should NOT appear in dirty when called without args (it was dirtied before current checkpoint)"
+
+            # get_dirty(checkpoint=cp1) should STILL see p1
+            result_cp1_again = ct.get_dirty(checkpoint=cp1)
+            assert p1 in result_cp1_again["dirty"]
+        finally:
+            os.unlink(p1)
+
+    def test_get_dirty_checkpoint_zero(self):
+        """get_dirty(checkpoint=0) works after reset (0 is falsy but valid)."""
+        ct = ContextTracker()
+        cp1 = ct.set_checkpoint("before")["checkpoint"]
+        p1 = make_temp_file("data")
+        try:
+            ct.mark_dirty(p1)
+            ct.reset()
+
+            # After reset, checkpoint=0 is the only valid checkpoint
+            p2 = make_temp_file("after_reset")
+            ct.mark_dirty(p2)
+
+            # get_dirty(checkpoint=0) should see p2 (written since reset at cp0)
+            result = ct.get_dirty(checkpoint=0)
+            assert result["total_dirty"] == 1,                 f"Expected 1 dirty for checkpoint=0 after reset, got {result['total_dirty']}"
+            assert p2 in result["dirty"]
+        finally:
+            for p in (p1, p2):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
 class TestContextTrackerReset:
     """Reset and edge cases."""
