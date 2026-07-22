@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.8.15] — 2026-07-22
+
+### Added
+- **context_get_stale** — `cache.context_get_stale(path)` detects provably stale content by comparing mtime + size against the cached record. Returns `True`/`False` without pulling content from disk. Enables agent-level cache awareness without a full read.
+- **Direct DeepSeek API support** — `bench/agent.py` now supports `provider=deepseek` with full 1M context window via `api.deepseek.com`. Default model: `deepseek-chat`.
+- **Direct Gemini API support** — `bench/agent.py` now supports `provider=gemini` via Google's OpenAI-compatible endpoint. Default model: `gemini-2.5-flash`.
+- **Per-run benchmark databases** — each benchmark run gets its own `.db` file under `bench-runs/<run_id>.db`, eliminating WAL corruption from concurrent writes to a shared `benchmark.db`.
+- **Honest token accounting** — `get_stats()` now exposes `tokens_saved_cumulative` (raw DB accumulator) alongside `tokens_saved` (real cumulative savings). New metrics: `cached_content_tokens` (byte sum / 4 heuristic) for file_cache capacity, `unique_files` count.
+- **Agent-tool source tagging** — `cached_read` requests tagged with `source: "agent_tool"`, enabling per-source tracking of context tokens saved.
+
+### Changed
+- **docs/BENCHMARK.md fully rewritten** — old single-session case study replaced with three-arm controlled benchmark (naive vs prefix vs toolrecall). 6 runs, 239 turns, DeepSeek V4 Flash, seed=42 interleaved. Key finding: TR survives 140 turns vs naive's 17 (7.4× longer), sends 9.5× fewer tokens at turn-matched comparison.
+- **Benchmark provider consolidation** — `bench/run_arm.py` provider choices expanded to `openrouter`, `anthropic`, `gemini`, `deepseek`. Default switched to `openai/gpt-4o-mini` (was `deepseek/deepseek-v4-flash`).
+- **Per-run DB directory** — `bench/analyze.py`, `turnlog.py`, `interleave.py` all migrated to per-run DBs under `~/.toolrecall/bench-runs/`.
+- **Workload file validation** — `tests/benchmark_workload.py` now fails fast with clear error if any source file is missing. Reduced file set: removed `docs.py`, `mcp_server.py`, `BOTTLENECK_SOLVED.md`.
+- **ARCHITECTURE.md restructured** — merged architecture diagrams, added design principles section, full README restructuring.
+
+### Fixed
+- **Daemon forward proxy silent failure** — `except Exception: pass` in `DaemonServer.start()` now prints a visible warning when proxy fails to start (port in use, import error).
+- **Benchmark marker formatting** — correct marker tags, DB path resolution, seed isolation across runs, schema alignment.
+
+### Removed
+- `tests/benchmark_mcp.py` — obsolete MCP benchmark (superseded by per-run system)
+- `tests/benchmark_on2.py` — obsolete O(N²) benchmark (replaced by three-arm)
+
+### Documentation
+- `docs/BENCHMARK.md` — complete rewrite with three-arm controlled benchmark data
+- `docs/ARCHITECTURE.md` — merged diagrams, design principles, README restructure
+- `docs/README.md` — removed Turso mention from hero section
+
+---
+
 ## [0.8.14] — 2026-07-19
 
 ### Added
@@ -14,6 +46,7 @@
 - `toolrecall/proxy.py`: header-based tiebreaker replaced with general auth-based routing (key prefix detection). Old Anthropic-only check (`x-api-key`, `anthropic-version`) kept as fallback.
 
 ### Fixed
+- **Daemon forward proxy silent failure** — when the forward proxy failed to start (port in use, import error), the `except Exception: pass` in `DaemonServer.start()` swallowed all errors silently. Now prints a visible warning with the error message so operators know why port :8569 isn't listening.
 - **Proxy 401 on OpenRouter requests** — path routing sent all `/v1/chat/completions` to `api.openai.com`. OpenRouter keys now correctly route to `openrouter.ai`.
 - **Proxy 404 on OpenRouter requests** — path `/v1/chat/completions` forwarded as-is, but OpenRouter expects `/api/v1/chat/completions`.
 - **Proxy timeout on all requests** — responses lacked `Content-Length`, causing HTTP/1.0 clients (Python `http.client`, some SDKs) to hang indefinitely.
@@ -61,7 +94,7 @@
 - **Client write/patch fallback** — `cached_write` and `cached_patch` now fail closed when daemon is unavailable (consistent with `cached_terminal`). Previously bypassed the path allowlist.
 - **`normalize_json`/`normalize_tool_args`/`normalize_command` lazy import** — replaced `locals()[name]` (raises `KeyError`) with explicit `_alias_map` dict (raises `AttributeError` as expected). Added `invalidate_file` and `refresh_file` to `__all__`.
 - **`docs_get_page` argument swap** — daemon.py called `_docs_get_page(source, path)` but `docs.py` defines `(path, source)`. Fixed all call sites + client.py signature.
-- **`docs_get_page` literal `\n` bug** — exact-match branch used `\n` (escaped backslash-n) instead of actual newlines.
+- **`docs_get_page` literal `\\n` bug** — exact-match branch used `\\n` (escaped backslash-n) instead of actual newlines.
 - **Proxy Content-Encoding** — `Accept-Encoding` stripped from outgoing requests; `Content-Encoding` stripped from stored headers. Prevents gzipped responses being stored as corrupted UTF-8.
 - **Proxy routing specificity** — `/v1beta` (Google) checked before `/v1`; `/v1/messages` (Anthropic) checked before `/v1/chat/completions` (OpenAI). Ordered tuple list replaces unordered dict iteration.
 
@@ -98,14 +131,14 @@
 - **7 new integration tests** for context tracker daemon integration (auto-checkpoint, read tracking, write tracking, ping stats, hint endpoint, status output).
 
 ### Fixed
-- **Pipx editable install** — symlinked pipx venv `toolrecall` package to source directory, so daemon picks up code changes immediately without manual `cp`.
+- **Pipx editable install** — symlinked pipx venv `toolrecall` package to source, so daemon picks up code changes immediately without manual `cp`.
 - **Pytest crash** — downgraded from 9.1.0 to 8.0.0 (capture plugin crash in this environment).
 - **Context tracker tests** — test suite now handles shared daemon state correctly (path-based assertions instead of count-based).
 
 ### Documentation
 - `docs/CLI.md` — `--remove` → `--uninstall` (matches actual CLI).
 - `docs/HERMES_TRANSPARENT_CACHE.md` — `--remove` → `--uninstall` (2 occurrences).
-- `docs/ARCHITECTURE.md` — `93.8% O(n²) reduction` → `~90% reduction`.
+- `docs/ARCHITECTURE.md` — `93.8% O(n)² reduction` → `~90% reduction`.
 - `docs/APPENDIX.md` — `76 KB` → `~132 KB install`; `v0.6.0 roadmap` → `v0.8.10 roadmap delivered` with 7 items.
 - `docs/TESTING.md` — `~330 tests (v0.7.5)` → `550+ tests across 38 files (v0.8.10)`.
 - `tests/README.md` — `~150+ tests across 30 files` → `550+ tests across 38 files (v0.8.10)`.
@@ -119,7 +152,7 @@
 
 ### Added
 - **Context Tracker auto-hint** — daemon injects `_agent_hint` in `context_get_dirty` response with clean/dirty file lists. New `context_get_hint` daemon command for lightweight hint-only queries.
-- **MCP bridge auto-trigger** — after every non-context tool call, the bridge calls `context_get_hint` and appends the hint to the tool response. Agents get context guidance on every turn without explicit tracker calls.
+- **MCP bridge auto-trigger** — after every non-context tool call, the bridge calls `context_get_hint` and appends the hint to the tool response. Agents get context awareness on every turn without explicit tracker calls.
 - `_format_context_hint()` — shared helper in daemon for emoji-coded hint generation.
 
 ### Documentation
@@ -142,7 +175,7 @@
 - **Bug 5 (shim):** `Popen` was patched with a no-op wrapper — removed entirely.
 - **Bug 6 (shim):** `tr` binary initialization could fail silently — now handled.
 - **`capture_output` guard (v0.8.8 regression):** inverted logic — now correctly routes **only** when `capture_output=True` or `stdout=PIPE`, not when it's absent.
-- **Stream detection (v0.8.8):** byte-literal `b'"stream": true'` missed compact JSON (`{"stream":true}`) — replaced with `rb'"stream"\s*:\s*true'` regex catching all whitespace variations.
+- **Stream detection (v0.8.8):** byte-literal `b'stream': true` missed compact JSON (`{"stream":true}`) — replaced with `rb'"stream"\s*:\s*true'` regex catching all whitespace variations.
 - **Replay docstring:** falsely claimed "daemon checks Replay mode" — corrected to "planned integration".
 - **CONTEXT_TRACKER.md:** "Three MCP Tools" heading listed 4 tools — fixed to "Four MCP Tools".
 

@@ -109,15 +109,21 @@ def mcp_list_servers() -> dict:
     return resp
 
 
-def cached_read(path: str) -> dict:
+def cached_read(path: str, source: str = "agent_tool") -> dict:
     """Read file via daemon (UDS) or direct SQLite.
 
     Daemon-first: sends path to the running daemon over Unix Domain Socket.
     Fallback respects allowed_paths by loading the config and checking
     against the same SecurityGate rules the daemon would apply.
+
+    Args:
+        path: File path to read.
+        source: "agent_tool" for agent-initiated reads, "shim" for
+                infrastructure/interception reads. Controls whether
+                tokens count toward context_tokens_saved.
     """
     client = _get_client()
-    resp = client.send({"cmd": "cached_read", "path": path, "source": "agent_tool"})
+    resp = client.send({"cmd": "cached_read", "path": path, "source": source})
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp  # Success or real error from Daemon
     # Fallback: check allowed_paths ourselves, then read directly
@@ -133,7 +139,7 @@ def cached_read(path: str) -> dict:
                 break
         else:
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
-    return _get_direct_cache().cached_read(path, source="agent_tool")
+    return _get_direct_cache().cached_read(path, source=source)
 
 
 def cached_shell_exec(command: str) -> dict:

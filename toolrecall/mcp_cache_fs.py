@@ -113,6 +113,7 @@ def _cached_read(path: str, max_tokens: int = 0) -> str:
     resp = _daemon_send({
         "cmd": "cached_read",
         "path": path,
+        "source": "agent_tool",
         "max_tokens": max_tokens,
     })
 

@@ -1170,7 +1170,20 @@ def cached_mcp(server: str, tool: str, arguments: dict = None,
 # ─── STATS & ADMIN ─────────────────────────────────────────
 
 def get_stats() -> dict:
-    """Get cache statistics (from SQLite + in-memory)."""
+    """Get cache statistics with honest token accounting.
+
+    ``tokens_saved`` is the real cumulative accumulator — each cache hit
+    records the estimated token count of the content served, so this is
+    the actual number of tokens NOT re-read from disk due to cache hits.
+
+    ``cached_content_tokens`` shows the estimated token size of ALL unique
+    content in the file_cache (byte sum / 4 chars-per-token heuristic) —
+    a measure of cache capacity, NOT savings.
+
+    ``tokens_saved_cumulative`` preserves the raw DB accumulator for
+    debugging. ``context_tokens_saved`` tracks only agent-tool-initiated
+    reads (tagged with source="agent_tool").
+    """
     stats = {}
     try:
         with _db() as conn:
@@ -1180,11 +1193,20 @@ def get_stats() -> dict:
                     "hits": row["hits"],
                     "misses": row["misses"],
                     "tokens_read_from_disk": row["tokens_read_from_disk"],
-                    "tokens_saved": row["tokens_saved"],
+                    "tokens_saved_cumulative": row["tokens_saved"],
+                    "tokens_saved": row["tokens_saved"],  # real cumulative savings
                     "context_tokens_saved": row["context_tokens_saved"],
                     "updated_at": row["updated_at"],
                     "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
                 }
+                if row["category"] == "file_cache":
+                    total_bytes = conn.execute(
+                        "SELECT COALESCE(SUM(size), 0) FROM file_cache"
+                    ).fetchone()[0]
+                    stats[row["category"]]["cached_content_tokens"] = total_bytes // 4
+                    stats[row["category"]]["unique_files"] = conn.execute(
+                        "SELECT COUNT(*) FROM file_cache"
+                    ).fetchone()[0]
             for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache", "browser_cache"]:
                 r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
                 stats[f"{t}_entries"] = r[0]

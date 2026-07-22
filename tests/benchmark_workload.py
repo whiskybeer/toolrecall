@@ -38,21 +38,31 @@ _init()
 
 # Project files to read (real files from ToolRecall project)
 REPO = os.path.expanduser("~/toolrecall")
-FILES = [
-    os.path.join(REPO, "README.md"),           # ~23KB
-    os.path.join(REPO, "toolrecall/cache.py"),  # ~30KB
-    os.path.join(REPO, "toolrecall/daemon.py"),
-    os.path.join(REPO, "toolrecall/cli.py"),
-    os.path.join(REPO, "toolrecall/docs.py"),
-    os.path.join(REPO, "toolrecall/config.py"),
-    os.path.join(REPO, "toolrecall/client.py"),
-    os.path.join(REPO, "toolrecall/mcp_server.py"),
-    os.path.join(REPO, "toolrecall/proxy.py"),
-    os.path.join(REPO, "SECURITY.md"),          # ~4.6KB
-    os.path.join(REPO, "pyproject.toml"),
-    os.path.join(REPO, "docs/BENCHMARK.md"),
-    os.path.join(REPO, "docs/BOTTLENECK_SOLVED.md"),
+if not os.path.isdir(REPO):
+    print(f"  ❌ REPO={REPO} does not exist. Hard-failing.")
+    print(f"     Set the TOOLRECALL_REPO env var or symlink ~/toolrecall to your clone.")
+    sys.exit(1)
+
+# Validate all files exist before starting
+_FILE_CANDIDATES = [
+    "README.md",
+    "toolrecall/cache.py",
+    "toolrecall/daemon.py",
+    "toolrecall/cli.py",
+    "toolrecall/config.py",
+    "toolrecall/client.py",
+    "toolrecall/proxy.py",
+    "SECURITY.md",
+    "pyproject.toml",
+    "docs/BENCHMARK.md",
 ]
+FILES = [os.path.join(REPO, f) for f in _FILE_CANDIDATES]
+
+missing = [f for f in FILES if not os.path.exists(f)]
+if missing:
+    for f in missing:
+        print(f"  ❌ File not found: {f}")
+    sys.exit(1)
 
 # ════════════════════════════════════════════
 # PHASE 1: Session Day 1 — First read of all files

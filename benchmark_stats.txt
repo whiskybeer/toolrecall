@@ -1,0 +1,45 @@
+============================================================
+ToolRecall Benchmark Statistics
+============================================================
+
+--- Turns to exhaustion ---
+  naive       : median=200, exhausted=0/3
+  toolrecall  : median=200, exhausted=0/4
+
+--- Wilcoxon signed-rank on request_tokens ---
+  naive        vs toolrecall  : n=   0, W=None, N/A
+
+--- Log-rank test (turns to exhaustion) ---
+  naive_vs_toolrecall           : chi2=0.87, p=0.3865
+
+--- Marginal cost at checkpoints (median request_tokens) ---
+  turn   10, naive       :   37,170 tok
+  turn   10, toolrecall  :    4,898 tok
+  turn   50, naive       :  178,607 tok
+  turn   50, toolrecall  :   26,547 tok
+  turn  100, naive       :  298,688 tok
+  turn  100, toolrecall  :   55,608 tok
+  turn  200, naive       :  531,355 tok
+  turn  200, toolrecall  :  110,248 tok
+  turn  340, toolrecall  :  175,910 tok
+
+--- Probe recall pass rate ---
+  naive       , lag= 30: 0% (18 probes)
+  naive       , lag=130: 0% (6 probes)
+  toolrecall  , lag= 30: 100% (34 probes)
+  toolrecall  , lag=130: 100% (18 probes)
+  toolrecall  , lag=280: 100% (6 probes)
+
+--- Cost estimate (deepseek-chat via deepseek) ---
+  naive       : prompt_miss=$0.66936, prompt_hit=$0.00000, completion=$0.02363, total=$0.69299
+  toolrecall  : prompt_miss=$12.13355, prompt_hit=$0.00000, completion=$0.28531, total=$12.41886
+
+--- Provider prefix caching (self-counted vs provider-reported) ---
+  naive       : request_tokens=173,578,285, prompt_tokens=4,781,170, delta=-168,797,115 (-97.2%)
+  toolrecall  : request_tokens=85,175,625, prompt_tokens=86,668,221, delta=+1,492,596 (+1.8%)
+
+--- Per-arm summary ---
+            runs  total_turns  median_request_tokens  median_completion  total_api_time_s
+arm                                                                                      
+naive          3          600               296282.5                0.0       1627.198147
+toolrecall     4         1050                71229.0              512.0      13719.489557

@@ -5,7 +5,14 @@ import time
 import uuid
 import os
 
-BENCH_DB = os.path.expanduser("~/.toolrecall/benchmark.db")
+BENCH_DIR = os.path.expanduser("~/.toolrecall/bench-runs")
+os.makedirs(BENCH_DIR, exist_ok=True)
+# Per-run DB: bench-runs/<run_id>.db. Symlink latest -> bench-runs/latest.db
+# Avoids data loss from WAL corruption when sharing a single file across runs.
+def _bench_db_path(run_id: str = None) -> str:
+    if run_id is None:
+        run_id = str(uuid.uuid4())
+    return os.path.join(BENCH_DIR, f"{run_id}.db")
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS turn_log (
@@ -48,12 +55,12 @@ CREATE TABLE IF NOT EXISTS probe_result (
 class TurnLogger:
     """One row per agent turn. Cheap, synchronous, append-only."""
 
-    def __init__(self, arm: str, workload_id: str, db_path: str = BENCH_DB):
+    def __init__(self, arm: str, workload_id: str, db_path: str = None):
         self.run_id = str(uuid.uuid4())
         self.arm = arm
         self.workload_id = workload_id
         self.turn = 0
-        self.con = sqlite3.connect(db_path, timeout=30)
+        self.con = sqlite3.connect(db_path or _bench_db_path(self.run_id), timeout=30)
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute("PRAGMA synchronous=NORMAL")
         self.con.executescript(_SCHEMA_SQL)

@@ -24,23 +24,41 @@ import urllib.error
 # ── Provider configuration ──────────────────────────────────────
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 ENV_FILE = os.path.expanduser("~/.hermes/.env")
 
 DEFAULT_MODELS = {
-    "openrouter": "deepseek/deepseek-v4-flash",
+    "openrouter": "openai/gpt-4o-mini",
     "anthropic": "claude-sonnet-4-20250514",
+    "gemini": "gemini-2.5-flash",
+    "deepseek": "deepseek-chat",
 }
 
 # Pricing per 1M tokens (USD) — used by analyze.py
 PRICING = {
-    "openrouter": {
-        "deepseek/deepseek-v4-flash": {
+    "gemini": {
+        "gemini-2.5-flash": {
+            "prompt": 0.075,
+            "prompt_cached": 0.075,
+            "completion": 0.30,
+        },
+    },
+    "deepseek": {
+        "deepseek-chat": {
             "prompt": 0.14,
             "prompt_cached": 0.0028,
             "completion": 0.55,
+        },
+    },
+    "openrouter": {
+        "openai/gpt-4o-mini": {
+            "prompt": 0.15,
+            "prompt_cached": 0.15,
+            "completion": 0.60,
         },
         "anthropic/claude-sonnet-4-20250514": {
             "prompt": 3.00,
@@ -128,6 +146,10 @@ def _call_llm(messages: list[dict], provider: str = "openrouter",
     """
     if provider == "anthropic":
         return _call_llm_anthropic(messages, model=model, arm=arm)
+    if provider == "gemini":
+        return _call_llm_gemini(messages, model=model, arm=arm)
+    if provider == "deepseek":
+        return _call_llm_deepseek(messages, model=model, arm=arm)
     return _call_llm_openrouter(messages, model=model, arm=arm)
 
 
@@ -238,6 +260,85 @@ def _call_llm_anthropic(messages: list[dict], model: str = None,
     }
 
 
+
+def _call_llm_gemini(messages: list[dict], model: str = None, arm: str = None) -> dict:
+    """Gemini via OpenAI-compatible endpoint. System stays in messages array."""
+    # Resolve API key from env or .env
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if (line.startswith("GEMINI_API_KEY=") or line.startswith("GOOGLE_API_KEY=")) and not line.startswith("#"):
+                    api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    if not api_key:
+        api_key = _get_api_key("openrouter", arm)
+
+    model_name = _resolve_model("gemini", model)
+    
+    body = json.dumps({
+        "model": model_name,
+        "max_tokens": 512,
+        "temperature": 0.0,
+        "messages": messages,
+    }).encode()
+
+    req = urllib.request.Request(
+        GEMINI_API_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+    try:
+        resp = json.loads(urllib.request.urlopen(req, timeout=180).read())
+        return resp
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode()[:200]
+        return {"error": f"HTTP {e.code}: {body_text}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+def _call_llm_deepseek(messages: list[dict], model: str = None, arm: str = None) -> dict:
+    """Direct DeepSeek API call — supports 1M context window."""
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("DEEPSEEK_API_KEY") and "=" in line and not line.startswith("#"):
+                    api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    if not api_key:
+        return {"error": "No DEEPSEEK_API_KEY found"}
+    model_name = _resolve_model("deepseek", model)
+
+    body = json.dumps({
+        "model": model_name,
+        "messages": messages,
+        "max_tokens": 512,
+        "temperature": 0.0,
+    }).encode()
+
+    req = urllib.request.Request(
+        DEEPSEEK_API_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        resp = json.loads(urllib.request.urlopen(req, timeout=180).read())
+        return resp
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode()[:200]
+        return {"error": f"HTTP {e.code}: {body_text}"}
+    except Exception as e:
+        return {"error": str(e)}
+
 # ── Agent Result ──────────────────────────────────────────────
 
 class AgentResult:
@@ -297,7 +398,7 @@ def _build_file_block(file_info: dict) -> str:
     """
     path = file_info["path"]
     content = file_info["content"]
-    cached_mark = " [cached]" if file_info.get("cached") else ""
+    cached_mark = "[cached] " if file_info.get("cached") else ""
     lines = content.split("\n")
     MAX_LINES = 200
     if len(lines) > MAX_LINES:
@@ -308,9 +409,9 @@ def _build_file_block(file_info: dict) -> str:
             f"{head}\n"
             f"... [{len(lines)} lines total, showing first 100 + last 100] ...\n"
             f"{tail}\n"
-            f"=== end {path} ==={cached_mark}"
+            f"=== end {path} ==="
         )
-    return f"=== {path} ===\n{content}\n=== end {path} ==={cached_mark}"
+    return f"=== {path} ===\n{cached_mark}{content}\n=== end {path} ==="
 
 
 def _strip_file_blocks(messages: list[dict], file_paths: set[str]) -> list[dict]:

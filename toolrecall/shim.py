@@ -139,7 +139,7 @@ def _shim_open(path, mode='r', *args, **kwargs):
         tr = _get_tr()
         if tr and mode in ('r', 'rt'):
             try:
-                result = tr["read"](path_str)
+                result = tr["read"](path_str, source="shim")
                 # Only serve from shim if it was a cache HIT.
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly

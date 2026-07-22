@@ -123,6 +123,7 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
                 continue
             # Isolated call: just the probe question, no workload noise.
             # Only runs when dry_run=False to avoid wasting API calls.
+            # Record probe to same per-run DB as the turn log
             if dry_run:
                 ans_text = f"[dry-run] BUILD_TOKEN_{pid} = ANSWERED"
             else:
@@ -132,12 +133,10 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
                 ans_text = ""
                 if "error" not in probe_resp:
                     ans_text = probe_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    # Add to main conversation for context continuity
                     convo.append({"role": "user", "content": question})
                     convo.append({"role": "assistant", "content": ans_text})
-            con = sqlite3.connect(os.path.expanduser("~/.toolrecall/benchmark.db"))
-            record_probe(con, log.run_id, arm, pid, probes, turn, ans_text)
-            con.close()
+            # Use the same connection as the turn logger (per-run DB)
+            record_probe(log.con, log.run_id, arm, pid, probes, turn, ans_text)
 
         # Get the workload step for this turn
         step = workload.step(turn)
@@ -228,7 +227,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-turns", type=int, default=500)
     parser.add_argument("--provider", default="openrouter",
-                        choices=["openrouter", "anthropic"],
+                        choices=["openrouter", "anthropic", "gemini", "deepseek"],
                         help="LLM provider (default: openrouter)")
     parser.add_argument("--model", default=None,
                         help="Model name override (uses provider default if unset)")

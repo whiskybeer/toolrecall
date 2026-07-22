@@ -23,7 +23,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-DB = os.path.expanduser("~/.toolrecall/benchmark.db")
+import glob
+
+# Data directory: per-run DBs, one per benchmark run.
+BENCH_DIR = os.path.expanduser("~/.toolrecall/bench-runs")
+os.makedirs(BENCH_DIR, exist_ok=True)
+
+# Default: scan all .db files in bench-runs. --db overrides to a single file.
+DB = BENCH_DIR  # sentinel — load_data will scan all
 
 # Read provider and model info from agent.py for report headers + pricing
 import importlib.util as _iutil
@@ -57,14 +64,46 @@ CLAIMS = {
 
 
 def load_data(db_path: str) -> pd.DataFrame:
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    """Load turn_log from one or more per-run DBs.
+
+    If db_path is a directory, scan all *.db files in it and concatenate.
+    If it's a file, read just that file.
+    """
+    if os.path.isdir(db_path):
+        files = sorted(glob.glob(os.path.join(db_path, "*.db")),
+                       key=os.path.getmtime)
+        if not files:
+            return pd.DataFrame()
+        frames = []
+        for f in files:
+            con = sqlite3.connect(f"file:{f}?mode=ro", uri=True, timeout=5)
+            frames.append(pd.read_sql(
+                "SELECT * FROM turn_log ORDER BY run_id, turn_index", con))
+            con.close()
+        return pd.concat(frames, ignore_index=True)
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
     df = pd.read_sql("SELECT * FROM turn_log ORDER BY run_id, turn_index", con)
     con.close()
     return df
 
 
 def load_probes(db_path: str) -> pd.DataFrame:
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    """Load probe_result from one or more per-run DBs.
+
+    Same directory-scanning logic as load_data.
+    """
+    if os.path.isdir(db_path):
+        files = sorted(glob.glob(os.path.join(db_path, "*.db")),
+                       key=os.path.getmtime)
+        if not files:
+            return pd.DataFrame()
+        frames = []
+        for f in files:
+            con = sqlite3.connect(f"file:{f}?mode=ro", uri=True, timeout=5)
+            frames.append(pd.read_sql("SELECT * FROM probe_result", con))
+            con.close()
+        return pd.concat(frames, ignore_index=True)
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
     df = pd.read_sql("SELECT * FROM probe_result", con)
     con.close()
     return df
@@ -575,7 +614,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=DB)
     parser.add_argument("--provider", default="openrouter",
-                        choices=["openrouter", "anthropic"],
+                        choices=["openrouter", "anthropic", "deepseek"],
                         help="Provider for pricing/report headers (default: openrouter)")
     parser.add_argument("--model", default=None,
                         help="Model name for pricing (defaults to provider default)")

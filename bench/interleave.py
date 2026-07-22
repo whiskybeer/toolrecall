@@ -97,14 +97,16 @@ def main():
     print(f"{'Arm':12s} {'Workload':10s} {'Seed':>5} {'Turns':>6} {'Time':>7}  Run ID")
     print("-" * 60)
 
-    import sqlite3
-    con = sqlite3.connect(os.path.expanduser("~/.toolrecall/benchmark.db"))
+    import sqlite3, os
+    bench_dir = os.path.expanduser("~/.toolrecall/bench-runs")
     for arm, wl, seed, rid, et in run_ids:
+        db_path = os.path.join(bench_dir, f"{rid}.db")
+        con = sqlite3.connect(db_path) if os.path.exists(db_path) else None
         turn_count = con.execute(
             "SELECT COUNT(*) FROM turn_log WHERE run_id = ?", (rid,)
-        ).fetchone()[0]
+        ).fetchone()[0] if con else 0
+        if con: con.close()
         print(f"{arm:12s} {wl:10s} {seed:>5} {turn_count:>6} {et:>6.0f}s  {rid}")
-    con.close()
 
     print()
     print("To generate charts and stats:")

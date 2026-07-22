@@ -1,0 +1,36 @@
+{
+  "mcp_cold_subprocess": {
+    "n": 100,
+    "median_ms": 45.0456,
+    "p95_ms": 70.6984,
+    "p99_ms": 99.8462,
+    "iqr_ms": 15.2218
+  },
+  "mcp_warm_cache": {
+    "n": 100,
+    "median_ms": 0.4011,
+    "p95_ms": 0.6357,
+    "p99_ms": 1.283,
+    "iqr_ms": 0.0904
+  },
+  "file_cold_disk": {
+    "n": 100,
+    "median_ms": 0.0168,
+    "p95_ms": 0.0231,
+    "p99_ms": 0.0567,
+    "iqr_ms": 0.0005
+  },
+  "file_warm_cache": {
+    "n": 100,
+    "median_ms": 0.4078,
+    "p95_ms": 0.5329,
+    "p99_ms": 1.0264,
+    "iqr_ms": 0.0575
+  },
+  "mcp_speedup_median": 112.31,
+  "file_speedup_median": 0.04,
+  "platform": "GCP e2-medium, Linux 6.1, Python 3.11",
+  "test_file_size": "1KB",
+  "mcp_cold_operation": "python3 -c import json; print(json.dumps({'ok': True}))",
+  "notes": "MCP speedup is subprocess fork+exec vs SQLite read. File cache SQLite overhead dominates for 1KB; benefit at scale is avoiding subprocess in agent frameworks."
+}
