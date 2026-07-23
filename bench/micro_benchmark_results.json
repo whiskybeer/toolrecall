@@ -32,5 +32,10 @@
   "platform": "GCP e2-medium, Linux 6.1, Python 3.11",
   "test_file_size": "1KB",
   "mcp_cold_operation": "python3 -c import json; print(json.dumps({'ok': True}))",
-  "notes": "MCP speedup is subprocess fork+exec vs SQLite read. File cache SQLite overhead dominates for 1KB; benefit at scale is avoiding subprocess in agent frameworks."
+  "notes": "MCP speedup is subprocess fork+exec vs SQLite read. File cache SQLite overhead dominates for 1KB; benefit at scale is avoiding subprocess in agent frameworks.",
+  "caveats": {
+    "mcp_cold_vs_warm": "Cold operation measures Python interpreter startup (45ms), not MCP server startup. Real MCP servers are long-lived processes — nobody forks one per call. The 112x speedup is against a strawman.",
+    "file_cache_1kb": "At 1KB files, SQLite overhead (0.40ms) dwarfs disk read (0.017ms). At 100KB+ SQLite overhead becomes negligible — the 25x slowdown at 1KB is not representative of real use.",
+    "tokens_saved_metric": "The daemon's status counter counts every in-memory LRU hit as 'tokens saved', inflating the number. Use bench/cache_honest.py for SQLite-level real savings."
+  }
 }

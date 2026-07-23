@@ -12,8 +12,8 @@
 
 ## Headline
 
-**ToolRecall doesn't save money — it enables work that naive/prefix cannot complete.**  
-At equal work, TR sends fewer tokens and survives more turns. Below the context wall, prefix caching beats context dropping on cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
+**ToolRecall costs less per turn and survives more turns — the two are connected.**  
+At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.00167 vs $0.00284 — 41% cheaper at matched turns). But the **primary value is endurance**: TR runs 140 turns vs naive's 17 (7.4× longer). Below the context wall, prefix caching also reduces cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
 
 | Metric | naive | prefix | toolrecall | Advantage |
 |--------|-------|--------|------------|-----------|

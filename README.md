@@ -61,7 +61,7 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
 | Feature | What it solves |
 |---------|---------------|
 | **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session |
-| **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens to provider |
+| **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. Below the context wall, prefix caching competes; above it TR wins on cost by not exhausting. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
 | **File / Terminal Cache** | Reduce redundant reads within a turn. Static commands only |
@@ -180,7 +180,7 @@ toolrecall stats          Detailed cache statistics (JSON)           [auto-start
 toolrecall invalidate     Clear all caches                           [auto-starts]
 toolrecall mcp            Start MCP Bridge                           [auto-starts]
 toolrecall serve          Forward proxy (cache API responses)        [auto-starts]
-toolrecall serve --9000   Forward proxy on custom port
+toolrecall serve --9000   Custom port forward proxy
 toolrecall replay         Record/replay agent sessions
 toolrecall shim --install Install OS-level cache shim (.pth file)
 toolrecall turso          Turso Cloud sync: init, enable, disable, status
