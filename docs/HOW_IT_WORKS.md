@@ -1,109 +1,133 @@
-# How ToolRecall Works — The Deterministic Cache
+# How ToolRecall Works
 
-ToolRecall doesn't ask "does this file still exist?" on repeat reads.
-**It only asks the cache: "have I seen this before?"**
+One daemon. Four cache layers. One context tracker.
 
-## Three Cache Paths, One Daemon
+ToolRecall doesn't re-execute tool calls on repeat reads — it serves cached results from a shared daemon. The daemon intercepts file reads, terminal commands, MCP tool responses, and API proxy requests. Each layer has its own cacheability rules and invalidation strategy.
 
-ToolRecall has **three** independent cache layers, all served by the same daemon:
+## The Four Cache Layers
 
-| Path | What it caches | Cache key | Invalidation | Speedup |
-|------|---------------|-----------|-------------|---------|
-| **MCP bridge** (tool-level) | File reads, terminal output, MCP server responses | Tool name + arguments | File mtime, TTL | **1 tick statt 4** (stat-only) |
-| **Forward proxy** (API-level) | Full HTTP responses from API providers | Request body SHA256 hash | Body hash — same request = same response | **Zero tokens consumed**, provider never contacted |
-| **OS-level shim** (`.pth` patch) | Every `open()` + `subprocess.run()` in every Python process | File path + mode, command string | File mtime (open), TTL (subprocess) | **Agent-agnostic** — no config needed per tool |
+| Layer | What it caches | Cache key | Invalidation | Repeat-read speedup |
+|-------|---------------|-----------|-------------|---------------------|
+| **File cache** | File reads (open/read/close) | File path + mtime | mtime changes → evict + fresh read | ~0.6ms (daemon LRU) vs ~1.5s (subprocess fork) |
+| **Terminal cache** | Shell command output | Command string | TTL-based (configurable, sec–hr) | ~0.8ms vs ~1.5s (subprocess fork) |
+| **MCP cache** | MCP tool results (search, fetch, docs) | Tool name + arguments | TTL per tool config | depends on tool latency |
+| **Forward proxy** | HTTP API responses (provider requests) | Request body SHA256 hash | Body hash — identical request = identical response | Provider prefix caching discount up to 90% |
 
-All three start automatically with `toolrecall daemon`. The MCP bridge is stdio-based (agent connects as MCP client). The forward proxy listens on `:8569` — point any OpenAI-compatible SDK at it. The shim patches Python globally via a `.pth` file in site-packages.
+All four layers share one daemon process (~25 MB RSS) with a single LRU + SQLite backing store.
 
-### OS-level shim
+### File Cache
 
-The shim (`toolrecall shim --install`) installs a `.pth` file that auto-imports `toolrecall.shim` on every Python process startup:
+Every `cached_read()` goes through the daemon:
+- **Hit:** LRU lookup (~0.001ms) → return. If evicted from LRU: SQLite lookup (~7ms) → re-prime LRU → return.
+- **Miss:** Execute real read → store in LRU + SQLite → return.
+- **mtime check:** On every lookup, a lightweight `stat()` (~0.01ms) compares the file's current mtime with the cached mtime. If they differ, the entry is evicted and a fresh read occurs.
 
-```bash
-toolrecall shim --install
-# Every Python process now transparently caches open() and subprocess.run()
-# Disable per-process: TOOLRECALL_SHIM_DISABLE=1 python my_script.py
-```
+Result: **99.3% hit rate** across 239 benchmark turns (3 seeds). Repeat reads are ~1000× faster than a subprocess fork.
 
-This works with **any** Python-based agent — Hermes, Aider, Cline, custom scripts — zero imports, zero config per tool. (OpenCode, Claude Code, and Codex CLI are Node.js binaries — the shim doesn't apply to them. See [Agent Compatibility](AGENT_COMPATIBILITY.md) for their recommended integration.) The shim monkey-patches `builtins.open`, `subprocess.run`, and `subprocess.Popen` to check the cache before touching the OS.
+### Terminal Cache
 
-```python
-# Equivalent of what the .pth file does:
-import toolrecall.shim  # auto-patches open(), subprocess.run(), subprocess.Popen()
-toolrecall.shim.apply()
-```
+Not every command that hits the terminal should be cached. The cache is gated by a configurable allowlist (`[cache] terminal_ttls` in config.toml). Commands outside the allowlist execute fresh every time.
 
-| Env | Effect |
-|-----|--------|
-| `TOOLRECALL_SHIM_DISABLE=1` | Disable shim for a specific process |
-| `TOOLRECALL_SHIM_DISABLE=1 python -c "..."` | Run without caching |
+Cacheable commands are stored per TTL:
+- `ls -la` → cached 30s
+- `git status` → cached 10s
+- `pip list --outdated` → cached 1h
 
-## The Core Loop (MCP bridge — tool caching)
+### MCP Cache
+
+The daemon includes an MCP multiplexer that lazy-loads MCP server processes. Tool results from those servers (search results, fetch responses, DB lookups) are cached per tool name + argument hash. Idle servers auto-shutdown after 15 min.
+
+### Forward Proxy
+
+Point any OpenAI-compatible SDK at `http://localhost:8569`. The proxy:
+1. Hashes the request body (SHA256)
+2. Checks the cache
+3. On hit: returns cached response — provider never contacted (zero tokens consumed, zero latency)
+4. On miss: forwards to provider, caches the response
+
+Because the proxy returns byte-identical responses for identical requests, every API call that hits the cache also qualifies for the provider's prefix caching discount (up to 90%).
+
+## Context Tracker (Overlay)
+
+The Context Tracker is not a cache layer — it's an overlay that tells the agent *what to drop from context*.
+
+It tracks which files are **clean** (read-only) vs **dirty** (written by the agent) since the last checkpoint. The agent can drop clean files from its conversation history after every turn, keeping only dirty files + its own reasoning.
+
+| Mechanism | Effect | Caveat |
+|-----------|--------|--------|
+| Clean files dropped | Context grows at ~910 tok/turn instead of ~8,000 | Estimations; real growth depends on workload mix |
+| Dirty files kept | Agent never loses in-progress edits | Only tracks writes via `cached_write`/`cached_patch` — terminal `git add` bypasses |
+| Re-read from cache | Dropped clean files can be re-read at ~0.6ms | Requires ToolRecall daemon running |
+
+In the review benchmark (pure reads, 4 files per turn):
+- **Without Context Tracker:** context exhausted at turn 19 (128K harness cap)
+- **With Context Tracker:** 140 turns before exhaustion — **7.4× longer**
+
+In the bugfix benchmark (mixed reads + writes, 3 seeds, gpt-4o-mini):
+- **Without:** exhausted at turn 28
+- **With:** alive at turn 200 — 86% fewer tokens at turn 30
+
+See [CONTEXT_TRACKER.md](CONTEXT_TRACKER.md) for the full API and agent integration pattern.
+
+## The Core Lookup Flow
 
 ```mermaid
 flowchart TD
-    Agent["Agent: read main.py"]
-    LRU{"In-Memory LRU hit?"}
-    SQL{"SQLite hit?"}
-    Fresh["Execute real read<br/>Prime LRU + SQLite<br/>Return fresh"]
-    Return["Return cached bytes"]
+    Agent["Agent: read_file('main.py')"]
+    CacheCheck{"In any cache layer?"}
+    Execute["Execute real operation<br/>Store result in daemon<br/>Return fresh"]
+    Return["Return cached result"]
 
-    Agent --> LRU
-    LRU -- "YES ✔️ ~0.001ms" --> Return
-    LRU -- "NO" --> SQL
-    SQL -- "YES ✔️ ~7ms → Prime LRU" --> Return
-    SQL -- "NO (miss)" --> Fresh
-    Fresh --> Return
-
+    Agent --> CacheCheck
+    CacheCheck -- "Hit (0.6–0.8ms)" --> Return
+    CacheCheck -- "Miss" --> Execute
+    Execute --> Return
 ```
 
-**The lookup is always validated against the file's mtime.** If mtime changed,
-the entry is evicted and a fresh read occurs.
+Per-layer detail:
+- **File:** cache check = LRU → SQLite → miss → real read. mtime validated on every hit.
+- **Terminal:** cache check = command in allowlist + TTL valid. If yes: return cached. If no: execute.
+- **MCP:** cache check = tool name + args hash in SQLite. If yes: return. If no: execute via MCP server.
+- **Proxy:** cache check = body SHA256 in SQLite. If yes: return. If no: forward to provider.
 
-**Key point:** On a cache hit, ToolRecall returns stored bytes from the last
-read — it does NOT re-read the file from disk. The mtime check is a lightweight
-`stat()` (~0.01ms), not a full file open.
+## Deterministic Outputs
 
-## 1 Tick Instead of 4
+Every cache layer produces **byte-identical** results for identical inputs. This is not a mechanism — it's a *property* that emerges from the combination of:
 
-A normal file read requires 4 OS operations: **stat** (check existence) → **open** (acquire handle) → **read** (transfer bytes) → **close** (release handle). Each is a kernel syscall with measurable overhead.
+1. Content-addressable cache keys (sha256, file path + mtime, command string)
+2. No LLM in the caching loop (no AI makes cache-or-execute decisions)
+3. mtime-based invalidation (not heuristic expiry)
 
-ToolRecall reduces this to **1 operation**: a single `stat()` to validate mtime. On cache hit, the bytes come from memory (in-memory LRU) — no open, no read, no close. The OS filesystem is fully bypassed.
+This property matters because:
+- Provider prefix caching (DeepSeek, Anthropic, OpenAI) requires byte-identical prefixes to apply discounts. Because ToolRecall strips clean file content deterministically, the remaining prefix (system prompt + instructions) stays stable across turns.
+- Benchmark results are reproducible — same workload, same seeds, same token counts.
+- No silent data corruption from an LLM guessing which content to cache.
 
-For terminal commands, the savings are even larger: each `subprocess.run()` forks a child process (~1.5s) with shell setup, PATH resolution, and I/O piping. ToolRecall replaces the entire chain with a single SQLite lookup (~7ms) or memory lookup (~0.001ms).
+## What ToolRecall Does Not Do
 
-**Impact on energy and time:**
-- File read: 4 OS calls → 1 OS call (75% fewer kernel transitions)
-- Terminal command: full subprocess fork → SQLite read (99.9% less CPU)
-- Provider API: unique payload → deterministic byte string → 90% prefix-caching discount (no redundant LLM processing)
+- **It does not replace provider prefix caching.** They're complementary. TR reduces what you send; provider caching discounts what you're billed.
+- **It does not hallucinate or summarize.** There is no LLM in the caching path. `ttl=0` means never cache — binary, no AI middleman.
+- **It does not guarantee work completion.** Longer sessions make more work possible, but successful issue resolution depends on the agent, model, and task complexity.
+- **It does not enforce context dropping.** The Context Tracker gives the agent information. The agent must act on it.
 
-## The Only Tie to Reality: mtime
+## Benchmark Caveats
 
-ToolRecall doesn't blindly trust its cache forever. On every lookup it does a
-lightweight `stat()` call (~0.01ms) on the real file to check its **modification time**:
+- Review workload (pure reads) is ToolRecall's best case. Real sessions with writes have higher per-turn growth (~910 vs ~580 tok/turn during read-only phases).
+- The 140-turn exhaustion uses a 128K harness cap. DeepSeek V4 Flash supports 1.05M context — the harness, not the model, created the ceiling.
+- ToolRecall's total cost is higher than naive prefix caching because it completes more work. **Per turn, it is 16% cheaper.** The value proposition is feasibility (longer sessions, less session-switching), not absolute cost reduction.
+- Bugfix numbers confirmed across 3 seeds (42, 43, 44). Review numbers from seed=42.
 
+## How to Use
+
+```bash
+pipx install toolrecall
+toolrecall setup          # starts daemon, caches begin immediately
+toolrecall status         # check hit rates, cache sizes
+
+# Optional: install OS-level shim for Python agents
+toolrecall shim --install
 ```
-Cache entry has:  mtime = 2026-06-12 10:00:00
-Real file has:    mtime = 2026-06-12 10:00:00  → SAME → cache hit
-Real file has:    mtime = 2026-06-12 14:30:00  → DIFFERENT → cache invalidated, fresh read
-```
 
-If the mtime changed, the cache entry is invalidated and the next call goes to the OS. This prevents serving stale data without asking the OS every single time.
+The daemon starts automatically and survives terminal restarts. Connect any MCP-capable agent (Claude Code, Cursor, Cline, Hermes, opencode) via the MCP bridge.
 
-## What This Means
-
-- **Repeat reads are ~1000× faster** (0.6ms cache vs 1.5s subprocess)
-- **Deterministic byte strings** → the API provider sees the exact same prompt prefix every turn → **90% server-side prompt caching discount** activates
-- **No "does the file exist?" check** — only "is it in the cache?" — which is the entire speed secret
-
-## Why This Is Not Context Compression
-
-ToolRecall caches **tool outputs**, not the agent's context window. The agent still appends every result to its prompt. What changes:
-
-| Without ToolRecall | With ToolRecall |
-|---|---|
-| Each `read_file` forks a subprocess → 1.5s | Repeat reads from SQLite → 0.6ms |
-| OS noise (timestamps, PIDs) changes every payload → no prompt caching discount | Byte-identical outputs → 90% discount on prefix |
-| Agent must wait for disk I/O on every call | Agent gets instant response for cached results |
-
-But the agent's context window still grows. ToolRecall is a **local execution cache**, not a context window manager.
+For the Context Tracker, see [CONTEXT_TRACKER.md](CONTEXT_TRACKER.md) for the 5 MCP tools and agent integration pattern.
