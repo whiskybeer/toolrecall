@@ -123,9 +123,27 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 ### One-time setup
 
 ```bash
-pipx install toolrecall
+pipx install toolrecall        # or: uv tool install toolrecall
+                               # or: pip install toolrecall (inside a venv)
 toolrecall setup                # config -> systemd service -> daemon start
 ```
+
+> **PATH check:** After installation, make sure `toolrecall` is on your `$PATH`.  
+> `pipx` puts binaries in `~/.local/bin/`, `uv tool install` in `~/.local/share/uv/tools/`.  
+> If `toolrecall` isn't found, add the right directory to your PATH or reinstall inside the venv your agent uses.
+
+> **Shim in the right venv:** `toolrecall shim --install` installs the `.pth` shim into the
+> **current Python environment**. If you installed via `pipx` or `uv tool install`, the
+> shim goes into that isolated environment — not your agent's venv. The agent won't see it.
+> `toolrecall setup` auto-detects common agent venvs and installs the shim there too.
+> `toolrecall shim --install --all` scans for agent venvs (Hermes, OpenCode) and installs
+> into all of them at once.
+> If you need to target a specific venv manually:
+> ```bash
+> toolrecall shim --install --venv ~/.hermes/hermes-agent/venv
+> toolrecall shim --install --venv ~/.local/share/uv/tools/hermes-agent
+> ```
+> The `toolrecall` package must also be installed in that venv (`import toolrecall` must work).
 
 `toolrecall setup` creates `~/.config/toolrecall/toolrecall.toml` with default-deny security, generates a systemd user unit, and starts the daemon. After this, every `toolrecall` command "just works".
 
@@ -166,7 +184,12 @@ toolrecall shim --install Install OS-level cache shim (.pth file)
 toolrecall turso          Turso Cloud sync: init, enable, disable, status
 toolrecall init           Create default config.toml and .env
 toolrecall config-set     Set a config value
+toolrecall index          Index knowledge DB (FTS5 search)  [not file cache pre-warm]
+toolrecall index-memory   Index agent memory stores
+toolrecall index-dir      Index a directory for FTS5 search [not file cache pre-warm]
 ```
+
+> **Knowledge indexing ≠ cache warming:** `toolrecall index*` commands build an FTS5 search index for knowledge retrieval (`docs_search()`). They do NOT pre-warm the file/terminal/API response cache. The daemon's file cache warms naturally as the agent reads files — no separate command needed.
 
 Full reference: [CLI.md](docs/CLI.md)
 
@@ -214,7 +237,6 @@ servers = ["time", "sequential-thinking"]
 - [Security Architecture](SECURITY.md) — policy gate, trust boundary
 - [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
 - [Benchmark](docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
-- [Benchmark Report](BENCHMARK_REPORT.md) — latest measured results per arm
 - [Bench Infrastructure](bench/README.md) — reproduce the three-arm benchmark
 - [Test Suite](tests/README.md) — test runner documentation
 - [CLI Reference](docs/CLI.md) — all subcommands
@@ -234,7 +256,6 @@ servers = ["time", "sequential-thinking"]
   - [LangChain / LangGraph](docs/langchain.md) — `ToolRecallCache` BaseCache + callback
   - [herdr](docs/herdr.md) — `tr` binary + MCP bridge for any pane
   - [Odysseus](docs/odysseus.md) — `cached_tool` decorator + MCP server caching
-- [Agent Tracking](docs/AGENT_TRACKING.md) — per-agent cache stats, TOOLRECALL_AGENT_ID
 - [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes
 - [Normalizer](docs/NORMALIZER.md) — cache key normalization, deterministic JSON
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide

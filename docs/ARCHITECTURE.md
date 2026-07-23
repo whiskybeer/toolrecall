@@ -143,7 +143,7 @@ flowchart TB
         C1["Python Client\nfrom toolrecall.client\nimport *"]
         C2["MCP Bridge\ntoolrecall mcp\nstdio -- UDS"]
         C3["HTTP Bridge\ntoolrecall serve\nHTTP GET/POST -- UDS"]
-        C4["Forward Proxy\ntoolrecall proxy\nlocalhost:8569 -- upstream API"]
+        C4["Forward Proxy\\ntoolrecall serve\\nlocalhost:8569 -- upstream API"]
     end
 
     DS["OS-level Shim\ntoolrecall shim --install\n(patches open/subprocess.run/Popen)"]
@@ -180,7 +180,7 @@ flowchart TB
 - No internal SQLite, no LRU
 - Language-agnostic — any HTTP client can use it
 
-**Forward Proxy** (`toolrecall proxy`):
+**Forward Proxy** (`toolrecall serve`):
 - Runs on `localhost:8569` — set `OPENAI_BASE_URL=http://localhost:8569/v1`
 - Forwards API requests to the real provider, caches responses by body hash
 - **Cache hit** -> zero tokens consumed, provider never contacted
@@ -728,7 +728,7 @@ toolrecall shim --install
 # }
 
 # Forward proxy (set OPENAI_BASE_URL=http://localhost:8569/v1)
-toolrecall proxy
+toolrecall serve
 
 # Extra storage backends
 pip install toolrecall[libsql]       # libSQL local backend

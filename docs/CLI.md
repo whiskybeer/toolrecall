@@ -13,6 +13,8 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 
 | Call | Function | File |
 |------|----------|------|
+| `toolrecall setup` | `cmd_setup()` | `toolrecall/cli.py` |
+| `toolrecall restart` | `cmd_restart()` | `toolrecall/cli.py` |
 | `toolrecall init` | `cmd_init()` | `toolrecall/cli.py` |
 | `toolrecall status` | `cmd_status()` | `toolrecall/cli.py` |
 | `toolrecall stats` | `cmd_stats()` | `toolrecall/cli.py` |
@@ -29,6 +31,9 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall mcp list` | `cmd_mcp_list()` | `toolrecall/cli.py` |
 | `toolrecall shim` | `cmd_shim()` | `toolrecall/cli.py` |
 | `toolrecall nginx` | `cmd_nginx()` | `toolrecall/cli.py` |
+| `toolrecall replay` | `cmd_replay()` → dispatches subcommands | `toolrecall/cli.py` |
+| `toolrecall turso` | `cmd_turso()` | `toolrecall/cli.py` |
+| `toolrecall context` | `cmd_context()` → dispatches subcommands | `toolrecall/cli.py` |
 
 Each function imports its dependencies lazily — running `toolrecall status` does not load `daemon.py` or `proxy.py`.
 
@@ -77,7 +82,7 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 ### `toolrecall index-dir`
 
 - **File:** `cli.py : cmd_index_dir()`
-- **Purpose:** Index a specific directory (e.g., an Obsidian vault) into the FTS5 knowledge DB.
+- **Purpose:** Index a specific directory (e.g., an Obsidian vault) into the FTS5 knowledge DB for full-text search (`docs_search()`). This is **not** file-cache pre-warming — the daemon's file/terminal cache warms naturally as files are read during normal use.
 - **Options:** `--source label` overrides the auto-detected source label (default: basename of the directory).
 
 ### `toolrecall config-set`
@@ -130,15 +135,73 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **Purpose:** Install/uninstall OS-level cache shim.
 - **What it does:** Installs a `.pth` file in site-packages that auto-imports `toolrecall.shim`, monkey-patching `open()` and `subprocess.run()` in every Python process.
 - **Usage:**
-  - `toolrecall shim --install` — install the shim
-  - `toolrecall shim --uninstall` — remove the shim
+  - `toolrecall shim --install` — install shim into current Python env
+  - `toolrecall shim --install --venv ~/.hermes/hermes-agent/venv` — install into a specific venv
+  - `toolrecall shim --uninstall` — remove shim
   - `toolrecall shim --status` — check if shim is installed
+  - `toolrecall shim --status --venv ~/.hermes/hermes-agent/venv` — check in a specific venv
+- **⚠️  Important when using `pipx` or `uv tool install`:** The shim is installed into the **current Python environment**. If toolrecall is installed via `pipx` or `uv tool install`, that's an isolated environment — the shim won't activate in your agent's Python runtime. Use `--venv` to target the right venv, or run `toolrecall setup` which auto-detects agent venvs.
 
 ### `toolrecall nginx`
 
 - **File:** `cli.py : cmd_nginx()`
 - **Purpose:** Generate an nginx reverse-proxy config for the forward proxy.
 - **Uses:** `[nginx]` section in `config.toml` (domain, SSL, etc.).
+
+### `toolrecall setup`
+
+- **File:** `cli.py : cmd_setup()`
+- **Purpose:** One-shot installation: creates config, systemd user service,
+  OS-level `.pth` shim, and starts the daemon. Detects installed agents
+  (Hermes, OpenCode) and wires up the MCP bridge automatically.
+- **Idempotent:** Safe to re-run — skips existing configs.
+- **Auto-start:** After setup, every `toolrecall` command auto-starts the
+  daemon if it isn't running.
+
+### `toolrecall restart`
+
+- **File:** `cli.py : cmd_restart()`
+- **Purpose:** Health check + clean daemon restart. Verifies config integrity
+  before restarting the systemd service.
+
+### `toolrecall replay`
+
+- **File:** `cli.py : cmd_replay()` → dispatches subcommands
+- **Purpose:** Record/replay mode for deterministic CI testing.
+- **Subcommands:**
+  - `toolrecall replay record <scenario>` — start recording
+  - `toolrecall replay replay <scenario>` — start replaying
+  - `toolrecall replay stop` — stop recording/replaying
+  - `toolrecall replay status` — show current mode
+  - `toolrecall replay list` — list recorded scenarios
+  - `toolrecall replay show <scenario>` — show recorded calls
+  - `toolrecall replay export <scenario>` — export as JSON
+  - `toolrecall replay import <file.json>` — import from JSON
+  - `toolrecall replay delete <scenario>` — delete scenario
+- **Full reference:** [Replay Mode](REPLAY_MODE.md)
+
+### `toolrecall turso`
+
+- **File:** `cli.py : cmd_turso()`
+- **Purpose:** Turso Cloud sync management.
+- **Subcommands:**
+  - `toolrecall turso init` — create Turso database + generate token
+  - `toolrecall turso enable` — enable background sync
+  - `toolrecall turso disable` — disable background sync
+  - `toolrecall turso status` — show sync status
+- **Full reference:** [libSQL Backend](LIBSQL_COMPARISON.md)
+
+### `toolrecall context`
+
+- **File:** `cli.py : cmd_context()` → dispatches subcommands
+- **Purpose:** Query context tracker state without an MCP agent.
+- **Subcommands:**
+  - `toolrecall context status` — show checkpoint, dirty/clean/stale counts
+  - `toolrecall context stale` — list files that were read then overwritten
+    (content in context is provably wrong)
+  - Options for `stale`: `--format json|table`, `--quiet` (pipeable paths)
+  - Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error
+- **Full reference:** [Context Stale](CONTEXT_STALE.md), [Context Tracker](CONTEXT_TRACKER.md)
 
 ## Key Source Files Referenced
 
@@ -152,9 +215,16 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 | `config-set` | `toolrecall/config.py` |
 | `init` | Direct file writes to `~/.toolrecall/` |
 | `shim` | `toolrecall/shim.py` |
+| `replay` | `toolrecall/replay.py` |
+| `turso` | Direct REST + config writes |
+| `context` | `toolrecall/context_tracker.py` |
+| `setup`, `restart` | `toolrecall/cli.py` (setup/restart logic) |
 
 ## See Also
 
 - [Configuration Reference](CONFIG_REFERENCE.md) — `config.toml`, `config.py`, env vars
 - [MCP Multiplexer](MCP_MULTIPLEXER.md) — server registry, `mcp list`, auto-resolution
 - [Hermes Transparent Cache](HERMES_TRANSPARENT_CACHE.md) — agent-side integration via the OS-level .pth shim
+- [Replay Mode](REPLAY_MODE.md) — record/replay tool calls for deterministic CI
+- [Context Stale](CONTEXT_STALE.md) — provably stale file detection
+- [libSQL Backend](LIBSQL_COMPARISON.md) — Turso Cloud sync commands
