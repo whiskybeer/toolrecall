@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.16] — 2026-07-23
+
+### Added
+- **`tokens_saved_adjusted`** — new stats metric reporting net token savings after subtracting disk I/O overhead, giving a truthful picture of cache benefit vs cost.
+
+### Fixed
+- **Benchmark silent failures** — context tracker failures during benchmark runs now surface visibly instead of passing silently, preventing misleading "all green" results when the tracker is broken.
+
+### Changed
+- **Version alignment** — `__init__.py` bumped to match `pyproject.toml` (both now 0.8.16), fixing test collection error caused by version drift.
+
+### Documentation
+- **toolrecall.dev website link** — README now features a site badge in the hero section and lists the website as the primary documentation portal.
+- **Hermes shim instructions** — `AGENT_COMPATIBILITY.md` documents the `uv tool install` alternative and manual shim fallback for Hermes users.
+- **Critique-driven doc fixes** — dead/broken links repaired across README, ARCHITECTURE, and CLI.md; missing CLI reference entries restored; outdated CLI command names corrected.
+
+---
+
 ## [0.8.15] — 2026-07-22
 
 ### Added
