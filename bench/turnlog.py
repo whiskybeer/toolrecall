@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS turn_log (
     api_latency_s          REAL,
     status                 TEXT,
     error                  TEXT,
+    context_tracker_ok     INTEGER DEFAULT 1,
     PRIMARY KEY (run_id, turn_index)
 );
 CREATE INDEX IF NOT EXISTS idx_turn_arm ON turn_log(arm, workload_id, turn_index);

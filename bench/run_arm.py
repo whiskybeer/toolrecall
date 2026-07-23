@@ -184,6 +184,7 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
             api_latency_s=elapsed,
             status="ok" if result.ok else "error",
             error=error_text or None,
+            context_tracker_ok=result.context_tracker_ok if arm == "toolrecall" else None,
         )
 
         convo = result.conversation
@@ -192,8 +193,11 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
         if turn % 10 == 0 or not result.ok:
             pt = result.usage.get("prompt_tokens", 0)
             err_suffix = f" err={error_text[:60]}" if error_text else ""
+            cto_suffix = ""
+            if arm == "toolrecall" and not result.context_tracker_ok:
+                cto_suffix = " [TRACKER DOWN]"
             print(f"  turn {turn:>4} | req_tok={req_tokens:>7} | "
-                  f"prov_tok={pt:>7} | ok={result.ok}{err_suffix}", flush=True)
+                  f"prov_tok={pt:>7} | ok={result.ok}{err_suffix}{cto_suffix}", flush=True)
 
         # Rate-limit avoidance delay
         if delay > 0 and not dry_run:

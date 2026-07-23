@@ -16,6 +16,7 @@ Supports multiple LLM providers:
 """
 
 import json
+import logging
 import os
 import time
 import urllib.request
@@ -348,6 +349,7 @@ class AgentResult:
                  tool_calls: int = 0, tool_hits: int = 0, tool_misses: int = 0,
                  tool_time_ms: float = 0.0, ttft: float = 0.0,
                  ok: bool = True, ctx_dropped_total: int = 0,
+                 context_tracker_ok: bool = True,
                  response_text: str = ""):
         self.usage = usage or {}
         self.conversation = conversation or []
@@ -358,6 +360,7 @@ class AgentResult:
         self.ttft = ttft
         self.ok = ok
         self._ctx_dropped_total = ctx_dropped_total
+        self.context_tracker_ok = context_tracker_ok
         self.response_text = response_text
 
     def ctx_dropped_total(self) -> int:
@@ -571,10 +574,12 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
     tool_misses = 0
 
     # Step 1: Set checkpoint before reading
+    context_tracker_ok = True
     try:
         context_set_checkpoint("turn_start")
-    except Exception:
-        pass  # non-fatal
+    except Exception as e:
+        logging.warning(f"Context tracker checkpoint failed: {e}")
+        context_tracker_ok = False
 
     # Step 2: Read files via daemon's cached_read
     file_infos = _read_files(step.reads)
@@ -604,6 +609,7 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
             conversation=updated_convo,
             tool_hits=tool_hits, tool_misses=tool_misses,
             ok=False, ttft=0,
+            context_tracker_ok=context_tracker_ok,
             response_text=resp["error"],
         )
 
@@ -635,8 +641,9 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
         for fi in file_infos:
             if fi["path"] in clean_paths:
                 dropped_tokens += _count_tokens(fi.get("content", ""))
-    except Exception:
-        pass  # non-fatal
+    except Exception as e:
+        logging.warning(f"Context tracker dirty check failed: {e}")
+        context_tracker_ok = False
 
     # Step 5: Strip clean file content from assistant messages
     if clean_paths:
@@ -654,5 +661,6 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
         tool_time_ms=0.0, ttft=usage.get("time_to_first_token_s", 0),
         ok=True,
         ctx_dropped_total=dropped_tokens,
+        context_tracker_ok=context_tracker_ok,
         response_text=assistant_msg.get("content", ""),
     )

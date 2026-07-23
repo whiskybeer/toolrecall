@@ -15,7 +15,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
-| **Claude Code** | ⚠️ Multiplex only | ✅ | ❌ N/A | **Selective** | MCP bridge for multiplex only — do NOT enable file/terminal caching. Forward proxy is safe and orthogonal. |
+| **Claude Code** | ⚠️ Available (untested) | ✅ | ❌ N/A | **Selective** | MCP bridge file caching available but empirically untested — see test protocol below. Forward proxy and multiplex are verified. |
 | **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
 | **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
 
@@ -127,16 +127,19 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 
 ---
 
-## Claude Code — ⚠️ Use selectively
+## Claude Code — ⚠️ Use selectively (cache impact: untested)
 
-ToolRecall and Claude Code have different strengths. The cache adds little value for Claude Code's workflow, but two features are safe and useful:
+ToolRecall and Claude Code have different strengths. **File/terminal caching via MCP is functionally available but its value is untested** — see the test protocol below.
 
-**What works:**
+**What works (verified):**
 - **Forward proxy** — caching API responses via `:8569` is orthogonal to Claude Code's tool loop and saves real cost.
 - **MCP multiplexer only** — if you run 5+ MCP servers (GitHub, Postgres, fetch, time), TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point.
 
+**What's available (architecture, not tested):**
+- **File caching via MCP** — the MCP bridge (`toolrecall mcp`) exposes `read_file`, `write_file`, `patch`, and `terminal` as MCP tools. Claude Code connects to the bridge and sees them. Whether the model calls MCP `read_file` instead of its native `Read` tool depends on model routing — **empirically untested**.
+- **mtime guards against staleness** — `cached_read()` checks file mtime on every access. If Claude Code uses native `Edit` then MCP `read_file`, the mtime mismatch triggers a fresh read. Edge cases where mtime doesn't change (mtime-preserving writes) are the same gap Robin identified in v0.8.14.
+
 **What to avoid:**
-- **File/terminal caching** — Claude Code maintains its own in-memory state tracking. External caching adds staleness risk with no benefit.
 - **Python shim** — Claude Code is Node.js; the shim doesn't apply.
 
 **Config:**
@@ -152,7 +155,27 @@ ToolRecall and Claude Code have different strengths. The cache adds little value
 }
 ```
 
-> **Bottom line:** Add TR for the forward proxy and MCP multiplex benefits. Skip file/terminal caching — Claude Code manages those itself.
+**Test protocol (run when Anthropic API key is available):**
+
+To settle whether file caching helps Claude Code empirically:
+
+1. Install Claude Code + ToolRecall on the same machine
+2. Configure `toolrecall mcp` as Claude Code's sole MCP server (above config)
+3. Start the ToolRecall daemon with `cache_stats` tracking enabled
+4. Give Claude Code a multi-turn task that re-reads the same file:
+   ```
+   claude -p "Read /tmp/test.txt, then modify it, then read it again. Report what you read."
+   ```
+5. After the task, check the daemon's access log:
+   ```bash
+   sqlite3 ~/.toolrecall/cache.db "SELECT path, hit FROM access_log WHERE category='file_cache' ORDER BY cached_at DESC LIMIT 20;"
+   ```
+6. If `file_cache` entries appear with the test file's path → Claude Code called MCP `read_file`
+7. If no entries → Claude Code used native `Read` exclusively
+
+Repeat with 3+ different models and task types to account for model routing variance.
+
+> **Bottom line:** Add TR for the forward proxy and MCP multiplex (verified benefits). File caching is available but its value for Claude Code is unknown — test it with your own workflow before relying on it.
 
 ---
 
