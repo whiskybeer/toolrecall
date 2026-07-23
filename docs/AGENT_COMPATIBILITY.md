@@ -33,8 +33,16 @@ ToolRecall is **built into Hermes** — the tools `read_file`, `terminal`, `mcp_
 **Config:**
 ```bash
 pipx install toolrecall && toolrecall setup
+# or: uv tool install toolrecall && toolrecall setup
 # Tools available natively in Hermes — no extra config needed.
 ```
+
+> **⚠️  Shim venv:** If you used `pipx` or `uv tool install`, `toolrecall setup` auto-detects
+> the Hermes venv and installs the `.pth` shim there. If this fails, or you skipped `setup`,
+> run manually:
+> ```bash
+> toolrecall shim --install --venv ~/.hermes/hermes-agent/venv
+> ```
 
 ---
 
