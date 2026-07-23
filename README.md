@@ -1,5 +1,7 @@
 # ToolRecall — Deterministic Execution Layer for Agent Tools
 
+**🌐 [toolrecall.dev](https://toolrecall.dev) — documentation, benchmarks, downloads**
+
 You run agents. Every session spawns its own MCP servers, every test run hits live APIs, every tool call is unrepeatable, and your agent can read `~/.ssh` if it feels like it.
 
 ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
@@ -230,6 +232,7 @@ servers = ["time", "sequential-thinking"]
 
 ## Documentation
 
+- **[toolrecall.dev](https://toolrecall.dev)** — documentation portal, benchmarks, downloads
 - [Architecture](docs/ARCHITECTURE.md) — system design, components, data flow, token costs
 - [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) — daemon-managed MCP server pool
 - [Forward Proxy](docs/FORWARD_PROXY.md) — API response caching, provider list, auth routing
