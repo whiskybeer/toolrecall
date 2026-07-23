@@ -1181,7 +1181,10 @@ def get_stats() -> dict:
     a measure of cache capacity, NOT savings.
 
     ``tokens_saved_cumulative`` preserves the raw DB accumulator for
-    debugging. ``context_tokens_saved`` tracks only agent-tool-initiated
+    debugging. ``tokens_saved_adjusted`` (file_cache only) re-counts
+    based on SQLite re-reads only, excluding the first unavoidable disk
+    read per file — mirrors bench/cache_honest.py logic.
+    ``context_tokens_saved`` tracks only agent-tool-initiated
     reads (tagged with source="agent_tool").
     """
     stats = {}
@@ -1207,6 +1210,13 @@ def get_stats() -> dict:
                     stats[row["category"]]["unique_files"] = conn.execute(
                         "SELECT COUNT(*) FROM file_cache"
                     ).fetchone()[0]
+                    # Adjusted tokens_saved: net savings after subtracting unavoidable
+                    # first-read disk I/O. This is the honest signal — how many tokens
+                    # the cache actually saved beyond the one mandatory read per file.
+                    # Mirrors bench/cache_honest.py philosophy.
+                    raw_saved = stats[row["category"]].get("tokens_saved", 0)
+                    disk_read = stats[row["category"]].get("tokens_read_from_disk", 0)
+                    stats[row["category"]]["tokens_saved_adjusted"] = max(0, raw_saved - disk_read)
             for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache", "browser_cache"]:
                 r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
                 stats[f"{t}_entries"] = r[0]

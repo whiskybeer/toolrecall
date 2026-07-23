@@ -231,15 +231,17 @@ def cmd_status():
             continue
         if isinstance(v, dict):
             saved = v.get("tokens_saved", 0)
+            adjusted = v.get("tokens_saved_adjusted", 0)
             read = v.get("tokens_read_from_disk", 0)
             context = v.get("context_tokens_saved", 0)
             content_tokens = v.get("cached_content_tokens", 0)
             saved_str = f", tokens_saved={saved:,}" if saved else ""
+            adjusted_str = f", adjusted={adjusted:,}" if adjusted and adjusted != saved else ""
             read_str = f", tokens_read_from_disk={read:,}" if read else ""
             context_str = f", context_tokens_saved={context:,}" if context else ""
             content_str = f", cached_content_tokens={content_tokens:,}" if content_tokens else ""
             print(f"  {k}: {v['hits']} hits, {v['misses']} misses, "
-                  f"hit_rate={v['hit_rate']}{read_str}{saved_str}{context_str}{content_str}")
+                  f"hit_rate={v['hit_rate']}{read_str}{saved_str}{adjusted_str}{context_str}{content_str}")
         else:
             print(f"  {k}: {v}")
     # Recent activity
