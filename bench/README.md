@@ -63,7 +63,7 @@ cd ~/toolrecall && /tmp/bench-env/bin/python3 bench/analyze.py
 | **bugfix** | 450+ | Mixed read/write — debug loop with file edits | Write-heavy agent session. High cache invalidation rate (every write dirties the file). |
 | **feature** | 450+ | Moderate writes — add logging, utility functions | Balanced agent session. Some writes, some pure reads. |
 | **analysis** | 400+ | Heavy reads, rare writes — count patterns, compare files | Read-mostly session. Low invalidation, high repeat-read ratio. |
-| **review** | 200 | Same 4 core files every turn, no writes | ToolRecall's ideal case. Maximizes advantage of context dropping + cache hits. |
+| **review** | 200 | Same 4 core files, same 200-line cap every turn. No writes. | ToolRecall's best case — pure repeated reads, maximises cache + context-drop advantage. |
 
 ## Output
 

@@ -42,7 +42,7 @@ The cost per turn is lower, but this is a **secondary effect** — the primary v
 | 100 | — | — | 105,664 | — |
 | 140 (TR exhausts) | — | — | 128,006 | — |
 
-Both naive and prefix exhaust at ~17-19 turns (128K context limit). ToolRecall survives **140 turns** — the context tracker drops clean file content each turn, keeping growth at ~915 tok/turn full-run average (~580 in probe-free phases, ~1,500 when writes dirty files) vs ~8,000 for naive/prefix.
+Both naive and prefix exhaust at ~17-19 turns (128K context limit). ToolRecall survives **140 turns** — the context tracker drops clean file content each turn, keeping growth at ~915 tok/turn full-run average (~580 probe-free) vs ~8,000 for naive/prefix. On the bugfix workload (mixed reads+writes), TR growth climbs to ~1,500/turn during write phases when dirtied files can't be dropped.
 
 ---
 
