@@ -2,7 +2,7 @@
 
 **Generated:** 2026-07-21 (v0.8.14 — review workload only; write simulation fix in v0.8.15 does not affect read-only results)
 **Model:** `deepseek/deepseek-v4-flash` via OpenRouter
-**Workload:** `review` (repeated reads of 4 core files: cache.py, daemon.py, config.py, client.py — ~42K tokens)
+**Workload:** `review` (repeated reads of 4 core files: cache.py, daemon.py, config.py, client.py — each truncated to 100 + 100 lines, ~7K tokens total per turn)
 **Arms:** naive (full history), prefix (full history + provider prefix caching), toolrecall (context tracker drops clean files)
 **Total runs:** 6 (239 turns), seed=42 interleaved per arm
 **Agent:** Hermes Agent (Nous Research)
@@ -20,7 +20,7 @@ At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.
 | Turns to exhaustion | 17 | 19 | **140** | **7.4× longer** |
 | Request tokens @ turn 10 (turn-matched) | 76,430 | 72,133 | **8,077** | **9.5× less** |
 | Request tokens @ turn 17 (naive exhausts) | 134,570 | ~125K | **11,723** | **11.5× less** |
-| Per-turn growth | ~8,000 | ~7,700 | **~580** | **14× slower** |
+| Per-turn growth | ~8,000 | ~7,700 | **~915** (~580 probe-free) | **~8.7× slower** |
 | Cache hit rate (benchmark tool cache) | 100% | 100% | **99.3%** | — |
 | Billed cost per turn | — | $0.00284 | **$0.00167** | reference only |
 
@@ -42,7 +42,7 @@ The cost per turn is lower, but this is a **secondary effect** — the primary v
 | 100 | — | — | 105,664 | — |
 | 140 (TR exhausts) | — | — | 128,006 | — |
 
-Both naive and prefix exhaust at ~17-19 turns (128K context limit). ToolRecall survives **140 turns** — the context tracker drops ~42K tokens of file content per turn, keeping growth at ~580 tok/turn vs ~8,000 for naive/prefix.
+Both naive and prefix exhaust at ~17-19 turns (128K context limit). ToolRecall survives **140 turns** — the context tracker drops clean file content each turn, keeping growth at ~915 tok/turn full-run average (~580 in probe-free phases, ~1,500 when writes dirty files) vs ~8,000 for naive/prefix.
 
 ---
 
