@@ -385,19 +385,20 @@ class MCPBridge:
                     f"ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
                     f"This bridge connects to the ToolRecall daemon. "
                     f"All file read/write tools are transparently cached.\n"
-                    f"  read_file / cached_read: path-allowlisted (bypass_cache=true for fresh read)\n"
+                    f"  read_file: path-allowlisted (bypass_cache=true for fresh read)\n"
                     f"  write_file: write content, invalidates cache\n"
                     f"  patch: find-and-replace, invalidates cache\n"
-                    f"  cache_refresh_file: re-read a single file from disk (safe)\n"
+                    f"  cache_refresh_file: re-read a file from disk (bypasses cache)\n"
                     f"  cache_status: view cache statistics\n"
-                    f"  terminal / cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
+                    f"  terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
                     f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n"
-                    f"  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
-                    f"    Context Tracker — bound your context window.\n"
-                    f"    Pattern: context_set_checkpoint → read files → work → "
-                    f"context_get_dirty → drop 'clean' files from context → "
-                    f"context_set_checkpoint again.\n\n"
-                    f"Start daemon: toolrecall daemon &"
+                    + (f"  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
+                       f"    Context Tracker — bound your context window.\n"
+                       f"    Pattern: context_set_checkpoint → read files → work → "
+                       f"context_get_dirty → drop 'clean' files from context → "
+                       f"context_set_checkpoint again.\n"
+                       if self._emit_context_hints else "")
+                    + f"\nStart daemon: toolrecall daemon &"
                 ),
             }
         }
@@ -412,7 +413,7 @@ class MCPBridge:
         tools = []
         for tdef in TOOL_DEFINITIONS:
             name = tdef["name"]
-            if name in ("cached_terminal", "terminal") and not allow_terminal:
+            if name == "terminal" and not allow_terminal:
                 continue
             if name == "cache_invalidate" and not allow_invalidate:
                 continue
