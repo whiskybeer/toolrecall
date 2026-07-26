@@ -1223,6 +1223,19 @@ def get_stats() -> dict:
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite stats failed: {e}")
 
+    # Zero context_tokens_saved when the agent can't drop content.
+    # The DB still holds the cumulative value, but reporting it as
+    # "saved" is misleading when emit_context_hints is off.
+    try:
+        from toolrecall.config import load_config as _load_config
+        _cfg = _load_config()
+        if not _cfg.mcp_emit_context_hints:
+            for _cat in stats:
+                if isinstance(stats[_cat], dict) and "context_tokens_saved" in stats[_cat]:
+                    stats[_cat]["context_tokens_saved"] = 0
+    except Exception:
+        pass
+
     stats["memory_file_entries"] = len(_file_cache)
     stats["memory_used_mb"] = round(_file_cache.memory_bytes() / (1024 * 1024), 2)
     stats["memory_max_mb"] = MAX_MEMORY_MB

@@ -354,12 +354,13 @@ class MCPBridge:
             # we re-send the full content to avoid blind recovery.
             self._consecutive_stubs[key] = self._consecutive_stubs.get(key, 0) + 1
             if self._consecutive_stubs[key] >= 3:
-                del self._session_reads[key]
-                del self._consecutive_stubs[key]
+                self._consecutive_stubs[key] = 0  # keep digest, don't re-arm
                 return resp
+            note = ("File unchanged; see earlier read. "
+                    "If you no longer have it, pass bypass_cache=true.")
             return {"result": {
                 "unchanged": True,
-                "note": "File unchanged; see earlier read.",
+                "note": note,
             }}
 
         self._session_reads[key] = digest
