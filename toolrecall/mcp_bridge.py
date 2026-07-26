@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 from toolrecall import __version__
@@ -31,13 +32,12 @@ from toolrecall.context_tracker import format_stale_block
 # ─── MCP Tool Definitions ────────────────────────────────
 
 TOOL_DEFINITIONS = [
-    # ── Native-named aliases (agents pick these naturally) ──
+    # ── File tools (primary names) ──
     {
         "name": "read_file",
         "description": "Read a file through ToolRecall's cache. "
                        "Cached until file modification time (mtime) changes. "
-                       "Set bypass_cache=true to force a fresh read from disk. "
-                       "This is the cached version of the standard read_file tool.",
+                       "Set bypass_cache=true to force a fresh read from disk.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -49,9 +49,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "write_file",
-        "description": "Write content to a file and invalidate the cache entry. "
-                       "Routes through the daemon's security gate (path allowlist, "
-                       "sensitive-file blocklist). Next read_file returns fresh content.",
+        "description": "Write content to a file, invalidates cache.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -63,10 +61,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "patch",
-        "description": "Apply a find-and-replace patch to a file. "
-                       "Invalidates the cache entry so the next read_file is fresh. "
-                       "The old_string must be unique in the file. "
-                       "Routes through the daemon's security gate.",
+        "description": "Apply a find-and-replace patch, invalidates cache.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -80,36 +75,6 @@ TOOL_DEFINITIONS = [
     {
         "name": "terminal",
         "description": "Run a terminal command with TTL-based caching. "
-                       "⚠ Requires mcp.allow_terminal=true in config. "
-                       "This is the cached version of the standard terminal tool.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell command"},
-                "ttl": {"type": "integer", "description": "Cache TTL in seconds (0=bypass)"}
-            },
-            "required": ["command"]
-        }
-    },
-    # ── Explicit cached tools (cached_ prefix for clarity) ──
-    {
-        "name": "cached_read",
-        "description": "Read a file with hybrid In-Memory + SQLite cache. "
-                       "Alias: read_file. Cached until file modification time (mtime) changes. "
-                       "Set bypass_cache=true to force a fresh read from disk.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path to read"},
-                "bypass_cache": {"type": "boolean", "description": "Skip cache and force fresh read from disk"}
-            },
-            "required": ["path"]
-        }
-    },
-    {
-        "name": "cached_terminal",
-        "description": "Run a terminal command with TTL-based caching. "
-                       "Alias: terminal. "
                        "⚠ Requires mcp.allow_terminal=true in config.",
         "inputSchema": {
             "type": "object",
@@ -120,6 +85,11 @@ TOOL_DEFINITIONS = [
             "required": ["command"]
         }
     },
+    # ── Cached variants (explicit aliases — not exposed in tools/list) ──
+    # cached_read and cached_terminal are NOT in this list. They remain
+    # usable via CMD_TO_MCP mapping — agents that discover them from
+    # a prior session or instruction text can still call them.
+    # ── Skill & docs ──
     {
         "name": "cached_skill",
         "description": "View an agent skill with caching.",
@@ -133,8 +103,8 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "docs_search",
-        "description": "Full-text search across indexed documents (FTS5+BM25). "
-                       "No embeddings, no GPU, no API calls.",
+        "description": "Full-text search indexed documents (FTS5+BM25). "
+                       "Hide from tools/list when knowledge DB is empty.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -146,7 +116,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "docs_get_page",
-        "description": "Retrieve a specific indexed page by source and path.",
+        "description": "Retrieve an indexed document page by source and path.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -156,9 +126,10 @@ TOOL_DEFINITIONS = [
             "required": ["source", "path"]
         }
     },
+    # ── Cache admin ──
     {
         "name": "cache_status",
-        "description": "Show cache statistics (hits, misses, tokens saved).",
+        "description": "Show cache statistics (hits, misses, tokens).",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -167,8 +138,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "cache_invalidate",
-        "description": "Clear all ToolRecall caches. "
-                       "⚠ Requires mcp.allow_invalidate=true in config.",
+        "description": "Clear all caches. ⚠ Requires mcp.allow_invalidate=true in config.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -177,9 +147,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "cache_refresh_file",
-        "description": "Invalidate and re-read a single file from disk. "
-                       "Always returns a fresh result. Safe — no security gate needed. "
-                       "Respects the path allowlist.",
+        "description": "Re-read a file from disk (bypasses cache). Safe.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -188,17 +156,16 @@ TOOL_DEFINITIONS = [
             "required": ["path"]
         }
     },
+    # ── MCP multiplex ──
     {
         "name": "mcp_call",
-        "description": "Call a tool on a multiplexed MCP server (github, time, fetch, etc.). "
-                       "The daemon manages persistent subprocesses for all MCP servers. "
-                       "Use mcp_list_servers first to discover available servers and tools. "
+        "description": "Call a tool on a multiplexed MCP server (github, time, fetch). "
                        "⚠ Requires mcp_multiplex.enabled=true in config.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "server": {"type": "string", "description": "MCP server name (e.g. 'github', 'time', 'fetch')"},
-                "tool": {"type": "string", "description": "Tool name on that server (e.g. 'list_issues')"},
+                "server": {"type": "string", "description": "MCP server name (e.g. 'github')"},
+                "tool": {"type": "string", "description": "Tool name on that server"},
                 "arguments": {"type": "object", "description": "Tool arguments dict"},
                 "bypass_cache": {"type": "boolean", "description": "Skip cache and force fresh call"}
             },
@@ -207,35 +174,28 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "mcp_list_servers",
-        "description": "List available multiplexed MCP servers and their tools. "
-                       "Returns name, running status, and tool names for each server.",
+        "description": "List available multiplexed MCP servers and their tools.",
         "inputSchema": {
             "type": "object",
             "properties": {},
             "required": []
         }
     },
-    # ── Context Tracker tools (checkpoint → get_dirty → drop clean files) ──
+    # ── Context Tracker tools (hidden when emit_context_hints=false) ──
     {
         "name": "context_set_checkpoint",
-        "description": "Mark current file state as a checkpoint. "
-                       "Call this before reading files — files dirtied after this "
-                       "point are tracked. Returns {checkpoint_id, name, dirty_before}.",
+        "description": "Mark current file state as a checkpoint.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Optional label for this checkpoint"}
+                "name": {"type": "string", "description": "Optional label"}
             },
             "required": []
         }
     },
     {
         "name": "context_get_dirty",
-        "description": "Get files dirtied (written/patched) and files that are still "
-                       "clean (read-only) since a checkpoint. "
-                       "Use to determine which files to drop from context: drop files "
-                       "in the 'clean' list, keep files in the 'dirty' list. "
-                       "Returns {dirty: [...], clean: [...], total_dirty, total_clean}.",
+        "description": "Get files dirtied (written) vs clean (read-only) since a checkpoint.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -246,13 +206,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "context_get_stale",
-        "description": "Get files you READ and that were LATER OVERWRITTEN. "
-                       "The copy of these files in your conversation is out of date — "
-                       "the daemon witnessed the write, so this is a fact, not a guess. "
-                       "Evict those file blocks from your context or re-read them. "
-                       "Distinct from context_get_dirty: 'clean' files are safe to drop "
-                       "(optimisation), 'stale' files are WRONG to keep (correctness). "
-                       "Returns {paths: [...], total_stale, est_reclaimable_tokens}.",
+        "description": "Get files read then later overwritten — your copy is stale.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -261,8 +215,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "context_get_stats",
-        "description": "Full status of the context tracker: all dirty and clean files, "
-                       "checkpoint ID, and total read count.",
+        "description": "Full context tracker status: dirty/clean files, checkpoint ID.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -271,9 +224,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "context_reset",
-        "description": "Reset the context tracker: clear all checkpoints, dirty files, "
-                       "and read tracking. After reset, call context_set_checkpoint "
-                       "before starting work.",
+        "description": "Reset the context tracker. Call context_set_checkpoint after.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -314,10 +265,15 @@ class MCPBridge:
 
     def __init__(self, socket_path: str = None, emit_context_hints: bool = False):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
+        self._start_time = time.time()
         # abs path -> sha256 of the content this session has already sent.
         # Per-process: the bridge's lifetime is the agent session, which is
         # exactly the scope we want.  The daemon cache stays shared.
         self._session_reads: dict[str, str] = {}
+        # Timestamp of last full send per path — for proactive TTL expiry.
+        # Harnesses compact old tool results; after N seconds the agent may
+        # no longer have the content even if the hash matches.
+        self._last_full_send: dict[str, float] = {}
         # Consecutive stub counter per path — prevents compaction blindness.
         # Claude Code summarizes away old tool results; after 2 consecutive
         # stubs we re-send full content so the agent can recover without
@@ -349,6 +305,15 @@ class MCPBridge:
         digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
 
         if self._session_reads.get(key) == digest:
+            # Proactive TTL expiry: if the last full send was more than
+            # STUB_TTL seconds ago, the harness may have compacted the
+            # earlier result. Re-send rather than risk a stale stub.
+            STUB_TTL = 60  # seconds — conservative per Claude Code's pacing
+            last_send = self._last_full_send.get(key, self._start_time)
+            if time.time() - last_send > STUB_TTL:
+                self._session_reads[key] = digest  # refresh, don't re-arm
+                self._last_full_send[key] = time.time()
+                return resp
             # Cap consecutive stubs — Claude Code compacts old tool results,
             # so the agent may have lost the earlier content. After 2 stubs
             # we re-send the full content to avoid blind recovery.
@@ -364,6 +329,7 @@ class MCPBridge:
             }}
 
         self._session_reads[key] = digest
+        self._last_full_send[key] = time.time()
         return resp
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:

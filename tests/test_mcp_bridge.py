@@ -152,37 +152,39 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     # ── Tools/List ─────────────────────────────────────────
 
     def test_tools_list_returns_all_with_gates_open(self):
-        """When all gates enabled, all 18 tools are listed (14 original + 4 context tracker)."""
-        resp = self.bridge.handle_request({
+        """When all gates enabled, all 17 tools are listed."""
+        # Create a bridge with context hints enabled so tracker tools show
+        hints_bridge = MCPBridge(self.sock_path, emit_context_hints=True)
+        resp = hints_bridge.handle_request({
             "jsonrpc": "2.0", "method": "tools/list", "id": 1
         })
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
-        # Original tool names
-        self.assertIn("cached_read", names)
-        self.assertIn("cached_terminal", names)
-        self.assertIn("cached_skill", names)
-        self.assertIn("docs_search", names)
-        self.assertIn("docs_get_page", names)
-        self.assertIn("cache_status", names)
-        self.assertIn("cache_invalidate", names)
-        self.assertIn("cache_refresh_file", names)
-        self.assertIn("mcp_call", names)
-        self.assertIn("mcp_list_servers", names)
-        # Native-named aliases
+        # File tools
         self.assertIn("read_file", names)
         self.assertIn("write_file", names)
         self.assertIn("patch", names)
         self.assertIn("terminal", names)
-        # Context tracker tools
+        # Skill & docs
+        self.assertIn("cached_skill", names)
+        self.assertIn("docs_search", names)
+        self.assertIn("docs_get_page", names)
+        # Cache admin
+        self.assertIn("cache_status", names)
+        self.assertIn("cache_invalidate", names)
+        self.assertIn("cache_refresh_file", names)
+        # MCP multiplex
+        self.assertIn("mcp_call", names)
+        self.assertIn("mcp_list_servers", names)
+        # Context tracker
         self.assertIn("context_set_checkpoint", names)
         self.assertIn("context_get_dirty", names)
         self.assertIn("context_get_stats", names)
         self.assertIn("context_reset", names)
-        self.assertEqual(len(tools), 18)
+        self.assertEqual(len(tools), 17)
 
     def test_tools_list_hides_terminal_when_disabled(self):
-        """cached_terminal and terminal are hidden when daemon has allow_terminal=False."""
+        """terminal is hidden when daemon has allow_terminal=False."""
         # Override daemon response for this test
         daemon2 = MockDaemonServer(self.sock_path)
         daemon2.start(ping_response={
@@ -195,9 +197,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
             "jsonrpc": "2.0", "method": "tools/list", "id": 1
         })
         names = [t["name"] for t in resp["result"]["tools"]]
-        self.assertNotIn("cached_terminal", names)
         self.assertNotIn("terminal", names)
-        self.assertIn("cached_read", names)
         self.assertIn("read_file", names)
 
     def test_tools_list_hides_invalidate_when_disabled(self):
@@ -483,11 +483,11 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
 
 class TestToolDefinitions(unittest.TestCase):
-    """TOOL_DEFINITIONS contains valid schemas for all 18 tools."""
+    """TOOL_DEFINITIONS contains valid schemas for all 17 tools."""
 
-    def test_has_all_18_tools(self):
-        """There are exactly 18 tool definitions (14 original + 4 context tracker)."""
-        self.assertEqual(len(TOOL_DEFINITIONS), 18)
+    def test_has_all_17_tools(self):
+        """There are exactly 17 tool definitions."""
+        self.assertEqual(len(TOOL_DEFINITIONS), 17)
 
     def test_each_tool_has_valid_schema(self):
         """Every tool has name, description, and inputSchema with properties."""
@@ -500,9 +500,9 @@ class TestToolDefinitions(unittest.TestCase):
             self.assertEqual(schema["type"], "object")
             self.assertIn("properties", schema)
 
-    def test_cached_read_schema(self):
-        """cached_read requires path, optional bypass_cache."""
-        tdef = next(t for t in TOOL_DEFINITIONS if t["name"] == "cached_read")
+    def test_read_file_schema(self):
+        """read_file requires path, optional bypass_cache."""
+        tdef = next(t for t in TOOL_DEFINITIONS if t["name"] == "read_file")
         props = tdef["inputSchema"]["properties"]
         self.assertIn("path", props)
         self.assertIn("bypass_cache", props)

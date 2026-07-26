@@ -1226,15 +1226,17 @@ def get_stats() -> dict:
     # Zero context_tokens_saved when the agent can't drop content.
     # The DB still holds the cumulative value, but reporting it as
     # "saved" is misleading when emit_context_hints is off.
+    # Load config once — re-parsing TOML every call is wasteful.
     try:
         from toolrecall.config import load_config as _load_config
         _cfg = _load_config()
-        if not _cfg.mcp_emit_context_hints:
-            for _cat in stats:
-                if isinstance(stats[_cat], dict) and "context_tokens_saved" in stats[_cat]:
-                    stats[_cat]["context_tokens_saved"] = 0
+        _hints_on = _cfg.mcp_emit_context_hints
     except Exception:
-        pass
+        _hints_on = True  # safe default — don't zero if config broken
+    if not _hints_on:
+        for _cat in stats:
+            if isinstance(stats[_cat], dict) and "context_tokens_saved" in stats[_cat]:
+                stats[_cat]["context_tokens_saved"] = 0
 
     stats["memory_file_entries"] = len(_file_cache)
     stats["memory_used_mb"] = round(_file_cache.memory_bytes() / (1024 * 1024), 2)
