@@ -37,6 +37,7 @@ ENV_MAP = {
     "TOOLRECALL_MCP_ALLOWED_PATHS": ("mcp", "allowed_paths"),
     "TOOLRECALL_MCP_ALLOW_TERMINAL": ("mcp", "allow_terminal"),
     "TOOLRECALL_MCP_ALLOW_INVALIDATE": ("mcp", "allow_invalidate"),
+    "TOOLRECALL_MCP_EMIT_CONTEXT_HINTS": ("mcp", "emit_context_hints"),
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
@@ -356,6 +357,17 @@ class Config:
     def mcp_allow_invalidate(self) -> bool:
         """Allow cache_invalidate tool (default: False)."""
         return self.get("mcp", "allow_invalidate", default=False)
+
+    @property
+    def mcp_emit_context_hints(self) -> bool:
+        """Emit context-hint text and stale-file markers after tool calls.
+
+        Default: False (off). Only useful in harnesses that own their message
+        array (Hermes, Google ADK).  Append-only harnesses (Claude Code,
+        Cursor) cannot act on the hint, and the ~60 B/tool-call overhead is
+        pure waste.
+        """
+        return bool(self.get("mcp", "emit_context_hints", default=False))
 
     @property
     def mcp_cognitive_check_enabled(self) -> bool:

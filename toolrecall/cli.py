@@ -230,12 +230,12 @@ def cmd_status():
         if k == "recent":
             continue
         if isinstance(v, dict):
-            saved = v.get("tokens_saved", 0)
-            adjusted = v.get("tokens_saved_adjusted", 0)
+            saved = v.get("tokens_not_read_from_disk", 0)
+            adjusted = v.get("tokens_not_read_from_disk_adjusted", 0)
             read = v.get("tokens_read_from_disk", 0)
             context = v.get("context_tokens_saved", 0)
             content_tokens = v.get("cached_content_tokens", 0)
-            saved_str = f", tokens_saved={saved:,}" if saved else ""
+            saved_str = f", tokens_not_read_from_disk={saved:,}" if saved else ""
             adjusted_str = f", adjusted={adjusted:,}" if adjusted and adjusted != saved else ""
             read_str = f", tokens_read_from_disk={read:,}" if read else ""
             context_str = f", context_tokens_saved={context:,}" if context else ""

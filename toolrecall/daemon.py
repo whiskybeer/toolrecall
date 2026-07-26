@@ -1028,7 +1028,8 @@ class DaemonServer:
             str(self.security.allow_terminal) +
             str(self.security.allowed_terminal_commands) +
             str(self.security.allow_invalidate) +
-            str(self.security.allow_multiplex)
+            str(self.security.allow_multiplex) +
+            str(self.cfg.mcp_emit_context_hints)
         )
         import hashlib
         config_hash = hashlib.sha256(config_hash.encode()).hexdigest()[:16]
@@ -1040,6 +1041,7 @@ class DaemonServer:
             "allow_terminal": self.security.allow_terminal,
             "allow_invalidate": self.security.allow_invalidate,
             "multiplex_enabled": self.security.allow_multiplex,
+            "emit_context_hints": self.cfg.mcp_emit_context_hints,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
             "context_tracker": {
                 "checkpoint": ctx.get("checkpoint", 0),
@@ -1120,9 +1122,6 @@ class DaemonServer:
         result = _cache_read(path, source=source)
         if result and not result.get("error"):
             self._context.mark_read(path)
-        # Record mcp_cache stats when request originates from MCP bridge
-        if req.get("mcp_origin"):
-            _cache_record("mcp_cache", hit=result.get("cached", False), path=path)
         return result
 
     def _handle_terminal(self, req: dict) -> dict:

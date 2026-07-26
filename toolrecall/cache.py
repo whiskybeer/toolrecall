@@ -1196,8 +1196,8 @@ def get_stats() -> dict:
                     "hits": row["hits"],
                     "misses": row["misses"],
                     "tokens_read_from_disk": row["tokens_read_from_disk"],
-                    "tokens_saved_cumulative": row["tokens_saved"],
-                    "tokens_saved": row["tokens_saved"],  # real cumulative savings
+                    "tokens_not_read_from_disk_cumulative": row["tokens_saved"],
+                    "tokens_not_read_from_disk": row["tokens_saved"],  # disk I/O avoided (latency metric)
                     "context_tokens_saved": row["context_tokens_saved"],
                     "updated_at": row["updated_at"],
                     "hit_rate": f"{row['hits']/total*100:.0f}%" if total > 0 else "0%",
@@ -1210,13 +1210,13 @@ def get_stats() -> dict:
                     stats[row["category"]]["unique_files"] = conn.execute(
                         "SELECT COUNT(*) FROM file_cache"
                     ).fetchone()[0]
-                    # Adjusted tokens_saved: net savings after subtracting unavoidable
+                    # Adjusted tokens_not_read_from_disk: net savings after subtracting unavoidable
                     # first-read disk I/O. This is the honest signal — how many tokens
                     # the cache actually saved beyond the one mandatory read per file.
                     # Mirrors bench/cache_honest.py philosophy.
-                    raw_saved = stats[row["category"]].get("tokens_saved", 0)
+                    raw_saved = stats[row["category"]].get("tokens_not_read_from_disk", 0)
                     disk_read = stats[row["category"]].get("tokens_read_from_disk", 0)
-                    stats[row["category"]]["tokens_saved_adjusted"] = max(0, raw_saved - disk_read)
+                    stats[row["category"]]["tokens_not_read_from_disk_adjusted"] = max(0, raw_saved - disk_read)
             for t in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache", "browser_cache"]:
                 r = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
                 stats[f"{t}_entries"] = r[0]
@@ -1264,7 +1264,7 @@ def get_stats() -> dict:
 
 
 def reset_stats():
-    """Reset cache statistics counters (hits, misses, tokens_read_from_disk, tokens_saved) without clearing cache entries."""
+    """Reset cache statistics counters (hits, misses, tokens_read_from_disk, tokens_not_read_from_disk) without clearing cache entries."""
     try:
         with _db() as conn:
             conn.execute("DELETE FROM cache_stats")
@@ -1368,7 +1368,7 @@ def cached_browser_check(
         cache_key: e.g. ``browser:page:https_example_com:snapshot``
 
     Returns:
-        ``{"cached": True, "content": "...", "tokens_saved": N}`` on hit,
+        ``{"cached": True, "content": "...", "tokens_not_read_from_disk": N}`` on hit,
         ``{"cached": False}`` on miss.
     """
     try:
@@ -1387,7 +1387,7 @@ def cached_browser_check(
                 return {
                     "cached": True,
                     "content": row["content"],
-                    "tokens_saved": tokens_saved,
+                    "tokens_not_read_from_disk": tokens_saved,
                 }
     except Exception as e:
         warnings.warn(f"ToolRecall: browser_cache check failed: {e}")
@@ -1490,7 +1490,7 @@ def cached_api_check(request_hash: str) -> dict:
                     "status": row["response_status"],
                     "headers": headers,
                     "body": row["response_body"],
-                    "tokens_saved": tokens_saved,
+                    "tokens_not_read_from_disk": tokens_saved,
                 }
     except Exception as e:
         warnings.warn(f"ToolRecall: api_cache check failed: {e}")

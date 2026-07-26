@@ -347,7 +347,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 log.info(
                     "API CACHE HIT: %s %s%s (hash=%s, saved ~%s tokens)",
                     method, target_host, target_path,
-                    request_hash[:12], cached.get("tokens_saved", "?"),
+                    request_hash[:12], cached.get("tokens_not_read_from_disk", "?"),
                 )
                 self.send_response(status)
                 for hdr_key, hdr_val in cached.get("headers", {}).items():

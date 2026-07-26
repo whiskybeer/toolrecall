@@ -18,6 +18,7 @@ Requires a running ToolRecall Daemon:
     toolrecall mcp              # Run bridge
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -311,8 +312,58 @@ CMD_TO_MCP = {
 class MCPBridge:
     """Liest MCP JSON-RPC von stdin, leitet an Daemon weiter, schreibt auf stdout."""
 
-    def __init__(self, socket_path: str = None):
+    def __init__(self, socket_path: str = None, emit_context_hints: bool = False):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
+        # abs path -> sha256 of the content this session has already sent.
+        # Per-process: the bridge's lifetime is the agent session, which is
+        # exactly the scope we want.  The daemon cache stays shared.
+        self._session_reads: dict[str, str] = {}
+        # Consecutive stub counter per path — prevents compaction blindness.
+        # Claude Code summarizes away old tool results; after 2 consecutive
+        # stubs we re-send full content so the agent can recover without
+        # guessing bypass_cache=true.
+        self._consecutive_stubs: dict[str, int] = {}
+        # Context hints (drop-clean-files) are only useful in harnesses that
+        # own their message array (Hermes, ADK).  Append-only harnesses
+        # (Claude Code, Cursor) cannot act on them — disable by default.
+        self._emit_context_hints = emit_context_hints
+
+    def _maybe_stub(self, path: str, resp: dict) -> dict:
+        """Replace content with a stub when this session already holds it.
+
+        Harnesses with append-only transcripts (Claude Code, Cursor, Cline)
+        cannot drop an earlier tool_result, so re-sending identical content
+        costs full tokens every time.  Their native read tools deduplicate;
+        without this we are strictly more expensive than the tool we replace.
+        """
+        if not path or "error" in resp:
+            return resp
+        body = resp.get("result", resp)
+        if not isinstance(body, dict):
+            return resp
+        content = body.get("content")
+        if not isinstance(content, str):
+            return resp
+
+        key = os.path.realpath(os.path.expanduser(path))
+        digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+
+        if self._session_reads.get(key) == digest:
+            # Cap consecutive stubs — Claude Code compacts old tool results,
+            # so the agent may have lost the earlier content. After 2 stubs
+            # we re-send the full content to avoid blind recovery.
+            self._consecutive_stubs[key] = self._consecutive_stubs.get(key, 0) + 1
+            if self._consecutive_stubs[key] >= 3:
+                del self._session_reads[key]
+                del self._consecutive_stubs[key]
+                return resp
+            return {"result": {
+                "unchanged": True,
+                "note": "File unchanged; see earlier read.",
+            }}
+
+        self._session_reads[key] = digest
+        return resp
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:
         """Send a request to the daemon and return parsed response."""
@@ -322,7 +373,7 @@ class MCPBridge:
     def _format_result(self, result) -> str:
         """Format a result for MCP text content."""
         if isinstance(result, dict):
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         return str(result)
 
     def handle_request(self, req: dict) -> dict:
@@ -400,6 +451,10 @@ class MCPBridge:
                 continue
             if name in ("mcp_call", "mcp_list_servers") and not multiplex_enabled:
                 continue
+            # Context tracker tools are only useful when the harness owns its
+            # message array. Hide them in append-only environments.
+            if not self._emit_context_hints and name.startswith("context_"):
+                continue
             tools.append(tdef)
 
         return {
@@ -458,21 +513,32 @@ class MCPBridge:
                         "mcp_origin": True,
                     })
                 else:
-                    # Mark agent-tool reads so context_tokens_saved counts
+                    # Mark agent-tool reads so context_tokens_saved counts.
+                    # Only when context hints are enabled: if the agent isn't
+                    # receiving drop instructions, it can't be saving context,
+                    # so the counter would be misleading.
                     if tool_name in ("cached_read", "read_file"):
-                        resp = self._uds_request(uds_cmd, **arguments, source="agent_tool", mcp_origin=True)
+                        source = "agent_tool" if self._emit_context_hints else None
+                        resp = self._uds_request(uds_cmd, **arguments, source=source, mcp_origin=True)
                     else:
                         resp = self._uds_request(uds_cmd, **arguments, mcp_origin=True)
 
             if "error" in resp:
                 return self._error(req_id, -32603, resp["error"])
 
+            # Session-scoped dedup: identical content → stub (saves tokens in
+            # append-only harnesses like Claude Code where content can't be
+            # dropped from the transcript after it enters)
+            if tool_name in ("cached_read", "read_file") and not arguments.get("bypass_cache", False):
+                resp = self._maybe_stub(arguments.get("path", ""), resp)
+
             # Extract result for presentation
             content = resp.get("result", resp)
             result_text = self._format_result(content)
 
             # Auto-trigger context hint after every non-context tool call
-            if tool_name not in (
+            # Only emit if the harness owns its message array (config flag).
+            if self._emit_context_hints and tool_name not in (
                 "context_set_checkpoint", "context_get_dirty",
                 "context_get_stale", "context_get_stats", "context_reset",
             ):
@@ -519,15 +585,17 @@ class MCPBridge:
 def main():
     """Start the MCP Bridge (stdio → Daemon ↔ UDS)."""
 
-    bridge = MCPBridge()
-
-    # Try to ping daemon
-    ping = bridge._uds_request("ping")
+    # First ping: get daemon capabilities before constructing bridge
+    probe = MCPBridge()
+    ping = probe._uds_request("ping")
     if ping.get("error") == "daemon_unavailable":
         print("❌ ToolRecall daemon is not running.", file=sys.stderr)
         print("   Run: toolrecall daemon &", file=sys.stderr)
         print("   Or:  toolrecall mcp --direct   (legacy standalone)", file=sys.stderr)
         sys.exit(1)
+
+    emit_hints = ping.get("emit_context_hints", False)
+    bridge = MCPBridge(emit_context_hints=emit_hints)
 
     print("ToolRecall MCP Bridge v0.2.0", file=sys.stderr)
     print("  Connected to daemon", file=sys.stderr)
@@ -540,11 +608,15 @@ def main():
     print(f"  cache_invalidate: {'ENABLED' if inv else 'DISABLED'}", file=sys.stderr)
     print(f"  config: #{daemon_hash}", file=sys.stderr)
 
-    # Check if daemon's config hash differs from last known (stale daemon)
-    _config_hash_store = os.path.join(
-        os.path.dirname(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))),
-        "toolrecall", "last_daemon_config_hash"
+    # Check if daemon's config hash differs from last known (stale daemon).
+    # Key by socket path so users alternating between two projects don't get
+    # a false stale-daemon warning on every correct startup.
+    _sock_key = str(DEFAULT_PATH)
+    _cache_dir = os.environ.get(
+        "XDG_CACHE_HOME",
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~/.cache"))
     )
+    _config_hash_store = os.path.join(_cache_dir, "toolrecall", f"config_hash_{hashlib.sha256(_sock_key.encode()).hexdigest()[:16]}")
     _prev_hash = ""
     try:
         with open(_config_hash_store) as _f:
