@@ -245,7 +245,7 @@ servers = ["time", "sequential-thinking"]
 - [CLI Reference](docs/CLI.md) — all subcommands
 - [Configuration Reference](docs/CONFIG_REFERENCE.md) — config.toml, env vars
 - [Context Stale](docs/CONTEXT_STALE.md) — provably stale files in agent conversations
-- [Context Tracker](docs/CONTEXT_TRACKER.md) — checkpoint-based dirty-file tracking
+- [Context Tracker](docs/CONTEXT_TRACKER.md) — checkpoint-based dirty-file tracking\n- [AGENTS.md](docs/AGENTS.md) — agent instructions for MCP context tracker integration
 - [Testing Guide](docs/TESTING.md) — test philosophy, per-file coverage
 - [How It Works](docs/HOW_IT_WORKS.md) — quick technical overview
 - [libSQL Backend](docs/LIBSQL_COMPARISON.md) — multi-writer, vector search, cloud sync

@@ -19,6 +19,7 @@ Requires a running ToolRecall Daemon:
 """
 
 import json
+import os
 import sys
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
@@ -363,23 +364,23 @@ class MCPBridge:
                     "security": security,
                 },
                 "instructions": (
-                                                    "ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\\n\\n"
-                                                    "This bridge connects to the ToolRecall daemon. "
-                                                    "All file read/write tools are transparently cached.\\n"
-                                                    "  read_file / cached_read: path-allowlisted (bypass_cache=true for fresh read)\\n"
-                                                    "  write_file: write content, invalidates cache\\n"
-                                                    "  patch: find-and-replace, invalidates cache\\n"
-                                                    "  cache_refresh_file: re-read a single file from disk (safe)\\n"
-                                                    "  cache_status: view cache statistics\\n"
-                                                    "  terminal / cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\\n"
-                                                    "  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\\n"
-                                                    "  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\\n"
-                                                    "    Context Tracker — bound your context window.\\n"
-                                                    "    Pattern: context_set_checkpoint → read files → work → "
-                                                    "context_get_dirty → drop 'clean' files from context → "
-                                                    "context_set_checkpoint again.\\n\\n"
-                                                    "Start daemon: toolrecall daemon &"
-                                                ),
+                    f"ToolRecall — Tool-Output Cache for LLM Agents (MCP Bridge).\n\n"
+                    f"This bridge connects to the ToolRecall daemon. "
+                    f"All file read/write tools are transparently cached.\n"
+                    f"  read_file / cached_read: path-allowlisted (bypass_cache=true for fresh read)\n"
+                    f"  write_file: write content, invalidates cache\n"
+                    f"  patch: find-and-replace, invalidates cache\n"
+                    f"  cache_refresh_file: re-read a single file from disk (safe)\n"
+                    f"  cache_status: view cache statistics\n"
+                    f"  terminal / cached_terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
+                    f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n"
+                    f"  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
+                    f"    Context Tracker — bound your context window.\n"
+                    f"    Pattern: context_set_checkpoint → read files → work → "
+                    f"context_get_dirty → drop 'clean' files from context → "
+                    f"context_set_checkpoint again.\n\n"
+                    f"Start daemon: toolrecall daemon &"
+                ),
             }
         }
 
@@ -533,10 +534,52 @@ def main():
     term = ping.get("allow_terminal", False)
     inv = ping.get("allow_invalidate", False)
     paths = ping.get("allowed_paths", [])
+    daemon_hash = ping.get("config_hash", "")
     print(f"  cached_read path allowlist: {', '.join(paths) if paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
     print(f"  cached_terminal: {'ENABLED' if term else 'DISABLED'}", file=sys.stderr)
     print(f"  cache_invalidate: {'ENABLED' if inv else 'DISABLED'}", file=sys.stderr)
-    print(file=sys.stderr)
+    print(f"  config: #{daemon_hash}", file=sys.stderr)
+
+    # Check if daemon's config hash differs from last known (stale daemon)
+    _config_hash_store = os.path.join(
+        os.path.dirname(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))),
+        "toolrecall", "last_daemon_config_hash"
+    )
+    _prev_hash = ""
+    try:
+        with open(_config_hash_store) as _f:
+            _prev_hash = _f.read().strip()
+    except (FileNotFoundError, OSError, IOError):
+        pass
+    if _prev_hash and _prev_hash != daemon_hash:
+        print(f"  ⚠ Config changed since last connection (#{_prev_hash[:16]} → #{daemon_hash}).", file=sys.stderr)
+        print(f"    The old daemon may have been stale. Run 'toolrecall daemon stop && toolrecall daemon' to confirm.", file=sys.stderr)
+    try:
+        os.makedirs(os.path.dirname(_config_hash_store), exist_ok=True)
+        with open(_config_hash_store, "w") as _f:
+            _f.write(daemon_hash)
+    except (OSError, IOError):
+        pass
+
+    # Warn about env-var mismatch: the bridge delegates to the daemon's config,
+    # so TOOLRECALL_* env vars set at bridge launch time have no effect unless
+    # the daemon was also started with them in its environment.
+    import os as _os
+    _ENV_MISMATCH_WARNINGS = []
+    for _env_key in ("TOOLRECALL_MCP_ALLOWED_PATHS", "TOOLRECALL_MCP_ALLOW_TERMINAL",
+                     "TOOLRECALL_MCP_ALLOW_INVALIDATE", "TOOLRECALL_CACHE_DB",
+                     "TOOLRECALL_MCP_MULTIPLEX_ENABLED", "TOOLRECALL_STORAGE_BACKEND"):
+        _val = _os.environ.get(_env_key)
+        if _val:
+            _ENV_MISMATCH_WARNINGS.append(
+                f"  ⚠ {_env_key}={_val[:60]} — set at bridge launch, but config is from the daemon.\n"
+                f"    Restart the daemon with this env var set, or set it in your config.toml."
+            )
+    if _ENV_MISMATCH_WARNINGS:
+        print("  ── Env-var / daemon config mismatch ──", file=sys.stderr)
+        for _w in _ENV_MISMATCH_WARNINGS:
+            print(_w, file=sys.stderr)
+        print(file=sys.stderr)
 
     # Read JSON-RPC from stdin line by line
     for line in sys.stdin:

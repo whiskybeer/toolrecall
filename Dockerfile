@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM python:3.11-slim AS base
 
-LABEL org.opencontainers.image.source="https://robka.de/toolrecall"
+LABEL org.opencontainers.image.source="https://toolrecall.dev"
 LABEL org.opencontainers.image.description="ToolRecall — L1 Cache & MCP Multiplexer for LLM Agents"
 LABEL org.opencontainers.image.licenses="MIT"
 

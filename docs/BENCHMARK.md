@@ -12,8 +12,10 @@
 
 ## Headline
 
-**ToolRecall costs less per turn and survives more turns — the two are connected.**  
+**ToolRecall costs less per turn and survives more turns — the two are connected.**  \
 At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.00167 vs $0.00284 — 41% cheaper at matched turns). But the **primary value is endurance**: TR runs 140 turns vs naive's 17 (7.4× longer). Below the context wall, prefix caching also reduces cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
+
+> **⚠️ Scope of the 7.4× endurance figure:** This benchmark runs on **Hermes Agent**, which owns its message loop and drops clean files from context after each turn via the Context Tracker. **Append-only harnesses (Claude Code, Cursor) cannot do this** — the context tracker is inert in those environments, and this endurance figure does not transfer. See [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code) for details.
 
 | Metric | naive | prefix | toolrecall | Advantage |
 |--------|-------|--------|------------|-----------|

@@ -318,6 +318,8 @@ class Config:
         raw = self.get("mcp", "allowed_paths", default=[])
         if raw is None:
             return []
+        if isinstance(raw, str):
+            raw = [raw]
         return [os.path.expanduser(p) for p in raw]
 
     @property

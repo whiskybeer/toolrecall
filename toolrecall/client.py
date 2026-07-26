@@ -131,13 +131,8 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
     cfg = load_config()
     allowed_paths = cfg.mcp_allowed_paths
     if allowed_paths:
-        import os as _os
-        abs_path = _os.path.realpath(_os.path.expanduser(path))
-        for allowed in allowed_paths:
-            allowed_abs = _os.path.realpath(_os.path.expanduser(allowed))
-            if abs_path == allowed_abs or abs_path.startswith(allowed_abs + _os.sep):
-                break
-        else:
+        from toolrecall.path_utils import check_path_allowed
+        if not check_path_allowed(path, allowed_paths):
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
     return _get_direct_cache().cached_read(path, source=source)
 

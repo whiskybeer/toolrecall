@@ -127,9 +127,22 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 
 ---
 
-## Claude Code — ⚠️ Use selectively (cache impact: untested)
+## Claude Code — ⚠️ Use selectively (context tracker: UNAVAILABLE)
 
-ToolRecall and Claude Code have different strengths. **File/terminal caching via MCP is functionally available but its value is untested** — see the test protocol below.
+ToolRecall and Claude Code have different strengths. **The context tracker endurance gain (7.4×) does NOT apply to Claude Code** — see the explanation below. File/terminal caching via MCP is functionally available but its value is untested.
+
+### Critical: Context Tracker is Inert in Append-Only Harnesses
+
+The context tracker pattern requires the agent (or its harness) to **drop clean files from context** after each turn:
+
+    context_set_checkpoint → read files → work → context_get_dirty → drop clean files → ...
+
+Claude Code's transcript is **append-only from the model's side**. The model can call `context_get_dirty` and receive the droppable list, but has no mechanism to remove content from its message array. Only harness-level compaction (which Claude Code does not expose) can do that.
+
+This means:
+- **The 7.4× endurance figure does NOT transfer.** Context grows unboundedly — same as baseline.
+- The net effect of adding ToolRecall's MCP server in Claude Code is **neutral to slightly negative**: you pay the fixed cost of extra tool schemas on every turn plus extra `cached_read` round-trips, with zero endurance gain.
+- **The forward proxy and MCP multiplexer are still worthwhile.** Use TR for those.
 
 **What works (verified):**
 - **Forward proxy** — caching API responses via `:8569` is orthogonal to Claude Code's tool loop and saves real cost.

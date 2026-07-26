@@ -596,6 +596,9 @@ def _ensure_daemon():
     3. Windows fallback (subprocess.DETACHED_PROCESS)
 
     Returns True if daemon is running after attempt, False otherwise.
+
+    Note: auto-starts the daemon silently (output goes to DEVNULL). To start
+    it explicitly with visible output, run ``toolrecall daemon`` separately.
     """
     from toolrecall.transport import TransportClient, DEFAULT_PATH
     import time
@@ -639,6 +642,7 @@ def _ensure_daemon():
     import subprocess as _sp
     import shutil as _shutil
     try:
+        print("[ToolRecall] Daemon not running — auto-starting silently in background...", file=_sys.stderr, flush=True)
         _toolrecall_bin = _shutil.which("toolrecall")
         if not _toolrecall_bin:
             # Fallback: locate the installed package's cli module directly
@@ -752,11 +756,13 @@ def cmd_daemon():
         print("Then point agents OPENAI_BASE_URL to http://localhost:8569")
         return
 
-    if "--stop" in sys.argv:
+    # Accept both --stop (flag) and "stop" (positional subcommand)
+    args = sys.argv[2:]  # everything after "toolrecall daemon"
+    if "--stop" in args or "stop" in args:
         stop_daemon()
-    elif "--status" in sys.argv:
+    elif "--status" in args or "status" in args:
         daemon_status()
-    elif "--foreground" in sys.argv:
+    elif "--foreground" in args or "foreground" in args:
         run_daemon(foreground=True)
     else:
         run_daemon(foreground=False)

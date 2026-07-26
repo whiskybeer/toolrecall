@@ -110,7 +110,7 @@ class SecurityGate:
         self.ast_check = cfg.mcp_ast_check_enabled
         self.logger = logging.getLogger(__name__)
 
-    MAX_PATH_LENGTH = 4096  # POSIX PATH_MAX
+    MAX_PATH_LENGTH = 4096  # POSIX PATH_MAX (260 on Windows without long-path support; 4096 is safe on both)
 
     def check_read_path(self, path: str) -> str | None:
         """Check if path is allowed to be read. Returns None or error message."""
@@ -133,12 +133,8 @@ class SecurityGate:
                 "See: toolrecall init for interactive setup."
             )
 
-        abs_path = os.path.realpath(os.path.expanduser(path))
-        for allowed in self.allowed_paths:
-            allowed_abs = os.path.realpath(os.path.expanduser(allowed))
-            if abs_path == allowed_abs or abs_path.startswith(allowed_abs + os.sep):
-                break
-        else:
+        from toolrecall.path_utils import check_path_allowed
+        if not check_path_allowed(path, self.allowed_paths):
             # Generic error — never leak the real resolved path to the caller
             self.logger.warning("Blocked path not in allowed_paths: %s", path)
             return "Path not allowed: access denied"
@@ -1026,9 +1022,20 @@ class DaemonServer:
 
     def _handle_ping(self, req: dict) -> dict:
         ctx = self._context.get_stats()
+        # Config fingerprint — compare this across process restarts
+        config_hash = (
+            str(self.security.allowed_paths) +
+            str(self.security.allow_terminal) +
+            str(self.security.allowed_terminal_commands) +
+            str(self.security.allow_invalidate) +
+            str(self.security.allow_multiplex)
+        )
+        import hashlib
+        config_hash = hashlib.sha256(config_hash.encode()).hexdigest()[:16]
         return {
             "pong": True,
             "pid": os.getpid(),
+            "config_hash": config_hash,
             "allowed_paths": self.security.allowed_paths,
             "allow_terminal": self.security.allow_terminal,
             "allow_invalidate": self.security.allow_invalidate,
