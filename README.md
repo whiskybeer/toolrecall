@@ -8,6 +8,8 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 
 **One warm daemon instead of five cold Node processes.** ~132 KB install. Python 3.11+ stdlib only.
 
+> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
+
 ```bash
 pipx install toolrecall
 toolrecall setup          # One-shot: config -> systemd -> daemon start
@@ -64,7 +66,7 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. Below the context wall, prefix caching competes; above it TR wins on cost by not exhausting. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
-| **File / Terminal Cache** | Reduce redundant reads within a turn. Static commands only |
+| **File / Terminal Cache** | Reduce redundant reads within a turn. 73-91% token reduction for stateless agents without built-in context management |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context |
 | **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus |
 
@@ -110,13 +112,14 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 
 ## When To Use It
 
-| You want this... | Use this... |
-|-----------------|-------------|
-| Warm MCP servers across sessions | MCP Multiplexer |
-| $0 dev loops — repeated API calls cost nothing | Forward Proxy |
-| Deterministic CI tests for agent behavior | Replay Mode |
-| Guardrails between agents and your machine | Security Gate |
-| All of the above | `toolrecall setup` then add the MCP bridge |
+|| You want this... | Use this... | Works for |
+||-----------------|-------------|-----------|
+|| Warm MCP servers across sessions | MCP Multiplexer | Any agent |
+|| $0 dev loops — repeated API calls cost nothing | Forward Proxy | Any agent |
+|| Deterministic CI tests for agent behavior | Replay Mode | Any agent |
+|| Guardrails between agents and your machine | Security Gate | Any agent |
+||| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents (Hermes, Cline, ADK) — measured 73-91% fewer repeat tokens. **Not** for agents with built-in context management |
+|| All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
 
 ---
 

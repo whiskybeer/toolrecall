@@ -1039,28 +1039,51 @@ def _ensure_agent_integration():
     claude_bin = shutil.which("claude")
 
     if claude_bin:
+        # Prompt user: file caching via MCP was tested and costs 2.4× more
+        # for Claude Code. Offer multiplexer-only mode.
+        claude_multiplexer_only = False
+        if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
+            print()
+            print("  ⚠️  Claude Code detected — IMPORTANT:")
+            print("     ToolRecall's file caching via MCP was tested on Claude Code")
+            print("     and showed a 2.4× cost increase. File caching only helps")
+            print("     stateless agents (Hermes, Cline, ADK).")
+            print()
+            print("  Options:")
+            print("    f) Full bridge — file cache + multiplexer + proxy (default)")
+            print("    m) Multiplexer-only — no file/terminal/cache tools")
+            print()
+            try:
+                claude_choice = input("  Install [F/m]: ").strip().lower()
+                if claude_choice == "m":
+                    claude_multiplexer_only = True
+            except (EOFError, KeyboardInterrupt):
+                pass  # Non-interactive → default to full
         # Automatic: uses Claude's own CLI to register the MCP server
-        # No user action needed — this runs on its own
+        mcp_args = ["toolrecall", "mcp"]
+        if claude_multiplexer_only:
+            mcp_args.append("--multiplexer-only")
         try:
             r = subprocess.run(
-                [claude_bin, "mcp", "add", "toolrecall", "-s", "user", "--", "toolrecall", "mcp"],
+                [claude_bin, "mcp", "add", "toolrecall", "-s", "user", "--"] + mcp_args,
                 capture_output=True, text=True, timeout=15,
             )
             if r.returncode == 0:
-                print("  ✅ Claude Code MCP server registered (automatic — via 'claude mcp add')")
+                label = "multiplexer-only" if claude_multiplexer_only else "full"
+                print(f"  ✅ Claude Code MCP server registered ({label} — via 'claude mcp add')")
                 result["claude"] = True
             else:
                 print(f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config")
                 if r.stderr.strip():
                     print(f"     stderr: {r.stderr.strip()[:200]}")
-                _write_claude_json_config()
+                _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
                 result["claude"] = True
         except FileNotFoundError:
-            _write_claude_json_config()
+            _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
             result["claude"] = True
         except subprocess.TimeoutExpired:
             print("  ⚠️  'claude mcp add' timed out — falling back to direct config")
-            _write_claude_json_config()
+            _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
             result["claude"] = True
     else:
         # Fallback: detect via ~/.claude.json
@@ -1073,7 +1096,7 @@ def _ensure_agent_integration():
     # Instruction snippet: tell Claude to prefer cached tools
     claude_dotdir = os.path.expanduser("~/.claude/claude_dotfiles")
     claude_md = os.path.join(claude_dotdir, "claude.md")
-    if result.get("claude") and not os.path.exists(claude_md):
+    if result.get("claude") and not claude_multiplexer_only and not os.path.exists(claude_md):
         os.makedirs(claude_dotdir, exist_ok=True)
         try:
             with open(claude_md, "w") as f:
@@ -1135,7 +1158,7 @@ After configuring your agent: make sure the ToolRecall daemon is running:
 """
 
 
-def _write_claude_json_config():
+def _write_claude_json_config(multiplexer_only: bool = False):
     """Write toolrecall MCP entry to ~/.claude.json.
 
     Reads existing config, merges toolrecall into mcpServers, writes back.
@@ -1155,9 +1178,12 @@ def _write_claude_json_config():
 
     if "mcpServers" not in config:
         config["mcpServers"] = {}
+    args = ["mcp"]
+    if multiplexer_only:
+        args.append("--multiplexer-only")
     config["mcpServers"]["toolrecall"] = {
         "command": "toolrecall",
-        "args": ["mcp"],
+        "args": args,
     }
 
     with open(claude_json, "w") as f:

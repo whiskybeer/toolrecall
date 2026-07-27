@@ -15,7 +15,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
-| **Claude Code** | ⚠️ Available (untested) | ✅ | ❌ N/A | **Selective** | MCP bridge file caching available but empirically untested — see test protocol below. Forward proxy and multiplex are verified. |
+| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ✅ | ❌ | **Selective** | Tested: file caching via MCP increases cost 2.4×. Forward proxy and multiplex are verified. |
 | **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
 | **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
 
@@ -127,37 +127,48 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 
 ---
 
-## Claude Code — ⚠️ Use selectively (context tracker: UNAVAILABLE)
+## Claude Code — ❌ File caching costs more than it saves
 
-ToolRecall and Claude Code have different strengths. **The context tracker endurance gain (7.4×) does NOT apply to Claude Code** — see the explanation below. File/terminal caching via MCP is functionally available but its value is untested.
+| Feature | Verdict | Evidence |
+|---------|---------|----------|
+| **Forward Proxy** | ✅ Verified — saves real cost | Orthogonal to tool loop |
+| **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
+| **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | See §3 of the [full A/B test report](https://gist.github.com/whiskybeer/...) |
+| **Context tracker** | ❌ Inert — append-only harness can't drop context | Same report |
 
-### Critical: Context Tracker is Inert in Append-Only Harnesses
+### The Numbers
 
-The context tracker pattern requires the agent (or its harness) to **drop clean files from context** after each turn:
+A controlled A/B test (Claude Code Sonnet 5, edit-heavy task, n=2 per arm, adoption forced) showed:
 
-    context_set_checkpoint → read files → work → context_get_dirty → drop clean files → ...
+| Metric | Native | With TR file cache | Δ |
+|--------|-------:|-------------------|---:|
+| Turns | 32 | 56 | **1.8×** |
+| Cost (USD) | $0.57 | $1.34 | **2.4×** |
+| Wall time | 61 s | 187 s | **3.1×** |
 
-Claude Code's transcript is **append-only from the model's side**. The model can call `context_get_dirty` and receive the droppable list, but has no mechanism to remove content from its message array. Only harness-level compaction (which Claude Code does not expose) can do that.
+**Root causes:**
+1. **`patch` has no `replace_all`** — a 29-site rename became 58 sequential single-occurrence patch calls vs. a few native `replace_all` edits. Each extra turn re-bills the full growing context under Anthropic prompt caching.
+2. **Edits fight the cache** — every `patch` invalidates the file's entry; verification re-reads mostly missed (21% hit rate).
+3. **Stub savings are structurally small** — ~15K tokens avoided vs ~690K extra context tokens billed (~45×).
+4. **Native Read is preferred** — when both native `Read` and MCP `cached_read` are available, Claude Code uses native Read exclusively. Forcing it to use MCP tools via `--disallowedTools Read` makes sessions more expensive.
+
+### Why File Caching Doesn't Help Append-Only Harnesses
+
+Claude Code's transcript is **append-only from the model's side**. Every turn appends to the message array — there's no harness-level compaction mechanism exposed to the model. Adding a file cache that returns stubs saves ~15K tokens of file content but adds dozens of MCP tool round-trips plus the full re-billing of prompt-cached context on each extra turn.
 
 This means:
 - **The 7.4× endurance figure does NOT transfer.** Context grows unboundedly — same as baseline.
-- The net effect of adding ToolRecall's MCP server in Claude Code is **neutral to slightly negative**: you pay the fixed cost of extra tool schemas on every turn plus extra `cached_read` round-trips, with zero endurance gain.
-- **The forward proxy and MCP multiplexer are still worthwhile.** Use TR for those.
+- Adding ToolRecall's MCP file-caching tools means **your sessions cost 2.4× more and run 3.1× slower.**
 
-**What works (verified):**
-- **Forward proxy** — caching API responses via `:8569` is orthogonal to Claude Code's tool loop and saves real cost.
-- **MCP multiplexer only** — if you run 5+ MCP servers (GitHub, Postgres, fetch, time), TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point.
+### What to Use Instead
 
-**What's available (architecture, not tested):**
-- **File caching via MCP** — the MCP bridge (`toolrecall mcp`) exposes `read_file`, `write_file`, `patch`, and `terminal` as MCP tools. Claude Code connects to the bridge and sees them. Whether the model calls MCP `read_file` instead of its native `Read` tool depends on model routing — **empirically untested**.
-- **mtime guards against staleness** — `cached_read()` checks file mtime on every access. If Claude Code uses native `Edit` then MCP `read_file`, the mtime mismatch triggers a fresh read. Edge cases where mtime doesn't change (mtime-preserving writes) are the same gap Robin identified in v0.8.14.
+- **Forward proxy** — cache API responses via `:8569`. This is orthogonal to the tool loop and saves real money on repeat API calls in dev loops.
+- **MCP multiplexer only** — if you run 5+ MCP servers, TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point, but **don't route file tools through it**.
 
-**What to avoid:**
-- **Python shim** — Claude Code is Node.js; the shim doesn't apply.
+### Config (multiplexer + proxy only, no file caching)
 
-**Config:**
 ```json
-// ~/.claude/settings.json
+// ~/.claude/settings.json — add toolrecall for multiplexing ONLY
 {
   "mcpServers": {
     "toolrecall": {
@@ -168,41 +179,9 @@ This means:
 }
 ```
 
-**Test protocol (automated test — see `tests/claude-integration/`):**
+Then set `OPENAI_BASE_URL=http://localhost:8569/v1` for API response caching.
 
-An automated test runner is available at `tests/claude-integration/run-test.sh`:
-
-```bash
-cd tests/claude-integration
-bash run-test.sh
-```
-
-The test:
-1. Creates a CLAUDE.md with a multi-turn read/re-read task across 4+ files
-2. Records pre-test cache stats from the ToolRecall SQLite DB
-3. Runs `claude -p "..."` in the test directory
-4. Records post-test cache stats
-5. Reports whether cache hits on test files occurred
-
-**Manual protocol (if automated test fails):**
-
-1. Install Claude Code + ToolRecall on the same machine
-2. Configure `toolrecall mcp` as Claude Code's sole MCP server (see above)
-3. Start the ToolRecall daemon with `cache_stats` tracking enabled
-4. Give Claude Code a multi-turn task that re-reads the same file:
-   ```
-   claude -p "Read /tmp/test.txt, then modify it, then read it again. Report what you read."
-   ```
-5. After the task, check the daemon's access log:
-   ```bash
-   sqlite3 ~/.toolrecall/cache.db "SELECT path, hit FROM access_log WHERE category='file_cache' ORDER BY cached_at DESC LIMIT 20;"
-   ```
-6. If `file_cache` entries appear with the test file's path → Claude Code called MCP `read_file`
-7. If no entries → Claude Code used native `Read` exclusively
-
-Repeat with 3+ different models and task types to account for model routing variance.
-
-> **Bottom line:** Add TR for the forward proxy and MCP multiplex (verified benefits). File caching is available but its value for Claude Code is unknown — test it with your own workflow before relying on it.
+> **Bottom line:** Add TR **only** for the forward proxy and MCP multiplex. File caching through MCP has been empirically tested and makes Claude Code sessions **2.4× more expensive**. Do not route file tools through ToolRecall with Claude Code.
 
 ---
 

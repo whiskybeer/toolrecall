@@ -261,9 +261,10 @@ CMD_TO_MCP = {
 # ─── MCP Bridge ───────────────────────────────────────────
 
 class MCPBridge:
-    """Liest MCP JSON-RPC von stdin, leitet an Daemon weiter, schreibt auf stdout."""
+    """Reads MCP JSON-RPC from stdin, proxies to daemon, writes to stdout."""
 
-    def __init__(self, socket_path: str = None, emit_context_hints: bool = True):
+    def __init__(self, socket_path: str = None, emit_context_hints: bool = True,
+                 multiplexer_only: bool = False):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
         self._start_time = time.time()
         # abs path -> sha256 of the content this session has already sent.
@@ -274,6 +275,25 @@ class MCPBridge:
         # Harnesses compact old tool results; after N seconds the agent may
         # no longer have the content even if the hash matches.
         self._last_full_send: dict[str, float] = {}
+        # Consecutive stub counter per path — prevents compaction blindness.
+        # Claude Code summarizes away old tool results; after 2 consecutive
+        # stubs we re-send full content so the agent can recover without
+        # guessing bypass_cache=true.
+        self._consecutive_stubs: dict[str, int] = {}
+        # Terminal output dedup: command string -> sha256 of output.
+        # Native Bash tool does NOT deduplicate; repeated identical output
+        # (git status, test runs, ls) re-enters context at full cost.
+        self._session_terminal: dict[str, str] = {}
+        # Context hints (drop-clean-files) are only useful in harnesses that
+        # own their message array (Hermes, ADK).  Append-only harnesses
+        # (Claude Code, Cursor) cannot act on them — disable by default.
+        self._emit_context_hints = emit_context_hints
+        # Multiplexer-only mode: expose only mcp_call/mcp_list_servers,
+        # no file/terminal/cache tools. For agents with built-in context
+        # management (Claude Code, Cursor) where file caching costs 2.4× more.
+        self._multiplexer_only = multiplexer_only
+        if multiplexer_only:
+            self._emit_context_hints = False  # context tracker is useless without file tools
         # Consecutive stub counter per path — prevents compaction blindness.
         # Claude Code summarizes away old tool results; after 2 consecutive
         # stubs we re-send full content so the agent can recover without
@@ -444,6 +464,8 @@ class MCPBridge:
                 continue
             if name in ("mcp_call", "mcp_list_servers") and not multiplex_enabled:
                 continue
+            if self._multiplexer_only and name not in ("mcp_call", "mcp_list_servers"):
+                continue
             tools.append(tdef)
 
         return {
@@ -578,6 +600,11 @@ class MCPBridge:
 def main():
     """Start the MCP Bridge (stdio → Daemon ↔ UDS)."""
 
+    # Parse --multiplexer-only from sys.argv (consumed here, not passed to daemon)
+    multiplexer_only = "--multiplexer-only" in sys.argv
+    if multiplexer_only:
+        sys.argv = [a for a in sys.argv if a != "--multiplexer-only"]
+
     # First ping: get daemon capabilities before constructing bridge
     probe = MCPBridge()
     ping = probe._uds_request("ping")
@@ -588,7 +615,7 @@ def main():
         sys.exit(1)
 
     emit_hints = ping.get("emit_context_hints", True)
-    bridge = MCPBridge(emit_context_hints=emit_hints)
+    bridge = MCPBridge(emit_context_hints=emit_hints, multiplexer_only=multiplexer_only)
 
     print("ToolRecall MCP Bridge v0.2.0", file=sys.stderr)
     print("  Connected to daemon", file=sys.stderr)

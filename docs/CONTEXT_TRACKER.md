@@ -89,7 +89,7 @@ This metric is visible in:
 - `toolrecall daemon --status` — shows `ctx_dropped=N`
 - `context_get_stats()` — returns `ctx_dropped_tokens_total`
 - Daemon ping response — includes `ctx_dropped_tokens` in `context_tracker` section
-- Healthcheck output — reported as `tokens_saved` / `ctx_recent`
+- Healthcheck output — reported as `tokens_not_read_from_disk` / `ctx_recent`
 
 ### What Gets Tracked
 
