@@ -853,6 +853,7 @@ See [Context Tracker](CONTEXT_TRACKER.md) for the full workflow.
 | `toolrecall/daemon.py` | Daemon core + MCPMultiplexer + IPC dispatch |
 | `toolrecall/proxy.py` | Forward proxy (auth routing, streaming, usage logging) |
 | `toolrecall/mcp_bridge.py` | MCP stdio bridge (JSON-RPC to UDS) |
+| `toolrecall/path_utils.py` | Shared path allowlist validation (daemon + client) |
 | `toolrecall/storage/` | Storage backend layer (sqlite, libsql, libsql-sync) |
 | `toolrecall/transport.py` | UDS transport client/server |
 | `toolrecall/security.py` | Security gate, path allowlist, terminal policy |

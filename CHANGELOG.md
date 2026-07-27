@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.8.17] — 2026-07-27
+
+### Added
+- **`docs/AGENTS.md`** — agent instructions for MCP context tracker integration pattern (checkpoint → read → dirty → drop → repeat). 7.4× endurance documented with stale-file awareness.
+- **`toolrecall/path_utils.py`** — shared path allowlist validation extracted from daemon + client. Single source for `check_path_allowed()`.
+- **`--multiplexer-only` flag** — `toolrecall mcp --multiplexer-only` exposes only `mcp_call`/`mcp_list_servers` for agents where file caching costs more than it saves (Claude Code, Cursor).
+- **`emit_context_hints` config option** — `[mcp] emit_context_hints = true` controls whether 🧹 drop-clean hints are appended after tool calls. Automatically disabled in multiplexer-only mode. Default: `true` for stateless agents.
+- **`_maybe_stub_terminal` dedup** — repeated identical terminal output (git status, test runs, ls) replaced with a content-hash stub, matching the existing `_maybe_stub` pattern for file reads.
+- **`StartLimitInterval` / `StartLimitBurst`** in systemd unit — stale-socket takeover retries without failing.
+- **Claude Code setup prompt** — `toolrecall setup` now detects Claude Code and offers multiplexer-only install (avoids the tested 2.4× cost increase).
+- **Terminal output dedup** — `_session_terminal` hash maps command string → sha256 output. Same command in same session gets a stub instead of full content.
+
+### Changed
+- **MCP tool surface reduced** — 18 → 17 tools. Context-tracker tools (context_set_checkpoint, context_get_dirty, context_get_stats, context_get_hint, context_get_stale) always visible. Original tool count adjusted from 14 to 13 (native-named aliases removed).
+- **Compaction cap re-armed** — `_maybe_stub` now enforces maximum consecutive stubs before re-sending full content, preventing Claude Code's compaction blindness.
+- **`tokens_saved` → `tokens_not_read_from_disk`** — metric renamed to accurately describe what it measures (disk I/O avoided = latency saved, not cost saved). `tokens_saved_adjusted` → `tokens_not_read_from_disk_adjusted`.
+- **`context_tokens_saved` zeroed** when `emit_context_hints=false` — prevents reporting misleading "savings" in append-only harnesses that can't drop content.
+- **Context hints gated** — `🧹 drop-clean` hints only emitted when `emit_context_hints=true`. Prevents unusable hints in append-only harnesses.
+- **`configs/README.md` rewritten** — 135→30 lines, focused on non-Python agents, context tracker limitations documented.
+- **`go-client/README.md`** — removed "pre-built install" section (no releases published; build from source instead).
+- **AGENT_COMPATIBILITY.md restructured** — per-feature verdict table (forward proxy ✅, multiplex ✅, file cache ❌ 2.4×, context tracker ❌ inert). Claude Code section rewritten with real A/B test data.
+- **README file cache qualification** — hero section now explicitly states file caching is for stateless agents. When-to-use table with "Works for" column.
+- **BENCHMARK.md scope caveat** — 7.4× endurance figure explicitly qualified as Hermes-only; append-only harness caveat added.
+- **robka.de → toolrecall.dev** — URL migration complete across LICENSE, Dockerfile, pyproject.toml, README, configs, docs.
+
+### Fixed
+- **Claude Code token regression** — compaction cap re-arm + bypass hint in stub prevent unbounded stub accumulation.
+- **Terminal dedup stub** — `_maybe_stub_terminal` for repeated command output within a session.
+- **go-client/README** — removed non-existent pre-built install instructions.
+- **docs audit fixes** — CONTEXT_TRACKER.md stale `tokens_saved` metric; AGENTS.md 7× → 7.4× rounding; ARCHITECTURE.md module listing missing `path_utils.py`.
+
+### Documentation
+- `docs/AGENTS.md` — new agent context tracker integration guide
+- `docs/AGENT_COMPATIBILITY.md` — rewritten with Claude Code A/B test data, feature verdict table, multiplexer-only recommendation
+- `docs/BENCHMARK.md` — scope caveat: 7.4× is Hermes-only, not transferable
+- `docs/CONFIG_REFERENCE.md` — `emit_context_hints` added to all three reference tables
+- `docs/CONTEXT_TRACKER.md` — `tokens_saved` → `tokens_not_read_from_disk`
+- `README.md` — file cache qualified for stateless agents; when-to-use "Works for" column added
+- `configs/README.md` — full rewrite for non-Python agent audience
+- `ARCHITECTURE.md` — `path_utils.py` added to module listing
+
+---
+
 ## [0.8.16] — 2026-07-23
 
 ### Added

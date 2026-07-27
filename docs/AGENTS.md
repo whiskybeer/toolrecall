@@ -3,7 +3,7 @@
 Your session has ToolRecall's daemon running with the context tracker. The daemon
 tracks which files are **dirty** (written/edited by you) vs **clean** (only read).
 You can drop clean file content from your context every turn to keep the session
-alive 7× longer.
+alive 7.4× longer.
 
 ## The Pattern
 
