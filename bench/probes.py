@@ -13,8 +13,9 @@ def _nonce(n: int = 8) -> str:
 class ProbeSet:
     """Plant retrievable facts; check recall at increasing lag.
 
-    Lags: probe is queried at turn (planted_turn + 30), (planted_turn + 130),
-    (planted_turn + 280).
+    Probes are embedded inside file content blocks so they get stripped
+    by _strip_file_blocks on the toolrecall arm. The recall differential
+    between arms is the real quality signal.
     """
 
     LAGS = (30, 130, 280)
@@ -24,22 +25,31 @@ class ProbeSet:
         self.planted = {}       # probe_id -> (turn, nonce)
         self.schedule = {}      # turn -> [probe_id, ...]
 
-    def plant(self, turn: int) -> tuple[str, str]:
-        """Create a new probe and schedule its recall queries.
+    def plant(self, turn: int, file_path: str = "") -> tuple[str, str]:
+        """Create a new probe.
 
-        Returns (probe_id, message_to_inject) where message_to_inject is a
-        user message the agent should receive at this turn.
+        If file_path is set, returns a comment-snippet the caller should
+        inject into that file's content block. If unset, returns a
+        standalone user message (legacy).
+
+        Returns (probe_id, content_snippet).
         """
         pid = f"p{len(self.planted):03d}"
         nonce = _nonce()
         self.planted[pid] = (turn, nonce)
         for lag in self.LAGS:
             self.schedule.setdefault(turn + lag, []).append(pid)
-        msg = (
-            f"Record this project constant, you will need it later. "
-            f"BUILD_TOKEN_{pid} = {nonce}. Acknowledge and continue."
-        )
-        return pid, msg
+
+        if file_path:
+            snippet = (
+                f"/** BUILD_TOKEN_{pid} = {nonce}. Record this value. */\n"
+            )
+        else:
+            snippet = (
+                f"Record this project constant, you will need it later. "
+                f"BUILD_TOKEN_{pid} = {nonce}. Acknowledge and continue."
+            )
+        return pid, snippet
 
     def due(self, turn: int) -> list[str]:
         """Return probe ids whose recall is due at this turn."""
