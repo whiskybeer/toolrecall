@@ -362,12 +362,12 @@ class Config:
     def mcp_emit_context_hints(self) -> bool:
         """Emit context-hint text and stale-file markers after tool calls.
 
-        Default: False (off). Only useful in harnesses that own their message
-        array (Hermes, Google ADK).  Append-only harnesses (Claude Code,
-        Cursor) cannot act on the hint, and the ~60 B/tool-call overhead is
-        pure waste.
+        Default: True (on). The ~60 B/tool-call overhead is negligible
+        compared to the token savings from dropping clean files from context.
+        Set False in append-only harnesses (Claude Code, Cursor) that
+        cannot act on the hint.
         """
-        return bool(self.get("mcp", "emit_context_hints", default=False))
+        return bool(self.get("mcp", "emit_context_hints", default=True))
 
     @property
     def mcp_cognitive_check_enabled(self) -> bool:

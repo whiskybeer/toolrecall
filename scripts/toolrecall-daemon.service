@@ -8,6 +8,10 @@ Type=simple
 ExecStart=python3 -m toolrecall daemon --foreground
 Restart=on-failure
 RestartSec=5
+# Allow more retries — stale-socket takeover can take a few attempts
+# before the old instance fully releases the port.
+StartLimitInterval=120s
+StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 

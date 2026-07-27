@@ -107,3 +107,14 @@ Changes:
 ## What's NOT Claimed (Verification Note)
 
 The context tracker append-only limitation is **architectural reasoning, not a measured result**. The cheap falsification: run a two-turn session with the MCP server registered vs. without; the first-turn input-token delta is the fixed schema cost ToolRecall must overcome before it breaks even. That measurement is straightforward but hasn't been run.
+
+---
+
+## P2 — Systemd Restart Loop on Stale UDS Socket (v0.8.17)
+
+**File:** `toolrecall/daemon.py:run_daemon()`
+**Status:** ✅ Fixed
+
+**Symptom:** After a clean daemon stop (e.g. `toolrecall daemon stop`), the UDS socket lingers briefly. When systemd's `Restart=always` starts a new instance, the ping test connects through the stale socket and gets a `pong` from the exiting daemon — triggering "refusing duplicate" + `sys.exit(0)`. After 3 such exits in 60 seconds, systemd's `StartLimitBurst=3` exhausts and marks the service `inactive (dead)` permanently. The forward proxy (port 8569) goes dark, and the WebUI gets `Connection error` for every API call.
+
+**Fix:** Before exiting on duplicate, verify the responding PID is actually alive with `os.kill(pid, 0)`. If `ProcessLookupError` is raised (PED is dead), treat the socket as stale and proceed with startup instead of committing suicide.

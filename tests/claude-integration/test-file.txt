@@ -1,0 +1,39 @@
+ToolRecall Claude Integration Test
+====================================
+Created: 2026-07-26
+Purpose: Test whether Claude Code uses MCP cached_read vs native Read
+
+This file contains a unique marker for cache tracking.
+Marker: TR-CLAUDE-INTEGRATION-TEST-v1
+
+Some sample configuration data:
+  - api_key: sk-test-toolrecall-integration
+  - endpoint: https://api.example.com/v1
+  - timeout: 30
+  - retries: 3
+
+Some code-like content:
+  function getConfig() {
+    return {
+      apiKey: process.env.API_KEY,
+      endpoint: "https://api.example.com/v1",
+      timeout: 30,
+      retries: 3
+    };
+  }
+
+  function fetchData(id) {
+    const config = getConfig();
+    return fetch(`${config.endpoint}/data/${id}`, {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      timeout: config.timeout
+    });
+  }
+
+Some sample data to verify byte-identical caching:
+Row,Name,Value,Description
+1,alpha,100,First parameter
+2,beta,200,Second parameter
+3,gamma,300,Third parameter
+4,delta,400,Fourth parameter
+5,epsilon,500,Fifth parameter

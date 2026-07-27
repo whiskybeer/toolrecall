@@ -168,12 +168,26 @@ This means:
 }
 ```
 
-**Test protocol (run when Anthropic API key is available):**
+**Test protocol (automated test — see `tests/claude-integration/`):**
 
-To settle whether file caching helps Claude Code empirically:
+An automated test runner is available at `tests/claude-integration/run-test.sh`:
+
+```bash
+cd tests/claude-integration
+bash run-test.sh
+```
+
+The test:
+1. Creates a CLAUDE.md with a multi-turn read/re-read task across 4+ files
+2. Records pre-test cache stats from the ToolRecall SQLite DB
+3. Runs `claude -p "..."` in the test directory
+4. Records post-test cache stats
+5. Reports whether cache hits on test files occurred
+
+**Manual protocol (if automated test fails):**
 
 1. Install Claude Code + ToolRecall on the same machine
-2. Configure `toolrecall mcp` as Claude Code's sole MCP server (above config)
+2. Configure `toolrecall mcp` as Claude Code's sole MCP server (see above)
 3. Start the ToolRecall daemon with `cache_stats` tracking enabled
 4. Give Claude Code a multi-turn task that re-reads the same file:
    ```

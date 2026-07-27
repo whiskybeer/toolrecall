@@ -263,7 +263,7 @@ CMD_TO_MCP = {
 class MCPBridge:
     """Liest MCP JSON-RPC von stdin, leitet an Daemon weiter, schreibt auf stdout."""
 
-    def __init__(self, socket_path: str = None, emit_context_hints: bool = False):
+    def __init__(self, socket_path: str = None, emit_context_hints: bool = True):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
         self._start_time = time.time()
         # abs path -> sha256 of the content this session has already sent.
@@ -279,6 +279,10 @@ class MCPBridge:
         # stubs we re-send full content so the agent can recover without
         # guessing bypass_cache=true.
         self._consecutive_stubs: dict[str, int] = {}
+        # Terminal output dedup: command string -> sha256 of output.
+        # Native Bash tool does NOT deduplicate; repeated identical output
+        # (git status, test runs, ls) re-enters context at full cost.
+        self._session_terminal: dict[str, str] = {}
         # Context hints (drop-clean-files) are only useful in harnesses that
         # own their message array (Hermes, ADK).  Append-only harnesses
         # (Claude Code, Cursor) cannot act on them — disable by default.
@@ -330,6 +334,27 @@ class MCPBridge:
 
         self._session_reads[key] = digest
         self._last_full_send[key] = time.time()
+        return resp
+
+    def _maybe_stub_terminal(self, command: str, resp: dict) -> dict:
+        """Replace terminal output with a stub when identical to last run.
+
+        Native Bash tool does NOT deduplicate command output.  Repeated
+        runs of idempotent commands (git status, which, pip list) re-send
+        identical output at full token cost.  This catches them.
+        """
+        if not command or "error" in resp:
+            return resp
+        content = resp.get("result", resp).get("output") if isinstance(resp.get("result", resp), dict) else None
+        if not isinstance(content, str):
+            return resp
+        digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+        if self._session_terminal.get(command) == digest:
+            return {"result": {
+                "unchanged": True,
+                "note": f'Command \"{command}\" returned identical output; see earlier result.',
+            }}
+        self._session_terminal[command] = digest
         return resp
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:
@@ -419,10 +444,6 @@ class MCPBridge:
                 continue
             if name in ("mcp_call", "mcp_list_servers") and not multiplex_enabled:
                 continue
-            # Context tracker tools are only useful when the harness owns its
-            # message array. Hide them in append-only environments.
-            if not self._emit_context_hints and name.startswith("context_"):
-                continue
             tools.append(tdef)
 
         return {
@@ -499,6 +520,10 @@ class MCPBridge:
             # dropped from the transcript after it enters)
             if tool_name in ("cached_read", "read_file") and not arguments.get("bypass_cache", False):
                 resp = self._maybe_stub(arguments.get("path", ""), resp)
+            # Terminal dedup: identical command output → stub (native Bash
+            # tool does not deduplicate; this is a genuine win)
+            if tool_name in ("cached_terminal", "terminal"):
+                resp = self._maybe_stub_terminal(arguments.get("command", ""), resp)
 
             # Extract result for presentation
             content = resp.get("result", resp)
@@ -562,7 +587,7 @@ def main():
         print("   Or:  toolrecall mcp --direct   (legacy standalone)", file=sys.stderr)
         sys.exit(1)
 
-    emit_hints = ping.get("emit_context_hints", False)
+    emit_hints = ping.get("emit_context_hints", True)
     bridge = MCPBridge(emit_context_hints=emit_hints)
 
     print("ToolRecall MCP Bridge v0.2.0", file=sys.stderr)

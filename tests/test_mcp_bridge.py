@@ -152,10 +152,8 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     # ── Tools/List ─────────────────────────────────────────
 
     def test_tools_list_returns_all_with_gates_open(self):
-        """When all gates enabled, all 17 tools are listed."""
-        # Create a bridge with context hints enabled so tracker tools show
-        hints_bridge = MCPBridge(self.sock_path, emit_context_hints=True)
-        resp = hints_bridge.handle_request({
+        """When all gates enabled, all 17 tools are listed (context tools always visible)."""
+        resp = self.bridge.handle_request({
             "jsonrpc": "2.0", "method": "tools/list", "id": 1
         })
         tools = resp["result"]["tools"]

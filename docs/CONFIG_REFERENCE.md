@@ -17,7 +17,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[cache.terminal_ttls]` | Per-command TTL overrides | Any command as key, TTL in seconds as value |
 | `[nginx]` | Optional nginx config generation | `site_name`, `domain`, `ssl` |
 | `[security]` | MCP security gates | `tool_access_control`, `dangerous_tool_keywords`, `cognitive_check_enabled`, `ast_check_enabled` |
-| `[mcp]` | MCP file/terminal access | `allowed_paths`, `allow_terminal`, `allow_invalidate`, `allowed_terminal_commands` |
+| `[mcp]` | MCP file/terminal access | `allowed_paths`, `allow_terminal`, `allow_invalidate`, `emit_context_hints`, `allowed_terminal_commands` |
 | `[mcp_multiplex]` | MCP Multiplexer settings | `enabled`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache` |
 | `[mcp_multiplex.servers_config]` | Custom server overrides | Any server name with `command`, `args`, `env`, `ttl` |
 | `[sources]` | Knowledge DB scanning | `scan_dirs`, `scan_extensions`, `scan_ignore`, `max_file_kb` |
@@ -65,6 +65,7 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `mcp_allowed_paths` | Default-deny read allowlist | `[]` |
 | `mcp_allow_terminal` | Allow shell execution | `true` |
 | `mcp_allow_invalidate` | Allow cache invalidation | `false` |
+| `mcp_emit_context_hints` | Append 🧹 drop-clean hints after tool calls | `true` |
 | `mcp_multiplex_servers` | Server names to multiplex | `[]` |
 | `mcp_multiplex_servers_config` | Resolved server configs | Registry + overrides |
 
@@ -84,6 +85,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_MCP_ALLOWED_PATHS` | `mcp.allowed_paths` | `TOOLRECALL_MCP_ALLOWED_PATHS=/home/user/projects` |
 | `TOOLRECALL_MCP_ALLOW_TERMINAL` | `mcp.allow_terminal` | `TOOLRECALL_MCP_ALLOW_TERMINAL=true` |
 | `TOOLRECALL_MCP_ALLOW_INVALIDATE` | `mcp.allow_invalidate` | |
+| `TOOLRECALL_MCP_EMIT_CONTEXT_HINTS` | `mcp.emit_context_hints` | `TOOLRECALL_MCP_EMIT_CONTEXT_HINTS=false` |
 | `TOOLRECALL_MCP_MULTIPLEX_ENABLED` | `mcp_multiplex.enabled` | |
 | `TOOLRECALL_MCP_MULTIPLEX_SERVERS` | `mcp_multiplex.servers` | `TOOLRECALL_MCP_MULTIPLEX_SERVERS=time,github` |
 | `TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE` | `mcp_multiplex.transparent_cache` | |

@@ -1523,7 +1523,11 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
 
     # Prevent duplicate instances: try to bind the socket.
     # If the socket file already exists and a daemon responds on it,
-    # refuse to start another one.
+    # verify the responding PID is actually alive before refusing.
+    # Without this check, a stale socket from a recently-exited daemon
+    # causes the new instance to exit with code 0, which under systemd
+    # Restart=always + StartLimitBurst=3 exhausts the restart budget
+    # and permanently darkens the forward proxy (port 8569).
     if not socket_path:
         socket_path = _default_socket_path()
     try:
@@ -1531,8 +1535,17 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         tc = TransportClient(socket_path)
         resp = tc.send({"cmd": "ping"}, timeout=1)
         if resp.get("pong"):
-            print(f"ToolRecall Daemon already running (PID {resp.get('pid', '?')}) — refusing duplicate.")
-            sys.exit(0)
+            pid = resp.get("pid", -1)
+            if isinstance(pid, int) and pid > 0:
+                try:
+                    os.kill(pid, 0)  # PID alive → real conflict
+                    print(f"ToolRecall Daemon already running (PID {pid}) — refusing duplicate.")
+                    sys.exit(0)
+                except ProcessLookupError:
+                    pass  # PID dead → socket is stale, take over
+            else:
+                # No valid PID in response — socket likely from a dead process
+                pass
     except (ConnectionRefusedError, FileNotFoundError, TimeoutError, OSError, Exception):
         pass  # Socket stale or absent — safe to start
     # Remove stale socket file if present

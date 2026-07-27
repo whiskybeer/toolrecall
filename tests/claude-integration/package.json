@@ -1,0 +1,14 @@
+{
+  "name": "toolrecall-claude-integration",
+  "version": "1.0.0",
+  "description": "Test project for Claude Code + ToolRecall integration test",
+  "main": "src/main.js",
+  "dependencies": {
+    "express": "^4.18.0",
+    "lodash": "^4.17.21"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node src/test.js"
+  }
+}

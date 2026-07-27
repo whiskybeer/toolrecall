@@ -157,10 +157,12 @@ allow_terminal = true
 allow_invalidate = false
 
 # Emit context-hint and stale-file markers after each tool call.
-# Only useful in harnesses that own their message array (Hermes, Google ADK).
-# Append-only harnesses (Claude Code, Cursor) cannot act on the hint.
-# Default: false — saves ~60 B/tool-call in append-only environments.
-emit_context_hints = false
+# The ~60 B/tool-call overhead is negligible compared to the token
+# savings from dropping clean files from context. Set false in
+# append-only harnesses (Claude Code, Cursor) that cannot act on
+# the hint.
+# Default: true.
+emit_context_hints = true
 
 # ═══ Terminal command regex allowlist ═══
 # Commands matching these patterns are eligible for terminal caching
