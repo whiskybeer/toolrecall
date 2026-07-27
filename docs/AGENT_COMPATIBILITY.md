@@ -10,7 +10,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 
 | Agent | MCP Bridge | Forward Proxy | Shim | Value | Notes |
 |-------|-----------|---------------|------|-------|-------|
-| **Hermes** | ✅ | ✅ | ✅ | **High** | Built-in native. Stateless, small context — biggest win. Context Tracker auto-hint after every tool call. |
+| **Hermes** | ✅ | ✅ | ✅ | **High** | Optimized for Hermes — stateless, small context = biggest win. Context Tracker auto-hint after every tool call. |
 | **OpenCode** | ✅ | ✅ | ❌ N/A (Node.js) | **High** | MCP multiplex is the killer feature. |
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
@@ -23,7 +23,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 
 ## Hermes (Nous Research) — ✅ Best-in-class
 
-ToolRecall is **built into Hermes** — the tools `read_file`, `terminal`, `mcp_call` are available directly (native MCP names). The internal daemon commands are `cached_read`, `cached_terminal`, etc. — both names work in the MCP bridge.
+ToolRecall is **built for Hermes** — the tools `read_file`, `terminal`, `mcp_call` are available directly (native MCP names). The internal daemon commands are `cached_read`, `cached_terminal`, etc. — both names work in the MCP bridge.
 
 **Why it works:**
 - Hermes is a stateless agent with limited context budget
