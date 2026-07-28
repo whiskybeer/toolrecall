@@ -41,6 +41,122 @@ from toolrecall._db import _hash
 def _init():
     _db_init(schema=SCHEMA)
 
+# DB integrity check: run every N seconds to catch corruption early.
+# Reset on each successful check so a single bad access doesn't cascade.
+_LAST_INTEGRITY_CHECK = 0.0
+_INTEGRITY_CHECK_INTERVAL = 600  # 10 minutes
+
+
+def _ensure_db_integrity():
+    """Run PRAGMA integrity_check periodically and attempt recovery on failure.
+
+    Called from _record() on every cache access, but only actually runs
+    every _INTEGRITY_CHECK_INTERVAL seconds.  If the check reveals a
+    malformed database, attempts recovery via:
+      1. Dumping the DB content to a backup
+      2. Deleting and recreating the DB
+      3. Re-running schema init
+
+    This is intentionally conservative — it only acts when the DB itself
+    reports corruption, not on transient SQL errors.
+    """
+    global _LAST_INTEGRITY_CHECK
+    now = time.time()
+    if now - _LAST_INTEGRITY_CHECK < _INTEGRITY_CHECK_INTERVAL:
+        return
+    _LAST_INTEGRITY_CHECK = now
+
+    import sqlite3 as _sqlite3
+    db_path = config.get("storage", "db_path", default="")
+    if not db_path:
+        return
+
+    try:
+        with _db() as conn:
+            if conn is None:
+                return
+            cursor = conn.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            if result and result[0] != "ok":
+                warnings.warn(f"ToolRecall: DB integrity check FAILED: {result[0]}. Attempting recovery...")
+                conn.close()
+                _recover_database(str(db_path))
+    except Exception as e:
+        msg = str(e)
+        if "database disk image is malformed" in msg or "malformed" in msg:
+            warnings.warn(f"ToolRecall: DB access triggered corruption detection. Attempting recovery...")
+            _recover_database(db_path)
+        else:
+            warnings.warn(f"ToolRecall: DB integrity check failed: {e}")
+
+
+def _recover_database(db_path: str):
+    """Attempt to recover a malformed SQLite database.
+
+    Strategy:
+      1. Dump recoverable content via ``.dump`` to a temp file.
+      2. Rename corrupt DB to .bak.
+      3. Recreate fresh DB.
+      4. Re-import dump (catches what's recoverable; corrupt pages are
+         silently dropped by .dump).
+    """
+    import subprocess
+    import sqlite3 as _sqlite3
+
+    backup_path = db_path + f".corrupt-{int(time.time())}.bak"
+    # Need the module-level config's db_path — resolve relative paths
+    if not os.path.isabs(db_path):
+        toolrecall_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_path = os.path.join(toolrecall_dir, db_path)
+    dump_path = db_path + ".dump"
+
+    try:
+        # 1. Dump what's recoverable
+        subprocess.run(
+            ["sqlite3", db_path, ".dump"],
+            stdout=open(dump_path, "w"), stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except Exception as e:
+        warnings.warn(f"ToolRecall: DB dump during recovery failed: {e}")
+        # Continue anyway — we'll create a fresh DB
+
+    try:
+        # 2. Backup corrupt DB
+        if os.path.exists(db_path):
+            os.rename(db_path, backup_path)
+        # Remove WAL/shm sidecars
+        for suf in ("-wal", "-shm", ".dump"):
+            sidecar = db_path + suf
+            if os.path.exists(sidecar):
+                os.remove(sidecar)
+
+        # 3. Recreate
+        from toolrecall._db import SCHEMA
+        conn = _sqlite3.connect(db_path, timeout=30.0)
+        conn.executescript(SCHEMA)
+        conn.commit()
+        conn.close()
+
+        # 4. Re-import dump if available
+        dump_sql = ""
+        if os.path.exists(dump_path):
+            with open(dump_path) as f:
+                dump_sql = f.read()
+            if dump_sql.strip():
+                try:
+                    conn2 = _sqlite3.connect(db_path, timeout=30.0)
+                    conn2.executescript(dump_sql)
+                    conn2.commit()
+                    conn2.close()
+                    warnings.warn(f"ToolRecall: DB recovery complete. Recovered data from {backup_path}")
+                except Exception as e:
+                    warnings.warn(f"ToolRecall: DB dump re-import failed (partial recovery): {e}")
+
+        _LAST_INTEGRITY_CHECK = time.time()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: DB recovery failed: {e}")
+
 config = load_config()
 
 
@@ -238,7 +354,10 @@ def _record(category, hit: bool, tokens_read: int = 0, path: str = "", tokens_sa
       the LLM context. This is a subset of tokens_saved — only counts
       reads that originate from agent tools (read_file, skill_view),
       not internal infrastructure reads (config, cron, cwd files).
+
+    Also triggers periodic DB integrity checks.
     """
+    _ensure_db_integrity()
     try:
         with _db() as conn:
             if hit:
@@ -1508,7 +1627,12 @@ def cached_api_check(request_hash: str) -> dict:
                     "tokens_not_read_from_disk": tokens_saved,
                 }
     except Exception as e:
-        warnings.warn(f"ToolRecall: api_cache check failed: {e}")
+        msg = str(e)
+        if "malformed" in msg:
+            warnings.warn(f"ToolRecall: api_cache check failed — DB corruption detected: {e}")
+            _recover_database(str(config.get("storage", "db_path", default="")))
+        else:
+            warnings.warn(f"ToolRecall: api_cache check failed: {e}")
 
     _record("api_cache", False)
     return {"cached": False}

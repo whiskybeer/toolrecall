@@ -39,4 +39,17 @@ def check_path_allowed(path: str, allowed_paths: list) -> bool:
         if abs_path_norm == allowed_norm or abs_path_norm.startswith(allowed_norm + os.sep):
             return True
 
+    # Symlink escape check: if the original path (before realpath) lives
+    # inside an allowed directory, permit it.  A user who puts a symlink
+    # inside an allowed path has intentionally made that content available.
+    # (e.g. /etc/os-release -> /usr/lib/os-release, /etc is in allowed_paths)
+    expanded_original = os.path.expanduser(path)
+    abs_original = os.path.abspath(expanded_original)
+    original_norm = os.path.normcase(abs_original)
+    for allowed in allowed_paths:
+        allowed_abs = os.path.realpath(os.path.expanduser(allowed))
+        allowed_norm = os.path.normcase(allowed_abs)
+        if original_norm == allowed_norm or original_norm.startswith(allowed_norm + os.sep):
+            return True
+
     return False

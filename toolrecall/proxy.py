@@ -432,8 +432,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         Returns (status_code, list_of_headers, body_bytes).
         """
         # SECURITY: Never fall back to plaintext HTTP for known API hosts.
+        # Loopback targets (localhost, 127.0.0.1, ::1) always use HTTP since
+        # the daemon proxy speaks HTTP on its local port.
+        is_loopback = host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
         try:
-            conn = http.client.HTTPSConnection(host, timeout=_FORWARD_TIMEOUT)
+            if is_loopback:
+                conn = http.client.HTTPConnection(host, timeout=_FORWARD_TIMEOUT)
+            else:
+                conn = http.client.HTTPSConnection(host, timeout=_FORWARD_TIMEOUT)
         except Exception as e:
             log.error("Cannot establish HTTPS connection to %s: %s", host, e)
             return 502, [("Content-Type", "application/json")], json.dumps({
@@ -493,10 +499,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         available as a single value).
         """
         import http.client
+        is_loopback = host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
         try:
-            conn = http.client.HTTPSConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
+            if is_loopback:
+                conn = http.client.HTTPConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
+            else:
+                conn = http.client.HTTPSConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
         except Exception as e:
-            log.error("Cannot establish HTTPS connection to %s: %s", host, e)
+            log.error("Cannot establish %s connection to %s: %s",
+                       "HTTP" if is_loopback else "HTTPS", host, e)
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
