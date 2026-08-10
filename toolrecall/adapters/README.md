@@ -8,7 +8,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 
 ## Available Adapters
 
-| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` | ✅ `ToolRecallCache` BaseCache | `pip install toolrecall[langchain]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |
+| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` | ✅ `ToolRecallCache` BaseCache | `pip install toolrecall[langchain]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |
 
 ---
 
@@ -141,6 +141,34 @@ toolrecall mcp              # Exposes cached tools via MCP
 - **Shared cache:** What one pane caches, another can hit.
 
 [Full docs →](../../docs/herdr.md)
+
+---
+
+## LiteLLM Proxy — Pre-Call Content Dedup
+
+```python
+# proxy_config.yaml
+litellm_settings:
+  callbacks: toolrecall.adapters.litellm.handler
+```
+
+Deduplicates repeated large content blocks within a single chat completion request.
+Typically hits when agent loops re-send identical tool output or file contents every
+turn. Keep-first strategy preserves provider prefix caching.
+
+- **~280 lines**, no deps beyond toolrecall + litellm
+- **Keep-first**: earlier messages never rewritten — provider prefix caching keeps hitting
+- **Deterministic**: same messages + same config = same output
+- **Protected tail**: last N messages (default 2) never stubbed
+- **Env config**: `TOOLRECALL_DEDUP_MIN_CHARS`, `TOOLRECALL_DEDUP_PROTECT_LAST`, `TOOLRECALL_DEDUP_DISABLED`
+
+> **⚠ Known limitation:** LiteLLM currently bypasses `async_pre_call_hook` on the
+> Anthropic-format `/v1/messages` endpoint ([#27518](https://github.com/BerriAI/litellm/issues/27518)).
+> Route through `/v1/chat/completions` for the hook to fire.
+
+> **Layer note:** Gateway dedup is *lossy compression* — it stubs and hopes the model
+> doesn't need the bytes back. For *lossless recall* (serve exact bytes on demand,
+> freshness tracking, cross-session state), use the [ToolRecall daemon](../../README.md).
 
 ---
 

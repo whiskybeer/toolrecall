@@ -286,10 +286,12 @@ class TestAdapterPackage:
 
     def test_import_all(self):
         """All adapters are importable from the package."""
-        from toolrecall.adapters import google_adk, langchain, herdr
+        from toolrecall.adapters import google_adk, langchain, herdr, litellm, odysseus
         assert google_adk is not None
         assert langchain is not None
         assert herdr is not None
+        assert litellm is not None
+        assert odysseus is not None
 
     def test_package_has_all(self):
         """__all__ lists all adapters."""
@@ -297,3 +299,38 @@ class TestAdapterPackage:
         assert "google_adk" in toolrecall.adapters.__all__
         assert "langchain" in toolrecall.adapters.__all__
         assert "herdr" in toolrecall.adapters.__all__
+        assert "litellm" in toolrecall.adapters.__all__
+        assert "odysseus" in toolrecall.adapters.__all__
+
+
+# ---- LiteLLM Adapter Tests -----------------------------------
+
+
+class TestLiteLLMAdapter:
+    """Test the LiteLLM dedup hook adapter."""
+
+    def test_import(self):
+        """Module imports without litellm installed."""
+        import toolrecall.adapters.litellm
+        assert toolrecall.adapters.litellm is not None
+        assert toolrecall.adapters.litellm._HAVE_LITELLM is False
+
+    def test_handler_instantiation(self):
+        """ToolRecallDedupHandler instantiates and exposes env defaults."""
+        from toolrecall.adapters.litellm import ToolRecallDedupHandler
+        h = ToolRecallDedupHandler()
+        assert h.min_chars == 800
+        assert h.protect_last == 2
+        assert h.enabled is True
+        assert h.total_requests_modified == 0
+
+    def test_dedup_messages_importable(self):
+        """dedup_messages pure function is importable."""
+        from toolrecall.adapters.litellm import dedup_messages
+        assert callable(dedup_messages)
+
+    def test_handler_is_module_level(self):
+        """handler instance exists at module level."""
+        import toolrecall.adapters.litellm
+        assert hasattr(toolrecall.adapters.litellm, "handler")
+        assert toolrecall.adapters.litellm.handler is not None

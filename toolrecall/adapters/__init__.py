@@ -10,6 +10,7 @@ connection, avoiding lock contention.
     langchain     — ToolRecallCache BaseCache subclass + auto-callback handler
     herdr         — Integration guide for herdr terminal multiplexer
     odysseus      — Agent tool + MCP server cache for Odysseus AI workspace
+    litellm       — Pre-call content dedup hook for LiteLLM proxy
 
 See README.md in this directory for detailed docs, examples, and architecture.
 
@@ -18,11 +19,13 @@ Usage:
     from toolrecall.adapters import langchain
     from toolrecall.adapters import herdr
     from toolrecall.adapters import odysseus
+    from toolrecall.adapters import litellm
 """
 
 from toolrecall.adapters import google_adk
 from toolrecall.adapters import langchain
 from toolrecall.adapters import herdr
 from toolrecall.adapters import odysseus
+from toolrecall.adapters import litellm
 
-__all__ = ["google_adk", "langchain", "herdr", "odysseus"]
+__all__ = ["google_adk", "langchain", "herdr", "odysseus", "litellm"]
