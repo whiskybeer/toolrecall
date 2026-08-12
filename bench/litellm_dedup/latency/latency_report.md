@@ -65,6 +65,46 @@ compatible stub** (no provider network), 100 iterations:
 > measured; end-to-end round-trip to a provider is provider-dominated and the
 > dedup delta is negligible there.
 
+---
+
+## Good news vs Bad news — what the numbers mean
+
+### Good news (the latency answer)
+
+| point | evidence |
+|-------|----------|
+| **Sub-millisecond in every config** | worst microbench p50 0.11 ms, p99 0.25 ms; full accumulating request p50 0.19 ms, p99 0.41 ms |
+| **Negligible vs provider round-trip** | any real LLM call is ~1 s+; 0.19 ms dedup = ~0.01–0.02% of one call |
+| **Clean, attributable mechanism** | cost is pure SHA-256 hashing of blocks ≥ `min_chars`; `small` (nothing hashed) = 4 µs |
+| **No request-path risk** | even at the high end it's a fraction of a ms; only matters at extreme req rates (>5k/s) |
+
+**So on the CTO's literal question ("anything in the request path gets asked
+about latency first") — this is good news: the hook is not a latency problem.**
+
+### Bad news (the product caveat, honestly)
+
+| point | evidence |
+|-------|----------|
+| **Worst case is also the least useful** | `wrap_varied`: re-wrapped (formatting-varying) blocks = *most* cost (106 µs p50) **and** *fewest* savings (fewer stubs). When whole-block matches break, we spend more and recover less. |
+| **Cost tracks bytes hashed, not value recovered** | every large block is hashed every request whether or not it stubs. Real savings depend on byte-identical duplicates existing in the first place. |
+| **Accumulating full request is the expensive regime** | 189 µs p50 (vs 67 µs single shape) — every re-read of every file is hashed per request. Agents that re-read everything pay the most. |
+| **We could NOT cleanly measure a wall-clock delta** | the +30 µs A/B local-path delta is inside noise (1 ms HTTP/JSON path); only the hook's own timer is trustworthy. So we can claim sub-ms *CPU*, not a measured request-latency delta. |
+
+### Verdict
+
+**Mixed, skewing good.** The number the CTO asked for first — "is the hook
+cheap on the request path?" — is answered cleanly: yes, sub-millisecond, ~0.01%
+of a provider round-trip. That is genuinely good news for the latency objection.
+
+The bad news is **not about latency** — it's about **value conditioning**: the
+same data that proves "cheap" (`wrap_varied`) also shows savings only materialize
+when whole blocks repeat byte-identically. So the latency answer is a green
+light, but it does not itself prove dedup *pays* on formatted-varied traffic.
+That's still the in-perimeter duplicate-ratio question, which the sweep script is
+built to answer on real traffic.
+
+---
+
 ## Files
 
 - `bench/litellm_dedup/latency/microbench.py` + `fixtures.py` + `test_microbench.py`
