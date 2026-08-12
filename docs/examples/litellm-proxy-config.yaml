@@ -1,0 +1,9 @@
+model_list:
+  - model_name: deepseek
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-flash
+      api_key: os.environ/OR_KEY
+litellm_settings:
+  callbacks: toolrecall.adapters.litellm.handler
+general_settings:
+  master_key: sk-bench

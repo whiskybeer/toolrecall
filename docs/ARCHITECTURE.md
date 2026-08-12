@@ -18,7 +18,8 @@ policy — all from a single background process.
 | **OS-level shim** | `.pth` file patches `open()`, `subprocess.run/Popen` in every Python process |
 | **Context Tracker** | Tracks dirty/clean files, auto-hints agents which files to drop from context |
 | **Security gate** | Path allowlist, terminal policy, sensitive-file blocklist — framework-agnostic |
-| **Framework adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus |
+| **LiteLLM proxy hook** | `async_pre_call_hook` dedup of repeated content blocks in gateway requests | `toolrecall/adapters/litellm.py` | opt-in, fails open, zero new deps |
+| **Framework adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
 | **Storage backends** | sqlite (default), libsql, or libsql-sync with Turso Cloud |
 | **Replay mode** | Record agent sessions, replay deterministically in CI |
 
