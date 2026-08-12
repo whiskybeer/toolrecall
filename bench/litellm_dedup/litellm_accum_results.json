@@ -1,0 +1,1894 @@
+{
+  "with_dedup": {
+    "label": "WITH dedup hook",
+    "disabled": false,
+    "total_prompt_tokens": 282688,
+    "total_cost_billed": 0.013387,
+    "total_cost_estimate": 0.042403,
+    "n_requests": 80,
+    "n_errors": 0,
+    "instances": [
+      {
+        "instance_id": "astropy__astropy-12907",
+        "repo": "astropy/astropy",
+        "base_commit": "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 423,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 1.64801e-05,
+            "latency_s": 2.76,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2206,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 4.59746e-05,
+            "latency_s": 2.68,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3994,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001673798,
+            "latency_s": 3.15,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2520,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.000171948,
+            "latency_s": 3.17,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4303,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001883609,
+            "latency_s": 1.26,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4303,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0001752793,
+            "latency_s": 0.86,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 4417,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2560,
+            "cost": 0.0001699383,
+            "latency_s": 1.0,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 4406,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 0.0002869258,
+            "latency_s": 0.79,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 26572,
+        "sum_cost_billed": 0.00122229,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "django__django-10914",
+        "repo": "django/django",
+        "base_commit": "e7fd69d051eaa67cb17f172a39b57253e9cb831a",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 272,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 1.93088e-05,
+            "latency_s": 1.7,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2144,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 4.17648e-05,
+            "latency_s": 1.13,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4021,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 7.76419e-05,
+            "latency_s": 0.65,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2475,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001688925,
+            "latency_s": 1.19,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4347,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002960013,
+            "latency_s": 2.53,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4347,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001913485,
+            "latency_s": 2.03,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 4461,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0001860075,
+            "latency_s": 0.72,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 4436,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001973916,
+            "latency_s": 1.84,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 26503,
+        "sum_cost_billed": 0.00117836,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "matplotlib__matplotlib-18869",
+        "repo": "matplotlib/matplotlib",
+        "base_commit": "b7d05919865fc0c37a0164cf467d5d5513bd0ede",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 450,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 1.83134e-05,
+            "latency_s": 1.23,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2235,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001525965,
+            "latency_s": 0.74,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4025,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002741375,
+            "latency_s": 0.88,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2982,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 9.8665e-05,
+            "latency_s": 0.91,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4767,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0002198665,
+            "latency_s": 0.87,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4767,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0002198665,
+            "latency_s": 1.66,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 4884,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0002278108,
+            "latency_s": 0.92,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 4059,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2816,
+            "cost": 0.0001325485,
+            "latency_s": 0.91,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 28169,
+        "sum_cost_billed": 0.0013438,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "mwaskom__seaborn-2848",
+        "repo": "mwaskom/seaborn",
+        "base_commit": "94621cef29f80282436d73e8d2c0aa76dab81273",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 287,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 2.03273e-05,
+            "latency_s": 2.35,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 1722,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 3.92742e-05,
+            "latency_s": 3.68,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3162,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002155398,
+            "latency_s": 2.46,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2080,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.000142072,
+            "latency_s": 1.27,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 3515,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001348557,
+            "latency_s": 1.26,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 3515,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 0.0001610189,
+            "latency_s": 2.5,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 3631,
+            "completion_tokens": 3,
+            "cache_read_tokens": 1536,
+            "cost": 0.0001685593,
+            "latency_s": 2.0,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 4053,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001713859,
+            "latency_s": 2.46,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 21965,
+        "sum_cost_billed": 0.00105303,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pallets__flask-4045",
+        "repo": "pallets/flask",
+        "base_commit": "d8c37f43724cd9fb0870f77877b7c4c7e38a19e0",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 88,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 6.8152e-06,
+            "latency_s": 0.88,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 1938,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001324302,
+            "latency_s": 2.46,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3793,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002583847,
+            "latency_s": 2.45,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2457,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001676703,
+            "latency_s": 0.79,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4307,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002932853,
+            "latency_s": 0.9,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4307,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002932853,
+            "latency_s": 1.12,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 4420,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0002093868,
+            "latency_s": 0.83,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 23,
+            "prompt_tokens": 5854,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0002805922,
+            "latency_s": 1.16,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 6,
+        "unique_file_blocks": 3,
+        "sum_prompt_tokens": 27164,
+        "sum_cost_billed": 0.00164185,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "psf__requests-1963",
+        "repo": "psf/requests",
+        "base_commit": "110048f9837f8441ea536804115e80b69f400277",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 205,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 1.47595e-05,
+            "latency_s": 0.76,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 1765,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001206835,
+            "latency_s": 1.61,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3330,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.000226947,
+            "latency_s": 0.98,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2049,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001399671,
+            "latency_s": 0.89,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 3609,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0001543199,
+            "latency_s": 1.36,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 3609,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3328,
+            "cost": 7.58303e-05,
+            "latency_s": 1.12,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 3716,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 0.0001746668,
+            "latency_s": 2.38,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 4251,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001848301,
+            "latency_s": 1.64,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 22534,
+        "sum_cost_billed": 0.001092,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pydata__xarray-3364",
+        "repo": "pydata/xarray",
+        "base_commit": "863e49066ca4d61c9adfe62aca3bf21b90e1af8c",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 171,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 1.24509e-05,
+            "latency_s": 4.96,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2069,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001413251,
+            "latency_s": 2.53,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3972,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002705388,
+            "latency_s": 2.25,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2434,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 6.14558e-05,
+            "latency_s": 1.0,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4332,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.00019033,
+            "latency_s": 1.26,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4332,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0001772484,
+            "latency_s": 2.32,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 4441,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4352,
+            "cost": 7.99967e-05,
+            "latency_s": 1.47,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 23,
+            "prompt_tokens": 7191,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0003713745,
+            "latency_s": 1.47,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 6,
+        "unique_file_blocks": 3,
+        "sum_prompt_tokens": 28942,
+        "sum_cost_billed": 0.00130472,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pylint-dev__pylint-5859",
+        "repo": "pylint-dev/pylint",
+        "base_commit": "182cc539b8154c0710fcea7e522267e42eba8899",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 364,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 1.2474e-05,
+            "latency_s": 1.68,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2286,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 5.14066e-05,
+            "latency_s": 1.05,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4213,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002869027,
+            "latency_s": 1.9,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 2661,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 7.68691e-05,
+            "latency_s": 1.45,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4583,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0002073729,
+            "latency_s": 0.98,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4583,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 0.0002989441,
+            "latency_s": 1.03,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 4699,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0002152493,
+            "latency_s": 3.89,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 4283,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001870029,
+            "latency_s": 1.02,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 27672,
+        "sum_cost_billed": 0.00133622,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pytest-dev__pytest-11143",
+        "repo": "pytest-dev/pytest",
+        "base_commit": "6995257cf470d2143ad1683824962de4071c0eb7",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 2045,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 4.81243e-05,
+            "latency_s": 1.71,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 4058,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002763782,
+            "latency_s": 2.6,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 6076,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0004134004,
+            "latency_s": 1.26,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4359,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 0.0001005921,
+            "latency_s": 2.0,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6372,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 0.0002372748,
+            "latency_s": 3.26,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6372,
+            "completion_tokens": 5,
+            "cache_read_tokens": 6144,
+            "cost": 0.0001195404,
+            "latency_s": 0.94,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 6490,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.000441511,
+            "latency_s": 1.28,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 6527,
+            "completion_tokens": 2,
+            "cache_read_tokens": 4352,
+            "cost": 0.0002211321,
+            "latency_s": 2.0,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 42299,
+        "sum_cost_billed": 0.00185795,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "scikit-learn__scikit-learn-10297",
+        "repo": "scikit-learn/scikit-learn",
+        "base_commit": "b90661d6a46aa3619d3eec94d5281f5888add501",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 488,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 3.39752e-05,
+            "latency_s": 0.68,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2399,
+            "completion_tokens": 2,
+            "cache_read_tokens": 0,
+            "cost": 0.0001632281,
+            "latency_s": 0.57,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4315,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4096,
+            "cost": 8.45229e-05,
+            "latency_s": 2.91,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 3069,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 0.0001961435,
+            "latency_s": 3.87,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4980,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0002212476,
+            "latency_s": 2.37,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4980,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2816,
+            "cost": 0.0001950844,
+            "latency_s": 1.12,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 5094,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0002289882,
+            "latency_s": 0.78,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 5543,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2816,
+            "cost": 0.0002333121,
+            "latency_s": 1.92,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 30868,
+        "sum_cost_billed": 0.0013565,
+        "n_errors": 0
+      }
+    ]
+  },
+  "without_dedup": {
+    "label": "WITHOUT dedup hook",
+    "disabled": true,
+    "total_prompt_tokens": 417256,
+    "total_cost_billed": 0.019135,
+    "total_cost_estimate": 0.062588,
+    "n_requests": 80,
+    "n_errors": 0,
+    "instances": [
+      {
+        "instance_id": "astropy__astropy-12907",
+        "repo": "astropy/astropy",
+        "base_commit": "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 423,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 1.64801e-05,
+            "latency_s": 1.15,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2206,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 4.59746e-05,
+            "latency_s": 3.48,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3994,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001673798,
+            "latency_s": 0.88,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4182,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 8.85738e-05,
+            "latency_s": 0.64,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 5965,
+            "completion_tokens": 5,
+            "cache_read_tokens": 5888,
+            "cost": 0.0001049867,
+            "latency_s": 1.05,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 5965,
+            "completion_tokens": 4,
+            "cache_read_tokens": 5888,
+            "cost": 0.0001048187,
+            "latency_s": 0.75,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 7741,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4096,
+            "cost": 0.0003171483,
+            "latency_s": 0.79,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 9392,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0006385568,
+            "latency_s": 1.09,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 39868,
+        "sum_cost_billed": 0.00148392,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "django__django-10914",
+        "repo": "django/django",
+        "base_commit": "e7fd69d051eaa67cb17f172a39b57253e9cb831a",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 272,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 1.93088e-05,
+            "latency_s": 1.14,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2144,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 4.17648e-05,
+            "latency_s": 2.8,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4021,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0001692131,
+            "latency_s": 2.08,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4226,
+            "completion_tokens": 2,
+            "cache_read_tokens": 3840,
+            "cost": 9.10574e-05,
+            "latency_s": 1.89,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6098,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0003102414,
+            "latency_s": 0.74,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6098,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4096,
+            "cost": 0.0002055886,
+            "latency_s": 1.01,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 7963,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0005415277,
+            "latency_s": 0.89,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 9689,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0006587231,
+            "latency_s": 1.05,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 40511,
+        "sum_cost_billed": 0.00203742,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "matplotlib__matplotlib-18869",
+        "repo": "matplotlib/matplotlib",
+        "base_commit": "b7d05919865fc0c37a0164cf467d5d5513bd0ede",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 450,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 3.1395e-05,
+            "latency_s": 1.08,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2235,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 4.79437e-05,
+            "latency_s": 2.48,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4025,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002741375,
+            "latency_s": 1.11,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4643,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0002114469,
+            "latency_s": 1.3,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6428,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4352,
+            "cost": 0.000214914,
+            "latency_s": 0.97,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6428,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 0.0002410772,
+            "latency_s": 0.77,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 8206,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0005580274,
+            "latency_s": 1.68,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 9042,
+            "completion_tokens": 3,
+            "cache_read_tokens": 6144,
+            "cost": 0.0003004974,
+            "latency_s": 0.76,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 41457,
+        "sum_cost_billed": 0.00187944,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "mwaskom__seaborn-2848",
+        "repo": "mwaskom/seaborn",
+        "base_commit": "94621cef29f80282436d73e8d2c0aa76dab81273",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 287,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 2.03273e-05,
+            "latency_s": 1.91,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 1722,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 3.92742e-05,
+            "latency_s": 2.18,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3162,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3072,
+            "cost": 5.85606e-05,
+            "latency_s": 1.21,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 3392,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3072,
+            "cost": 7.41776e-05,
+            "latency_s": 0.9,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 4827,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 0.0002501037,
+            "latency_s": 2.34,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 4827,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 0.0002501037,
+            "latency_s": 1.65,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 6255,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4608,
+            "cost": 0.0001900857,
+            "latency_s": 2.15,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 7989,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 0.0004648035,
+            "latency_s": 2.78,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 32461,
+        "sum_cost_billed": 0.00134744,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pallets__flask-4045",
+        "repo": "pallets/flask",
+        "base_commit": "d8c37f43724cd9fb0870f77877b7c4c7e38a19e0",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 88,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 6.8152e-06,
+            "latency_s": 1.72,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 1938,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001324302,
+            "latency_s": 0.76,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3793,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0001668135,
+            "latency_s": 0.73,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4187,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0001935661,
+            "latency_s": 1.16,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6037,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0004107523,
+            "latency_s": 0.79,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6037,
+            "completion_tokens": 5,
+            "cache_read_tokens": 5888,
+            "cost": 0.0001098755,
+            "latency_s": 1.73,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 7880,
+            "completion_tokens": 2,
+            "cache_read_tokens": 3584,
+            "cost": 0.0003522456,
+            "latency_s": 2.47,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 23,
+            "prompt_tokens": 11044,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0006591564,
+            "latency_s": 1.14,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 6,
+        "unique_file_blocks": 3,
+        "sum_prompt_tokens": 41004,
+        "sum_cost_billed": 0.00203165,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "psf__requests-1963",
+        "repo": "psf/requests",
+        "base_commit": "110048f9837f8441ea536804115e80b69f400277",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 205,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 1.47595e-05,
+            "latency_s": 0.74,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 1765,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1536,
+            "cost": 4.21939e-05,
+            "latency_s": 0.73,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3330,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3072,
+            "cost": 6.99678e-05,
+            "latency_s": 1.49,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 3495,
+            "completion_tokens": 3,
+            "cache_read_tokens": 0,
+            "cost": 0.0002378145,
+            "latency_s": 1.55,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 5055,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0003440745,
+            "latency_s": 3.52,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 5055,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3328,
+            "cost": 0.0001740137,
+            "latency_s": 2.31,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 6608,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4864,
+            "cost": 0.0002009728,
+            "latency_s": 1.55,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 8589,
+            "completion_tokens": 4,
+            "cache_read_tokens": 0,
+            "cost": 0.0005838651,
+            "latency_s": 0.99,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 34102,
+        "sum_cost_billed": 0.00166766,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pydata__xarray-3364",
+        "repo": "pydata/xarray",
+        "base_commit": "863e49066ca4d61c9adfe62aca3bf21b90e1af8c",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 171,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 1.24509e-05,
+            "latency_s": 0.79,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2069,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001413251,
+            "latency_s": 0.7,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 3972,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 7.43148e-05,
+            "latency_s": 0.71,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4216,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4096,
+            "cost": 7.78008e-05,
+            "latency_s": 0.89,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6114,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 0.0002197566,
+            "latency_s": 0.66,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6114,
+            "completion_tokens": 5,
+            "cache_read_tokens": 5888,
+            "cost": 0.0001151038,
+            "latency_s": 0.88,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 8005,
+            "completion_tokens": 5,
+            "cache_read_tokens": 7936,
+            "cost": 0.0001388499,
+            "latency_s": 1.1,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 23,
+            "prompt_tokens": 12537,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0007605311,
+            "latency_s": 1.28,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 6,
+        "unique_file_blocks": 3,
+        "sum_prompt_tokens": 43198,
+        "sum_cost_billed": 0.00154013,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pylint-dev__pylint-5859",
+        "repo": "pylint-dev/pylint",
+        "base_commit": "182cc539b8154c0710fcea7e522267e42eba8899",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 364,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 2.55556e-05,
+            "latency_s": 0.88,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2286,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 5.14066e-05,
+            "latency_s": 1.37,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4213,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0002869027,
+            "latency_s": 0.91,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4460,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4096,
+            "cost": 9.43684e-05,
+            "latency_s": 1.59,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6382,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.000329525,
+            "latency_s": 2.92,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6382,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.000329525,
+            "latency_s": 1.43,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 8297,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2048,
+            "cost": 0.0004595535,
+            "latency_s": 0.74,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 9680,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4352,
+            "cost": 0.0004357248,
+            "latency_s": 0.91,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 42064,
+        "sum_cost_billed": 0.00201256,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "pytest-dev__pytest-11143",
+        "repo": "pytest-dev/pytest",
+        "base_commit": "6995257cf470d2143ad1683824962de4071c0eb7",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 2045,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 4.81243e-05,
+            "latency_s": 0.73,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 4058,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 8.01542e-05,
+            "latency_s": 0.82,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 6076,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 0.0002171764,
+            "latency_s": 1.37,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 6247,
+            "completion_tokens": 5,
+            "cache_read_tokens": 5888,
+            "cost": 0.0001241345,
+            "latency_s": 0.6,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 8260,
+            "completion_tokens": 5,
+            "cache_read_tokens": 6144,
+            "cost": 0.0002477356,
+            "latency_s": 0.83,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 8260,
+            "completion_tokens": 5,
+            "cache_read_tokens": 1792,
+            "cost": 0.0004701228,
+            "latency_s": 1.26,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 10266,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0006979014,
+            "latency_s": 1.07,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 12191,
+            "completion_tokens": 5,
+            "cache_read_tokens": 3840,
+            "cost": 0.0006323849,
+            "latency_s": 0.78,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 57403,
+        "sum_cost_billed": 0.00251773,
+        "n_errors": 0
+      },
+      {
+        "instance_id": "scikit-learn__scikit-learn-10297",
+        "repo": "scikit-learn/scikit-learn",
+        "base_commit": "b90661d6a46aa3619d3eec94d5281f5888add501",
+        "turns": [
+          {
+            "turn": 1,
+            "n_messages": 3,
+            "prompt_tokens": 488,
+            "completion_tokens": 5,
+            "cache_read_tokens": 256,
+            "cost": 2.08936e-05,
+            "latency_s": 1.33,
+            "error": null
+          },
+          {
+            "turn": 2,
+            "n_messages": 6,
+            "prompt_tokens": 2399,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0001637321,
+            "latency_s": 0.74,
+            "error": null
+          },
+          {
+            "turn": 3,
+            "n_messages": 9,
+            "prompt_tokens": 4315,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0001760941,
+            "latency_s": 0.57,
+            "error": null
+          },
+          {
+            "turn": 4,
+            "n_messages": 11,
+            "prompt_tokens": 4859,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.0003307661,
+            "latency_s": 1.87,
+            "error": null
+          },
+          {
+            "turn": 5,
+            "n_messages": 14,
+            "prompt_tokens": 6770,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.000460523,
+            "latency_s": 0.72,
+            "error": null
+          },
+          {
+            "turn": 6,
+            "n_messages": 14,
+            "prompt_tokens": 6770,
+            "completion_tokens": 5,
+            "cache_read_tokens": 0,
+            "cost": 0.000460523,
+            "latency_s": 1.64,
+            "error": null
+          },
+          {
+            "turn": 7,
+            "n_messages": 17,
+            "prompt_tokens": 8674,
+            "completion_tokens": 5,
+            "cache_read_tokens": 2304,
+            "cost": 0.0004720702,
+            "latency_s": 1.28,
+            "error": null
+          },
+          {
+            "turn": 8,
+            "n_messages": 21,
+            "prompt_tokens": 10913,
+            "completion_tokens": 5,
+            "cache_read_tokens": 4096,
+            "cost": 0.0005325271,
+            "latency_s": 1.11,
+            "error": null
+          }
+        ],
+        "n_file_block_occurrences": 5,
+        "unique_file_blocks": 2,
+        "sum_prompt_tokens": 45188,
+        "sum_cost_billed": 0.00261713,
+        "n_errors": 0
+      }
+    ]
+  },
+  "config": {
+    "model": "openrouter/deepseek/deepseek-v4-flash",
+    "price_per_m_input": 0.15,
+    "n_instances": 10,
+    "turns_per_instance": 8,
+    "n_requests": 80,
+    "disabled": false,
+    "litellm_url": "http://localhost:4000/v1/chat/completions",
+    "dataset": "princeton-nlp/swe-bench-lite (test split)",
+    "hooks": "callbacks: toolrecall.adapters.litellm.handler"
+  },
+  "methodology": {
+    "version": "1.0",
+    "date": "2026-08-10T23:16:48.572062Z",
+    "description": "LiteLLM dedup measurement on real SWE-bench Lite instances",
+    "arms": {
+      "with_dedup": "LiteLLM proxy with toolrecall.adapters.litellm.handler callback",
+      "without_dedup": "Same proxy with TOOLRECALL_DEDUP_DISABLED=1 (hook passes through)"
+    },
+    "workload_description": "8-turn agent debugging conversation constructed from real SWE-bench instances. Each turn simulates a phase of an agent's workflow: read problem, read source files, re-read to trace flow, propose fix, re-read to verify, apply patch, re-read post-fix, run tests. File content at base_commit fetched from GitHub raw. 200-line truncated blocks (per SWE-bench convention).",
+    "token_counting": "usage.prompt_tokens from OpenAI-compatible /v1/chat/completions response. This is the provider-billed prompt token count. Cost estimate at $0.15/M input tokens.",
+    "verification": "Separate OpenRouter API keys per arm. Per-key billed spend visible on https://openrouter.ai/dashboard \u2014 cross-verifies reported token counts.",
+    "caveats": [
+      "Measures token savings, not task success rate. Opt-in design, protected_tail=2.",
+      "Hook only fires on /v1/chat/completions (litellm#27518 \u2014 /v1/messages not covered).",
+      "Request-level dedup, different from LiteLLM's response caching."
+    ],
+    "reproduce": "pip install litellm toolrecall datasets\npython3 measure_swebench.py --json > result.json\nMEASURE_INSTANCES=10 MEASURE_MAX_TURNS=8 MEASURE_MODEL=openrouter/deepseek/deepseek-v4-flash"
+  },
+  "note": "Accumulating agent loop: turn N = single request carrying turns 1..N. 10 SWE-bench Lite instances x 8 turns = 80 requests/arm. Model deepseek-v4-flash via LiteLLM proxy."
+}

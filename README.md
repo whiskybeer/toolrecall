@@ -69,7 +69,7 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
 | **File / Terminal Cache** | Reduce redundant reads within a turn; bounded context growth for stateless agents without built-in context management |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context |
 | **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
-| **LiteLLM Gateway Hook** | Dedup repeated content in proxy requests — **32.3% fewer prompt tokens / 30% lower billed cost, measured on 10 real SWE-bench Lite instances (billing-verified, OpenRouter)** |
+| **LiteLLM Gateway Hook** | Dedup repeated content in proxy requests — **32.3% fewer prompt tokens / 30% lower billed cost, measured on 10 real SWE-bench Lite instances (billing-verified, OpenRouter)** — [benchmark & methodology](bench/litellm_dedup/README.md) |
 
 Full detail in [Architecture](docs/ARCHITECTURE.md).
 
@@ -244,6 +244,7 @@ servers = ["time", "sequential-thinking"]
 - [Security Architecture](SECURITY.md) — policy gate, trust boundary
 - [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
 - [Benchmark](docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
+- [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) — gateway dedup hook: −32.3% prompt tokens / −30% cost, billing-verified
 - [Bench Infrastructure](bench/README.md) — reproduce the three-arm benchmark
 - [Test Suite](tests/README.md) — test runner documentation
 - [CLI Reference](docs/CLI.md) — all subcommands

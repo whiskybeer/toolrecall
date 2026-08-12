@@ -162,6 +162,17 @@ turn. Keep-first strategy preserves provider prefix caching.
 - **Protected tail**: last N messages (default 2) never stubbed
 - **Env config**: `TOOLRECALL_DEDUP_MIN_CHARS`, `TOOLRECALL_DEDUP_PROTECT_LAST`, `TOOLRECALL_DEDUP_DISABLED`
 
+**Measured (billing-verified, OpenRouter):** on an accumulating agent loop over
+10 real SWE-bench Lite instances (80 requests/arm, DeepSeek V4 Flash), the hook
+cut **−32.3% prompt tokens / −30% billed cost**, with prefix caching preserved
+(effective $/M unchanged). See the [benchmark & methodology](../../bench/litellm_dedup/README.md).
+
+> **Honesty:** the −32% is token/cost savings. Task quality (pass@1) is
+> **unverified** — the hook stubs content, and a quality A/B requires a model
+> that can actually solve the tasks; a baseline model scored 0 so no dedup
+> effect on pass@1 could be measured. The hook removes wasted tokens; it does
+> not claim to improve answers.
+
 > **⚠ Known limitation:** LiteLLM currently bypasses `async_pre_call_hook` on the
 > Anthropic-format `/v1/messages` endpoint ([#27518](https://github.com/BerriAI/litellm/issues/27518)).
 > Route through `/v1/chat/completions` for the hook to fire.
