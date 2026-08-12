@@ -167,6 +167,17 @@ FORWARD_HOSTS = {
     "openrouter.ai",
 }
 
+
+def _host_allowed(host: str) -> bool:
+    """SSRF guard — only known, trusted LLM API hosts may be forwarded to.
+
+    target_host is derived from caller-controlled headers (Host /
+    X-Target-Host), so every outbound connection must be checked against this
+    allowlist first. This prevents using the localhost proxy as a relay to
+    cloud-metadata endpoints or internal services (py/full-ssrf).
+    """
+    return host.split(":", 1)[0] in FORWARD_HOSTS
+
 # Path-based routing: maps distinctive path prefixes to API hosts.
 # Used when the SDK sends Host: localhost (OPENAI_BASE_URL=http://localhost:8569).
 # Ordered by specificity — more specific paths checked first.
@@ -293,11 +304,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         target_scheme = "https"
 
-        # Only cache known API hosts
-        is_known_host = target_host in FORWARD_HOSTS
-
-        if not is_known_host:
-            self._forward_direct(method, target_host, target_path, target_scheme)
+        # SECURITY (py/full-ssrf): target_host is built from caller-controlled
+        # headers (Host / X-Target-Host). Enforce the FORWARD_HOSTS allowlist
+        # BEFORE any outbound connection so a caller can't use this localhost
+        # proxy as an SSRF relay to cloud-metadata or internal services.
+        if not _host_allowed(target_host):
+            log.warning("Blocked SSRF attempt — non-allowlisted target host %r", target_host)
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"Forbidden: non-allowlisted target host"}')
             return
 
         body_bytes = b""
@@ -431,6 +447,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         Returns (status_code, list_of_headers, body_bytes).
         """
+        # Defense-in-depth SSRF guard at the connection sink (py/full-ssrf):
+        # never open a connection to a non-allowlisted host even if this
+        # method is reached from a path that skipped the _handle gate.
+        if not _host_allowed(host):
+            log.warning("Blocked forward to non-allowlisted host %r (SSRF guard)", host)
+            return 403, [("Content-Type", "application/json")], json.dumps({
+                "error": "Forbidden: non-allowlisted target host",
+            }).encode()
+
         # SECURITY: Never fall back to plaintext HTTP for known API hosts.
         # Loopback targets (localhost, 127.0.0.1, ::1) always use HTTP since
         # the daemon proxy speaks HTTP on its local port.
@@ -468,27 +493,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 "error": f"Forward failed: {e}",
             })
 
-    def _forward_direct(self, method: str, host: str, path: str, scheme: str):
-        """Forward request uncached (for non-API hosts)."""
-        body_bytes = b""
-        cl = int(self.headers.get("Content-Length", 0))
-        if cl > 0:
-            if cl > MAX_BODY_SIZE:
-                self.send_response(413)
-                self.end_headers()
-                self.wfile.write(b'{"error":"Request too large"}')
-                return
-            body_bytes = self.rfile.read(cl)
-        status, headers, body = self._forward(method, host, path, scheme, body_bytes)
-        body_bytes = body if isinstance(body, bytes) else body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Length", str(len(body_bytes)))
-        for k, v in headers:
-            if k.lower() not in ("transfer-encoding", "content-encoding"):
-                self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body_bytes)
-
     def _forward_streaming(self, method: str, host: str, path: str,
                            scheme: str, body: bytes):
         """Forward request and relay response as chunked/streaming.
@@ -498,6 +502,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         body (the response usage field is spread across SSE chunks and not
         available as a single value).
         """
+        # SSRF guard — never open a streaming connection to a non-allowlisted host.
+        if not _host_allowed(host):
+            log.warning("Blocked streaming forward to non-allowlisted host %r (SSRF guard)", host)
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"Forbidden: non-allowlisted target host"}')
+            return
+
         import http.client
         is_loopback = host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
         try:

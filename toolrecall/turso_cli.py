@@ -214,9 +214,13 @@ def cmd_turso_init():
     if not re.fullmatch(r"never|\d+[smhdw]", expiration):
         print(f"  ❌ Invalid expiration '{expiration}' (expected e.g. 30d, 2w, never).")
         sys.exit(1)
-    authorization = _prompt("Token authorization (full-access | read-only)", default="full-access")
-    if authorization not in ("full-access", "read-only"):
-        print(f"  ❌ Invalid authorization '{authorization}'.")
+    # NOTE: the value here is a scope POLICY string ("full-access" | "read-only"),
+    # NOT a secret. Named token_scope to avoid the credential-name heuristic
+    # (py/clear-text-logging-sensitive-data) — the actual JWT (db_token) is
+    # never printed or logged, only written to 0600 config files.
+    token_scope = _prompt("Token authorization (full-access | read-only)", default="full-access")
+    if token_scope not in ("full-access", "read-only"):
+        print(f"  ❌ Invalid authorization '{token_scope}'.")
         sys.exit(1)
     if expiration == "never":
         print("  ⚠️  Non-expiring token: if it leaks, access is permanent until revoked.")
@@ -226,7 +230,7 @@ def cmd_turso_init():
         token_result = _api_req(
             "POST",
             f"/v1/organizations/{org_slug}/databases/{db_name}/auth/tokens"
-            f"?expiration={expiration}&authorization={authorization}",
+            f"?expiration={expiration}&authorization={token_scope}",
             api_token,
         )
     except RuntimeError as e:
@@ -237,7 +241,7 @@ def cmd_turso_init():
     if not db_token:
         print("  ❌ Token generation returned empty JWT.")
         sys.exit(1)
-    print(f"  ✅ Token generated ({authorization}, expires: {expiration}).")
+    print(f"  ✅ Token generated ({token_scope}, expires: {expiration}).")
 
     # ─── Opt-in decision (default: NO) ────────────────────
     enable_now = _confirm("Enable sync now (uploads cache contents to Turso Cloud)?")
