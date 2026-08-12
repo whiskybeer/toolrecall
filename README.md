@@ -66,9 +66,10 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. Below the context wall, prefix caching competes; above it TR wins on cost by not exhausting. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
-| **File / Terminal Cache** | Reduce redundant reads within a turn. 73-91% token reduction for stateless agents without built-in context management |
+| **File / Terminal Cache** | Reduce redundant reads within a turn; bounded context growth for stateless agents without built-in context management |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context |
-| **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus |
+| **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
+| **LiteLLM Gateway Hook** | Dedup repeated content in proxy requests — **32.3% fewer prompt tokens / 30% lower billed cost, measured on 10 real SWE-bench Lite instances (billing-verified, OpenRouter)** |
 
 Full detail in [Architecture](docs/ARCHITECTURE.md).
 
@@ -112,14 +113,14 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 
 ## When To Use It
 
-|| You want this... | Use this... | Works for |
-||-----------------|-------------|-----------|
-|| Warm MCP servers across sessions | MCP Multiplexer | Any agent |
-|| $0 dev loops — repeated API calls cost nothing | Forward Proxy | Any agent |
-|| Deterministic CI tests for agent behavior | Replay Mode | Any agent |
-|| Guardrails between agents and your machine | Security Gate | Any agent |
-||| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents (Hermes, Cline, ADK) — measured 73-91% fewer repeat tokens. **Not** for agents with built-in context management |
-|| All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
+| You want this... | Use this... | Works for |
+|-----------------|-------------|-----------|
+| Warm MCP servers across sessions | MCP Multiplexer | Any agent |
+| $0 dev loops — repeated API calls cost nothing | Forward Proxy | Any agent |
+| Deterministic CI tests for agent behavior | Replay Mode | Any agent |
+| Guardrails between agents and your machine | Security Gate | Any agent |
+| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents (Hermes, Cline, ADK) — bounded context growth. **Not** for agents with built-in context management |
+| All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
 
 ---
 

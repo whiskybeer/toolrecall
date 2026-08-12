@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`toolrecall.adapters.litellm`** — LiteLLM Gateway Hook: stubs byte-identical duplicate large text blocks per request (keep-first, `protected_tail=2`, fails-open). Measured on **10 real SWE-bench Lite instances × 8 accumulated turns (80 requests/arm, DeepSeek V4 Flash via OpenRouter, billing-verified)**: **32.3% fewer prompt tokens** (282,688 → 417,256) and **30.0% lower billed cost** ($0.0134 → $0.0191), with no prefix-cache damage (effective $/M $0.0474 vs $0.0459). Savings are a curve that grows with session length (0% turns 1–3, ~50% by turn 8).
+
+### Changed
+- **README token-savings wording corrected** — removed the synthetic harness's "73–91%" and "~97%" request-token figures (those came from a codegen loop, not real tasks). The only billing-verified figure stated is the LiteLLM Gateway Hook's **32.3%/30%** from real SWE-bench Lite. File / Terminal Cache row now describes bounded context growth qualitatively without an unverified percentage.
+
 ## [0.8.17] — 2026-07-27
 
 ### Added
