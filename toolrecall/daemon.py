@@ -956,9 +956,7 @@ class DaemonServer:
             if cmd == "cached_read":
                 return self._handle_read(request)
             elif cmd == "cached_shell_exec":
-                from toolrecall.cache import cached_shell_exec
-                result = cached_shell_exec(request.get("command", ""))
-                return result
+                return self._handle_shell_exec(request)
             elif cmd == "cached_terminal":
                 return self._handle_terminal(request)
             elif cmd == "cached_skill":
@@ -1122,6 +1120,29 @@ class DaemonServer:
         result = _cache_read(path, source=source)
         if result and not result.get("error"):
             self._context.mark_read(path)
+        return result
+
+    def _handle_shell_exec(self, req: dict) -> dict:
+        """Route a wrapped shell command through the same terminal security gate.
+
+        Mirrors _handle_terminal: the wrapper-stripped inner command is checked
+        against the SecurityGate (allow_terminal + allowed_terminal_commands
+        regex allowlist) BEFORE execution. Prevents the cached_shell_exec path
+        from bypassing the terminal policy that cached_terminal enforces.
+        """
+        command = req.get("command", "")
+        if not command:
+            return {"error": "Missing 'command'"}
+        from toolrecall.cache import _strip_shell_wrapper
+        inner = _strip_shell_wrapper(command) or command
+        err = self.security.check_terminal(inner)
+        if err:
+            return {"error": err}
+        from toolrecall.cache import cached_shell_exec
+        result = cached_shell_exec(command)
+        # Record mcp_cache stats when request originates from MCP bridge
+        if req.get("mcp_origin"):
+            _cache_record("mcp_cache", hit=result.get("cached", False), path=inner)
         return result
 
     def _handle_terminal(self, req: dict) -> dict:

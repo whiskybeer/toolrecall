@@ -118,30 +118,13 @@ dangerous_tool_keywords = []
 #      as a secondary safety net within allowed paths
 #
 # For best security: list only directories the agent needs to read.
+# Default-deny: an empty list means NO paths are readable. The blocklist
+# (.env, .ssh/, *.pem) is a secondary safety net within allowed paths.
+# Avoid broad system dirs like /etc or /dev — a compromised agent could
+# read system config / device files under them.
 allowed_paths = [
-    "~", "/etc", "/dev",
+    "~",
 ]
-
-# ─── Cache Key Normalization (v0.9.0) ────────
-# When enabled, tool call arguments are normalized before cache key
-# generation: keys are sorted, whitespace stripped, non-semantic fields
-# (timestamps, session IDs, etc.) are removed.
-# This broadens cache hits when agents rephrase or reorder arguments.
-# ⚠️ Changing this setting invalidates existing cache entries.
-[norm]
-enabled = false
-
-# Sort lists of primitive types (str, int, float, bool, None) during
-# normalization.  True (default) broadens cache hits across reordered
-# tool arguments.  Set False to preserve argument order, which matters
-# for positional CLI args (e.g. `["src", "dst"]` vs `["dst", "src"]`).
-sort_lists = true
-
-# Strip leading/trailing whitespace from string values during normalization.
-# True (default) broadens cache hits across minor formatting differences.
-# Set False to preserve significant whitespace (e.g. patches that differ
-# only in trailing newlines).
-strip_strings = true
 
 # Whether to cache terminal command output via the shim.
 # When enabled, every subprocess.run()/Popen() call is cached through the
@@ -152,8 +135,9 @@ strip_strings = true
 # This does NOT execute commands — it only caches their output. The shim intercepts
 # the subprocess call, asks the daemon if output is cached, and returns cached output
 # if available (or passes through the real command and caches the result).
-# Default: true (enabled — safe for desktop/VMs, use false for shared/multi-tenant)
-allow_terminal = true
+# Default: false (opt-in — safe default for shared/multi-tenant and
+# paranoia. Set true only if you need the terminal caching shim).
+allow_terminal = false
 allow_invalidate = false
 
 # Emit context-hint and stale-file markers after each tool call.
@@ -204,6 +188,27 @@ allowed_terminal_commands = [
     "^du\\s",
     "^crontab\\s",
 ]
+
+# ─── Cache Key Normalization (v0.9.0) ────────
+# When enabled, tool call arguments are normalized before cache key
+# generation: keys are sorted, whitespace stripped, non-semantic fields
+# (timestamps, session IDs, etc.) are removed.
+# This broadens cache hits when agents rephrase or reorder arguments.
+# ⚠️ Changing this setting invalidates existing cache entries.
+[norm]
+enabled = false
+
+# Sort lists of primitive types (str, int, float, bool, None) during
+# normalization.  True (default) broadens cache hits across reordered
+# tool arguments.  Set False to preserve argument order, which matters
+# for positional CLI args (e.g. `["src", "dst"]` vs `["dst", "src"]`).
+sort_lists = true
+
+# Strip leading/trailing whitespace from string values during normalization.
+# True (default) broadens cache hits across minor formatting differences.
+# Set False to preserve significant whitespace (e.g. patches that differ
+# only in trailing newlines).
+strip_strings = true
 
 # ─── MCP Multiplexer — Security-sensitive servers are opt-in ──
 #

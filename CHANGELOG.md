@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+- **`cached_shell_exec` now gated by `SecurityGate.check_terminal`** — the daemon's `cached_shell_exec` dispatch previously executed commands with **no** terminal allowlist check (unlike `cached_terminal`), so a client could run shell commands even with `allow_terminal=false` or outside `allowed_terminal_commands`. It now routes through `_handle_shell_exec`, which strips agent wrappers and gates the inner command identically to `_handle_terminal`. Regression tests: `tests/test_shell_exec_gate.py`.
+- **Shipped `config.toml` defaults hardened** — removed broad `allowed_paths` entries `/etc` and `/dev` (now `["~"]` only) and set `allow_terminal = false` (opt-in). Also fixed a pre-existing TOML section-placement bug so `allow_terminal`, `allow_invalidate`, `emit_context_hints`, and `allowed_terminal_commands` actually parse under `[mcp]` where the code reads them.
+
 ### Added
 - **`toolrecall.adapters.litellm`** — LiteLLM Gateway Hook: stubs byte-identical duplicate large text blocks per request (keep-first, `protected_tail=2`, fails-open). Measured on **10 real SWE-bench Lite instances × 8 accumulated turns (80 requests/arm, DeepSeek V4 Flash via OpenRouter, billing-verified)**: **32.3% fewer prompt tokens** (282,688 → 417,256) and **30.0% lower billed cost** ($0.0134 → $0.0191), with no prefix-cache damage (effective $/M $0.0474 vs $0.0459). Savings are a curve that grows with session length (0% turns 1–3, ~50% by turn 8).
 

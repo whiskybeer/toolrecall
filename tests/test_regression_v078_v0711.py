@@ -407,20 +407,32 @@ class TestMCPCacheFSRealDaemon(unittest.TestCase):
         except Exception:
             self.daemon_available = False
 
-    def test_daemon_allowed_paths_includes_etc(self):
-        """The daemon should have /etc in allowed_paths."""
-        if not self.daemon_available:
-            self.skipTest("ToolRecall daemon not running")
-        paths = self.ping.get("allowed_paths", [])
-        self.assertIn("/etc", paths, "/etc should be in daemon allowed_paths")
-        self.assertIn("/dev", paths, "/dev should be in daemon allowed_paths")
+    def test_shipped_config_excludes_broad_system_dirs(self):
+        """The shipped config.toml must NOT allow broad system dirs (/etc, /dev).
 
-    def test_daemon_allow_terminal_true(self):
-        """The daemon should have allow_terminal=True."""
-        if not self.daemon_available:
-            self.skipTest("ToolRecall daemon not running")
-        self.assertTrue(self.ping.get("allow_terminal", False),
-                        "allow_terminal should be True")
+        Hardened default (v0.8.18): the package default config only allows home
+        and drops the permissive /etc and /dev entries a compromised agent could
+        use to read system config / device files. Verified against the shipped
+        file (deterministic) rather than a live daemon.
+        """
+        import tomllib
+        cfg_path = os.path.join(os.path.dirname(__file__), "..", "toolrecall", "config.toml")
+        with open(cfg_path, "rb") as f:
+            cfg = tomllib.load(f)
+        allowed = cfg.get("mcp", {}).get("allowed_paths", [])
+        self.assertNotIn("/etc", allowed, "/etc should NOT be a shipped default")
+        self.assertNotIn("/dev", allowed, "/dev should NOT be a shipped default")
+        # sanity: "~" is fine to keep as the usable out-of-box default
+        self.assertIn("~", allowed, "~ should remain a usable default")
+
+    def test_shipped_config_allow_terminal_false(self):
+        """The shipped config.toml must default allow_terminal=false (opt-in)."""
+        import tomllib
+        cfg_path = os.path.join(os.path.dirname(__file__), "..", "toolrecall", "config.toml")
+        with open(cfg_path, "rb") as f:
+            cfg = tomllib.load(f)
+        enabled = cfg.get("mcp", {}).get("allow_terminal", True)
+        self.assertFalse(enabled, "shipped allow_terminal should default to False (opt-in)")
 
 
 if __name__ == "__main__":
