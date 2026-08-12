@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "n_turns": 8,
+    "iters": 100,
+    "stub": "local stdlib OpenAI-compatible, no provider network",
+    "note": "local-path only (hook+dispatch). Total provider round-trip not measured here (no key)."
+  },
+  "WITHOUT": {
+    "path_n": 800,
+    "path_mean_us": 1072.79,
+    "path_p50_us": 976.64,
+    "path_p95_us": 1341.33,
+    "path_p99_us": 3636.66
+  },
+  "WITH": {
+    "hook_n": 800,
+    "hook_mean_us": 190.43,
+    "hook_p50_us": 189.12,
+    "hook_p95_us": 321.41,
+    "hook_p99_us": 407.93,
+    "path_n": 800,
+    "path_mean_us": 1066.5,
+    "path_p50_us": 1006.99,
+    "path_p95_us": 1317.5,
+    "path_p99_us": 1619.35
+  },
+  "delta": {
+    "path_p50_us_delta": 30.35,
+    "path_p99_us_delta": -2017.31,
+    "hook_p50_us": 189.12,
+    "hook_p99_us": 407.93
+  }
+}
