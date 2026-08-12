@@ -15,7 +15,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
-| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ✅ | ❌ | **Selective** | Tested: file caching via MCP increases cost 2.4×. Forward proxy and multiplex are verified. |
+| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ✅ | ❌ | **Selective** | Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Distinct from provider prefix caching, which complements TR on stateless agents. |
 | **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
 | **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
 
@@ -145,6 +145,10 @@ A controlled A/B test (Claude Code Sonnet 5, edit-heavy task, n=2 per arm, adopt
 | Turns | 32 | 56 | **1.8×** |
 | Cost (USD) | $0.57 | $1.34 | **2.4×** |
 | Wall time | 61 s | 187 s | **3.1×** |
+
+Cost is **real billed API usage** (`total_cost_usd` from each run's Claude API JSON; means of 2 runs/arm: A=$0.644/$0.490, B=$1.122/$1.555). n=2 per arm, one model (Sonnet 5), one edit-heavy task, adoption forced — adequate for a directional 2.4× result, not for effect-size precision.
+
+> **Scope note — this is a different result from the prefix-caching benchmark.** The 2.4× is about *ToolRecall's file cache being routed through MCP as tools inside Claude Code*, an append-only harness that can't drop context. The provider-prefix-caching finding is an *API-layer* result on stateless agents where the Context Tracker can drop clean files — there, provider prefix caching is orthogonal and complements TR. One does not contradict the other; they describe different cache layers for different harnesses.
 
 **Root causes:**
 1. **`patch` has no `replace_all`** — a 29-site rename became 58 sequential single-occurrence patch calls vs. a few native `replace_all` edits. Each extra turn re-bills the full growing context under Anthropic prompt caching.
