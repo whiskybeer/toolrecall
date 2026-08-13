@@ -6,7 +6,7 @@ You run agents. Every session spawns its own MCP servers, every test run hits li
 
 ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
 
-**One warm daemon instead of five cold Node processes.** ~132 KB install. Python 3.11+ stdlib only.
+**One warm daemon instead of five cold Node processes.** Under 200 KB install. Python 3.11+ stdlib only.
 
 > **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
@@ -16,6 +16,17 @@ toolrecall setup          # One-shot: config -> systemd -> daemon start
 ```
 
 > **Zero config mode:** Every `toolrecall` command auto-starts the daemon if it isn't running. You never need to think about it.
+
+---
+
+## Why ToolRecall — stop paying for tokens you already saw
+
+Two capabilities are the reason to run it. Both are measured, both target the same waste: your agent re-encountering content that's already in its context.
+
+| Capability | What it does | Measured |
+|-----------|--------------|----------|
+| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (measured on real runs, prefix-caching model) — [Context Tracker](#context-tracker) |
+| **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
 
 ---
 
@@ -72,6 +83,61 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
 | **LiteLLM Gateway Hook** | Dedup repeated content in proxy requests — **32.3% fewer prompt tokens / 30% lower billed cost, measured on 10 real SWE-bench Lite instances (billing-verified, OpenRouter)** — [benchmark & methodology](bench/litellm_dedup/README.md) |
 
 Full detail in [Architecture](docs/ARCHITECTURE.md).
+
+---
+
+## Context Tracker
+
+> **TL;DR:** ToolRecall caches file reads so re-reading is instant (~0.1ms). The Context Tracker adds **dirty-file awareness**: the agent drops old file content from its context window and re-reads on demand from cache — keeping context bounded and breaking the O(n²) attention-cost snowball.
+
+Every turn, an agent appends all prior tool output to its history, and the LLM computes attention over the whole sequence — **O(n²) in tokens**. ToolRecall caches the *I/O* but not the *context window*; without help, file content the agent read ten turns ago still sits in context as redundant overhead.
+
+The Context Tracker records which files were **written** (made *dirty*) since a user-defined checkpoint. Clean files (read but not modified) are safe to drop: a cache hit returns the same content in ~0.1ms, so dropping costs nothing.
+
+| Category | Meaning | Agent action |
+|----------|---------|--------------|
+| **Dirty** | Modified by the agent since checkpoint | **Keep** — uncommitted work |
+| **Clean** | Read but not modified | **Drop from context**, re-read from cache if needed |
+| **Untracked** | Never read | Not in context — no action |
+
+**Available in the MCP Bridge as five tools** — `context_set_checkpoint`, `context_get_dirty`, `context_get_stats`, `context_reset`, `context_get_hint`. The bridge **auto-appends a hint to every tool response** telling the agent which clean files to drop, so no agent-side config is required beyond the pattern.
+
+**Measured, not modeled.** On real runs (Hermes agent, DeepSeek V4 Flash — a model with prefix caching already on), the tracker sent **9.5× fewer request tokens per turn** (8,077 vs 76,430 at turn 10) and the session ran **7.4× longer** (140 vs 19 turns) before hitting the context wall. Because it shrinks the context window itself — not just what the provider caches — the benefit holds for **prefix and non-prefix models alike**.
+
+How far it goes depends on the workload: an agent that rewrites whole files every turn saves less than one that re-reads the same files. The table below is the **modeled ceiling** — it assumes an idealized re-read-heavy agent that drops every clean file each turn (~7 files/turn):
+
+| Agents × Turns | Baseline (attention pairs) | With Tracker (every-turn drops) | Reduction |
+|:---:|:---:|:---:|:---:|
+| 1 × 30 | 1.27T | 127B | **90%** |
+| 5 × 30 | 6.35T | 635B | **90%** |
+| 10 × 30 | 12.7T | 1.27T | **90%** |
+| 20 × 30 | 25.4T | 2.54T | **90%** |
+| 10 × 100 | 171T | 4.23T | **97.5%** |
+
+**Read this number carefully:** the ~90% (up to 97.5%) is a **modeled upper bound** for an idealized re-read-heavy session — **not** a measured benchmark. The measured headline is the **9.5× fewer tokens / 7.4× longer endurance** above. Two caveats hold either way: the daemon can't *force* the agent to drop — it provides the data, the agent must act on it — and append-only harnesses (Claude Code, Cursor) can't use the tracker at all. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
+
+Full detail: [Context Tracker](docs/CONTEXT_TRACKER.md) · [Agent integration](docs/AGENTS.md) · [Stale-file detection](docs/CONTEXT_STALE.md)
+
+---
+
+## Input Dedup Hook
+
+> **TL;DR:** AI agents re-read the same files over and over, and every read pastes that file into the message they send to the model. This hook removes the repeated copies before they're billed — cutting input tokens with cost measured, not estimated.
+
+**Why this matters, in plain English.** When an agent works on a task it re-reads the same files many times, and each read sends that file's contents to the model again. On a long session the same file can be sent five, ten, twenty times — and normal billing charges you for *every* copy. The hook keeps the **first** copy (so the model still has the information, and the provider's own caching stays intact) and turns every later repeat into a short note like *"same content as before — see message 4."* You pay for each block once, not once per read. How much you save depends on your agent: one that re-reads the same files a lot saves the most.
+
+| Metric (80 req/arm, SWE-bench Lite × 8 turns) | WITH dedup | WITHOUT dedup | Saved |
+|---|---|---|---|
+| **Total prompt tokens** | 282,688 | 417,256 | **134,568 (−32.3%)** |
+| **Billed cost (OpenRouter)** | $0.0134 | $0.0191 | **$0.0057 (−30.0%)** |
+
+**Prefix caching preserved.** Effective per-token rate is near-identical between arms (Δ $0.0015/M) — the keep-first design stubs only *later* duplicates, so each block's first occurrence is byte-identical to the non-dedup arm. The honest shape of the method: it saves on *re-reads* (savings appear from turn 4, growing to **−49.9%** by turn 8), not first reads.
+
+**Honesty (stated explicitly):** token savings are **billing-verified**; **task-quality is not**. A SWE-bench pass@1 A/B was attempted but inconclusive (the baseline model scored 0 on the chosen tasks even in isolation), so the defensible claim is: *"the hook removes wasted input tokens; its effect on task success is unverified."* Savings are also workload-dependent — an agent that rewrites whole files each turn saves less.
+
+**Zero-trust customer triage:** `bench/litellm_dedup/measure_duplicates.py` measures *your own* duplicate ratio from a JSONL export of your request bodies, entirely inside your perimeter, no network, no API key — so you know what you'd save before any pilot. It reports volume stubbable, deliberately *not* billed-$, because real savings depend on prefix-cache economics.
+
+Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md)
 
 ---
 
