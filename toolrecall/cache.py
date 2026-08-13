@@ -26,7 +26,6 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 (English ~4 chars/token, code ~2 char/token → weighted average ~3)
 """
 import os
-import re
 import time
 import warnings
 from datetime import datetime
@@ -66,7 +65,6 @@ def _ensure_db_integrity():
         return
     _LAST_INTEGRITY_CHECK = now
 
-    import sqlite3 as _sqlite3
     db_path = config.get("storage", "db_path", default="")
     if not db_path:
         return
@@ -84,7 +82,7 @@ def _ensure_db_integrity():
     except Exception as e:
         msg = str(e)
         if "database disk image is malformed" in msg or "malformed" in msg:
-            warnings.warn(f"ToolRecall: DB access triggered corruption detection. Attempting recovery...")
+            warnings.warn("ToolRecall: DB access triggered corruption detection. Attempting recovery...")
             _recover_database(db_path)
         else:
             warnings.warn(f"ToolRecall: DB integrity check failed: {e}")

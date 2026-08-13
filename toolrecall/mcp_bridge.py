@@ -437,13 +437,13 @@ class MCPBridge:
                     f"  cache_status: view cache statistics\n"
                     f"  terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
                     f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n"
-                    + (f"  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
-                       f"    Context Tracker — bound your context window.\n"
-                       f"    Pattern: context_set_checkpoint → read files → work → "
-                       f"context_get_dirty → drop 'clean' files from context → "
-                       f"context_set_checkpoint again.\n"
+                    + ("  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
+                       "    Context Tracker — bound your context window.\n"
+                       "    Pattern: context_set_checkpoint → read files → work → "
+                       "context_get_dirty → drop 'clean' files from context → "
+                       "context_set_checkpoint again.\n"
                        if self._emit_context_hints else "")
-                    + f"\nStart daemon: toolrecall daemon &"
+                    + "\nStart daemon: toolrecall daemon &"
                 ),
             }
         }
@@ -645,7 +645,7 @@ def main():
         pass
     if _prev_hash and _prev_hash != daemon_hash:
         print(f"  ⚠ Config changed since last connection (#{_prev_hash[:16]} → #{daemon_hash}).", file=sys.stderr)
-        print(f"    The old daemon may have been stale. Run 'toolrecall daemon stop && toolrecall daemon' to confirm.", file=sys.stderr)
+        print("    The old daemon may have been stale. Run 'toolrecall daemon stop && toolrecall daemon' to confirm.", file=sys.stderr)
     try:
         os.makedirs(os.path.dirname(_config_hash_store), exist_ok=True)
         with open(_config_hash_store, "w") as _f:

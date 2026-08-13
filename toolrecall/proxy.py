@@ -551,7 +551,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
             # Relay body chunk by chunk — SSE lines or raw bytes
-            buf = resp if hasattr(resp, "readline") else resp
             while True:
                 chunk = resp.read(4096)
                 if not chunk:

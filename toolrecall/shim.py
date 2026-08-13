@@ -155,9 +155,8 @@ def _shim_open(path, mode='r', *args, **kwargs):
 
 
 # ─── Patch subprocess ───
-import re
-import shlex
-import subprocess as _sp
+import re  # noqa: E402  (deliberate late import — must not run at module import)
+import subprocess as _sp  # noqa: E402  (deliberate late import — must not run at module import)
 _original_run = _sp.run
 _original_popen = _sp.Popen
 

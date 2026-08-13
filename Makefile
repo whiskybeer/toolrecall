@@ -215,6 +215,12 @@ publish-prep:
 	@echo "Or with uv:"
 	@echo "  uv publish"
 
+# ─── Release ────────────────────────────────────────────────────
+
+.PHONY: release
+release:
+	./scripts/release.sh $(VERSION)
+
 .PHONY: reinstall
 reinstall:
 	pipx install --force . 2>&1

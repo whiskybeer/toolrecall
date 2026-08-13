@@ -926,7 +926,7 @@ class DaemonServer:
                 print("  Forward proxy: http://127.0.0.1:8569 (caches API responses)")
             except Exception as e:
                 print(f"  ⚠️  Forward proxy failed to start: {e}")
-                print(f"     API response caching on :8569 is unavailable.")
+                print("     API response caching on :8569 is unavailable.")
 
             # Start periodic GC background thread
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)

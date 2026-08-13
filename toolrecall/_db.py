@@ -1,8 +1,6 @@
-import os
 import re
 import sqlite3
 import hashlib
-import warnings
 from threading import RLock
 from contextlib import contextmanager
 from toolrecall.config import load_config, Config
@@ -182,12 +180,11 @@ def _is_sensitive_path(path: str) -> bool:
 # The names below are re-exported for backward compatibility — tests
 # and older call sites import them from toolrecall._db.
 
-from toolrecall.storage import (          # noqa: E402
+from toolrecall.storage import (          # noqa: E402, F401  (re-exported)
     active_db_path as _active_db_path,
     open_backend as _open_db_backend,
-    restrict_db_perms as _restrict_db_perms,
 )
-from toolrecall.storage.libsql import (   # noqa: E402  (import-safe w/o extra)
+from toolrecall.storage.libsql import (   # noqa: E402, F401  (re-exported — tests import these)
     _LibSQLConnection,
     _LibSQLCursor,
     _LibSQLRow,

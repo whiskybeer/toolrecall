@@ -13,6 +13,7 @@ build/
 .hermes/
 .ruff_cache/
 .pytest_cache/
+.release-checkpoints/
 *.swp
 *.swo
 *~

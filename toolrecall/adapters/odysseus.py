@@ -87,7 +87,6 @@ Key patterns (consistent with adapters/google_adk.py)
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import json
 import logging

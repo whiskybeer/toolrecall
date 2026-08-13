@@ -19,7 +19,6 @@ Usage:
 """
 import os
 import sys
-import json
 
 def cmd_init():
     """Create boilerplate config and .env for users with interactive setup."""
@@ -334,7 +333,7 @@ def cmd_index_memory():
 
 
 def cmd_index_dir():
-    """Index a directory into the knowledge database.
+    r"""Index a directory into the knowledge database.
     
     Usage:
         toolrecall index-dir ~/Documents/Obsidian\ Vault
