@@ -345,6 +345,28 @@ class _CachedPopen:
     def returncode(self):
         return self._returncode
 
+    def __enter__(self):
+        # subprocess.run() uses `with Popen(...) as process:`. Return self so
+        # cached terminal output works as a drop-in Popen context manager.
+        # Without this, the shimmed Popen crashes subprocess.run with
+        # "'_CachedPopen' object does not support the context manager protocol".
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Mirror subprocess.Popen.__exit__: close the streams opened by
+        # communicate(), and never suppress an exception.
+        if hasattr(self, "stdout") and self.stdout is not None:
+            try:
+                self.stdout.close()
+            except Exception:
+                pass
+        if hasattr(self, "stderr") and self.stderr is not None:
+            try:
+                self.stderr.close()
+            except Exception:
+                pass
+        return False
+
     def __repr__(self):
         return f"<_CachedPopen returncode={self._returncode}>"
 

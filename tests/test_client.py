@@ -292,6 +292,14 @@ class TestClientFallbackDirect(unittest.TestCase):
         with open(self.test_file, "w") as f:
             f.write("fallback content")
 
+        # Save original env values so tearDown can restore them exactly.
+        # test_cached_read_fallback_blocked_outside_allowlist sets
+        # TOOLRECALL_MCP_ALLOWED_PATHS; if it's not restored, the leaked
+        # allowlist points every later E2EDaemon child at a dead tmpdir and
+        # they reject their own fresh temp dirs ("Path not allowed").
+        self._orig_allowed_paths = os.environ.get("TOOLRECALL_MCP_ALLOWED_PATHS")
+        self._orig_scan_dirs = os.environ.get("TOOLRECALL_SCAN_DIRS")
+
         # Isolate DB + point client to non-existent socket
         os.environ["TOOLRECALL_CACHE_DB"] = self.db_path
         os.environ.pop("TOOLRECALL_SCAN_DIRS", None)
@@ -302,6 +310,16 @@ class TestClientFallbackDirect(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        # Restore env vars this class may have mutated, so later tests
+        # (esp. E2EDaemon-spawning ones) don't inherit a stale allowlist.
+        if self._orig_allowed_paths is None:
+            os.environ.pop("TOOLRECALL_MCP_ALLOWED_PATHS", None)
+        else:
+            os.environ["TOOLRECALL_MCP_ALLOWED_PATHS"] = self._orig_allowed_paths
+        if self._orig_scan_dirs is None:
+            os.environ.pop("TOOLRECALL_SCAN_DIRS", None)
+        else:
+            os.environ["TOOLRECALL_SCAN_DIRS"] = self._orig_scan_dirs
         import toolrecall.client as cl
         cl._client = None
         # Don't restore — next setUp patches it
