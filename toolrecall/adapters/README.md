@@ -165,7 +165,7 @@ turn. Keep-first strategy preserves provider prefix caching.
 **Measured (billing-verified, OpenRouter):** on an accumulating agent loop over
 10 real SWE-bench Lite instances (80 requests/arm, DeepSeek V4 Flash), the hook
 cut **−32.3% prompt tokens / −30% billed cost**, with prefix caching preserved
-(effective $/M unchanged). See the [benchmark & methodology](../../bench/litellm_dedup/README.md).
+(effective $/M unchanged). See the [benchmark & methodology](../../bench/litellm_dedup/README.md) and ready-to-use [litellm-proxy-config.yaml](../../docs/examples/litellm-proxy-config.yaml).
 
 > **Honesty:** the −32% is token/cost savings. Task quality (pass@1) is
 > **unverified** — the hook stubs content, and a quality A/B requires a model

@@ -137,7 +137,7 @@ Full detail: [Context Tracker](docs/CONTEXT_TRACKER.md) · [Agent integration](d
 
 **Zero-trust customer triage:** `bench/litellm_dedup/measure_duplicates.py` measures *your own* duplicate ratio from a JSONL export of your request bodies, entirely inside your perimeter, no network, no API key — so you know what you'd save before any pilot. It reports volume stubbable, deliberately *not* billed-$, because real savings depend on prefix-cache economics.
 
-Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md)
+Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) · ready-to-use config: [litellm-proxy-config.yaml](docs/examples/litellm-proxy-config.yaml)
 
 ---
 
@@ -311,6 +311,8 @@ servers = ["time", "sequential-thinking"]
 - [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
 - [Benchmark](docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
 - [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) — gateway dedup hook: −32.3% prompt tokens / −30% cost, billing-verified
+- [LiteLLM Proxy Example Config](docs/examples/litellm-proxy-config.yaml) — ready-to-use `litellm_settings.callbacks` hook wiring
+- [Go Dedup Reference](go/dedup/README.md) — pure-Go request-level `dedup_messages` reference implementation
 - [Bench Infrastructure](bench/README.md) — reproduce the three-arm benchmark
 - [Test Suite](tests/README.md) — test runner documentation
 - [CLI Reference](docs/CLI.md) — all subcommands

@@ -216,6 +216,15 @@ flowchart TB
 The daemon uses a singleton connection wrapped in a `_DBConnection` class,
 protected by a `threading.RLock()`. The backend storage layer is isolated in `toolrecall/storage/`.
 
+**Single-instance lock (v0.8.18+):** `run_daemon` acquires an atomic `flock` on
+the socket path *before* binding. Earlier, `bind_socket` unconditionally
+unlinked/rebound the UDS, so repeated `toolrecall daemon` calls could stack
+orphaned instances (all listening on fd 6). The flock serializes racing starts —
+a second instance detects the held lock and exits with "already running" — and
+is auto-released on process death (no stale-lock trap). It is per-socket, so
+tests using temp sockets keep independent locks. Regression tests:
+`tests/test_daemon_pid_guard.py::TestDaemonSingleInstanceLock`.
+
 **Before (v0.7.0--v0.7.2): Connection-per-call**
 
 Each function opened its own SQLite connection via `_get_db()`, did work, and closed it.
@@ -327,6 +336,13 @@ This installs `tr_shim.pth` into site-packages. Every Python process auto-import
 The `cached_shell_exec` function (v0.8.14+) strips agent-specific shell wrappers
 (fabric shell, Claude Code hermetic_run, aider script wrappers) before checking
 the cache — so the same command through different agents gets a hit.
+
+**Security gate (v0.8.18+):** `cached_shell_exec` is gated identically to
+`cached_terminal` — dispatch routes through the `SecurityGate.check_terminal`
+allowlist, so a client cannot run shell commands via `cached_shell_exec` when
+`allow_terminal` is false or the command is outside `allowed_terminal_commands`.
+This closes the prior bypass where shell-exec dispatch skipped the allowlist
+check entirely. Regression tests: `tests/test_shell_exec_gate.py`.
 
 ```python
 # tr_shim.pth contains one line:
