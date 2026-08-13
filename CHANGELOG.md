@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.18] — 2026-08-13
 
 ### Security
 - **`cached_shell_exec` now gated by `SecurityGate.check_terminal`** — the daemon's `cached_shell_exec` dispatch previously executed commands with **no** terminal allowlist check (unlike `cached_terminal`), so a client could run shell commands even with `allow_terminal=false` or outside `allowed_terminal_commands`. It now routes through `_handle_shell_exec`, which strips agent wrappers and gates the inner command identically to `_handle_terminal`. Regression tests: `tests/test_shell_exec_gate.py`.
