@@ -15,7 +15,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from toolrecall.turso_cli import _upsert_env_lines, _write_private, _set_sync_enabled
+from toolrecall.turso_cli import (
+    _upsert_env_lines,
+    _write_private,
+    _set_sync_enabled,
+    _prompt,
+    _prompt_secret,
+)
 from toolrecall import _db
 
 
@@ -130,6 +136,32 @@ class TestSetSyncEnabled(unittest.TestCase):
         out = self._run_with_config("[storage]\nbackend = \"libsql\"\n", True)
         self.assertRegex(out, r"(?m)^sync_enabled = true")
         self.assertIn('backend = "libsql"', out)
+
+
+class TestPromptFunctions(unittest.TestCase):
+    """_prompt (non-secret) and _prompt_secret must honor env overrides and
+    never echo secret values."""
+
+    def setUp(self):
+        self._orig = dict(os.environ)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._orig)
+
+    def test_prompt_env_override(self):
+        os.environ["TURSO_DATABASE_NAME"] = "mydb"
+        self.assertEqual(_prompt("Database name", default="fallback"), "mydb")
+
+    def test_prompt_secret_env_override_never_echoed(self):
+        os.environ["TURSO_PLATFORM_API_TOKEN"] = "supersecret-token"
+        # grab stdout; secret must NOT appear anywhere in the prompt echo
+        import io
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            val = _prompt_secret("Platform API token")
+        self.assertEqual(val, "supersecret-token")
+        self.assertNotIn("supersecret-token", buf.getvalue())
 
 
 class TestBlocklistCoversOwnSecrets(unittest.TestCase):
