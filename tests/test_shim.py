@@ -187,7 +187,7 @@ class TestShimOpenRouting(unittest.TestCase):
     def test_cache_hit_returns_stringio(self):
         """When cached_read returns content, _shim_open returns a StringIO."""
         shim_mod._TR = {
-            "read": lambda p: {"cached": True, "content": "cached file content"},
+            "read": lambda p, **kwargs: {"cached": True, "content": "cached file content"},
             "terminal": MagicMock(),
         }
         shim_mod._original_open = MagicMock(return_value=io.StringIO("should not be called"))
@@ -201,7 +201,7 @@ class TestShimOpenRouting(unittest.TestCase):
     def test_cache_miss_falls_back_to_original_open(self):
         """When cached_read returns no content, fall back to _original_open."""
         shim_mod._TR = {
-            "read": lambda p: {"error": "not found"},
+            "read": lambda p, **kwargs: {"error": "not found"},
             "terminal": MagicMock(),
         }
         shim_mod._SKIP_PREFIXES = []  # prevent config-load calls

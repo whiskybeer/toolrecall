@@ -521,7 +521,12 @@ class TestContextTrackerDaemonIntegration:
         from toolrecall.transport import TransportClient, DEFAULT_PATH
         try:
             tc = TransportClient(DEFAULT_PATH)
-            tc.send({"cmd": "ping"}, timeout=1)
+            resp = tc.send({"cmd": "ping"}, timeout=1)
+            # send() returns {"error": "daemon_unavailable"} (a dict, NOT an
+            # exception) when no daemon is up. Check for the error dict too,
+            # otherwise these tests run against a dead daemon and fail.
+            if isinstance(resp, dict) and resp.get("error"):
+                pytest.skip("ToolRecall daemon not running — skipping integration tests")
         except Exception:
             pytest.skip("ToolRecall daemon not running — skipping integration tests")
 

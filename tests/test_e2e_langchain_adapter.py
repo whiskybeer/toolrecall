@@ -11,6 +11,9 @@ Requires:
 
 import pytest
 
+pytest.importorskip("langchain", reason="langchain not installed")
+pytest.importorskip("langchain_core", reason="langchain-core not installed")
+
 pytestmark = [pytest.mark.e2e, pytest.mark.langchain]
 
 

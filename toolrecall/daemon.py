@@ -75,6 +75,58 @@ from toolrecall.context_tracker import (
 PID_FILE = os.path.expanduser("~/.toolrecall/daemon.pid")
 
 
+def _instance_lock_path(socket_path: str) -> str:
+    """Return a lock-file path for a given socket path.
+
+    The lock is keyed on the socket path so that daemons bound to
+    *different* sockets (e.g. e2e tests using a temp socket) each get
+    their own lock, while multiple attempts to start a daemon on the
+    *same* socket serialize and only one wins.
+    """
+    import hashlib
+    digest = hashlib.md5(socket_path.encode("utf-8")).hexdigest()[:16]
+    return os.path.join(os.path.dirname(PID_FILE), f"daemon-{digest}.lck")
+
+
+def _acquire_instance_lock(socket_path: str):
+    """Atomically claim a single-instance lock for this socket.
+
+    Returns an open file object held for the daemon's lifetime, or None
+    if another process already holds the lock for this socket.
+
+    Uses fcntl.flock — the OS releases the lock automatically when the
+    holding process exits/crashes, so a stale lock file can never
+    permanently block a restart (the classic pid-file trap).
+
+    NOTE: The returned file object MUST be kept referenced for the
+    lifetime of the daemon (assigned to a module global) — flock is
+    tied to the open file description; if the object is garbage
+    collected, the lock is silently released.
+    """
+    if IS_WINDOWS:
+        # On Windows use the pid-file wait approach instead of flock.
+        import msvcrt  # noqa: F401  (present on Windows)
+        return None
+    import fcntl
+    lock_path = _instance_lock_path(socket_path)
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    # Use append mode so we never truncate the file (and thus erase another
+    # holder's PID) before we've actually won the lock. We only truncate+write
+    # our own PID after a successful flock.
+    fh = open(lock_path, "a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    # Record the owning PID so humans/debuggers can see who holds it.
+    fh.seek(0)
+    fh.truncate()
+    fh.write(str(os.getpid()))
+    fh.flush()
+    return fh
+
+
 def _default_socket_path():
     """Default IPC path: UDS on POSIX, TCP on Windows."""
     from toolrecall.transport import _default_socket_path as _tsp
@@ -1521,6 +1573,12 @@ class DaemonServer:
 # ─── Entry Points ─────────────────────────────────────────
 
 _server_instance = None
+# Keeps the flock'd single-instance lock file object referenced for the
+# daemon's lifetime. If this went out of scope / got GC'd, the lock would
+# be silently released and a duplicate daemon could start. On POSIX the
+# fd is inherited across fork() by the daemonized child (which is the one
+# that keeps running), so the child holds it for the whole process life.
+_instance_lock_fh = None
 
 
 def _signal_handler(signum, frame):
@@ -1532,7 +1590,7 @@ def _signal_handler(signum, frame):
 
 def run_daemon(socket_path: str = None, foreground: bool = False):
     """Start the ToolRecall daemon."""
-    global _server_instance
+    global _server_instance, _instance_lock_fh
 
     # Strip local source tree from sys.path — ensures we import from
     # site-packages (pip-installed) when running inside a venv whose
@@ -1542,38 +1600,33 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     _pkg_dir = os.path.dirname(os.path.abspath(__file__))
     _sys.path = [p for p in _sys.path if _pkg_dir not in p]
 
-    # Prevent duplicate instances: try to bind the socket.
-    # If the socket file already exists and a daemon responds on it,
-    # verify the responding PID is actually alive before refusing.
-    # Without this check, a stale socket from a recently-exited daemon
-    # causes the new instance to exit with code 0, which under systemd
-    # Restart=always + StartLimitBurst=3 exhausts the restart budget
-    # and permanently darkens the forward proxy (port 8569).
     if not socket_path:
         socket_path = _default_socket_path()
-    try:
-        from toolrecall.transport import TransportClient
-        tc = TransportClient(socket_path)
-        resp = tc.send({"cmd": "ping"}, timeout=1)
-        if resp.get("pong"):
-            pid = resp.get("pid", -1)
-            if isinstance(pid, int) and pid > 0:
-                try:
-                    os.kill(pid, 0)  # PID alive → real conflict
-                    print(f"ToolRecall Daemon already running (PID {pid}) — refusing duplicate.")
-                    sys.exit(0)
-                except ProcessLookupError:
-                    pass  # PID dead → socket is stale, take over
-            else:
-                # No valid PID in response — socket likely from a dead process
-                pass
-    except (ConnectionRefusedError, FileNotFoundError, TimeoutError, OSError, Exception):
-        pass  # Socket stale or absent — safe to start
-    # Remove stale socket file if present
-    sock_path = socket_path
-    if os.path.exists(sock_path) and not IS_WINDOWS:
+
+    # ── Single-instance guard (atomic, flock-based) ──────────
+    # flock is an atomic OS lock that (a) serializes two racing start
+    # attempts so only one wins, and (b) is auto-released when the holder
+    # dies — no stale-lock trap. Without this, repeated `daemon` calls can
+    # stack orphaned instances: each rebinds the socket path while older
+    # processes keep running on fd 6. Keyed on the socket path, so e2e
+    # tests binding a distinct temp socket get their own independent lock.
+    _instance_lock_fh = _acquire_instance_lock(socket_path)
+    if _instance_lock_fh is None:
+        lock_path = _instance_lock_path(socket_path)
         try:
-            os.unlink(sock_path)
+            with open(lock_path) as _lf:
+                holder = _lf.read().strip()
+        except OSError:
+            holder = "?"
+        print(
+            f"ToolRecall Daemon already running (lock held by PID {holder}) — "
+            "refusing duplicate."
+        )
+        sys.exit(0)
+
+    if os.path.exists(socket_path) and not IS_WINDOWS:
+        try:
+            os.unlink(socket_path)
         except OSError:
             pass
 

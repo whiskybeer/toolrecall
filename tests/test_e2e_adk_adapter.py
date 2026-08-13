@@ -11,6 +11,9 @@ Requires:
 
 import pytest
 
+pytest.importorskip("google.adk", reason="google-adk not installed")
+pytest.importorskip("google", reason="google not installed")
+
 
 # ---- cached_tool decorator tests ----
 

@@ -167,6 +167,7 @@ class TestLangChainAdapter:
 
     def test_ensure_base_succeeds_with_langchain(self):
         """_ensure_base succeeds when langchain_core is installed."""
+        pytest.importorskip("langchain_core", reason="langchain-core not installed")
         from toolrecall.adapters.langchain import _ensure_base
 
         _ensure_base()
