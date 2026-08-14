@@ -54,7 +54,7 @@ toolrecall = "toolrecall.cli:main"
 include = ["toolrecall*"]
 
 [tool.setuptools.package-data]
-toolrecall = ["config.toml", "tr_shim.pth", "adapters/README.md"]
+toolrecall = ["config.toml", "tr_shim.pth", "LICENSE", "adapters/README.md"]
 
 [tool.ruff]
 line-length = 100
