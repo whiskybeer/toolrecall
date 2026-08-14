@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Robin Schultka
+# SPDX-License-Identifier: MIT
+# Source: https://github.com/whiskybeer/toolrecall
 """
 LangChain Adapter — ToolRecallCache BaseCache subclass + auto callback handler.
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Robin Schultka
+# SPDX-License-Identifier: MIT
+# Source: https://github.com/whiskybeer/toolrecall
 """ToolRecall Framework Adapters — integrate ToolRecall caching into popular
 agent frameworks without modifying the framework itself.
 

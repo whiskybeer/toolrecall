@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Robin Schultka
+# SPDX-License-Identifier: MIT
+# Source: https://github.com/whiskybeer/toolrecall
 """
 Herdr Integration Guide — ToolRecall with the herdr terminal multiplexer.
 
