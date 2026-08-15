@@ -1664,7 +1664,6 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
         with open(PID_FILE, "w") as f:
             f.write(str(os.getpid()))
-    
     elif not foreground and IS_WINDOWS:
         # Windows: use multiprocessing instead of fork
         import multiprocessing as mp
@@ -1674,6 +1673,17 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         print(f"ToolRecall Daemon started (PID: {p.pid})")
         print(f"  Transport: {_server_instance.socket_path}")
         sys.exit(0)
+    else:
+        # Foreground mode (incl. systemd-managed, which runs --foreground):
+        # write the PID file so `daemon --status`/`daemon --stop` reflect the
+        # live daemon instead of a stale value from a previous background run.
+        if not IS_WINDOWS:
+            try:
+                os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+                with open(PID_FILE, "w") as f:
+                    f.write(str(os.getpid()))
+            except OSError:
+                pass  # PID file is best-effort; socket ping is authoritative
 
     try:
         _server_instance.start()
@@ -1726,8 +1736,33 @@ def stop_daemon():
                 pass
 
 def daemon_status():
-    """Print daemon status via systemd, or by PID file on Windows."""
+    """Print daemon status via socket, then systemd, then PID file."""
     import subprocess as _sp
+    # Socket is the source of truth: if the daemon answers a ping, it's
+    # running regardless of what systemd or the PID file claims. This avoids
+    # the false "DEAD (Stale PID file)" report when systemd is unreachable
+    # from this shell (no user bus) but the daemon is actually alive.
+    try:
+        client = TransportClient(_default_socket_path())
+        resp = client.send({"cmd": "ping"})
+        if resp.get("pong"):
+            pid = resp.get("pid", "?")
+            print(f"ToolRecall Daemon: RUNNING (PID {pid})")
+            print(f"  Transport: {_default_socket_path()}")
+            print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
+            print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
+            print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
+            servers = resp.get("multiplex_servers", [])
+            if servers:
+                names = [s['name'] if isinstance(s, dict) else s for s in servers]
+                print(f"  MCP Servers: {', '.join(names)}")
+            ctx = resp.get('context_tracker', {})
+            if ctx:
+                print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}")
+            return
+    except Exception:
+        pass  # Socket unreachable — fall through to systemd / PID file
+
     # Try systemd first (Linux)
     if not IS_WINDOWS:
         result = _sp.run(
@@ -1736,7 +1771,6 @@ def daemon_status():
         )
         active = result.stdout.strip()
         if active == "active":
-            # Get the PID from the daemon socket for details
             try:
                 client = TransportClient(_default_socket_path())
                 resp = client.send({"cmd": "ping"})
@@ -1748,7 +1782,6 @@ def daemon_status():
                 print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
                 servers = resp.get('multiplex_servers', [])
                 if servers:
-                    # multiplex_servers is a list of server name strings
                     names = [s['name'] if isinstance(s, dict) else s for s in servers]
                     print(f"  MCP Servers: {', '.join(names)}")
                 ctx = resp.get('context_tracker', {})
@@ -1778,3 +1811,5 @@ def daemon_status():
         print(f"  Transport: {_default_socket_path()}")
     except ProcessLookupError:
         print("ToolRecall Daemon: DEAD (Stale PID file)")
+        print("  The PID file is out of date. Remove it (rm ~/.toolrecall/daemon.pid)")
+        print("  or restart the daemon: systemctl --user restart toolrecall-daemon")

@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased] — shim Option B
+
+### Fixed
+- **Shim no longer intercepts `subprocess.run` / `subprocess.Popen` (Option B).** The `.pth` shim previously routed terminal commands through the daemon, which stripped the agent's `cd`/`source`/`export`/`printf` wrapper lines and executed the inner command in the daemon's own working directory and environment — not the calling agent's. Every plain command (`pwd`, `git status`, `ls`, `cat`) produced output from the wrong directory, which then got cached and replayed, surfacing as garbled shell output and offline-looking sessions. The shim now patches **only** `builtins.open` for read-only `r`/`rt` access (safe: keyed on path + mtime + size). Terminal command output runs natively in the agent's process with correct cwd/env/shell state and is never transparently cached at the shim layer. `cached_shell_exec` / `cached_terminal` remain available as explicit daemon-side calls (gated by `SecurityGate.check_terminal`). Regression tests: `tests/test_shim.py::TestOptionBNoSubprocess`.
+
 ## [0.8.18] — 2026-08-13
 
 ### Security
