@@ -56,6 +56,7 @@ ENV_MAP = {
     "TOOLRECALL_NORM_SORT_LISTS": ("norm", "sort_lists"),
     "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
+    "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
 }
 
 
@@ -273,6 +274,18 @@ class Config:
         Env override: TOOLRECALL_SYNC_ENABLED=true
         """
         val = self.get("storage", "sync_enabled", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
+    @property
+    def recall_enabled(self) -> bool:
+        """Enable the recall tier (lossless-recoverable eviction).
+
+        Opt-in, default OFF — absent/present-but-false is disabled. Env
+        override: TOOLRECALL_RECALL_ENABLED=true
+        """
+        val = self.get("recall", "enabled", default=False)
         if isinstance(val, str):
             return val.strip().lower() in ("1", "true", "yes", "on")
         return bool(val)
