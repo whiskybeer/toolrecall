@@ -112,5 +112,76 @@ class TestRecallSchema(unittest.TestCase):
         self.assertIsNotNone(pk)
 
 
+class TestRecallStore(unittest.TestCase):
+    """recall.store/get roundtrip, deterministic node_id, classifier."""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.mkdtemp()
+        self._db_path = os.path.join(self._tmp, "test_recall_store.db")
+        os.environ["TOOLRECALL_CACHE_DB"] = self._db_path
+        from toolrecall._db import _db_lock, _db_real
+        import toolrecall._db as _db_mod
+
+        _db_lock.acquire()
+        if _db_real is not None:
+            _db_real.close()
+            _db_mod._db_real = None
+        _db_lock.release()
+        _db._cached_config = None
+        from toolrecall.cache import _init
+
+        _init()
+
+    def tearDown(self):
+        import shutil
+
+        os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_node_id_is_deterministic(self):
+        from toolrecall import recall
+
+        self.assertEqual(recall.node_id("fp-x"), recall.node_id("fp-x"))
+        self.assertNotEqual(recall.node_id("fp-x"), recall.node_id("fp-y"))
+
+    def test_reproducible_classifier(self):
+        from toolrecall import recall
+
+        self.assertTrue(recall.reproducible("file", "/etc/os-release"))
+        self.assertTrue(recall.reproducible("api", "GET /health"))
+        self.assertFalse(recall.reproducible("web", ""))
+        self.assertFalse(recall.reproducible("other", ""))
+        self.assertFalse(recall.reproducible("file", ""))
+
+    def test_store_then_get_roundtrips(self):
+        from toolrecall import recall
+
+        nid = recall.store(
+            fingerprint="fp",
+            content="raw bytes",
+            content_type="web",
+            reproducible=False,
+            summary="s",
+        )
+        got = recall.get(nid)
+        self.assertEqual(got["content"], "raw bytes")
+        self.assertEqual(got["summary"], "s")
+        self.assertIs(got["reproducible"], False)
+
+    def test_same_fingerprint_dedups_to_same_node_id(self):
+        from toolrecall import recall
+
+        nid1 = recall.store(fingerprint="fp", content="a", content_type="web", reproducible=False)
+        nid2 = recall.store(fingerprint="fp", content="b", content_type="web", reproducible=False)
+        self.assertEqual(nid1, nid2)
+
+    def test_get_missing_returns_none(self):
+        from toolrecall import recall
+
+        self.assertIsNone(recall.get("does-not-exist"))
+
+
 if __name__ == "__main__":
     unittest.main()
