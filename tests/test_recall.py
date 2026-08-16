@@ -183,5 +183,30 @@ class TestRecallStore(unittest.TestCase):
         self.assertIsNone(recall.get("does-not-exist"))
 
 
+class TestRecallDaemonGate(unittest.TestCase):
+    """Daemon handlers refuse to run while the recall tier is disabled."""
+
+    def _handler(self, enabled: bool):
+        from unittest import mock
+        from toolrecall.daemon import DaemonServer
+
+        h = object.__new__(DaemonServer)  # skip __init__; only cfg is touched
+        h.cfg = mock.MagicMock()
+        h.cfg.recall_enabled = enabled
+        return h
+
+    def test_recall_store_disabled_returns_error(self):
+        resp = self._handler(False)._handle_recall_store({"fingerprint": "f", "content": "c"})
+        self.assertIn("disabled", resp.get("error", ""))
+
+    def test_recall_get_disabled_returns_error(self):
+        resp = self._handler(False)._handle_recall_get({"node_id": "x"})
+        self.assertIn("disabled", resp.get("error", ""))
+
+    def test_recall_store_missing_fields_returns_error(self):
+        resp = self._handler(True)._handle_recall_store({"fingerprint": "f"})
+        self.assertIn("Missing", resp.get("error", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

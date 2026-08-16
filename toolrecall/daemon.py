@@ -1151,6 +1151,10 @@ class DaemonServer:
                 return self._handle_context_get_stats(request)
             elif cmd == "context_reset":
                 return self._handle_context_reset(request)
+            elif cmd == "recall_store":
+                return self._handle_recall_store(request)
+            elif cmd == "recall_get":
+                return self._handle_recall_get(request)
             else:
                 return {"error": f"Unknown command: {cmd}"}
 
@@ -1346,6 +1350,36 @@ class DaemonServer:
         if req.get("mcp_origin"):
             _cache_record("mcp_cache", hit=result.get("unchanged", False), path=path)
         return result
+
+    def _handle_recall_store(self, req: dict) -> dict:
+        """Persist a non-reproducible content block; return a node_id pointer."""
+        if not self.cfg.recall_enabled:
+            return {"error": "recall tier disabled (enable [recall].enabled)"}
+        fingerprint = req.get("fingerprint", "")
+        content = req.get("content", "")
+        if not fingerprint or not content:
+            return {"error": "Missing 'fingerprint' or 'content'"}
+        from toolrecall import recall
+
+        nid = recall.store(
+            fingerprint=fingerprint,
+            content=content,
+            content_type=req.get("content_type", "other"),
+            reproducible=bool(req.get("reproducible")),
+            summary=req.get("summary", ""),
+        )
+        return {"node_id": nid}
+
+    def _handle_recall_get(self, req: dict) -> dict:
+        """Restore a persisted block by node_id."""
+        if not self.cfg.recall_enabled:
+            return {"error": "recall tier disabled (enable [recall].enabled)"}
+        node_id_ = req.get("node_id", "")
+        if not node_id_:
+            return {"error": "Missing 'node_id'"}
+        from toolrecall import recall
+
+        return {"entry": recall.get(node_id_)}
 
     def _handle_docs_search(self, req: dict) -> dict:
         query = req.get("query", "")
