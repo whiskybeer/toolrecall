@@ -233,6 +233,19 @@ toolrecall setup                # config -> systemd service -> daemon start
 > ```
 > The `toolrecall` package must also be installed in that venv (`import toolrecall` must work).
 
+**Agent type → mechanism:** pick based on what your agent is:
+
+| Agent type | Mechanism | Needs `toolrecall` in the venv? | Setup action |
+|---|---|---|---|
+| Python agent, own venv (Hermes, Codex, OpenCode, Cline) | `.pth` shim in the agent venv (transparent `open()`/`subprocess` cache) | yes | `toolrecall shim --install --venv <path>` (opt-in) |
+| Non-Python agent (Claude Code, Cursor, Cline, Windsurf) | MCP bridge (`toolrecall mcp`) | n/a | register an MCP server |
+| System python / global interpreter | shim in user site-packages | yes | `toolrecall shim --install` |
+
+> The `.pth` shim is **opt-in, default off** — `toolrecall shim --install` or
+> `--venv`/`--all` prompts before enabling. Use `--yes` to skip the prompt.
+> Verify with `toolrecall shim --status [--all]` (prints `probe: pass` only when
+> the shim actually imports in that venv from a neutral cwd).
+
 `toolrecall setup` creates `~/.config/toolrecall/toolrecall.toml` with default-deny security, generates a systemd user unit, and starts the daemon. After this, every `toolrecall` command "just works".
 
 Daemon auto-start fallback: systemd -> os.fork() -> DETACHED_PROCESS (Linux -> Docker/macOS -> Windows).
@@ -268,7 +281,9 @@ toolrecall mcp            Start MCP Bridge                           [auto-start
 toolrecall serve          Forward proxy (cache API responses)        [auto-starts]
 toolrecall serve --9000   Custom port forward proxy
 toolrecall replay         Record/replay agent sessions
-toolrecall shim --install Install OS-level cache shim (.pth file)
+toolrecall shim --install [--venv <path>|--all]  Install OS-level cache shim (.pth) — opt-in
+toolrecall shim --status [--venv <path>|--all]   Check shim presence + import probe
+toolrecall shim --uninstall [--venv <path>|--all] Remove .pth shim
 toolrecall turso          Turso Cloud sync: init, enable, disable, status
 toolrecall init           Create default config.toml and .env
 toolrecall config-set     Set a config value
