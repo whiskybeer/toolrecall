@@ -87,10 +87,12 @@ sync:
 .PHONY: test
 test:
 	$(PY_RUN) -m pytest tests/ -v --tb=short --no-header
+	$(PY_RUN) bench/litellm_dedup/property_test_quality.py
 
 .PHONY: test-fast
 test-fast:
 	$(PY_RUN) -m pytest tests/ -v --tb=short --no-header -k "not e2e"
+	$(PY_RUN) bench/litellm_dedup/property_test_quality.py
 
 .PHONY: test-e2e
 test-e2e:
@@ -99,6 +101,10 @@ test-e2e:
 .PHONY: test-file
 test-file:
 	$(PY_RUN) -m pytest $(FILE) -v --tb=short
+
+.PHONY: test-dedup
+test-dedup:
+	$(PY_RUN) bench/litellm_dedup/property_test_quality.py
 
 .PHONY: test-kw
 test-kw:
