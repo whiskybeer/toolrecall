@@ -22,6 +22,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[mcp_multiplex.servers_config]` | Custom server overrides | Any server name with `command`, `args`, `env`, `ttl` |
 | `[sources]` | Knowledge DB scanning | `scan_dirs`, `scan_extensions`, `scan_ignore`, `max_file_kb` |
 | `[sources.memory]` | Agent memory indexing | `enabled` |
+| `[recall]` | Recall Tier (lossless-recoverable eviction) | `enabled` (opt-in, default `false`), `summarizer` (Phase 2) |
 | `[forward_proxy]` | Forward proxy port | Port via `TOOLRECALL_FORWARD_PORT` env var |
 
 ### Config Loading Priority
@@ -99,6 +100,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_TURSO_API_BASE` | `storage.turso_api_base` | `TOOLRECALL_TURSO_API_BASE=https://turso.internal.example` |
 | `TOOLRECALL_HASH_ALGORITHM` | `cache.hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM=sha256` |
 | `TOOLRECALL_LOG_SHELL_FALLBACK` | `cache.log_shell_fallback` | |
+| `TOOLRECALL_RECALL_ENABLED` | `recall.enabled` | `TOOLRECALL_RECALL_ENABLED=true` |
 | `TOOLRECALL_FORWARD_PORT` | (not in config.toml) | `TOOLRECALL_FORWARD_PORT=9090` |
 | `TOOLRECALL_FETCH_MAX_BYTES` | (not in config.toml) | `TOOLRECALL_FETCH_MAX_BYTES=1048576` (1MB) |
 | `TOOLRECALL_FETCH_LOG` | (not in config.toml) | `TOOLRECALL_FETCH_LOG=~/.toolrecall/fetch_api.log` |
