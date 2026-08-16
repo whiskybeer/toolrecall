@@ -117,3 +117,10 @@ def get(node_id_: str) -> dict | None:
         "reproducible": bool(row[3]),
         "tokens": row[4],
     }
+
+
+def stats() -> dict:
+    """Aggregate recall-cache totals (entry count + persisted tokens)."""
+    with _db() as conn:
+        row = conn.execute("SELECT COUNT(*), COALESCE(SUM(tokens), 0) FROM recall_cache").fetchone()
+    return {"total": int(row[0]), "tokens": int(row[1])}

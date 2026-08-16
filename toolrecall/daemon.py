@@ -1155,6 +1155,8 @@ class DaemonServer:
                 return self._handle_recall_store(request)
             elif cmd == "recall_get":
                 return self._handle_recall_get(request)
+            elif cmd == "recall_stats":
+                return self._handle_recall_stats(request)
             else:
                 return {"error": f"Unknown command: {cmd}"}
 
@@ -1369,6 +1371,8 @@ class DaemonServer:
             reproducible=bool(req.get("reproducible")),
             summary=req.get("summary", ""),
         )
+        # Accounting: store = a disk-write miss for the recall sink.
+        _cache_record("recall", hit=False, tokens_read=max(1, len(content) // 3))
         return {"node_id": nid}
 
     def _handle_recall_get(self, req: dict) -> dict:
@@ -1380,7 +1384,21 @@ class DaemonServer:
             return {"error": "Missing 'node_id'"}
         from toolrecall import recall
 
-        return {"entry": recall.get(node_id_)}
+        entry = recall.get(node_id_)
+        if entry is not None:
+            # Accounting: a get hit = tokens served from the recall sink
+            # that would have been re-sent into the context.
+            tokens = int(entry.get("tokens") or 0)
+            _cache_record("recall", hit=True, tokens_saved=tokens, context_tokens=tokens)
+        return {"entry": entry}
+
+    def _handle_recall_stats(self, req: dict) -> dict:
+        """Return recall-cache aggregate totals."""
+        if not self.cfg.recall_enabled:
+            return {"error": "recall tier disabled (enable [recall].enabled)"}
+        from toolrecall import recall
+
+        return recall.stats()
 
     def _handle_docs_search(self, req: dict) -> dict:
         query = req.get("query", "")

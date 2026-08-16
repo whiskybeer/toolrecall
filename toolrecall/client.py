@@ -499,6 +499,13 @@ def recall_get(node_id: str) -> dict:
     return client.send(payload)
 
 
+def recall_stats() -> dict:
+    """Return recall-cache aggregate totals (entries + persisted tokens)."""
+    client = _get_client()
+    payload = {"cmd": "recall_stats"}
+    return client.send(payload)
+
+
 # Direct fallbacks are lazy-imported via _get_direct_cache() / _get_direct_docs().
 # This avoids opening a second SQLite connection when the daemon is already running.
 # The cache module (and its DB connection) is only loaded when the daemon is

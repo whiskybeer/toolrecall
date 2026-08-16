@@ -182,6 +182,19 @@ class TestRecallStore(unittest.TestCase):
 
         self.assertIsNone(recall.get("does-not-exist"))
 
+    def test_stats_reflects_stored_entries(self):
+        from toolrecall import recall
+
+        recall.store(
+            fingerprint="s1", content="hello world", content_type="web", reproducible=False
+        )
+        recall.store(
+            fingerprint="s2", content="foo bar baz qux", content_type="web", reproducible=False
+        )
+        st = recall.stats()
+        self.assertEqual(st["total"], 2)
+        self.assertGreater(st["tokens"], 0)
+
 
 class TestRecallDaemonGate(unittest.TestCase):
     """Daemon handlers refuse to run while the recall tier is disabled."""
@@ -206,6 +219,10 @@ class TestRecallDaemonGate(unittest.TestCase):
     def test_recall_store_missing_fields_returns_error(self):
         resp = self._handler(True)._handle_recall_store({"fingerprint": "f"})
         self.assertIn("Missing", resp.get("error", ""))
+
+    def test_recall_stats_disabled_returns_error(self):
+        resp = self._handler(False)._handle_recall_stats({})
+        self.assertIn("disabled", resp.get("error", ""))
 
 
 class TestRecallBridgeDefs(unittest.TestCase):

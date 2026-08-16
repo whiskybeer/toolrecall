@@ -51,6 +51,46 @@ class TestE2ERecallDaemon(unittest.TestCase):
         got = self.daemon.client.send({"cmd": "recall_get", "node_id": "nope"})
         self.assertIsNone(got.get("entry"))
 
+    def test_recall_stats_reports_entries(self):
+        self.daemon.client.send(
+            {
+                "cmd": "recall_store",
+                "fingerprint": "fp1",
+                "content": "some content here",
+                "content_type": "web",
+                "reproducible": False,
+            }
+        )
+        st = self.daemon.client.send({"cmd": "recall_stats"})
+        self.assertEqual(st["total"], 1)
+        self.assertGreater(st["tokens"], 0)
+
+    def test_recall_get_accounting_recorded_in_cache_stats(self):
+        import sqlite3
+
+        node_id_ = self.daemon.client.send(
+            {
+                "cmd": "recall_store",
+                "fingerprint": "fp-acct",
+                "content": "accounted content",
+                "content_type": "web",
+                "reproducible": False,
+            }
+        )["node_id"]
+        self.daemon.client.send({"cmd": "recall_get", "node_id": node_id_})
+
+        conn = sqlite3.connect(self.daemon.db_path)
+        try:
+            row = conn.execute(
+                "SELECT hits, tokens_saved, context_tokens_saved "
+                "FROM cache_stats WHERE category='recall'"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertIsNotNone(row, "expected a cache_stats row for category 'recall'")
+        self.assertEqual(row[0], 1, "one get hit should be recorded")
+        self.assertGreater(row[2], 0, "context_tokens_saved should be > 0")
+
 
 class TestE2ERecallBridgeVisibility(unittest.TestCase):
     """Bridge exposes recall tools only when the recall tier is enabled."""
@@ -128,6 +168,29 @@ class TestE2ERecallCLI(unittest.TestCase):
         with contextlib.redirect_stdout(out2):
             cli.cmd_context()
         self.assertIn("cli raw content", out2.getvalue())
+
+    def test_cli_recall_status_counts_entries(self):
+        import contextlib
+        import io
+        import sys as _sys
+        from unittest import mock
+
+        from toolrecall import cli
+
+        # seed one entry via the CLI store path
+        _sys.argv = ["toolrecall", "context", "recall", "store", "fp-status", "web"]
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            mock.patch.object(cli.sys, "stdin", io.StringIO("status content")),
+        ):
+            cli.cmd_context()
+
+        _sys.argv = ["toolrecall", "context", "recall", "status"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.cmd_context()
+        self.assertIn("recall entries:", out.getvalue())
+        self.assertIn("persisted tokens:", out.getvalue())
 
 
 if __name__ == "__main__":

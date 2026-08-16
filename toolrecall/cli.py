@@ -1778,6 +1778,12 @@ def cmd_context():
             print(entry.get("content", ""))
             return
 
+        if rsub == "status":
+            resp = _call(client.recall_stats)
+            print(f"  recall entries:   {resp.get('total', 0)}")
+            print(f"  persisted tokens: {resp.get('tokens', 0):,}")
+            return
+
         print(f"Unknown recall command: {rsub}")
         print("Available: store, get, status")
         sys.exit(2)
