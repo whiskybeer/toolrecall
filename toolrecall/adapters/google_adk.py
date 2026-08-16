@@ -46,7 +46,7 @@ logger = logging.getLogger("toolrecall.adapters.google_adk")
 ADAPTER_SERVER = "adk"  # Cache namespace for ADK tool calls
 
 
-def cached_tool(func=None, *, ttl: int = None):
+def cached_tool(func=None, *, ttl: int | None = None):
     """Decorator: cache ADK @tool function results via ToolRecall.
 
     Can be used with or without arguments:
@@ -72,10 +72,11 @@ def cached_tool(func=None, *, ttl: int = None):
     # Used as @cached_tool(ttl=300) with parentheses
     def decorator(f):
         return _make_cached(f, ttl=ttl)
+
     return decorator
 
 
-def _make_cached(func, *, ttl: int = None):
+def _make_cached(func, *, ttl: int | None = None):
     """Internal: wrap a function with cache check + store."""
     tool_name = func.__name__
     is_async = asyncio.iscoroutinefunction(func)
@@ -103,6 +104,7 @@ def _cached_call(func, tool_name: str, ttl, args, kwargs):
     if result.get("cached"):
         logger.info("Cache HIT  adk/%s  —  %s", tool_name, _summarize_args(arguments))
         import json
+
         return json.loads(result["data"])
 
     logger.info("Cache MISS adk/%s  —  executing live", tool_name)
@@ -123,6 +125,7 @@ async def _cached_call_async(func, tool_name: str, ttl, args, kwargs):
     if result.get("cached"):
         logger.info("Cache HIT  adk/%s  —  %s", tool_name, _summarize_args(arguments))
         import json
+
         return json.loads(result["data"])
 
     logger.info("Cache MISS adk/%s  —  executing live", tool_name)
@@ -140,6 +143,7 @@ def _store_result(tool_name: str, arguments: dict, data, ttl):
     if not daemon_running():
         return
     import json
+
     try:
         serialized = json.dumps(data, default=str, ensure_ascii=False)
         key = cached_mcp_check(ADAPTER_SERVER, tool_name, arguments, ttl=ttl)

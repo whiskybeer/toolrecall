@@ -40,6 +40,6 @@ class TestE2EStress(unittest.TestCase):
         for i in range(5):
             d = E2EDaemon()
             d.start()
-            self.assertTrue(d.running, f"Failed on iteration {i+1}")
+            self.assertTrue(d.running, f"Failed on iteration {i + 1}")
             d.stop()
-            self.assertFalse(d.running, f"Failed to stop on iteration {i+1}")
+            self.assertFalse(d.running, f"Failed to stop on iteration {i + 1}")

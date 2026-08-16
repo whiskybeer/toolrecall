@@ -35,7 +35,9 @@ import random
 import re
 import string
 
-import sys, os
+import sys
+import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from toolrecall.adapters.litellm import dedup_messages
@@ -52,9 +54,8 @@ def _digest(text):
 
 
 def random_block(rng, size=900):
-    body = "".join(rng.choice(string.ascii_letters + string.digits + "\n ")
-                   for _ in range(size))
-    return f"def block_{rng.randint(0,99)}(x):\n    return {body}"[:size]
+    body = "".join(rng.choice(string.ascii_letters + string.digits + "\n ") for _ in range(size))
+    return f"def block_{rng.randint(0, 99)}(x):\n    return {body}"[:size]
 
 
 def random_messages(rng, n_blocks=8, length=40, seed=0):
@@ -63,16 +64,27 @@ def random_messages(rng, n_blocks=8, length=40, seed=0):
     for i in range(length):
         r = rng.random()
         if r < 0.15:
-            msgs.append({"role": "user", "content": rng.choice(
-                ["Read the test file.", "Fix the bug.", "Run the tests.", "What changed?"])})
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": rng.choice(
+                        ["Read the test file.", "Fix the bug.", "Run the tests.", "What changed?"]
+                    ),
+                }
+            )
         elif r < 0.30:
-            msgs.append({"role": "assistant", "content": rng.choice(
-                ["Looking at it now.", "I see the issue.", "Let me check."])})
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": rng.choice(
+                        ["Looking at it now.", "I see the issue.", "Let me check."]
+                    ),
+                }
+            )
         elif r < 0.45:
             msgs.append({"role": "tool", "content": rng.choice(blocks)})
         elif r < 0.65:
-            msgs.append({"role": "tool", "content": [
-                {"type": "text", "text": rng.choice(blocks)}]})
+            msgs.append({"role": "tool", "content": [{"type": "text", "text": rng.choice(blocks)}]})
         elif r < 0.80:
             msgs.append({"role": "user", "content": "Re-read the full file."})
         else:
@@ -96,9 +108,11 @@ def block_texts(msg):
     if isinstance(c, str):
         return [c]
     if isinstance(c, list):
-        return [p.get("text") for p in c
-                if isinstance(p, dict) and p.get("type") == "text"
-                and isinstance(p.get("text"), str)]
+        return [
+            p.get("text")
+            for p in c
+            if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str)
+        ]
     return []
 
 
@@ -123,10 +137,12 @@ def test_no_information_loss(seed=0, trials=500):
                 assert ref < i, f"stub refs later msg (trial {t})"
                 assert digest in full_first, f"stub digest absent as full block (trial {t})"
                 # the referenced message must itself contain a full (non-stub) block
-                referent_blocks = [b for b in block_texts(out[ref])
-                                   if b is not None and not STUB_RE.match(b)]
-                assert any(len(b) >= 800 and _digest(b) == digest for b in referent_blocks), \
+                referent_blocks = [
+                    b for b in block_texts(out[ref]) if b is not None and not STUB_RE.match(b)
+                ]
+                assert any(len(b) >= 800 and _digest(b) == digest for b in referent_blocks), (
                     f"stub->stub / digest-mismatch at ref {ref} (trial {t})"
+                )
     return f"no-information-loss OK ({trials} trials)"
 
 
@@ -141,9 +157,8 @@ def test_keep_first_retained(seed=0, trials=500):
                 if tx is None or STUB_RE.match(tx) or len(tx) < 800:
                     continue
                 first.setdefault(_digest(tx), (i, tx))
-        for (fi, ftx) in first.values():
-            assert not STUB_RE.match(ftx), \
-                f"first occurrence stubbed (trial {t}, idx {fi})"
+        for fi, ftx in first.values():
+            assert not STUB_RE.match(ftx), f"first occurrence stubbed (trial {t}, idx {fi})"
     return f"keep-first OK ({trials} trials)"
 
 
@@ -158,7 +173,9 @@ def test_non_mutation(seed=0):
 
 def test_fail_open(seed=0):
     junk = [
-        None, 42, "a plain short string that is not a dict",
+        None,
+        42,
+        "a plain short string that is not a dict",
         {"role": "tool", "content": 12345},
         {"role": "tool", "content": ["not", "a", "list-of-dicts"]},
         {"content": "no role"},
@@ -172,7 +189,7 @@ def test_fail_open(seed=0):
 def test_prefix_shift_is_benign(seed=0, trials=200):
     """Prefix may change (protect window re-anchors) but never loses info."""
     rng = random.Random(seed)
-    chains = losses = 0
+    chains = 0
     for t in range(trials):
         msgs = random_messages(rng, seed=seed + t)
         extra = msgs + [{"role": "tool", "content": random_block(rng, 1100)}]
@@ -188,10 +205,12 @@ def test_prefix_shift_is_benign(seed=0, trials=200):
                 mm = STUB_RE.match(tx or "")
                 if mm:
                     ref = int(mm.group(3))
-                    referent_blocks = [b for b in block_texts(out2[ref])
-                                       if b is not None and not STUB_RE.match(b)]
-                    if not any(len(b) >= 800 and _digest(b) == mm.group(2)
-                               for b in referent_blocks):
+                    referent_blocks = [
+                        b for b in block_texts(out2[ref]) if b is not None and not STUB_RE.match(b)
+                    ]
+                    if not any(
+                        len(b) >= 800 and _digest(b) == mm.group(2) for b in referent_blocks
+                    ):
                         chains += 1
     assert chains == 0, f"prefix growth caused stub->stub chain ({chains})"
     return f"prefix-shift benign (no stub->stub chains in {trials} trials)"
@@ -199,8 +218,13 @@ def test_prefix_shift_is_benign(seed=0, trials=200):
 
 if __name__ == "__main__":
     results = []
-    for fn in (test_no_information_loss, test_keep_first_retained,
-               test_non_mutation, test_fail_open, test_prefix_shift_is_benign):
+    for fn in (
+        test_no_information_loss,
+        test_keep_first_retained,
+        test_non_mutation,
+        test_fail_open,
+        test_prefix_shift_is_benign,
+    ):
         try:
             results.append(f"{fn.__name__}: {fn()}")
         except AssertionError as e:

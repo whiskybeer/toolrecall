@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from toolrecall.cache import cached_read, _init
 
+
 class TestFileCache(unittest.TestCase):
     def setUp(self):
         # Re-assert our DB path (other test modules may have changed it)
@@ -21,6 +22,7 @@ class TestFileCache(unittest.TestCase):
         # Reset singleton DB connection so it re-opens with test DB path
         from toolrecall._db import _db_lock, _db_real
         import toolrecall._db as _db_mod
+
         _db_lock.acquire()
         if _db_real is not None:
             _db_real.close()
@@ -29,12 +31,12 @@ class TestFileCache(unittest.TestCase):
         if os.path.exists(test_db_path):
             os.remove(test_db_path)
         _init()
-        
+
         # Create a temporary file for reading
         self.fd, self.temp_file = tempfile.mkstemp(text=True)
-        with os.fdopen(self.fd, 'w') as f:
+        with os.fdopen(self.fd, "w") as f:
             f.write("line 1\nline 2\n")
-            
+
     def tearDown(self):
         if os.path.exists(test_db_path):
             os.remove(test_db_path)
@@ -51,7 +53,7 @@ class TestFileCache(unittest.TestCase):
         res1 = cached_read(self.temp_file)
         self.assertFalse(res1.get("cached"), "First read should be a cache miss")
         self.assertIn("line 1", res1.get("content", ""))
-        
+
         # 2. Second read (Hit)
         res2 = cached_read(self.temp_file)
         self.assertTrue(res2.get("cached"), "Second read should be a cache hit")
@@ -62,17 +64,17 @@ class TestFileCache(unittest.TestCase):
         # 1. Cache the file
         res1 = cached_read(self.temp_file)
         self.assertFalse(res1.get("cached"))
-        
+
         # Ensure mtime will definitely change (some OS have low mtime resolution)
-        time.sleep(0.01) 
-        
+        time.sleep(0.01)
+
         # 2. Modify the file
-        with open(self.temp_file, 'w') as f:
+        with open(self.temp_file, "w") as f:
             f.write("MODIFIED LINE\n")
-            
+
         # 3. Read again
         res2 = cached_read(self.temp_file)
-        
+
         # Prove cache was busted!
         self.assertFalse(res2.get("cached"), "Cache MUST be invalidated after file modification")
         self.assertIn("MODIFIED LINE", res2.get("content", ""))
@@ -86,7 +88,7 @@ class TestFileCache(unittest.TestCase):
             with open(large_file, "wb") as f:
                 f.seek((6 * 1024 * 1024) - 1)
                 f.write(b"\0")
-                
+
             res = cached_read(large_file)
             self.assertIn("error", res)
             self.assertIn("exceeds 5MB limit", res["error"])
@@ -102,7 +104,7 @@ class TestFileCache(unittest.TestCase):
 
         # Create fresh file never seen before
         fd2, f2 = tempfile.mkstemp(text=True)
-        with os.fdopen(fd2, 'w') as f:
+        with os.fdopen(fd2, "w") as f:
             f.write("Hello World! " * 50)
         expected_tokens = _estimate_tokens("Hello World! " * 50)
 
@@ -115,7 +117,7 @@ class TestFileCache(unittest.TestCase):
         self.assertEqual(
             tokens_read_from_disk,
             expected_tokens,
-            f"First disk-read should count tokens exactly once (got {tokens_read_from_disk}, expected {expected_tokens})"
+            f"First disk-read should count tokens exactly once (got {tokens_read_from_disk}, expected {expected_tokens})",
         )
 
         # 2nd read: in-memory hit → NO new tokens
@@ -124,6 +126,7 @@ class TestFileCache(unittest.TestCase):
 
         # 3rd: force SQLite hit by clearing in-memory
         from toolrecall.cache import _file_cache
+
         _file_cache.remove(f2)
         r3 = cached_read(f2)
         self.assertTrue(r3.get("cached"))
@@ -133,7 +136,7 @@ class TestFileCache(unittest.TestCase):
         self.assertEqual(
             tokens_after_three,
             expected_tokens,
-            f"Tokens should NOT increase on cache hits (got {tokens_after_three}, expected {expected_tokens})"
+            f"Tokens should NOT increase on cache hits (got {tokens_after_three}, expected {expected_tokens})",
         )
         self.assertEqual(stats_after_three["hits"], 2, "Should have 2 hits (2nd read + 3rd read)")
 
@@ -145,7 +148,7 @@ class TestFileCache(unittest.TestCase):
 
         # Populate via a miss
         fd3, f3 = tempfile.mkstemp(text=True)
-        with os.fdopen(fd3, 'w') as f:
+        with os.fdopen(fd3, "w") as f:
             f.write("test data")
         cached_read(f3)
 
@@ -159,8 +162,7 @@ class TestFileCache(unittest.TestCase):
         self.assertNotIn("file_cache", stats, "file_cache stats should be reset")
         # Entries preserved
         entries_after = stats.get("file_cache_entries", 0)
-        self.assertEqual(entries_after, entries_before,
-                         "Cache entries should survive reset_stats")
+        self.assertEqual(entries_after, entries_before, "Cache entries should survive reset_stats")
 
         os.unlink(f3)
 
@@ -170,9 +172,17 @@ class TestFileCache(unittest.TestCase):
 
         reset_stats()
         stats = get_stats()
-        for layer in ["file_cache", "skill_cache", "terminal_cache", "script_cache", "code_cache", "mcp_cache"]:
-            self.assertNotIn(layer, stats,
-                             f"'{layer}' should be absent after reset_stats (category deleted)")
+        for layer in [
+            "file_cache",
+            "skill_cache",
+            "terminal_cache",
+            "script_cache",
+            "code_cache",
+            "mcp_cache",
+        ]:
+            self.assertNotIn(
+                layer, stats, f"'{layer}' should be absent after reset_stats (category deleted)"
+            )
 
 
 if __name__ == "__main__":

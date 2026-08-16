@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Check OpenRouter model info and provider options for DeepSeek V4 Flash."""
-import json, os, urllib.request, urllib.error
+
+import json
+import os
+import urllib.request
+import urllib.error
 
 # Get OpenRouter key
 key = None
@@ -20,7 +24,9 @@ try:
             print(f"Model: {m['id']}")
             print(f"  Context: {m.get('context_length', '?')}")
             print(f"  Pricing: {json.dumps(m.get('pricing', {}))}")
-            print(f"  Provider routes: {json.dumps(m.get('endpoints', m.get('provider', '?')), indent=2)}")
+            print(
+                f"  Provider routes: {json.dumps(m.get('endpoints', m.get('provider', '?')), indent=2)}"
+            )
             print()
 except urllib.error.HTTPError as e:
     print(f"HTTP {e.code}: {e.read().decode()[:300]}")

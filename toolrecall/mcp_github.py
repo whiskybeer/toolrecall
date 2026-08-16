@@ -7,6 +7,7 @@ Supports: create_repository, create_or_update_file, push_files, list_commits
 
 Token is loaded from the ToolRecall daemon environment (never exposed to subprocess).
 """
+
 import base64
 import json
 import os
@@ -38,12 +39,10 @@ def _setup():
 
     _LOG = logging.getLogger("toolrecall.github")
     _LOG.setLevel(logging.DEBUG)
-    _fh = logging.FileHandler(os.path.expanduser(
-        os.environ.get("TOOLRECALL_GITHUB_LOG", "~/.toolrecall/github_api.log")
-    ))
-    _fh.setFormatter(logging.Formatter(
-        "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    ))
+    _fh = logging.FileHandler(
+        os.path.expanduser(os.environ.get("TOOLRECALL_GITHUB_LOG", "~/.toolrecall/github_api.log"))
+    )
+    _fh.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     _LOG.addHandler(_fh)
 
     if not _TOKEN:
@@ -73,11 +72,15 @@ def _api(method, path, data=None):
 
 def _handle(method, params):
     if method == "create_repository":
-        return _api("POST", "user/repos", {
-            "name": params["name"],
-            "description": params.get("description", ""),
-            "private": params.get("private", False),
-        })
+        return _api(
+            "POST",
+            "user/repos",
+            {
+                "name": params["name"],
+                "description": params.get("description", ""),
+                "private": params.get("private", False),
+            },
+        )
     elif method == "create_or_update_file":
         owner, repo = params["owner"], params["repo"]
         path, content, branch = params["path"], params["content"], params["branch"]
@@ -90,12 +93,14 @@ def _handle(method, params):
         files = params.get("files", params.get("changes", []))
         tree = []
         for f in files:
-            tree.append({
-                "path": f["path"],
-                "mode": "100644",
-                "type": "blob",
-                "content": base64.b64decode(f["content"]).decode("utf-8", errors="replace"),
-            })
+            tree.append(
+                {
+                    "path": f["path"],
+                    "mode": "100644",
+                    "type": "blob",
+                    "content": base64.b64decode(f["content"]).decode("utf-8", errors="replace"),
+                }
+            )
         ref = _api("GET", f"repos/{owner}/{repo}/git/ref/heads/{branch}")
         if "error" in ref:
             return ref
@@ -104,20 +109,35 @@ def _handle(method, params):
         if "error" in commit_data:
             return commit_data
         base_tree = commit_data["tree"]["sha"]
-        new_tree = _api("POST", f"repos/{owner}/{repo}/git/trees", {
-            "base_tree": base_tree, "tree": tree,
-        })
+        new_tree = _api(
+            "POST",
+            f"repos/{owner}/{repo}/git/trees",
+            {
+                "base_tree": base_tree,
+                "tree": tree,
+            },
+        )
         if "error" in new_tree:
             return new_tree
-        new_commit = _api("POST", f"repos/{owner}/{repo}/git/commits", {
-            "message": params.get("message", "Update via ToolRecall"),
-            "tree": new_tree["sha"], "parents": [last_sha],
-        })
+        new_commit = _api(
+            "POST",
+            f"repos/{owner}/{repo}/git/commits",
+            {
+                "message": params.get("message", "Update via ToolRecall"),
+                "tree": new_tree["sha"],
+                "parents": [last_sha],
+            },
+        )
         if "error" in new_commit:
             return new_commit
-        return _api("PATCH", f"repos/{owner}/{repo}/git/refs/heads/{branch}", {
-            "sha": new_commit["sha"], "force": False,
-        })
+        return _api(
+            "PATCH",
+            f"repos/{owner}/{repo}/git/refs/heads/{branch}",
+            {
+                "sha": new_commit["sha"],
+                "force": False,
+            },
+        )
     elif method == "list_commits":
         owner, repo = params["owner"], params["repo"]
         return _api("GET", f"repos/{owner}/{repo}/commits?per_page=10")
@@ -138,30 +158,75 @@ def main():
     sys.stderr.flush()
 
     tools = [
-        {"name": "create_repository", "description": "Create a new GitHub repository",
-         "inputSchema": {"type": "object", "properties": {
-             "name": {"type": "string"}, "description": {"type": "string"},
-             "private": {"type": "boolean"}}, "required": ["name"]}},
-        {"name": "create_or_update_file", "description": "Create or update a file",
-         "inputSchema": {"type": "object", "properties": {
-             "owner": {"type": "string"}, "repo": {"type": "string"},
-             "path": {"type": "string"}, "content": {"type": "string"},
-             "message": {"type": "string"}, "branch": {"type": "string"},
-             "sha": {"type": "string"}}, "required": ["owner", "repo", "path", "content", "message", "branch"]}},
-        {"name": "push_files", "description": "Push multiple files in a single commit",
-         "inputSchema": {"type": "object", "properties": {
-             "owner": {"type": "string"}, "repo": {"type": "string"},
-             "branch": {"type": "string"}, "message": {"type": "string"},
-             "files": {"type": "array", "items": {"type": "object",
-                 "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                 "required": ["path", "content"]}}},
-             "required": ["owner", "repo", "branch", "files"]}},
-        {"name": "list_commits", "description": "List recent commits",
-         "inputSchema": {"type": "object", "properties": {
-             "owner": {"type": "string"}, "repo": {"type": "string"}},
-             "required": ["owner", "repo"]}},
-        {"name": "list_repos", "description": "List user repos",
-         "inputSchema": {"type": "object", "properties": {}, "required": []}},
+        {
+            "name": "create_repository",
+            "description": "Create a new GitHub repository",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "private": {"type": "boolean"},
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "create_or_update_file",
+            "description": "Create or update a file",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "owner": {"type": "string"},
+                    "repo": {"type": "string"},
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "message": {"type": "string"},
+                    "branch": {"type": "string"},
+                    "sha": {"type": "string"},
+                },
+                "required": ["owner", "repo", "path", "content", "message", "branch"],
+            },
+        },
+        {
+            "name": "push_files",
+            "description": "Push multiple files in a single commit",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "owner": {"type": "string"},
+                    "repo": {"type": "string"},
+                    "branch": {"type": "string"},
+                    "message": {"type": "string"},
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["path", "content"],
+                        },
+                    },
+                },
+                "required": ["owner", "repo", "branch", "files"],
+            },
+        },
+        {
+            "name": "list_commits",
+            "description": "List recent commits",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}},
+                "required": ["owner", "repo"],
+            },
+        },
+        {
+            "name": "list_repos",
+            "description": "List user repos",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
     ]
 
     for line in sys.stdin:
@@ -192,7 +257,9 @@ def main():
             if result is None:
                 resp["error"] = {"code": -32601, "message": f"Unknown: {tn}"}
             else:
-                resp["result"] = {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+                resp["result"] = {
+                    "content": [{"type": "text", "text": json.dumps(result, indent=2)}]
+                }
         elif method in ("notifications/initialized", "close"):
             continue
         else:

@@ -54,8 +54,7 @@ def load_dedup(min_chars_default: int):
             spec.loader.exec_module(mod)
             return mod.dedup_messages
     raise SystemExit(
-        "Could not locate toolrecall/adapters/litellm.py. Set TOOLRECALL_SRC or pass "
-        "--module PATH."
+        "Could not locate toolrecall/adapters/litellm.py. Set TOOLRECALL_SRC or pass --module PATH."
     )
 
 
@@ -91,23 +90,37 @@ def text_content(msg: Dict) -> str:
     if isinstance(c, list):
         out = []
         for part in c:
-            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            ):
                 out.append(part["text"])
         return "\n".join(out)
     return ""
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("input", nargs="?", default="-", help="path or '-' for stdin")
     ap.add_argument("--format", choices=["jsonl", "msgs"], default="jsonl")
-    ap.add_argument("--module", default=os.environ.get("TOOLRECALL_SRC", ""),
-                    help="path to toolrecall/adapters/litellm.py (override auto-detect)")
-    ap.add_argument("--min-chars", type=int, nargs="+", default=[400, 600, 800],
-                    help="min_chars thresholds to report")
-    ap.add_argument("--max-tokens-ratio", action="store_true",
-                    help="report % of message volume stubbable")
+    ap.add_argument(
+        "--module",
+        default=os.environ.get("TOOLRECALL_SRC", ""),
+        help="path to toolrecall/adapters/litellm.py (override auto-detect)",
+    )
+    ap.add_argument(
+        "--min-chars",
+        type=int,
+        nargs="+",
+        default=[400, 600, 800],
+        help="min_chars thresholds to report",
+    )
+    ap.add_argument(
+        "--max-tokens-ratio", action="store_true", help="report % of message volume stubbable"
+    )
     args = ap.parse_args()
 
     dedup = load_dedup(0)
@@ -118,8 +131,9 @@ def main() -> int:
         return 1
 
     # (min_chars) -> per-request stats lists
-    statz: Dict[int, Dict] = {mc: {"blocks": [], "chars": [], "tokens": [], "total_chars": []}
-                              for mc in args.min_chars}
+    statz: Dict[int, Dict] = {
+        mc: {"blocks": [], "chars": [], "tokens": [], "total_chars": []} for mc in args.min_chars
+    }
 
     for req in reqs:
         msgs = req.get("messages", [])
@@ -137,7 +151,7 @@ def main() -> int:
     print("ToolRecall duplicate-ratio scan  (runs 100% in-perimeter; sends nothing)")
     print("=" * 74)
     print(f"  requests scanned : {len(reqs)}")
-    print(f"  object used      : dedup_messages (pure, protect_last=0)")
+    print("  object used      : dedup_messages (pure, protect_last=0)")
     print()
     for mc in args.min_chars:
         s = statz[mc]
@@ -149,12 +163,12 @@ def main() -> int:
         pct_vol = tot_chars / tot_vol * 100
         reqs_with = sum(1 for b in s["blocks"] if b > 0)
         print(f"--- min_chars = {mc} ---")
-        print(f"  requests with any stubbable dup : {reqs_with}/{n} ({reqs_with/max(n,1)*100:.0f}%)")
+        print(
+            f"  requests with any stubbable dup : {reqs_with}/{n} ({reqs_with / max(n, 1) * 100:.0f}%)"
+        )
         print(f"  total duplicate blocks stubbable : {tot_blocks}")
         print(f"  total chars stubbable            : {tot_chars:,}  (~{tot_tokens:,} tokens)")
         print(f"  % of message volume stubbable    : {pct_vol:.1f}%")
-        if args.max_tokens_ratio:
-            nonempty = [s["total_chars"][i] for i in range(n) if s["total_chars"][i] > 0]
         print()
     print("Note: % of volume stubbable = duplicate content you'd stop re-sending.")
     print("It is NOT billed $ savings — real savings depend on cache-hit economics,")

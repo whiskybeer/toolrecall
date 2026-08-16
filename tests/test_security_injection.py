@@ -54,13 +54,23 @@ class TestSecurityInjectionA03(unittest.TestCase):
         self.mock_cfg.mcp_multiplex_servers = []
         self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = [
-            "write", "edit", "delete", "remove", "terminal",
-            "bash", "exec", "run", "push", "commit", "update", "create",
+            "write",
+            "edit",
+            "delete",
+            "remove",
+            "terminal",
+            "bash",
+            "exec",
+            "run",
+            "push",
+            "commit",
+            "update",
+            "create",
         ]
 
     def test_ssti_injection_in_path(self):
         """A03-001: Prove SSTI payloads in read_file path are blocked by path allowlist.
-        
+
         Attack: read_file("{{7*7}}") — template injection attempt.
         Defense: path allowlist rejects anything outside allowed dirs.
         """
@@ -74,7 +84,7 @@ class TestSecurityInjectionA03(unittest.TestCase):
 
     def test_null_byte_poisoning(self):
         """A03-002: Prove null byte injection in paths is detected.
-        
+
         Attack: read_file("/tmp/valid.png\x00/etc/passwd") — null byte to bypass extension check.
         Defense: check_read_path detects null bytes before path resolution.
         """
@@ -89,7 +99,7 @@ class TestSecurityInjectionA03(unittest.TestCase):
 
     def test_long_path_buffer_overflow(self):
         """A03-003: Prove extremely long paths are rejected.
-        
+
         Attack: read_file with 100KB path — buffer overflow attempt.
         Defense: MAX_PATH_LENGTH=4096 check rejects before resolution.
         """
@@ -104,7 +114,7 @@ class TestSecurityInjectionA03(unittest.TestCase):
 
     def test_command_injection_in_metadata(self):
         """A03-004: Prove command injection in tool metadata fields is rejected.
-        
+
         Attack: tool name containing '; rm -rf /' as social engineering.
         Defense: keyword access control filters at tool name level — blocks if name
                  contains a dangerous keyword (e.g. 'exec', 'run', 'remove').
@@ -143,7 +153,7 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
 
     def test_access_control_default_is_read_only(self):
         """A05-001: Prove the keyword access control defaults to read-only.
-        
+
         A read-write default would let any agent modify files immediately.
         SecurityGate now has built-in default dangerous_tool_keywords,
         so even without cfg.mcp_dangerous_tool_keywords, write tools are blocked.
@@ -158,7 +168,7 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
 
     def test_terminal_default_is_disabled(self):
         """A05-002: Prove terminal execution can be disabled for security.
-        
+
         Attack: Agent calls terminal() to execute arbitrary shell commands.
         Defense: allow_terminal=False disables all terminal caching.
         When enabled (default: true), a regex allowlist restricts to read-only commands.
@@ -172,7 +182,7 @@ class TestSecurityMisconfigurationA05(unittest.TestCase):
 
     def test_cache_invalidation_default_is_disabled(self):
         """A05-003: Prove cache invalidation is disabled by default.
-        
+
         Attack: Agent calls cache_invalidate('all') to purge cache as DoS.
         Defense: allow_invalidate=False prevents arbitrary cache clearing.
         """
@@ -200,12 +210,15 @@ class TestIdentificationFailuresA07(unittest.TestCase):
         self.mock_cfg.mcp_allowed_paths = ["/tmp/safe_dir"]
         self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = [
-            "write", "edit", "delete", "remove",
+            "write",
+            "edit",
+            "delete",
+            "remove",
         ]
 
     def test_path_traversal_error_does_not_leak_real_path(self):
         """A07-001: Prove path traversal errors don't reveal OS paths.
-        
+
         Attack: read_file("/tmp/safe_dir/../../../etc/shadow") — error message reveals real path.
         Defense: Error should say "Path not allowed: access denied" — NOT "/etc/shadow blocked".
         """
@@ -219,7 +232,7 @@ class TestIdentificationFailuresA07(unittest.TestCase):
 
     def test_access_control_block_error_has_no_stack_trace(self):
         """A07-002: Prove access control errors don't include Python stack traces.
-        
+
         Attack: Tool call triggers exception — error message includes traceback.
         Defense: SecurityGate returns plain string errors, not exception objects.
         """
@@ -228,7 +241,7 @@ class TestIdentificationFailuresA07(unittest.TestCase):
         err = security.check_mcp_tool_access("delete_all")
         self.assertIsNotNone(err)
         self.assertNotIn("Traceback", err, "Error must not contain stack trace")
-        self.assertNotIn("File \"", err, "Error must not contain file paths")
+        self.assertNotIn('File "', err, "Error must not contain file paths")
         _log(f"  PASS: Error is stack-trace free — '{err[:60]}...'")
 
 
@@ -248,14 +261,26 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
         self.mock_cfg.mcp_allowed_paths = ["/tmp/safe"]
         self.mock_cfg.mcp_tool_access_control = True
         self.mock_cfg.mcp_dangerous_tool_keywords = [
-            "write", "edit", "delete", "remove", "terminal",
-            "bash", "exec", "run", "push", "commit", "update", "create",
-            "sudo", "chmod", "chown",
+            "write",
+            "edit",
+            "delete",
+            "remove",
+            "terminal",
+            "bash",
+            "exec",
+            "run",
+            "push",
+            "commit",
+            "update",
+            "create",
+            "sudo",
+            "chmod",
+            "chown",
         ]
 
     def test_case_access_control_bypass(self):
         """LLM06-001: Prove case-mutation cannot bypass.
-        
+
         Attack: Write_file (capital W) vs write_file — keyword check is case-insensitive.
         Defense: Keyword check is case-insensitive (both converted to .lower()).
         """
@@ -267,7 +292,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
 
     def test_unicode_homoglyph_bypass(self):
         """LLM06-002: Prove Unicode homoglyphs cannot bypass.
-        
+
         Attack: wrіte (Cyrillic і) vs write (Latin i) — visually identical.
         Defense: Tool names are ASCII-only in MCP spec — homoglyph tools
                  would not match any registered tool anyway.
@@ -282,7 +307,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
 
     def test_substring_tool_name_false_positive(self):
         """LLM06-003: Document false-positive risk with substrings.
-        
+
         Scenario: tool named "update_manager" contains "update" keyword.
         Known limitation: The substring match causes false positives.
                          "update_manager" would be blocked because "update" is a substring.
@@ -294,7 +319,7 @@ class TestExcessiveAgencyLLM06(unittest.TestCase):
 
     def test_multi_word_tool_bypass(self):
         """LLM06-004: Prove multi-word tool arguments don't bypass.
-        
+
         Attack: execute_command — tool name contains 'exec'.
         Defense: exec is in the dangerous keyword list.
         """
@@ -337,7 +362,7 @@ class TestWAFDirectCachePoisoning(unittest.TestCase):
 
     def test_access_control_prevents_tool_execution(self):
         """WAF-002: Prove keyword access control blocks dangerous MCP tool names.
-        
+
         When enabled, MCP tool names containing dangerous keywords are blocked.
         write_file -> 'write' is a dangerous keyword.
         """

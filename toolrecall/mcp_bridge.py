@@ -36,16 +36,19 @@ TOOL_DEFINITIONS = [
     {
         "name": "read_file",
         "description": "Read a file through ToolRecall's cache. "
-                       "Cached until file modification time (mtime) changes. "
-                       "Set bypass_cache=true to force a fresh read from disk.",
+        "Cached until file modification time (mtime) changes. "
+        "Set bypass_cache=true to force a fresh read from disk.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to read"},
-                "bypass_cache": {"type": "boolean", "description": "Skip cache and force fresh read from disk"}
+                "bypass_cache": {
+                    "type": "boolean",
+                    "description": "Skip cache and force fresh read from disk",
+                },
             },
-            "required": ["path"]
-        }
+            "required": ["path"],
+        },
     },
     {
         "name": "write_file",
@@ -54,10 +57,10 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Absolute path to write to"},
-                "content": {"type": "string", "description": "Content to write"}
+                "content": {"type": "string", "description": "Content to write"},
             },
-            "required": ["path", "content"]
-        }
+            "required": ["path", "content"],
+        },
     },
     {
         "name": "patch",
@@ -66,24 +69,27 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File to patch"},
-                "old_string": {"type": "string", "description": "Exact text to find (must be unique)"},
-                "new_string": {"type": "string", "description": "Replacement text"}
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact text to find (must be unique)",
+                },
+                "new_string": {"type": "string", "description": "Replacement text"},
             },
-            "required": ["path", "old_string", "new_string"]
-        }
+            "required": ["path", "old_string", "new_string"],
+        },
     },
     {
         "name": "terminal",
         "description": "Run a terminal command with TTL-based caching. "
-                       "⚠ Requires mcp.allow_terminal=true in config.",
+        "⚠ Requires mcp.allow_terminal=true in config.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command"},
-                "ttl": {"type": "integer", "description": "Cache TTL in seconds (0=bypass)"}
+                "ttl": {"type": "integer", "description": "Cache TTL in seconds (0=bypass)"},
             },
-            "required": ["command"]
-        }
+            "required": ["command"],
+        },
     },
     # ── Cached variants (explicit aliases — not exposed in tools/list) ──
     # cached_read and cached_terminal are NOT in this list. They remain
@@ -95,24 +101,22 @@ TOOL_DEFINITIONS = [
         "description": "View an agent skill with caching.",
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Skill name"}
-            },
-            "required": ["name"]
-        }
+            "properties": {"name": {"type": "string", "description": "Skill name"}},
+            "required": ["name"],
+        },
     },
     {
         "name": "docs_search",
         "description": "Full-text search indexed documents (FTS5+BM25). "
-                       "Hide from tools/list when knowledge DB is empty.",
+        "Hide from tools/list when knowledge DB is empty.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search terms"},
-                "source": {"type": "string", "description": "Optional namespace filter"}
+                "source": {"type": "string", "description": "Optional namespace filter"},
             },
-            "required": ["query"]
-        }
+            "required": ["query"],
+        },
     },
     {
         "name": "docs_get_page",
@@ -121,65 +125,54 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "source": {"type": "string", "description": "Document source/namespace"},
-                "path": {"type": "string", "description": "Document path"}
+                "path": {"type": "string", "description": "Document path"},
             },
-            "required": ["source", "path"]
-        }
+            "required": ["source", "path"],
+        },
     },
     # ── Cache admin ──
     {
         "name": "cache_status",
         "description": "Show cache statistics (hits, misses, tokens).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "cache_invalidate",
         "description": "Clear all caches. ⚠ Requires mcp.allow_invalidate=true in config.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "cache_refresh_file",
         "description": "Re-read a file from disk (bypasses cache). Safe.",
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path to refresh"}
-            },
-            "required": ["path"]
-        }
+            "properties": {"path": {"type": "string", "description": "File path to refresh"}},
+            "required": ["path"],
+        },
     },
     # ── MCP multiplex ──
     {
         "name": "mcp_call",
         "description": "Call a tool on a multiplexed MCP server (github, time, fetch). "
-                       "⚠ Requires mcp_multiplex.enabled=true in config.",
+        "⚠ Requires mcp_multiplex.enabled=true in config.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "server": {"type": "string", "description": "MCP server name (e.g. 'github')"},
                 "tool": {"type": "string", "description": "Tool name on that server"},
                 "arguments": {"type": "object", "description": "Tool arguments dict"},
-                "bypass_cache": {"type": "boolean", "description": "Skip cache and force fresh call"}
+                "bypass_cache": {
+                    "type": "boolean",
+                    "description": "Skip cache and force fresh call",
+                },
             },
-            "required": ["server", "tool"]
-        }
+            "required": ["server", "tool"],
+        },
     },
     {
         "name": "mcp_list_servers",
         "description": "List available multiplexed MCP servers and their tools.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     # ── Context Tracker tools (hidden when emit_context_hints=false) ──
     {
@@ -187,11 +180,9 @@ TOOL_DEFINITIONS = [
         "description": "Mark current file state as a checkpoint.",
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Optional label"}
-            },
-            "required": []
-        }
+            "properties": {"name": {"type": "string", "description": "Optional label"}},
+            "required": [],
+        },
     },
     {
         "name": "context_get_dirty",
@@ -199,37 +190,28 @@ TOOL_DEFINITIONS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "checkpoint": {"type": "integer", "description": "Checkpoint ID to diff against (default: current)"}
+                "checkpoint": {
+                    "type": "integer",
+                    "description": "Checkpoint ID to diff against (default: current)",
+                }
             },
-            "required": []
-        }
+            "required": [],
+        },
     },
     {
         "name": "context_get_stale",
         "description": "Get files read then later overwritten — your copy is stale.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "context_get_stats",
         "description": "Full context tracker status: dirty/clean files, checkpoint ID.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "context_reset",
         "description": "Reset the context tracker. Call context_set_checkpoint after.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
 ]
 
@@ -260,11 +242,16 @@ CMD_TO_MCP = {
 
 # ─── MCP Bridge ───────────────────────────────────────────
 
+
 class MCPBridge:
     """Reads MCP JSON-RPC from stdin, proxies to daemon, writes to stdout."""
 
-    def __init__(self, socket_path: str = None, emit_context_hints: bool = True,
-                 multiplexer_only: bool = False):
+    def __init__(
+        self,
+        socket_path: str | None = None,
+        emit_context_hints: bool = True,
+        multiplexer_only: bool = False,
+    ):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
         self._start_time = time.time()
         # abs path -> sha256 of the content this session has already sent.
@@ -294,19 +281,6 @@ class MCPBridge:
         self._multiplexer_only = multiplexer_only
         if multiplexer_only:
             self._emit_context_hints = False  # context tracker is useless without file tools
-        # Consecutive stub counter per path — prevents compaction blindness.
-        # Claude Code summarizes away old tool results; after 2 consecutive
-        # stubs we re-send full content so the agent can recover without
-        # guessing bypass_cache=true.
-        self._consecutive_stubs: dict[str, int] = {}
-        # Terminal output dedup: command string -> sha256 of output.
-        # Native Bash tool does NOT deduplicate; repeated identical output
-        # (git status, test runs, ls) re-enters context at full cost.
-        self._session_terminal: dict[str, str] = {}
-        # Context hints (drop-clean-files) are only useful in harnesses that
-        # own their message array (Hermes, ADK).  Append-only harnesses
-        # (Claude Code, Cursor) cannot act on them — disable by default.
-        self._emit_context_hints = emit_context_hints
 
     def _maybe_stub(self, path: str, resp: dict) -> dict:
         """Replace content with a stub when this session already holds it.
@@ -345,12 +319,16 @@ class MCPBridge:
             if self._consecutive_stubs[key] >= 3:
                 self._consecutive_stubs[key] = 0  # keep digest, don't re-arm
                 return resp
-            note = ("File unchanged; see earlier read. "
-                    "If you no longer have it, pass bypass_cache=true.")
-            return {"result": {
-                "unchanged": True,
-                "note": note,
-            }}
+            note = (
+                "File unchanged; see earlier read. "
+                "If you no longer have it, pass bypass_cache=true."
+            )
+            return {
+                "result": {
+                    "unchanged": True,
+                    "note": note,
+                }
+            }
 
         self._session_reads[key] = digest
         self._last_full_send[key] = time.time()
@@ -365,15 +343,21 @@ class MCPBridge:
         """
         if not command or "error" in resp:
             return resp
-        content = resp.get("result", resp).get("output") if isinstance(resp.get("result", resp), dict) else None
+        content = (
+            resp.get("result", resp).get("output")
+            if isinstance(resp.get("result", resp), dict)
+            else None
+        )
         if not isinstance(content, str):
             return resp
         digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
         if self._session_terminal.get(command) == digest:
-            return {"result": {
-                "unchanged": True,
-                "note": f'Command \"{command}\" returned identical output; see earlier result.',
-            }}
+            return {
+                "result": {
+                    "unchanged": True,
+                    "note": f'Command "{command}" returned identical output; see earlier result.',
+                }
+            }
         self._session_terminal[command] = digest
         return resp
 
@@ -388,7 +372,7 @@ class MCPBridge:
             return json.dumps(result, indent=2, ensure_ascii=False)
         return str(result)
 
-    def handle_request(self, req: dict) -> dict:
+    def handle_request(self, req: dict) -> dict | None:
         """Handle one JSON-RPC request."""
         method = req.get("method", "")
         req_id = req.get("id")
@@ -437,15 +421,18 @@ class MCPBridge:
                     f"  cache_status: view cache statistics\n"
                     f"  terminal: {'ENABLED' if security['allow_terminal'] else 'DISABLED'}\n"
                     f"  cache_invalidate: {'ENABLED' if security['allow_invalidate'] else 'DISABLED'}\n"
-                    + ("  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
-                       "    Context Tracker — bound your context window.\n"
-                       "    Pattern: context_set_checkpoint → read files → work → "
-                       "context_get_dirty → drop 'clean' files from context → "
-                       "context_set_checkpoint again.\n"
-                       if self._emit_context_hints else "")
+                    + (
+                        "  context_set_checkpoint / context_get_dirty / context_get_stats / context_reset:\n"
+                        "    Context Tracker — bound your context window.\n"
+                        "    Pattern: context_set_checkpoint → read files → work → "
+                        "context_get_dirty → drop 'clean' files from context → "
+                        "context_set_checkpoint again.\n"
+                        if self._emit_context_hints
+                        else ""
+                    )
                     + "\nStart daemon: toolrecall daemon &"
                 ),
-            }
+            },
         }
 
     def _handle_tools_list(self, req_id):
@@ -468,11 +455,7 @@ class MCPBridge:
                 continue
             tools.append(tdef)
 
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {"tools": tools}
-        }
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
 
     def _handle_tool_call(self, req_id, params):
         tool_name = params.get("name", "")
@@ -502,27 +485,35 @@ class MCPBridge:
                 resp = self.client.send({"cmd": "mcp_list_servers"})
             else:
                 # cached_read with bypass_cache → translate to refresh_file
-                if tool_name in ("cached_read", "read_file") and arguments.get("bypass_cache", False):
-                    resp = self.client.send({
-                        "cmd": "cache_refresh_file",
-                        "path": arguments.get("path", ""),
-                        "mcp_origin": True,
-                    })
+                if tool_name in ("cached_read", "read_file") and arguments.get(
+                    "bypass_cache", False
+                ):
+                    resp = self.client.send(
+                        {
+                            "cmd": "cache_refresh_file",
+                            "path": arguments.get("path", ""),
+                            "mcp_origin": True,
+                        }
+                    )
                 elif tool_name == "write_file":
-                    resp = self.client.send({
-                        "cmd": "cached_write",
-                        "path": arguments.get("path", ""),
-                        "content": arguments.get("content", ""),
-                        "mcp_origin": True,
-                    })
+                    resp = self.client.send(
+                        {
+                            "cmd": "cached_write",
+                            "path": arguments.get("path", ""),
+                            "content": arguments.get("content", ""),
+                            "mcp_origin": True,
+                        }
+                    )
                 elif tool_name == "patch":
-                    resp = self.client.send({
-                        "cmd": "cached_patch",
-                        "path": arguments.get("path", ""),
-                        "old_string": arguments.get("old_string", ""),
-                        "new_string": arguments.get("new_string", ""),
-                        "mcp_origin": True,
-                    })
+                    resp = self.client.send(
+                        {
+                            "cmd": "cached_patch",
+                            "path": arguments.get("path", ""),
+                            "old_string": arguments.get("old_string", ""),
+                            "new_string": arguments.get("new_string", ""),
+                            "mcp_origin": True,
+                        }
+                    )
                 else:
                     # Mark agent-tool reads so context_tokens_saved counts.
                     # Only when context hints are enabled: if the agent isn't
@@ -530,7 +521,9 @@ class MCPBridge:
                     # so the counter would be misleading.
                     if tool_name in ("cached_read", "read_file"):
                         source = "agent_tool" if self._emit_context_hints else None
-                        resp = self._uds_request(uds_cmd, **arguments, source=source, mcp_origin=True)
+                        resp = self._uds_request(
+                            uds_cmd, **arguments, source=source, mcp_origin=True
+                        )
                     else:
                         resp = self._uds_request(uds_cmd, **arguments, mcp_origin=True)
 
@@ -540,7 +533,9 @@ class MCPBridge:
             # Session-scoped dedup: identical content → stub (saves tokens in
             # append-only harnesses like Claude Code where content can't be
             # dropped from the transcript after it enters)
-            if tool_name in ("cached_read", "read_file") and not arguments.get("bypass_cache", False):
+            if tool_name in ("cached_read", "read_file") and not arguments.get(
+                "bypass_cache", False
+            ):
                 resp = self._maybe_stub(arguments.get("path", ""), resp)
             # Terminal dedup: identical command output → stub (native Bash
             # tool does not deduplicate; this is a genuine win)
@@ -554,8 +549,11 @@ class MCPBridge:
             # Auto-trigger context hint after every non-context tool call
             # Only emit if the harness owns its message array (config flag).
             if self._emit_context_hints and tool_name not in (
-                "context_set_checkpoint", "context_get_dirty",
-                "context_get_stale", "context_get_stats", "context_reset",
+                "context_set_checkpoint",
+                "context_get_dirty",
+                "context_get_stale",
+                "context_get_stats",
+                "context_reset",
             ):
                 try:
                     hint_resp = self.client.send({"cmd": "context_get_hint"})
@@ -580,22 +578,17 @@ class MCPBridge:
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {
-                    "content": [{"type": "text", "text": result_text}]
-                }
+                "result": {"content": [{"type": "text", "text": result_text}]},
             }
         except Exception as e:
             return self._error(req_id, -32603, str(e))
 
     def _error(self, req_id, code, message):
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {"code": code, "message": message}
-        }
+        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 
 
 # ─── Entry Point ──────────────────────────────────────────
+
 
 def main():
     """Start the MCP Bridge (stdio → Daemon ↔ UDS)."""
@@ -623,7 +616,10 @@ def main():
     inv = ping.get("allow_invalidate", False)
     paths = ping.get("allowed_paths", [])
     daemon_hash = ping.get("config_hash", "")
-    print(f"  cached_read path allowlist: {', '.join(paths) if paths else 'ALL (DANGEROUS)'}", file=sys.stderr)
+    print(
+        f"  cached_read path allowlist: {', '.join(paths) if paths else 'ALL (DANGEROUS)'}",
+        file=sys.stderr,
+    )
     print(f"  cached_terminal: {'ENABLED' if term else 'DISABLED'}", file=sys.stderr)
     print(f"  cache_invalidate: {'ENABLED' if inv else 'DISABLED'}", file=sys.stderr)
     print(f"  config: #{daemon_hash}", file=sys.stderr)
@@ -633,10 +629,13 @@ def main():
     # a false stale-daemon warning on every correct startup.
     _sock_key = str(DEFAULT_PATH)
     _cache_dir = os.environ.get(
-        "XDG_CACHE_HOME",
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~/.cache"))
+        "XDG_CACHE_HOME", os.environ.get("LOCALAPPDATA", os.path.expanduser("~/.cache"))
     )
-    _config_hash_store = os.path.join(_cache_dir, "toolrecall", f"config_hash_{hashlib.sha256(_sock_key.encode()).hexdigest()[:16]}")
+    _config_hash_store = os.path.join(
+        _cache_dir,
+        "toolrecall",
+        f"config_hash_{hashlib.sha256(_sock_key.encode()).hexdigest()[:16]}",
+    )
     _prev_hash = ""
     try:
         with open(_config_hash_store) as _f:
@@ -644,8 +643,14 @@ def main():
     except (FileNotFoundError, OSError, IOError):
         pass
     if _prev_hash and _prev_hash != daemon_hash:
-        print(f"  ⚠ Config changed since last connection (#{_prev_hash[:16]} → #{daemon_hash}).", file=sys.stderr)
-        print("    The old daemon may have been stale. Run 'toolrecall daemon stop && toolrecall daemon' to confirm.", file=sys.stderr)
+        print(
+            f"  ⚠ Config changed since last connection (#{_prev_hash[:16]} → #{daemon_hash}).",
+            file=sys.stderr,
+        )
+        print(
+            "    The old daemon may have been stale. Run 'toolrecall daemon stop && toolrecall daemon' to confirm.",
+            file=sys.stderr,
+        )
     try:
         os.makedirs(os.path.dirname(_config_hash_store), exist_ok=True)
         with open(_config_hash_store, "w") as _f:
@@ -657,10 +662,16 @@ def main():
     # so TOOLRECALL_* env vars set at bridge launch time have no effect unless
     # the daemon was also started with them in its environment.
     import os as _os
+
     _ENV_MISMATCH_WARNINGS = []
-    for _env_key in ("TOOLRECALL_MCP_ALLOWED_PATHS", "TOOLRECALL_MCP_ALLOW_TERMINAL",
-                     "TOOLRECALL_MCP_ALLOW_INVALIDATE", "TOOLRECALL_CACHE_DB",
-                     "TOOLRECALL_MCP_MULTIPLEX_ENABLED", "TOOLRECALL_STORAGE_BACKEND"):
+    for _env_key in (
+        "TOOLRECALL_MCP_ALLOWED_PATHS",
+        "TOOLRECALL_MCP_ALLOW_TERMINAL",
+        "TOOLRECALL_MCP_ALLOW_INVALIDATE",
+        "TOOLRECALL_CACHE_DB",
+        "TOOLRECALL_MCP_MULTIPLEX_ENABLED",
+        "TOOLRECALL_STORAGE_BACKEND",
+    ):
         _val = _os.environ.get(_env_key)
         if _val:
             _ENV_MISMATCH_WARNINGS.append(

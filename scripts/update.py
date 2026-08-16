@@ -37,12 +37,14 @@ def get_current_version() -> str:
     """Read version from the installed package or pyproject.toml."""
     try:
         from toolrecall import __version__
+
         return __version__
     except ImportError:
         pass
     path = os.path.join(REPO_DIR, "pyproject.toml")
     if os.path.isfile(path):
         import tomllib
+
         with open(path, "rb") as f:
             data = tomllib.load(f)
         return data.get("project", {}).get("version", "unknown")
@@ -57,7 +59,10 @@ def detect_install_method() -> str:
     # Check pipx first
     try:
         r = subprocess.run(
-            ["pipx", "list"], capture_output=True, text=True, timeout=15,
+            ["pipx", "list"],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if r.returncode == 0 and "toolrecall" in r.stdout:
             return "pipx"
@@ -67,7 +72,9 @@ def detect_install_method() -> str:
     # Check pip
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "toolrecall"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode == 0:
         for line in result.stdout.splitlines():
@@ -85,7 +92,9 @@ def detect_install_method() -> str:
 
 def detect_daemon_running() -> bool:
     """Check if the daemon is running (UDS socket or PID file)."""
-    import socket, json
+    import socket
+    import json
+
     sock_path = os.path.expanduser("~/.toolrecall/tc.sock")
     if os.path.exists(sock_path):
         try:
@@ -113,12 +122,15 @@ def step_announce(current: str, method: str):
 
 # ── Update methods ────────────────────────────────────────────
 
+
 def update_via_pipx(current: str) -> bool:
     """Update via pipx upgrade."""
     print("[1/3] Upgrading pipx package...")
     result = subprocess.run(
         ["pipx", "upgrade", "toolrecall"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         log(f"pipx upgrade failed: {result.stderr.strip()}", "✗")
@@ -127,6 +139,7 @@ def update_via_pipx(current: str) -> bool:
     # Verify
     try:
         from toolrecall import __version__
+
         log(f"New version: {__version__}", "✓")
     except ImportError:
         pass
@@ -138,7 +151,9 @@ def update_via_pip(current: str) -> bool:
     print("[1/3] Upgrading pip package...")
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "--upgrade", "toolrecall"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         log(f"pip upgrade failed:\n{result.stderr}", "✗")
@@ -147,7 +162,9 @@ def update_via_pip(current: str) -> bool:
 
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "toolrecall"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode == 0:
         for line in result.stdout.splitlines():
@@ -162,7 +179,10 @@ def update_via_git(current: str) -> bool:
 
     result = subprocess.run(
         ["git", "status", "--porcelain"],
-        capture_output=True, text=True, timeout=10, cwd=REPO_DIR,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=REPO_DIR,
     )
     if result.stdout.strip():
         log("Uncommitted changes detected", "⚠")
@@ -170,7 +190,9 @@ def update_via_git(current: str) -> bool:
         if confirm("Stash changes and continue?"):
             subprocess.run(
                 ["git", "stash", "-u"],
-                capture_output=True, timeout=10, cwd=REPO_DIR,
+                capture_output=True,
+                timeout=10,
+                cwd=REPO_DIR,
             )
             log("Changes stashed", "✓")
         else:
@@ -179,14 +201,19 @@ def update_via_git(current: str) -> bool:
 
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "@{upstream}"],
-        capture_output=True, text=True, timeout=10, cwd=REPO_DIR,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=REPO_DIR,
     )
     if result.returncode != 0:
         log("No upstream branch configured", "⚠")
         if confirm("Set upstream to origin/main?"):
             subprocess.run(
                 ["git", "branch", "--set-upstream-to", "origin/main"],
-                capture_output=True, timeout=10, cwd=REPO_DIR,
+                capture_output=True,
+                timeout=10,
+                cwd=REPO_DIR,
             )
             log("Upstream set to origin/main", "✓")
         else:
@@ -195,7 +222,10 @@ def update_via_git(current: str) -> bool:
 
     result = subprocess.run(
         ["git", "pull", "--ff-only"],
-        capture_output=True, text=True, timeout=60, cwd=REPO_DIR,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=REPO_DIR,
     )
     if result.returncode != 0:
         log(f"git pull failed: {result.stderr.strip()}", "✗")
@@ -214,11 +244,14 @@ def restart_daemon():
 
     subprocess.run(
         ["toolrecall", "daemon", "--stop"],
-        capture_output=True, timeout=10,
+        capture_output=True,
+        timeout=10,
     )
     subprocess.run(
         ["toolrecall", "daemon", "&"],
-        capture_output=True, timeout=10, shell=True,
+        capture_output=True,
+        timeout=10,
+        shell=True,
     )
     log("Daemon restarted", "✓")
 
@@ -230,7 +263,8 @@ def verify():
         for mod in list(sys.modules.keys()):
             if mod.startswith("toolrecall"):
                 del sys.modules[mod]
-        from toolrecall import cached_read, __version__
+        from toolrecall import __version__
+
         log(f"Import OK — version {__version__}", "✓")
         log("ToolRecall is ready", "✓")
         return True
@@ -240,6 +274,7 @@ def verify():
 
 
 # ── Main ──────────────────────────────────────────────────────
+
 
 def main():
     global FORCE

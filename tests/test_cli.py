@@ -1,4 +1,5 @@
 """Tests for CLI — commands dispatch correctly."""
+
 import io
 import os
 import sys
@@ -23,12 +24,23 @@ class TestCLIMainDispatch(unittest.TestCase):
     def test_main_lists_all_registered_commands(self):
         """main() lists all registered commands."""
         expected = [
-            "init", "status", "stats", "invalidate", "reset-stats",
-            "index", "index-memory", "index-dir", "config-set",
-            "serve", "nginx", "mcp", "daemon",
+            "init",
+            "status",
+            "stats",
+            "invalidate",
+            "reset-stats",
+            "index",
+            "index-memory",
+            "index-dir",
+            "config-set",
+            "serve",
+            "nginx",
+            "mcp",
+            "daemon",
         ]
         sys.argv = ["toolrecall"]
         from toolrecall.cli import main
+
         main()
         output = self.stdout.getvalue()
         for cmd in expected:
@@ -38,6 +50,7 @@ class TestCLIMainDispatch(unittest.TestCase):
         """Case-sensitive: 'Status' with capital is unknown, shows error."""
         sys.argv = ["toolrecall", "Status"]  # Not "status"
         from toolrecall.cli import main
+
         main()
         output = self.stdout.getvalue()
         self.assertIn("Unknown command", output)
@@ -47,6 +60,7 @@ class TestCLIMainDispatch(unittest.TestCase):
 # Test: cmd_reset_stats
 # ═══════════════════════════════════════════════════════════
 
+
 class TestCLIResetStats(unittest.TestCase):
     """cmd_reset_stats() calls reset_stats without crash."""
 
@@ -55,6 +69,7 @@ class TestCLIResetStats(unittest.TestCase):
         self.db_path = os.path.join(self.tmpdir, "test.db")
         os.environ["TOOLRECALL_CACHE_DB"] = self.db_path
         from toolrecall.cache import _init
+
         _init()
         self.old_stdout = sys.stdout
         self.stdout = io.StringIO()
@@ -69,6 +84,7 @@ class TestCLIResetStats(unittest.TestCase):
         """reset-stats prints 'Cache statistics reset'."""
         sys.argv = ["toolrecall", "reset-stats"]
         from toolrecall.cli import cmd_reset_stats
+
         cmd_reset_stats()
         output = self.stdout.getvalue()
         self.assertIn("Cache statistics reset (hits/misses/tokens)", output)

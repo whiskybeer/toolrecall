@@ -127,7 +127,9 @@ def _build_cache_key(tool_name: str, args: tuple, kwargs: dict) -> str:
     return json.dumps(arg_dict, sort_keys=True, ensure_ascii=False)
 
 
-def _store_in_cache(tool_name: str, cache_key: str, data: Any, ttl: Optional[int] = None) -> None:
+def _store_in_cache(
+    tool_name: str, cache_key: str, data: Any, ttl: Optional[int] | None = None
+) -> None:
     """Serialize and store a tool result in ToolRecall's MCP cache.
 
     Uses the same pattern as google_adk._store_result. Failures are logged
@@ -151,7 +153,7 @@ def _store_in_cache(tool_name: str, cache_key: str, data: Any, ttl: Optional[int
         logger.warning("Cache STORE failed for odysseus/%s: %s", tool_name, e)
 
 
-def _check_cache(tool_name: str, cache_key: str, ttl: Optional[int] = None) -> Optional[Any]:
+def _check_cache(tool_name: str, cache_key: str, ttl: Optional[int] | None = None) -> Optional[Any]:
     """Check ToolRecall's MCP cache for a previous result.
 
     Returns deserialized data on hit, None on miss. Same pattern as
@@ -176,9 +178,7 @@ def _check_cache(tool_name: str, cache_key: str, ttl: Optional[int] = None) -> O
 # ---------------------------------------------------------------------------
 
 
-def cached_tool(
-    func: Optional[F] = None, *, ttl: Optional[int] = None
-) -> Callable:
+def cached_tool(func: Optional[F] | None = None, *, ttl: Optional[int] | None = None) -> Callable:
     """Decorator: cache the return value of a synchronous function via ToolRecall.
 
     Can be used with or without arguments:
@@ -195,11 +195,12 @@ def cached_tool(
 
     def decorator(f: F) -> Callable:
         return _make_cached_wrapper(f, ttl=ttl)
+
     return decorator
 
 
 async def cached_async_tool(
-    func: Optional[Callable[..., Awaitable[Any]]] = None, *, ttl: Optional[int] = None
+    func: Optional[Callable[..., Awaitable[Any]]] | None = None, *, ttl: Optional[int] | None = None
 ) -> Callable:
     """Async version of @cached_tool for async tool functions.
 
@@ -211,10 +212,11 @@ async def cached_async_tool(
 
     async def decorator(f: Callable[..., Awaitable[Any]]) -> Callable:
         return await _make_async_cached_wrapper(f, ttl=ttl)
+
     return decorator
 
 
-def _make_cached_wrapper(func: F, *, ttl: Optional[int] = None) -> Callable:
+def _make_cached_wrapper(func: F, *, ttl: Optional[int] | None = None) -> Callable:
     """Internal: wrap a sync function with cache check + store."""
     tool_name = func.__name__
 
@@ -234,7 +236,7 @@ def _make_cached_wrapper(func: F, *, ttl: Optional[int] = None) -> Callable:
 
 
 async def _make_async_cached_wrapper(
-    func: Callable[..., Awaitable[Any]], *, ttl: Optional[int] = None
+    func: Callable[..., Awaitable[Any]], *, ttl: Optional[int] | None = None
 ) -> Callable[..., Awaitable[Any]]:
     """Internal: wrap an async function with cache check + store."""
     tool_name = func.__name__
@@ -287,7 +289,7 @@ def install_agent_cache() -> None:
     )
 
 
-def install_mcp_cache(mcp_manager: Any = None) -> None:
+def install_mcp_cache(mcp_manager: Any | None = None) -> None:
     """Enable MCP server result caching in Odysseus's MCP manager.
 
     When an MCP server returns a result, it's cached per (server_id, tool_name,
@@ -298,10 +300,7 @@ def install_mcp_cache(mcp_manager: Any = None) -> None:
                      function logs a warning and returns no-op.
     """
     if mcp_manager is None:
-        logger.warning(
-            "install_mcp_cache called with None McpManager — "
-            "MCP caching is disabled."
-        )
+        logger.warning("install_mcp_cache called with None McpManager — MCP caching is disabled.")
         return
 
     logger.info(

@@ -37,6 +37,7 @@ _LOG: logging.Logger | None = None
 
 # ─── ToolRecall Daemon Client ─────────────────────────────────────────
 
+
 def _ensure_daemon() -> bool:
     """Ensure the ToolRecall daemon is running. Returns True if ready."""
     from toolrecall.transport import TransportClient, DEFAULT_PATH
@@ -60,13 +61,15 @@ def _ensure_daemon() -> bool:
     # Auto-start via subprocess
     import subprocess
     import shutil
+
     try:
         toolrecall_bin = shutil.which("toolrecall")
         if not toolrecall_bin:
             return False
         subprocess.Popen(
             [toolrecall_bin, "daemon", "--foreground"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         for _ in range(10):
@@ -86,11 +89,13 @@ def _ensure_daemon() -> bool:
 def _daemon_send(cmd: dict) -> dict:
     """Send a command to the ToolRecall daemon and return the response."""
     from toolrecall.transport import TransportClient, DEFAULT_PATH
+
     tc = TransportClient(DEFAULT_PATH)
     return tc.send(cmd)
 
 
 # ─── MCP Tool Implementations ─────────────────────────────────────────
+
 
 def _cached_read(path: str, max_tokens: int = 0) -> str:
     """Read a file through ToolRecall's cache.
@@ -110,12 +115,14 @@ def _cached_read(path: str, max_tokens: int = 0) -> str:
         return f"Error: file not found: {path}"
 
     # Read via daemon for caching
-    resp = _daemon_send({
-        "cmd": "cached_read",
-        "path": path,
-        "source": "agent_tool",
-        "max_tokens": max_tokens,
-    })
+    resp = _daemon_send(
+        {
+            "cmd": "cached_read",
+            "path": path,
+            "source": "agent_tool",
+            "max_tokens": max_tokens,
+        }
+    )
 
     if resp.get("error"):
         return f"Error: {resp['error']}"
@@ -135,11 +142,13 @@ def _cached_terminal(command: str, timeout: int = 30) -> str:
     Returns:
         Command output (cached if available)
     """
-    resp = _daemon_send({
-        "cmd": "cached_terminal",
-        "command": command,
-        "timeout": timeout,
-    })
+    resp = _daemon_send(
+        {
+            "cmd": "cached_terminal",
+            "command": command,
+            "timeout": timeout,
+        }
+    )
 
     if resp.get("error"):
         return f"Error: {resp['error']}"
@@ -169,11 +178,13 @@ def _cached_write(path: str, content: str) -> str:
     """
     # SECURITY: Route through daemon — it enforces the path allowlist
     # and sensitive-file blocklist. We must NOT write directly here.
-    resp = _daemon_send({
-        "cmd": "cached_write",
-        "path": path,
-        "content": content,
-    })
+    resp = _daemon_send(
+        {
+            "cmd": "cached_write",
+            "path": path,
+            "content": content,
+        }
+    )
 
     if resp.get("error"):
         return f"Error: {resp['error']}"
@@ -205,12 +216,14 @@ def _cached_patch(path: str, old_string: str, new_string: str) -> str:
     """
     # SECURITY: Route through daemon — it enforces the path allowlist
     # and sensitive-file blocklist.
-    resp = _daemon_send({
-        "cmd": "cached_patch",
-        "path": path,
-        "old_string": old_string,
-        "new_string": new_string,
-    })
+    resp = _daemon_send(
+        {
+            "cmd": "cached_patch",
+            "path": path,
+            "old_string": old_string,
+            "new_string": new_string,
+        }
+    )
 
     if resp.get("error"):
         return f"Error: {resp['error']}"
@@ -235,10 +248,10 @@ TOOLS = [
     {
         "name": "read_file",
         "description": "Read a file through ToolRecall's cache. "
-                       "On first read, content is fetched from disk and cached. "
-                       "Subsequent reads return cached content instantly. "
-                       "Supports all paths in allowed_paths (~, /etc, /dev). "
-                       "Sensitive files (.env, .ssh/, .pem) are still blocked.",
+        "On first read, content is fetched from disk and cached. "
+        "Subsequent reads return cached content instantly. "
+        "Supports all paths in allowed_paths (~, /etc, /dev). "
+        "Sensitive files (.env, .ssh/, .pem) are still blocked.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -258,9 +271,9 @@ TOOLS = [
     {
         "name": "terminal",
         "description": "Run a terminal command through ToolRecall's cache. "
-                       "On first run, output is fetched and cached. "
-                       "Subsequent identical commands return cached output. "
-                       "TTL: 5 min for unknown commands, 1h for hostname/whoami/pwd/uname.",
+        "On first run, output is fetched and cached. "
+        "Subsequent identical commands return cached output. "
+        "TTL: 5 min for unknown commands, 1h for hostname/whoami/pwd/uname.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -280,7 +293,7 @@ TOOLS = [
     {
         "name": "write_file",
         "description": "Write content to a file. Invalidates the cache entry "
-                       "so the next read_file is fresh. Does NOT cache the write itself.",
+        "so the next read_file is fresh. Does NOT cache the write itself.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -299,8 +312,8 @@ TOOLS = [
     {
         "name": "patch",
         "description": "Apply a find-and-replace patch to a file. "
-                       "Invalidates the cache entry so the next read_file is fresh. "
-                       "The old_string must be unique in the file.",
+        "Invalidates the cache entry so the next read_file is fresh. "
+        "The old_string must be unique in the file.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -356,15 +369,14 @@ def _handle_tool_call(name: str, arguments: dict) -> dict:
             return {"content": [{"type": "text", "text": result}]}
 
         else:
-            return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}],
-                    "isError": True}
+            return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}
 
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error: {e}"}],
-                "isError": True}
+        return {"content": [{"type": "text", "text": f"Error: {e}"}], "isError": True}
 
 
 # ─── MCP Server Loop ──────────────────────────────────────────────────
+
 
 def main():
     """Run the MCP Cache FS server over stdin/stdout (stdio MCP protocol)."""

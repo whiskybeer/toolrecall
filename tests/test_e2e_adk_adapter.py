@@ -17,6 +17,7 @@ pytest.importorskip("google", reason="google not installed")
 
 # ---- cached_tool decorator tests ----
 
+
 class TestCachedToolE2E:
     """Real daemon tests for the @cached_tool decorator."""
 
@@ -178,11 +179,7 @@ class TestCachedToolE2E:
         def nested() -> dict:
             call_count[0] += 1
             return {
-                "level1": {
-                    "level2": {
-                        "level3": ["a", "b", {"c": 42}]
-                    }
-                },
+                "level1": {"level2": {"level3": ["a", "b", {"c": 42}]}},
                 "flag": True,
                 "count": 0,
             }
@@ -198,6 +195,7 @@ class TestCachedToolE2E:
 
 
 # ---- Full ADK Agent Integration ----
+
 
 class TestADKAgentE2E:
     """Run a real ADK agent with @cached_tool through the LLM.
@@ -238,34 +236,39 @@ class TestADKAgentE2E:
         )
 
         # Run the agent
-        events = list(runner.run(
-            user_id="test_user",
-            session_id="test-session-1",
-            new_message=types.Content(
-                role="user",
-                parts=[types.Part(text="What's the weather in Berlin?")],
-            ),
-        ))
+        events = list(
+            runner.run(
+                user_id="test_user",
+                session_id="test-session-1",
+                new_message=types.Content(
+                    role="user",
+                    parts=[types.Part(text="What's the weather in Berlin?")],
+                ),
+            )
+        )
 
         model_replies = [
             ev.content.parts[0].text
             for ev in events
-            if hasattr(ev, 'content') and ev.content
+            if hasattr(ev, "content")
+            and ev.content
             and ev.content.role == "model"
             and ev.content.parts
-            and hasattr(ev.content.parts[0], 'text')
+            and hasattr(ev.content.parts[0], "text")
         ]
         assert len(model_replies) > 0, "Should have at least one model reply"
         assert call_count[0] == 1, "Tool should have been called once"
 
         # Second call — should hit the cache
-        list(runner.run(
-            user_id="test_user",
-            session_id="test-session-2",
-            new_message=types.Content(
-                role="user",
-                parts=[types.Part(text="What's the weather in Berlin?")],
-            ),
-        ))
+        list(
+            runner.run(
+                user_id="test_user",
+                session_id="test-session-2",
+                new_message=types.Content(
+                    role="user",
+                    parts=[types.Part(text="What's the weather in Berlin?")],
+                ),
+            )
+        )
 
         assert call_count[0] == 1, "Tool should NOT be called — cached result returned"

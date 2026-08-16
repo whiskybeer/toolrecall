@@ -25,6 +25,7 @@ class TestMCPTime(unittest.TestCase):
     def _run(self, request):
         """Feed a JSON-RPC request to stdin, capture stdout response."""
         import io
+
         old_stdin = sys.stdin
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -77,10 +78,7 @@ class TestMCPTime(unittest.TestCase):
     def test_get_time_utc(self):
         """Prove get_time returns valid datetime for UTC.
         Server returns datetime with space separator (not ISO T)."""
-        resp = self._call("tools/call", {
-            "name": "get_time",
-            "arguments": {"timezone": "UTC"}
-        })
+        resp = self._call("tools/call", {"name": "get_time", "arguments": {"timezone": "UTC"}})
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         text = json.loads(content[0]["text"])
@@ -91,10 +89,7 @@ class TestMCPTime(unittest.TestCase):
 
     def test_get_time_gmt(self):
         """Prove get_time returns GMT timezone."""
-        resp = self._call("tools/call", {
-            "name": "get_time",
-            "arguments": {"timezone": "GMT"}
-        })
+        resp = self._call("tools/call", {"name": "get_time", "arguments": {"timezone": "GMT"}})
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         text = json.loads(content[0]["text"])
@@ -103,10 +98,7 @@ class TestMCPTime(unittest.TestCase):
 
     def test_get_time_est(self):
         """Prove get_time handles EST (negative offset zone)."""
-        resp = self._call("tools/call", {
-            "name": "get_time",
-            "arguments": {"timezone": "EST"}
-        })
+        resp = self._call("tools/call", {"name": "get_time", "arguments": {"timezone": "EST"}})
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         text = json.loads(content[0]["text"])
@@ -115,10 +107,7 @@ class TestMCPTime(unittest.TestCase):
 
     def test_get_time_pst(self):
         """Prove get_time handles PST (negative offset)."""
-        resp = self._call("tools/call", {
-            "name": "get_time",
-            "arguments": {"timezone": "PST"}
-        })
+        resp = self._call("tools/call", {"name": "get_time", "arguments": {"timezone": "PST"}})
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         text = json.loads(content[0]["text"])
@@ -127,10 +116,9 @@ class TestMCPTime(unittest.TestCase):
 
     def test_get_time_unknown_zone_returns_error(self):
         """Prove unknown IANA-style zone names return error in result text."""
-        resp = self._call("tools/call", {
-            "name": "get_time",
-            "arguments": {"timezone": "Europe/Berlin"}
-        })
+        resp = self._call(
+            "tools/call", {"name": "get_time", "arguments": {"timezone": "Europe/Berlin"}}
+        )
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         text = json.loads(content[0]["text"])
@@ -140,10 +128,7 @@ class TestMCPTime(unittest.TestCase):
 
     def test_list_timezones(self):
         """Prove list_timezones returns dict with timezones list."""
-        resp = self._call("tools/call", {
-            "name": "list_timezones",
-            "arguments": {}
-        })
+        resp = self._call("tools/call", {"name": "list_timezones", "arguments": {}})
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         data = json.loads(content[0]["text"])
@@ -155,10 +140,7 @@ class TestMCPTime(unittest.TestCase):
 
     def test_missing_timezone_uses_default(self):
         """Prove missing timezone argument defaults to UTC."""
-        resp = self._call("tools/call", {
-            "name": "get_time",
-            "arguments": {}
-        })
+        resp = self._call("tools/call", {"name": "get_time", "arguments": {}})
         self.assertIsNotNone(resp)
         content = resp.get("result", {}).get("content", [])
         text = json.loads(content[0]["text"])
@@ -166,10 +148,7 @@ class TestMCPTime(unittest.TestCase):
 
     def test_unknown_tool_returns_error(self):
         """Prove unknown tool names return -32601 error."""
-        resp = self._call("tools/call", {
-            "name": "nonexistent_tool",
-            "arguments": {}
-        })
+        resp = self._call("tools/call", {"name": "nonexistent_tool", "arguments": {}})
         self.assertIsNotNone(resp)
         self.assertIn("error", resp)
         self.assertEqual(resp["error"]["code"], -32601)

@@ -30,6 +30,7 @@ Uninstall:
 Config:
     TOOLRECALL_SHIM_DISABLE=1  — disable shim at runtime
 """
+
 import os
 import builtins
 import sys
@@ -76,6 +77,7 @@ def _get_tr():
             # wherever sys.path resolves "toolrecall" (which can be the
             # source tree if an editable install shadows site-packages).
             from .client import cached_read as cr
+
             _TR = {"read": cr}
         except ImportError:
             _TR = False
@@ -99,6 +101,7 @@ def _load_skip_prefixes():
         return
     try:
         from toolrecall.config import load_config
+
         cfg = load_config()
         _SKIP_PREFIXES = list(cfg.shim_exclude_prefixes)
     except Exception:
@@ -109,6 +112,7 @@ def _should_skip(path: str | bytes | os.PathLike) -> bool:
     """Check if a path is an internal infrastructure file that should bypass the shim."""
     if _SKIP_PREFIXES is None:
         _load_skip_prefixes()
+    assert _SKIP_PREFIXES is not None
     ps = os.fspath(path)
     for prefix in _SKIP_PREFIXES:
         if ps.startswith(prefix):
@@ -120,7 +124,7 @@ def _should_skip(path: str | bytes | os.PathLike) -> bool:
 _original_open = builtins.open
 
 
-def _shim_open(path, mode='r', *args, **kwargs):
+def _shim_open(path, mode="r", *args, **kwargs):
     # Don't intercept non-file paths (integers = file descriptors,
     # None, or capture objects from test frameworks).
     if not isinstance(path, (str, bytes, os.PathLike)):
@@ -143,7 +147,7 @@ def _shim_open(path, mode='r', *args, **kwargs):
             return _original_open(path_str, mode, *args, **kwargs)
 
         tr = _get_tr()
-        if tr and mode in ('r', 'rt'):
+        if tr and mode in ("r", "rt"):
             try:
                 result = tr["read"](path_str, source="shim")
                 # Only serve from shim if it was a cache HIT.
@@ -152,6 +156,7 @@ def _shim_open(path, mode='r', *args, **kwargs):
                 # and records stats exactly once.
                 if result and result.get("cached", False) and "content" in result:
                     import io
+
                     return io.StringIO(result["content"])
             except Exception:
                 pass
@@ -175,10 +180,7 @@ def apply():
         return
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return
-    if _argv and _argv[0] == "-m" and any(
-        "pytest" in str(a)
-        for a in _argv[1:]
-    ):
+    if _argv and _argv[0] == "-m" and any("pytest" in str(a) for a in _argv[1:]):
         return
     builtins.open = _shim_open
 

@@ -11,7 +11,6 @@ import sys
 import tempfile
 
 
-
 class TestConfigAutoResolve:
     """Test that config.py auto-resolves MCP servers from registry."""
 
@@ -31,15 +30,21 @@ idle_minutes = 15
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
 
             result = cfg.mcp_multiplex_servers_config
             assert isinstance(result, dict)
             assert "time" in result, f"'time' should be resolved, got keys: {list(result.keys())}"
-            assert "github" in result, f"'github' should be resolved, got keys: {list(result.keys())}"
+            assert "github" in result, (
+                f"'github' should be resolved, got keys: {list(result.keys())}"
+            )
 
             # Check that built-in servers have the right command
-            assert "python" in result["time"]["command"].lower() or sys.executable in result["time"]["command"]
+            assert (
+                "python" in result["time"]["command"].lower()
+                or sys.executable in result["time"]["command"]
+            )
             assert "-m" in result["time"]["args"]
             assert "toolrecall.mcp_time" in str(result["time"]["args"])
         finally:
@@ -57,10 +62,12 @@ servers = ["time"]
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
             result = cfg.mcp_multiplex_servers_config
-            assert result["time"]["command"] == sys.executable, \
+            assert result["time"]["command"] == sys.executable, (
                 f"Expected {sys.executable}, got {result['time']['command']}"
+            )
         finally:
             os.unlink(tmp_path)
 
@@ -79,11 +86,13 @@ time = { command = "custom-cmd", args = ["--custom-flag"] }
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
             result = cfg.mcp_multiplex_servers_config
             assert "time" in result
-            assert result["time"]["command"] == "custom-cmd", \
+            assert result["time"]["command"] == "custom-cmd", (
                 f"Expected 'custom-cmd', got {result['time']['command']}"
+            )
             assert "--custom-flag" in result["time"]["args"]
         finally:
             os.unlink(tmp_path)
@@ -105,11 +114,13 @@ servers = ["completely-fake-server-99"]
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
             result = cfg.mcp_multiplex_servers_config
             # Unknown server should NOT be in the result
-            assert "completely-fake-server-99" not in result, \
+            assert "completely-fake-server-99" not in result, (
                 f"Unknown server should not be resolved, got: {result}"
+            )
         finally:
             os.unlink(tmp_path)
 
@@ -129,6 +140,7 @@ servers = []
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
             result = cfg.mcp_multiplex_servers_config
             # Empty servers list should not add any auto-resolved entries.
@@ -148,6 +160,7 @@ servers = ["time", "github", "fetch", "sequential-thinking"]
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
             result = cfg.mcp_multiplex_servers_config
 
@@ -159,6 +172,7 @@ servers = ["time", "github", "fetch", "sequential-thinking"]
 
             # Check sources: time/github/seqthink = builtin, fetch = external
             from toolrecall.mcp_registry import is_builtin
+
             assert is_builtin("time") or result["time"]["command"] == sys.executable
             assert is_builtin("fetch") or result["fetch"]["command"] == sys.executable
             assert "toolrecall.mcp_fetch" in str(result["fetch"]["args"])
@@ -180,12 +194,14 @@ github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"]
 
         try:
             from toolrecall.config import load_config
+
             cfg = load_config(tmp_path)
             result = cfg.mcp_multiplex_servers_config
 
             # GitHub should use explicit override
-            assert result["github"]["command"] == "npx", \
+            assert result["github"]["command"] == "npx", (
                 f"GitHub should use npx override, got {result['github']['command']}"
+            )
 
             # Time, Fetch should be auto-resolved (time=builtin, fetch=builtin)
             assert "time" in result

@@ -52,17 +52,13 @@ class TestMCPSeqThink(unittest.TestCase):
 
     def test_initialize(self):
         """Prove initialize returns capabilities."""
-        resp = self._run_once(
-            '{"jsonrpc":"2.0","method":"initialize","id":1}'
-        )
+        resp = self._run_once('{"jsonrpc":"2.0","method":"initialize","id":1}')
         self.assertIsNotNone(resp)
         self.assertIn("result", resp)
 
     def test_tools_list(self):
         """Prove tools/list returns all 3 tools."""
-        resp = self._run_once(
-            '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-        )
+        resp = self._run_once('{"jsonrpc":"2.0","method":"tools/list","id":1}')
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
         self.assertEqual(len(tools), 3)
@@ -202,16 +198,12 @@ class TestMCPSeqThink(unittest.TestCase):
 
     def test_unknown_method_returns_error(self):
         """Prove unknown method returns -32601."""
-        resp = self._run_once(
-            '{"jsonrpc":"2.0","method":"boogie","id":1}'
-        )
+        resp = self._run_once('{"jsonrpc":"2.0","method":"boogie","id":1}')
         self.assertEqual(resp["error"]["code"], -32601)
 
     def test_notifications_ignored(self):
         """Prove notifications/initialized is silently ignored."""
-        resp = self._run_once(
-            '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-        )
+        resp = self._run_once('{"jsonrpc":"2.0","method":"notifications/initialized"}')
         self.assertIsNone(resp)
 
 

@@ -41,7 +41,10 @@ def _run_python(code: str, extra_env: dict[str, str] | None = None) -> tuple[str
         env.update(extra_env)
     result = sys.executable and __import__("subprocess").run(
         [sys.executable, "-c", code],
-        env=env, capture_output=True, text=True, timeout=30,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     return result.stdout.strip(), result.stderr.strip(), result.returncode
 

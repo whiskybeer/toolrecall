@@ -35,23 +35,28 @@ ARMS = ["naive", "prefix", "toolrecall"]
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Three-arm interleaved benchmark driver"
+    parser = argparse.ArgumentParser(description="Three-arm interleaved benchmark driver")
+    parser.add_argument(
+        "workload", nargs="?", default="bugfix", help="Workload: bugfix, feature, analysis"
     )
-    parser.add_argument("workload", nargs="?", default="bugfix",
-                        help="Workload: bugfix, feature, analysis")
-    parser.add_argument("--seeds", type=int, default=3,
-                        help="Number of seeds per arm (default 3)")
+    parser.add_argument("--seeds", type=int, default=3, help="Number of seeds per arm (default 3)")
     parser.add_argument("--max-turns", type=int, default=500)
-    parser.add_argument("--provider", default="openrouter",
-                        choices=["openrouter", "anthropic"],
-                        help="LLM provider (default: openrouter)")
-    parser.add_argument("--model", default=None,
-                        help="Model name override (uses provider default if unset)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Skip LLM calls — dry-run only")
-    parser.add_argument("--delay", type=float, default=0.0,
-                        help="Seconds between turns to avoid rate limits (default: 0.0)")
+    parser.add_argument(
+        "--provider",
+        default="openrouter",
+        choices=["openrouter", "anthropic"],
+        help="LLM provider (default: openrouter)",
+    )
+    parser.add_argument(
+        "--model", default=None, help="Model name override (uses provider default if unset)"
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Skip LLM calls — dry-run only")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.0,
+        help="Seconds between turns to avoid rate limits (default: 0.0)",
+    )
     args = parser.parse_args()
 
     print(f"Interleaved benchmark: {args.workload}")
@@ -97,20 +102,25 @@ def main():
     print(f"{'Arm':12s} {'Workload':10s} {'Seed':>5} {'Turns':>6} {'Time':>7}  Run ID")
     print("-" * 60)
 
-    import sqlite3, os
+    import sqlite3
+    import os
+
     bench_dir = os.path.expanduser("~/.toolrecall/bench-runs")
     for arm, wl, seed, rid, et in run_ids:
         db_path = os.path.join(bench_dir, f"{rid}.db")
         con = sqlite3.connect(db_path) if os.path.exists(db_path) else None
-        turn_count = con.execute(
-            "SELECT COUNT(*) FROM turn_log WHERE run_id = ?", (rid,)
-        ).fetchone()[0] if con else 0
-        if con: con.close()
+        turn_count = (
+            con.execute("SELECT COUNT(*) FROM turn_log WHERE run_id = ?", (rid,)).fetchone()[0]
+            if con
+            else 0
+        )
+        if con:
+            con.close()
         print(f"{arm:12s} {wl:10s} {seed:>5} {turn_count:>6} {et:>6.0f}s  {rid}")
 
     print()
     print("To generate charts and stats:")
-    print(f"  /tmp/bench-env/bin/python3 bench/analyze.py")
+    print("  /tmp/bench-env/bin/python3 bench/analyze.py")
     print()
     print("Run IDs (for direct query):")
     for _, _, _, rid, _ in run_ids:

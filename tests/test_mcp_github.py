@@ -17,7 +17,7 @@ from toolrecall.cache import _init
 
 class TestMCPGithubProtocol(unittest.TestCase):
     """Test the GitHub MCP server's JSON-RPC protocol layer.
-    
+
     NOTE: These tests validate protocol handling and schema, NOT live API calls.
     The GitHub REST API path (_api function) requires a real token and network.
     We test: tool listing, schema validation, token detection, JSON-RPC compliance.
@@ -46,6 +46,7 @@ class TestMCPGithubProtocol(unittest.TestCase):
         # Re-import to pick up env changes
         import importlib
         from toolrecall import mcp_github
+
         importlib.reload(mcp_github)
 
         try:
@@ -72,8 +73,7 @@ class TestMCPGithubProtocol(unittest.TestCase):
     def test_initialize(self):
         """Prove initialize returns capabilities."""
         resp = self._run_github(
-            '{"jsonrpc":"2.0","method":"initialize","id":1}',
-            env_token="ghp_test123"
+            '{"jsonrpc":"2.0","method":"initialize","id":1}', env_token="ghp_test123"
         )
         self.assertIsNotNone(resp)
         self.assertIn("result", resp)
@@ -83,8 +83,7 @@ class TestMCPGithubProtocol(unittest.TestCase):
     def test_tools_list_returns_all_tools(self):
         """Prove tools/list returns expected tool names and schemas."""
         resp = self._run_github(
-            '{"jsonrpc":"2.0","method":"tools/list","id":1}',
-            env_token="ghp_test123"
+            '{"jsonrpc":"2.0","method":"tools/list","id":1}', env_token="ghp_test123"
         )
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
@@ -98,21 +97,20 @@ class TestMCPGithubProtocol(unittest.TestCase):
     def test_tool_schemas_all_have_required_fields(self):
         """Prove every tool has valid inputSchema with properties."""
         resp = self._run_github(
-            '{"jsonrpc":"2.0","method":"tools/list","id":1}',
-            env_token="ghp_test123"
+            '{"jsonrpc":"2.0","method":"tools/list","id":1}', env_token="ghp_test123"
         )
         for tool in resp["result"]["tools"]:
-            self.assertIn("inputSchema", tool,
-                          f"Tool '{tool['name']}' missing inputSchema")
-            self.assertIn("properties", tool["inputSchema"],
-                          f"Tool '{tool['name']}' missing properties")
+            self.assertIn("inputSchema", tool, f"Tool '{tool['name']}' missing inputSchema")
+            self.assertIn(
+                "properties", tool["inputSchema"], f"Tool '{tool['name']}' missing properties"
+            )
 
     def test_unknown_tool_returns_error(self):
         """Prove unknown tool returns -32601."""
         resp = self._run_github(
             '{"jsonrpc":"2.0","method":"tools/call","id":1,'
             '"params":{"name":"nonexistent_tool","arguments":{}}}',
-            env_token="ghp_test123"
+            env_token="ghp_test123",
         )
         self.assertEqual(resp["error"]["code"], -32601)
 
@@ -133,6 +131,7 @@ class TestMCPGithubProtocol(unittest.TestCase):
 
         import importlib
         from toolrecall import mcp_github
+
         importlib.reload(mcp_github)
 
         try:
@@ -153,10 +152,7 @@ class TestMCPGithubProtocol(unittest.TestCase):
 
     def test_tools_list_available_even_without_token(self):
         """Prove tools/list still works when no token is set."""
-        resp = self._run_github(
-            '{"jsonrpc":"2.0","method":"tools/list","id":1}',
-            env_token=""
-        )
+        resp = self._run_github('{"jsonrpc":"2.0","method":"tools/list","id":1}', env_token="")
         self.assertIsNotNone(resp)
         self.assertIn("result", resp)
 

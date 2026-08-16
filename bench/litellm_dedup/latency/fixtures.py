@@ -22,12 +22,9 @@ def _file_block(n_chars: int, seed: int) -> str:
     at different line-number prefixes is possible."""
     rng = random.Random(seed)
     lines = []
-    while sum(len(l) for l in lines) < n_chars:
+    while sum(len(line) for line in lines) < n_chars:
         n = rng.randint(20, 90)
-        lines.append(
-            "".join(rng.choice("abcdefghijklmnopqrstuvwxyz _-(),.")
-                    for _ in range(n))
-        )
+        lines.append("".join(rng.choice("abcdefghijklmnopqrstuvwxyz _-(),.") for _ in range(n)))
     return "\n".join(lines) + "\n"
 
 
@@ -66,8 +63,9 @@ def wrap_varied(n_msgs: int = 8, block_chars: int = 3000) -> list[dict]:
     lines = src.split("\n")
     for i in range(n_msgs):
         n = len(lines)
-        prefix = (f"=== path/to/file_{i % 3}.py (lines {i*n}-{(i+1)*n}) ===\n"
-                  + "\n".join(f"{ln:5d}  {t}" for ln, t in enumerate(lines)))
+        prefix = f"=== path/to/file_{i % 3}.py (lines {i * n}-{(i + 1) * n}) ===\n" + "\n".join(
+            f"{ln:5d}  {t}" for ln, t in enumerate(lines)
+        )
         out.append({"role": roles[i % 2], "content": prefix})
     return out
 

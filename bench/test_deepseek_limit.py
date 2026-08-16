@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Probe DeepSeek context limit with a large payload."""
-import json, os, urllib.request, urllib.error, socket
+
+import json
+import os
+import urllib.request
+import urllib.error
+import socket
 
 # Get key from env or .env
 api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -14,12 +19,14 @@ if not api_key:
 
 for target_chars in [50000, 100000, 200000, 400000]:
     msg = "hello world " * (target_chars // 12)  # ~0.25 tok/char
-    body = json.dumps({
-        "model": "deepseek-chat",
-        "messages": [{"role": "user", "content": msg}],
-        "max_tokens": 2,
-    }).encode()
-    
+    body = json.dumps(
+        {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": msg}],
+            "max_tokens": 2,
+        }
+    ).encode()
+
     req = urllib.request.Request(
         "https://api.deepseek.com/chat/completions",
         data=body,

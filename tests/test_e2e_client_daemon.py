@@ -23,17 +23,20 @@ class TestE2EClientDaemon(unittest.TestCase):
         self.daemon.start()
         # Force client to use our test socket
         from toolrecall.client import set_socket_path
+
         set_socket_path(self.daemon.socket_path)
 
     def tearDown(self):
         self.daemon.stop()
         # Reset client singleton for next test
         from toolrecall.client import set_socket_path
+
         set_socket_path(self.daemon.socket_path)
 
     def test_daemon_running_true(self):
         """daemon_running() returns True when daemon is up."""
         from toolrecall.client import daemon_running
+
         self.assertTrue(daemon_running())
 
     def test_daemon_running_false_after_stop(self):

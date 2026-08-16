@@ -7,6 +7,7 @@ Loads toolrecall.toml from (in order of priority):
 4. /etc/toolrecall/toolrecall.toml
 5. Package default (config.toml next to this file)
 """
+
 import os
 import sys
 from pathlib import Path
@@ -60,12 +61,20 @@ ENV_MAP = {
 
 def _apply_env_overrides(config: dict) -> dict:
     # Track which keys expect booleans (need explicit string→bool coercion)
-    _BOOL_KEYS = frozenset({
-        "allow_terminal", "allow_invalidate", "enabled",
-        "transparent_cache", "cognitive_check_enabled",
-        "ast_check_enabled", "tool_access_control",
-        "sort_lists", "strip_strings", "sync_enabled",
-    })
+    _BOOL_KEYS = frozenset(
+        {
+            "allow_terminal",
+            "allow_invalidate",
+            "enabled",
+            "transparent_cache",
+            "cognitive_check_enabled",
+            "ast_check_enabled",
+            "tool_access_control",
+            "sort_lists",
+            "strip_strings",
+            "sync_enabled",
+        }
+    )
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
         if val is None:
@@ -107,11 +116,11 @@ class Config:
         env vars > CWD config > ~/.config > /etc > package default
     """
 
-    def __init__(self, path: str = None):
+    def __init__(self, path: str | None = None):
         self._data = self._load(path)
         self._expand_paths()
 
-    def _load(self, path: str = None) -> dict:
+    def _load(self, path: str | None = None) -> dict:
         pkg_default = Path(__file__).parent / "config.toml"
         try:
             with open(pkg_default, "rb") as f:
@@ -148,6 +157,7 @@ class Config:
             if isinstance(val, str):
                 return os.path.expandvars(os.path.expanduser(val))
             return val
+
         for section in self._data.values():
             if isinstance(section, dict):
                 for key, val in section.items():
@@ -327,7 +337,7 @@ class Config:
     def mcp_allow_terminal(self) -> bool:
         """Allow cached_terminal tool (default: False — security risk)."""
         return self.get("mcp", "allow_terminal", default=False)
-        
+
     @property
     def mcp_allowed_terminal_commands(self) -> list:
         """Regex allowlist for terminal commands (e.g. ['^npm run (lint|test)$']).
@@ -342,6 +352,7 @@ class Config:
         Empty list = no terminal commands allowed via MCP.
         """
         import re
+
         raw = self.mcp_allowed_terminal_commands
         if not raw:
             return []
@@ -393,7 +404,20 @@ class Config:
     @property
     def mcp_dangerous_tool_keywords(self) -> list:
         """Keywords that indicate a tool modifies state. Used by tool_access_control."""
-        default_keywords = ["write", "edit", "delete", "remove", "terminal", "bash", "exec", "run", "push", "commit", "update", "create"]
+        default_keywords = [
+            "write",
+            "edit",
+            "delete",
+            "remove",
+            "terminal",
+            "bash",
+            "exec",
+            "run",
+            "push",
+            "commit",
+            "update",
+            "create",
+        ]
         val = self.get("security", "dangerous_tool_keywords", default=default_keywords)
         return val if isinstance(val, list) else default_keywords
 
@@ -454,6 +478,7 @@ class Config:
                 cmd, args, source = resolved
                 # Skip external servers that require uvx when uvx is not installed
                 from toolrecall.mcp_registry import has_uvx
+
                 if source == "external" and cmd == "uvx" and not has_uvx():
                     continue
                 result[name_lower] = {
@@ -505,6 +530,7 @@ class Config:
             return raw
         return []
 
+
 # ─── save_config / load_config ────────────────────────
 
 _CONFIG = None
@@ -522,6 +548,7 @@ def save_config(path: str, config: Config) -> bool:
     Returns True on success, False on failure.
     """
     from toolrecall.toml_serializer import dump
+
     path = os.path.expanduser(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
@@ -532,7 +559,7 @@ def save_config(path: str, config: Config) -> bool:
         return False
 
 
-def load_config(path: str = None) -> Config:
+def load_config(path: str | None = None) -> Config:
     """Load ToolRecall configuration. Returns a fresh Config instance each call.
 
     Unlike the previous singleton pattern, this always creates a new Config

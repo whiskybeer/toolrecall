@@ -94,12 +94,14 @@ def list_registered_servers() -> list[dict]:
     result = []
     for name in sorted(_ALL.keys()):
         cmd, args, source = _ALL[name]
-        result.append({
-            "name": name,
-            "source": source,
-            "command": cmd,
-            "args": list(args),
-        })
+        result.append(
+            {
+                "name": name,
+                "source": source,
+                "command": cmd,
+                "args": list(args),
+            }
+        )
     return result
 
 

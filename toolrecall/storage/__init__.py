@@ -40,6 +40,7 @@ DEFAULT_BACKEND = "sqlite"
 def _backend_module(name: str):
     """Import and return the backend module for name (lazy)."""
     import importlib
+
     return importlib.import_module(_BACKENDS[name])
 
 
@@ -48,8 +49,8 @@ def resolve_backend_name(cfg) -> str:
     name = cfg.storage_backend
     if name not in _BACKENDS:
         warnings.warn(
-            f"ToolRecall: Unknown storage_backend '{name}'. "
-            f"Falling back to '{DEFAULT_BACKEND}'.")
+            f"ToolRecall: Unknown storage_backend '{name}'. Falling back to '{DEFAULT_BACKEND}'."
+        )
         return DEFAULT_BACKEND
     return name
 
@@ -111,8 +112,7 @@ def stats_info(cfg) -> dict:
     """Backend block for get_stats() -- keeps cache.py free of backend branches."""
     name = resolve_backend_name(cfg)
     mod = _backend_module(name)
-    info = {"storage_backend": name, "sync_enabled": False,
-            "sync_url": None, "sync_interval": None}
+    info = {"storage_backend": name, "sync_enabled": False, "sync_url": None, "sync_interval": None}
     fn = getattr(mod, "stats_info", None)
     if fn:
         info.update(fn(cfg))

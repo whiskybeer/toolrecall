@@ -18,7 +18,6 @@ Supports multiple LLM providers:
 import json
 import logging
 import os
-import time
 import urllib.request
 import urllib.error
 
@@ -88,6 +87,7 @@ PRICING = {
 
 # ── API key resolution ─────────────────────────────────────────
 
+
 def _get_api_key(provider: str = "openrouter", arm: str = None) -> str:
     """Get API key for the given provider and arm.
 
@@ -124,8 +124,8 @@ def _get_api_key(provider: str = "openrouter", arm: str = None) -> str:
 
     # Fallback: read from .env
     with open(ENV_FILE) as f:
-        lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
-    aks = [l for l in lines if "OPENROUTER_API_KEY" in l]
+        lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+    aks = [line for line in lines if "OPENROUTER_API_KEY" in line]
     raw = aks[-1] if aks else lines[-1]
     return raw.split("=", 1)[1].strip().strip('"').strip("'")
 
@@ -137,8 +137,10 @@ def _resolve_model(provider: str, model: str = None) -> str:
 
 # ── LLM API callers ────────────────────────────────────────────
 
-def _call_llm(messages: list[dict], provider: str = "openrouter",
-              model: str = None, arm: str = None) -> dict:
+
+def _call_llm(
+    messages: list[dict], provider: str = "openrouter", model: str = None, arm: str = None
+) -> dict:
     """Make an LLM API call. Returns parsed response dict.
 
     Routes to the appropriate API handler based on provider.
@@ -154,19 +156,20 @@ def _call_llm(messages: list[dict], provider: str = "openrouter",
     return _call_llm_openrouter(messages, model=model, arm=arm)
 
 
-def _call_llm_openrouter(messages: list[dict], model: str = None,
-                         arm: str = None) -> dict:
+def _call_llm_openrouter(messages: list[dict], model: str = None, arm: str = None) -> dict:
     """OpenRouter / OpenAI-compatible API call."""
     api_key = _get_api_key("openrouter", arm)
     model_name = _resolve_model("openrouter", model)
 
-    payload = json.dumps({
-        "model": model_name,
-        "messages": messages,
-        "temperature": 0.0,
-        "max_tokens": 512,
-        "stream": False,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model_name,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": 512,
+            "stream": False,
+        }
+    ).encode()
 
     req = urllib.request.Request(
         OPENROUTER_API_URL,
@@ -186,8 +189,7 @@ def _call_llm_openrouter(messages: list[dict], model: str = None,
         return {"error": str(e)}
 
 
-def _call_llm_anthropic(messages: list[dict], model: str = None,
-                        arm: str = None) -> dict:
+def _call_llm_anthropic(messages: list[dict], model: str = None, arm: str = None) -> dict:
     """Direct Anthropic API call.
 
     Key differences from OpenAI format:
@@ -245,13 +247,15 @@ def _call_llm_anthropic(messages: list[dict], model: str = None,
     stop_reason = raw_resp.get("stop_reason", "end_turn")
 
     return {
-        "choices": [{
-            "message": {
-                "content": content_text,
-                "role": "assistant",
-            },
-            "finish_reason": stop_reason,
-        }],
+        "choices": [
+            {
+                "message": {
+                    "content": content_text,
+                    "role": "assistant",
+                },
+                "finish_reason": stop_reason,
+            }
+        ],
         "usage": {
             "prompt_tokens": usage.get("input_tokens", 0),
             "completion_tokens": usage.get("output_tokens", 0),
@@ -259,7 +263,6 @@ def _call_llm_anthropic(messages: list[dict], model: str = None,
             "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
         },
     }
-
 
 
 def _call_llm_gemini(messages: list[dict], model: str = None, arm: str = None) -> dict:
@@ -270,20 +273,24 @@ def _call_llm_gemini(messages: list[dict], model: str = None, arm: str = None) -
         with open(ENV_FILE) as f:
             for line in f:
                 line = line.strip()
-                if (line.startswith("GEMINI_API_KEY=") or line.startswith("GOOGLE_API_KEY=")) and not line.startswith("#"):
+                if (
+                    line.startswith("GEMINI_API_KEY=") or line.startswith("GOOGLE_API_KEY=")
+                ) and not line.startswith("#"):
                     api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                     break
     if not api_key:
         api_key = _get_api_key("openrouter", arm)
 
     model_name = _resolve_model("gemini", model)
-    
-    body = json.dumps({
-        "model": model_name,
-        "max_tokens": 512,
-        "temperature": 0.0,
-        "messages": messages,
-    }).encode()
+
+    body = json.dumps(
+        {
+            "model": model_name,
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "messages": messages,
+        }
+    ).encode()
 
     req = urllib.request.Request(
         GEMINI_API_URL,
@@ -302,6 +309,7 @@ def _call_llm_gemini(messages: list[dict], model: str = None, arm: str = None) -
     except Exception as e:
         return {"error": str(e)}
 
+
 def _call_llm_deepseek(messages: list[dict], model: str = None, arm: str = None) -> dict:
     """Direct DeepSeek API call — supports 1M context window."""
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -316,12 +324,14 @@ def _call_llm_deepseek(messages: list[dict], model: str = None, arm: str = None)
         return {"error": "No DEEPSEEK_API_KEY found"}
     model_name = _resolve_model("deepseek", model)
 
-    body = json.dumps({
-        "model": model_name,
-        "messages": messages,
-        "max_tokens": 512,
-        "temperature": 0.0,
-    }).encode()
+    body = json.dumps(
+        {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": 512,
+            "temperature": 0.0,
+        }
+    ).encode()
 
     req = urllib.request.Request(
         DEEPSEEK_API_URL,
@@ -340,17 +350,27 @@ def _call_llm_deepseek(messages: list[dict], model: str = None, arm: str = None)
     except Exception as e:
         return {"error": str(e)}
 
+
 # ── Agent Result ──────────────────────────────────────────────
+
 
 class AgentResult:
     """Result of a single agent turn."""
 
-    def __init__(self, usage: dict = None, conversation: list[dict] = None,
-                 tool_calls: int = 0, tool_hits: int = 0, tool_misses: int = 0,
-                 tool_time_ms: float = 0.0, ttft: float = 0.0,
-                 ok: bool = True, ctx_dropped_total: int = 0,
-                 context_tracker_ok: bool = True,
-                 response_text: str = ""):
+    def __init__(
+        self,
+        usage: dict = None,
+        conversation: list[dict] = None,
+        tool_calls: int = 0,
+        tool_hits: int = 0,
+        tool_misses: int = 0,
+        tool_time_ms: float = 0.0,
+        ttft: float = 0.0,
+        ok: bool = True,
+        ctx_dropped_total: int = 0,
+        context_tracker_ok: bool = True,
+        response_text: str = "",
+    ):
         self.usage = usage or {}
         self.conversation = conversation or []
         self.tool_calls = tool_calls
@@ -369,6 +389,7 @@ class AgentResult:
 
 # ── File reading (common to all arms) ─────────────────────────
 
+
 def _read_files(reads: list[str]) -> list[dict]:
     """Read files via toolrecall.client.cached_read().
 
@@ -381,14 +402,15 @@ def _read_files(reads: list[str]) -> list[dict]:
     for path in reads:
         resp = cached_read(path)
         if "error" in resp:
-            results.append({"path": path, "content": f"<error: {resp['error']}>",
-                            "cached": False})
+            results.append({"path": path, "content": f"<error: {resp['error']}>", "cached": False})
         else:
-            results.append({
-                "path": resp.get("path", path),
-                "content": resp.get("content", ""),
-                "cached": resp.get("cached", False),
-            })
+            results.append(
+                {
+                    "path": resp.get("path", path),
+                    "content": resp.get("content", ""),
+                    "cached": resp.get("cached", False),
+                }
+            )
     return results
 
 
@@ -440,7 +462,7 @@ def _strip_file_blocks(messages: list[dict], file_paths: set[str]) -> list[dict]
                 start_idx = content.index(start_marker)
                 if end_marker in content[start_idx:]:
                     end_idx = content.index(end_marker, start_idx)
-                    content = content[:start_idx] + content[end_idx + len(end_marker):]
+                    content = content[:start_idx] + content[end_idx + len(end_marker) :]
                 else:
                     content = content[:start_idx]
 
@@ -456,8 +478,8 @@ def _count_tokens(text: str) -> int:
 
 # ── Arm-specific agent turn factories ────────────────────────
 
-def make_agent_turn(arm: str, provider: str = "openrouter",
-                    model: str = None):
+
+def make_agent_turn(arm: str, provider: str = "openrouter", model: str = None):
     """Return the agent_turn function for the given arm.
 
     The returned function has signature:
@@ -477,15 +499,15 @@ def make_agent_turn(arm: str, provider: str = "openrouter",
 
     def wrapped(conversation, step):
         return fn(conversation, step, arm=arm, provider=provider, model=model)
+
     return wrapped
 
 
-def _agent_turn_naive(conversation: list[dict], step, arm: str = None,
-                      provider: str = "openrouter", model: str = None) -> AgentResult:
+def _agent_turn_naive(
+    conversation: list[dict], step, arm: str = None, provider: str = "openrouter", model: str = None
+) -> AgentResult:
     """Full history, no dropping. Reads files via cached_read but accumulates everything."""
-    from toolrecall.client import cached_read
 
-    t0 = time.time()
     tool_hits = 0
     tool_misses = 0
 
@@ -509,15 +531,15 @@ def _agent_turn_naive(conversation: list[dict], step, arm: str = None,
 
     # Call the LLM
     resp = _call_llm(updated_convo, provider=provider, model=model, arm=arm)
-    elapsed = time.time() - t0
 
     if "error" in resp:
         return AgentResult(
-            usage={"prompt_tokens": 0, "completion_tokens": 0,
-                   "cache_read_tokens": 0},
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "cache_read_tokens": 0},
             conversation=updated_convo,
-            tool_hits=tool_hits, tool_misses=tool_misses,
-            ok=False, ttft=0,
+            tool_hits=tool_hits,
+            tool_misses=tool_misses,
+            ok=False,
+            ttft=0,
             response_text=resp["error"],
         )
 
@@ -535,15 +557,19 @@ def _agent_turn_naive(conversation: list[dict], step, arm: str = None,
             "cache_write_tokens": usage.get("cache_write_tokens", 0),
         },
         conversation=updated_convo,
-        tool_calls=0, tool_hits=tool_hits, tool_misses=tool_misses,
-        tool_time_ms=0.0, ttft=usage.get("time_to_first_token_s", 0),
+        tool_calls=0,
+        tool_hits=tool_hits,
+        tool_misses=tool_misses,
+        tool_time_ms=0.0,
+        ttft=usage.get("time_to_first_token_s", 0),
         ok=True,
         response_text=assistant_msg.get("content", ""),
     )
 
 
-def _agent_turn_prefix(conversation: list[dict], step, arm: str = None,
-                       provider: str = "openrouter", model: str = None) -> AgentResult:
+def _agent_turn_prefix(
+    conversation: list[dict], step, arm: str = None, provider: str = "openrouter", model: str = None
+) -> AgentResult:
     """Full history, same as naive. Provider prefix caching is the savings mechanism.
 
     This arm exists so we can compare real provider-reported prompt_tokens against
@@ -553,8 +579,9 @@ def _agent_turn_prefix(conversation: list[dict], step, arm: str = None,
     return _agent_turn_naive(conversation, step, arm=arm, provider=provider, model=model)
 
 
-def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
-                           provider: str = "openrouter", model: str = None) -> AgentResult:
+def _agent_turn_toolrecall(
+    conversation: list[dict], step, arm: str = None, provider: str = "openrouter", model: str = None
+) -> AgentResult:
     """ToolRecall arm: uses the real daemon for context tracking + file caching.
 
     Before each turn:
@@ -567,9 +594,12 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
       5. Strips clean file content from assistant messages
       6. Tracks ctx_dropped_tokens for the report
     """
-    from toolrecall.client import cached_read, cached_write, context_set_checkpoint, context_get_dirty
+    from toolrecall.client import (
+        cached_write,
+        context_set_checkpoint,
+        context_get_dirty,
+    )
 
-    t0 = time.time()
     tool_hits = 0
     tool_misses = 0
 
@@ -600,15 +630,15 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
 
     # Call the LLM
     resp = _call_llm(updated_convo, provider=provider, model=model, arm=arm)
-    elapsed = time.time() - t0
 
     if "error" in resp:
         return AgentResult(
-            usage={"prompt_tokens": 0, "completion_tokens": 0,
-                   "cache_read_tokens": 0},
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "cache_read_tokens": 0},
             conversation=updated_convo,
-            tool_hits=tool_hits, tool_misses=tool_misses,
-            ok=False, ttft=0,
+            tool_hits=tool_hits,
+            tool_misses=tool_misses,
+            ok=False,
+            ttft=0,
             context_tracker_ok=context_tracker_ok,
             response_text=resp["error"],
         )
@@ -657,8 +687,11 @@ def _agent_turn_toolrecall(conversation: list[dict], step, arm: str = None,
             "cache_write_tokens": usage.get("cache_write_tokens", 0),
         },
         conversation=updated_convo,
-        tool_calls=0, tool_hits=tool_hits, tool_misses=tool_misses,
-        tool_time_ms=0.0, ttft=usage.get("time_to_first_token_s", 0),
+        tool_calls=0,
+        tool_hits=tool_hits,
+        tool_misses=tool_misses,
+        tool_time_ms=0.0,
+        ttft=usage.get("time_to_first_token_s", 0),
         ok=True,
         ctx_dropped_total=dropped_tokens,
         context_tracker_ok=context_tracker_ok,

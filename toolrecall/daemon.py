@@ -59,8 +59,12 @@ from toolrecall.cache import (
     _record as _cache_record,
 )
 from toolrecall.transport import (
-    TransportClient, create_socket, bind_socket, send_message,
-    receive_message, IS_WINDOWS,
+    TransportClient,
+    create_socket,
+    bind_socket,
+    send_message,
+    receive_message,
+    IS_WINDOWS,
 )
 from toolrecall.docs import docs_search as _docs_search, docs_get_page as _docs_get_page
 from toolrecall.config import load_config
@@ -84,6 +88,7 @@ def _instance_lock_path(socket_path: str) -> str:
     *same* socket serialize and only one wins.
     """
     import hashlib
+
     digest = hashlib.md5(socket_path.encode("utf-8")).hexdigest()[:16]
     return os.path.join(os.path.dirname(PID_FILE), f"daemon-{digest}.lck")
 
@@ -106,8 +111,10 @@ def _acquire_instance_lock(socket_path: str):
     if IS_WINDOWS:
         # On Windows use the pid-file wait approach instead of flock.
         import msvcrt  # noqa: F401  (present on Windows)
+
         return None
     import fcntl
+
     lock_path = _instance_lock_path(socket_path)
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
     # Use append mode so we never truncate the file (and thus erase another
@@ -130,6 +137,7 @@ def _acquire_instance_lock(socket_path: str):
 def _default_socket_path():
     """Default IPC path: UDS on POSIX, TCP on Windows."""
     from toolrecall.transport import _default_socket_path as _tsp
+
     return _tsp()
 
 
@@ -138,12 +146,13 @@ def _default_socket_path():
 
 class SecurityGate:
     """Check requests against configured security rules.
-    
+
     - cached_read: only within allowed_paths
     - cached_terminal: only if allow_terminal=true
     - cache_invalidate: only if allow_invalidate=true
     - mcp_call: only allowed servers
     """
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.allowed_paths = cfg.mcp_allowed_paths or []
@@ -154,15 +163,32 @@ class SecurityGate:
         self.allowed_servers = [s.lower() for s in (cfg.mcp_multiplex_servers or [])]
         self.tool_access_control = cfg.mcp_tool_access_control
         self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords or [
-            "write", "edit", "delete", "remove", "terminal",
-            "bash", "exec", "run", "push", "commit", "update", "create",
-            "sudo", "chmod", "chown", "invalidate", "store", "set",
+            "write",
+            "edit",
+            "delete",
+            "remove",
+            "terminal",
+            "bash",
+            "exec",
+            "run",
+            "push",
+            "commit",
+            "update",
+            "create",
+            "sudo",
+            "chmod",
+            "chown",
+            "invalidate",
+            "store",
+            "set",
         ]
         self.cognitive_check = cfg.mcp_cognitive_check_enabled
         self.ast_check = cfg.mcp_ast_check_enabled
         self.logger = logging.getLogger(__name__)
 
-    MAX_PATH_LENGTH = 4096  # POSIX PATH_MAX (260 on Windows without long-path support; 4096 is safe on both)
+    MAX_PATH_LENGTH = (
+        4096  # POSIX PATH_MAX (260 on Windows without long-path support; 4096 is safe on both)
+    )
 
     def check_read_path(self, path: str) -> str | None:
         """Check if path is allowed to be read. Returns None or error message."""
@@ -186,6 +212,7 @@ class SecurityGate:
             )
 
         from toolrecall.path_utils import check_path_allowed
+
         if not check_path_allowed(path, self.allowed_paths):
             # Generic error — never leak the real resolved path to the caller
             self.logger.warning("Blocked path not in allowed_paths: %s", path)
@@ -197,28 +224,35 @@ class SecurityGate:
         # The allowlist defines trust; the blocklist prevents accidental
         # disclosure of credential files within trusted directories.
         if _is_sensitive_path(path):
-            print(f"[ToolRecall] Blocked read of sensitive file: {path} (Layer 2: sensitive file blocklist)")
+            print(
+                f"[ToolRecall] Blocked read of sensitive file: {path} (Layer 2: sensitive file blocklist)"
+            )
             return "Path not allowed: path matches a sensitive file pattern"
 
         return None
 
     def check_terminal(self, cmd: str) -> str | None:
         if not self.allow_terminal:
-            print(f"[ToolRecall] Blocked terminal command: {cmd[:80]} (terminal disabled in config)")
+            print(
+                f"[ToolRecall] Blocked terminal command: {cmd[:80]} (terminal disabled in config)"
+            )
             return "cached_terminal is disabled. Set mcp.allow_terminal=true in config."
-            
+
         if not self.allowed_terminal_commands:
             # If terminal is allowed but no specific regexes defined, allow all (Binary WAF fallback)
             return None
-            
+
         import re
+
         for pattern in self.allowed_terminal_commands:
             try:
                 if re.search(pattern, cmd):
                     return None
             except re.error as e:
-                self.logger.info(f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})")
-                
+                self.logger.info(
+                    f"Warning: Invalid regex in allowed_terminal_commands: '{pattern}' ({e})"
+                )
+
         return f"Terminal command not allowed by regex allowlist: {cmd}"
 
     def check_invalidate(self) -> str | None:
@@ -245,7 +279,7 @@ class SecurityGate:
         """
         if not self.tool_access_control:
             return None
-        
+
         t_lower = tool_name.lower()
         for kw in self.dangerous_tool_keywords:
             if kw.lower() in t_lower:
@@ -270,6 +304,7 @@ class SecurityGate:
         """Lazy-compile cognitive scan regexes (measured: ~0.001ms each on first call)."""
         if cls._cog_override_pat is None:
             import re
+
             cls._cog_override_pat = re.compile(
                 r"ignore\s+(?:all\s+)?(?:prior|previous|your)?\s*(?:\w+\s+)?(?:instructions|directives|rules|commands)",
                 re.IGNORECASE,
@@ -344,51 +379,74 @@ class SecurityGate:
 
             # Override instructions
             if ovrd.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches override instruction pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches override instruction pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches override instruction pattern."
 
             # Role hijacking
             if role.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches role hijack pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches role hijack pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches role hijack pattern."
 
             # Credential fishing
             if fish.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches credential fishing pattern")
-                return f"Cognitive scan blocked: argument '{key}' matches credential fishing pattern."
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches credential fishing pattern"
+                )
+                return (
+                    f"Cognitive scan blocked: argument '{key}' matches credential fishing pattern."
+                )
 
             # Jailbreak tags
             if jail.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches jailbreak tag pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches jailbreak tag pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches jailbreak tag pattern."
 
             # Context overflow
             if overf.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches context overflow pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches context overflow pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches context overflow pattern."
 
             # Encoding evasion
             if enc.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches encoding evasion pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches encoding evasion pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches encoding evasion pattern."
 
             # Exfiltration URL (domain-based)
             if exf_dom.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches exfiltration url pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches exfiltration url pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches exfiltration url pattern."
 
             # Exfiltration URL (raw IP + exfil path)
             if exf_ip.search(val):
-                print(f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches exfiltration url pattern")
+                print(
+                    f"[ToolRecall] Cognitive scan blocked: argument '{key}' matches exfiltration url pattern"
+                )
                 return f"Cognitive scan blocked: argument '{key}' matches exfiltration url pattern."
 
         return None
 
     # ─── AST Structural Validation ──────────────────────────
 
-    _AST_DANGEROUS_CALLS = frozenset({
-        "exec", "eval", "compile", "__import__",
-    })
+    _AST_DANGEROUS_CALLS = frozenset(
+        {
+            "exec",
+            "eval",
+            "compile",
+            "__import__",
+        }
+    )
     _AST_MIN_LENGTH = 10  # Skip strings shorter than this
 
     def check_ast_injection(self, arguments: dict) -> str | None:
@@ -431,7 +489,9 @@ class SecurityGate:
                 # __import__() calls (as attribute)
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     if node.func.attr == "__import__":
-                        return f"AST injection blocked: argument '{key}' contains '__import__()' call."
+                        return (
+                            f"AST injection blocked: argument '{key}' contains '__import__()' call."
+                        )
 
                 # import statements
                 if isinstance(node, ast.Import):
@@ -461,7 +521,7 @@ class MCPClientSession:
     and proper shutdown.
     """
 
-    def __init__(self, name: str, command: str, args: list, env: dict = None):
+    def __init__(self, name: str, command: str, args: list, env: dict | None = None):
         self.name = name
         self.command = command
         self.args = args
@@ -511,7 +571,9 @@ class MCPClientSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=full_env,
-            preexec_fn=os.setsid if os.name != 'nt' else None,  # POSIX only; new process group for clean killing
+            preexec_fn=os.setsid
+            if os.name != "nt"
+            else None,  # POSIX only; new process group for clean killing
         )
 
     def _send_raw(self, payload: dict) -> dict:
@@ -523,17 +585,20 @@ class MCPClientSession:
             payload["id"] = self._req_id
             line = json.dumps(payload) + "\n"
             try:
-                self._proc.stdin.write(line.encode("utf-8"))
-                self._proc.stdin.flush()
+                proc = self._proc
+                assert proc is not None and proc.stdin is not None and proc.stdout is not None
+                proc.stdin.write(line.encode("utf-8"))
+                proc.stdin.flush()
                 # Read response with timeout to prevent indefinite blocking
                 # on hung MCP subprocesses (common with Node.js on startup).
                 # Without this, a single hung server exhausts the thread pool.
                 import select
-                stdout_fd = self._proc.stdout.fileno()
+
+                stdout_fd = proc.stdout.fileno()
                 readable, _, _ = select.select([stdout_fd], [], [], 30)
                 if not readable:
                     raise ConnectionError("MCP subprocess response timeout (30s)")
-                resp_line = self._proc.stdout.readline()
+                resp_line = proc.stdout.readline()
                 if not resp_line:
                     raise ConnectionError("Empty response from subprocess")
                 return json.loads(resp_line.decode("utf-8"))
@@ -548,41 +613,48 @@ class MCPClientSession:
 
     def initialize(self) -> dict:
         """Send initialize handshake."""
-        return self._send_raw({
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "toolrecall", "version": __version__},
-            },
-        })
+        return self._send_raw(
+            {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "toolrecall", "version": __version__},
+                },
+            }
+        )
 
     def list_tools(self) -> list:
         """Fetch tools/list from the subprocess."""
-        resp = self._send_raw({
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "params": {},
-        })
+        resp = self._send_raw(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {},
+            }
+        )
         result = resp.get("result", {})
         return result.get("tools", [])
 
-    def call_tool(self, tool_name: str, arguments: dict = None) -> dict:
+    def call_tool(self, tool_name: str, arguments: dict | None = None) -> dict:
         """Call a tool on the subprocess."""
-        resp = self._send_raw({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments or {},
-            },
-        })
+        resp = self._send_raw(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments or {},
+                },
+            }
+        )
         return resp
 
     def shutdown(self):
         """Graceful shutdown of entire process group."""
         import signal
+
         if self._proc is not None:
             pid = self._proc.pid
             try:
@@ -740,7 +812,9 @@ class MCPMultiplexer:
         # outside the lock to avoid blocking all multiplexer.call() calls
         # while doing blocking I/O with each subprocess.
         with self._lock:
-            config_snapshot = [(name_lower, dict(config)) for name_lower, config in self._configs.items()]
+            config_snapshot = [
+                (name_lower, dict(config)) for name_lower, config in self._configs.items()
+            ]
 
         result = []
         for name_lower, config in config_snapshot:
@@ -748,32 +822,38 @@ class MCPMultiplexer:
             if session and session.running:
                 try:
                     tools = session.list_tools()
-                    result.append({
-                        "name": config["name"],
-                        "running": True,
-                        "status": "active",
-                        "tools": len(tools),
-                        "tool_names": [t.get("name") for t in tools],
-                    })
+                    result.append(
+                        {
+                            "name": config["name"],
+                            "running": True,
+                            "status": "active",
+                            "tools": len(tools),
+                            "tool_names": [t.get("name") for t in tools],
+                        }
+                    )
                 except Exception:
-                    result.append({
+                    result.append(
+                        {
+                            "name": config["name"],
+                            "running": False,
+                            "status": "error",
+                            "tools": 0,
+                            "tool_names": [],
+                        }
+                    )
+            else:
+                result.append(
+                    {
                         "name": config["name"],
                         "running": False,
-                        "status": "error",
+                        "status": "idle",
                         "tools": 0,
                         "tool_names": [],
-                    })
-            else:
-                result.append({
-                    "name": config["name"],
-                    "running": False,
-                    "status": "idle",
-                    "tools": 0,
-                    "tool_names": [],
-                })
+                    }
+                )
         return result
 
-    def call(self, server: str, tool: str, arguments: dict = None) -> dict:
+    def call(self, server: str, tool: str, arguments: dict | None = None) -> dict:
         """Call a tool — lazy-starts server on first use, tracks idle."""
         server_lower = server.lower()
 
@@ -797,13 +877,13 @@ class MCPMultiplexer:
             session = self._sessions.get(server_lower)
             if not session:
                 return {"error": f"MCP server '{server}' not available"}
-                
+
         # Execute outside global multiplexer lock (session has its own lock)
         resp = session.call_tool(tool, arguments or {})
-        
+
         with self._lock:
             self._last_use[server_lower] = time.time()
-            
+
         return resp.get("result", resp)
 
 
@@ -812,12 +892,12 @@ class MCPMultiplexer:
 
 class DaemonServer:
     """IPC server — Unix Domain Socket (POSIX) or TCP (Windows).
-    
+
     Uses ThreadPoolExecutor for connection handling.
     The transport.py layer handles platform selection automatically.
     """
 
-    def __init__(self, socket_path: str = None):
+    def __init__(self, socket_path: str | None = None):
         self.socket_path = socket_path or _default_socket_path()
         self.cfg = load_config()
         self.security = SecurityGate(self.cfg)
@@ -834,6 +914,7 @@ class DaemonServer:
     def _run_periodic_gc(self):
         """Runs garbage collection every 4 hours in a background thread."""
         from toolrecall.cache import garbage_collect
+
         while self._running:
             # Sleep in small increments so we can exit instantly on stop()
             for _ in range(14400):  # 4 hours
@@ -865,6 +946,7 @@ class DaemonServer:
         def _sync_loop():
             """Periodically sync the embedded replica via the singleton connection."""
             from toolrecall._db import db_sync
+
             logger = logging.getLogger("toolrecall.daemon.sync")
             backoff = interval
 
@@ -875,7 +957,10 @@ class DaemonServer:
                 except Exception as e:
                     logger.warning(
                         "storage sync failed (%s: %.120s) — retrying in %ds",
-                        type(e).__name__, str(e), backoff)
+                        type(e).__name__,
+                        str(e),
+                        backoff,
+                    )
                     backoff = min(backoff * 2, 3600)  # exponential backoff, cap 1h
                 # Sleep in 1s slices so daemon shutdown isn't delayed
                 # by up to a full sync interval.
@@ -904,7 +989,9 @@ class DaemonServer:
             print(f"ToolRecall Daemon v{__version__}")
             print(f"  Transport: {transport_type} at {self.socket_path}")
             print(f"  PID: {os.getpid()}")
-            print(f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}")
+            print(
+                f"  Path allowlist: {', '.join(self.security.allowed_paths) if self.security.allowed_paths else 'ALL (DANGEROUS)'}"
+            )
             print(f"  Terminal: {'ENABLED' if self.security.allow_terminal else 'DISABLED'}")
             print(f"  Invalidate: {'ENABLED' if self.security.allow_invalidate else 'DISABLED'}")
 
@@ -917,6 +1004,7 @@ class DaemonServer:
             # Start forward proxy (caches API responses) in daemon thread
             try:
                 from toolrecall.proxy import run_forward_proxy
+
                 fp_thread = threading.Thread(
                     target=run_forward_proxy,
                     daemon=True,
@@ -999,7 +1087,6 @@ class DaemonServer:
             except Exception:
                 pass
 
-
     def _route(self, request: dict) -> dict:
         """Route a request to the appropriate handler."""
         cmd = request.get("cmd", "")
@@ -1074,14 +1161,15 @@ class DaemonServer:
         ctx = self._context.get_stats()
         # Config fingerprint — compare this across process restarts
         config_hash = (
-            str(self.security.allowed_paths) +
-            str(self.security.allow_terminal) +
-            str(self.security.allowed_terminal_commands) +
-            str(self.security.allow_invalidate) +
-            str(self.security.allow_multiplex) +
-            str(self.cfg.mcp_emit_context_hints)
+            str(self.security.allowed_paths)
+            + str(self.security.allow_terminal)
+            + str(self.security.allowed_terminal_commands)
+            + str(self.security.allow_invalidate)
+            + str(self.security.allow_multiplex)
+            + str(self.cfg.mcp_emit_context_hints)
         )
         import hashlib
+
         config_hash = hashlib.sha256(config_hash.encode()).hexdigest()[:16]
         return {
             "pong": True,
@@ -1111,13 +1199,13 @@ class DaemonServer:
             except Exception:
                 pass
         # Clean up socket
-        if hasattr(self, 'socket_path') and self.socket_path:
+        if hasattr(self, "socket_path") and self.socket_path:
             try:
                 os.unlink(self.socket_path)
             except Exception:
                 pass
         # Stop multiplexer
-        if hasattr(self, 'multiplexer'):
+        if hasattr(self, "multiplexer"):
             try:
                 self.multiplexer.shutdown()
             except Exception:
@@ -1166,6 +1254,7 @@ class DaemonServer:
         bypass = req.get("bypass_cache", False)
         if bypass:
             from toolrecall.cache import invalidate_file
+
             invalidate_file(path)
         # If source is "agent_tool", pass it through so context tokens are tracked
         source = req.get("source", "")
@@ -1186,11 +1275,13 @@ class DaemonServer:
         if not command:
             return {"error": "Missing 'command'"}
         from toolrecall.cache import _strip_shell_wrapper
+
         inner = _strip_shell_wrapper(command) or command
         err = self.security.check_terminal(inner)
         if err:
             return {"error": err}
         from toolrecall.cache import cached_shell_exec
+
         result = cached_shell_exec(command)
         # Record mcp_cache stats when request originates from MCP bridge
         if req.get("mcp_origin"):
@@ -1343,10 +1434,13 @@ class DaemonServer:
         # Store in cache (only when transparent cache is enabled)
         if self.multiplexer.cfg.mcp_multiplex_transparent_cache:
             import json as _json
+
             result_json = _json.dumps(result)
             server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
             ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
-            _cache_mcp_store(cached.get("key", f"{server}:{tool}"), server, tool, arguments, result_json, ttl=ttl)
+            _cache_mcp_store(
+                cached.get("key", f"{server}:{tool}"), server, tool, arguments, result_json, ttl=ttl
+            )
 
         return {"result": result, "cached": False}
 
@@ -1503,8 +1597,7 @@ class DaemonServer:
             return ""
         lines = []
         if clean:
-            lines.append("🧹 Drop these clean files from context "
-                         "(re-read from cache if needed):")
+            lines.append("🧹 Drop these clean files from context (re-read from cache if needed):")
             for p in clean:
                 lines.append(f"  - {p}")
         if dirty:
@@ -1588,7 +1681,7 @@ def _signal_handler(signum, frame):
     sys.exit(0)
 
 
-def run_daemon(socket_path: str = None, foreground: bool = False):
+def run_daemon(socket_path: str | None = None, foreground: bool = False):
     """Start the ToolRecall daemon."""
     global _server_instance, _instance_lock_fh
 
@@ -1597,6 +1690,7 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     # cwd/pyvenv.cfg leaks the project dir ahead of site-packages.
     # Uses __file__ to find the package dir dynamically (not hardcoded).
     import sys as _sys
+
     _pkg_dir = os.path.dirname(os.path.abspath(__file__))
     _sys.path = [p for p in _sys.path if _pkg_dir not in p]
 
@@ -1619,8 +1713,7 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         except OSError:
             holder = "?"
         print(
-            f"ToolRecall Daemon already running (lock held by PID {holder}) — "
-            "refusing duplicate."
+            f"ToolRecall Daemon already running (lock held by PID {holder}) — refusing duplicate."
         )
         sys.exit(0)
 
@@ -1634,12 +1727,14 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     # _shim_open -> client.cached_read -> daemon -> cached_read -> open -> _shim_open -> ...
     try:
         from toolrecall.shim import remove as _shim_remove
+
         _shim_remove()
     except ImportError:
         pass
 
     # Enable faulthandler so segfaults/aborts produce tracebacks
     import faulthandler
+
     faulthandler.enable()
 
     # Register signal handlers (POSIX only)
@@ -1656,7 +1751,7 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
             print(f"ToolRecall Daemon started (PID: {pid})")
             print(f"  Socket: {_server_instance.socket_path}")
             sys.exit(0)
-            
+
         # Child process: Redirect standard streams, write PID file
         log_file = os.path.expanduser("~/.toolrecall/daemon.log")
         sys.stdout = open(log_file, "a")
@@ -1667,6 +1762,7 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
     elif not foreground and IS_WINDOWS:
         # Windows: use multiprocessing instead of fork
         import multiprocessing as mp
+
         ctx = mp.get_context("spawn")
         p = ctx.Process(target=_server_instance.start)
         p.start()
@@ -1693,6 +1789,7 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
         # If start() crashes (e.g. socket bind failure, executor init failure),
         # print a traceback BEFORE exiting so logs show the root cause.
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
@@ -1700,11 +1797,14 @@ def run_daemon(socket_path: str = None, foreground: bool = False):
 def stop_daemon():
     """Stop the daemon via systemd, or by PID file on Windows."""
     import subprocess as _sp
+
     # Try systemd first (Linux)
     if not IS_WINDOWS:
         result = _sp.run(
             ["systemctl", "--user", "stop", "toolrecall-daemon"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode == 0:
             print("ToolRecall Daemon stopped (via systemd).")
@@ -1735,9 +1835,11 @@ def stop_daemon():
             except Exception:
                 pass
 
+
 def daemon_status():
     """Print daemon status via socket, then systemd, then PID file."""
     import subprocess as _sp
+
     # Socket is the source of truth: if the daemon answers a ping, it's
     # running regardless of what systemd or the PID file claims. This avoids
     # the false "DEAD (Stale PID file)" report when systemd is unreachable
@@ -1754,11 +1856,13 @@ def daemon_status():
             print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
             servers = resp.get("multiplex_servers", [])
             if servers:
-                names = [s['name'] if isinstance(s, dict) else s for s in servers]
+                names = [s["name"] if isinstance(s, dict) else s for s in servers]
                 print(f"  MCP Servers: {', '.join(names)}")
-            ctx = resp.get('context_tracker', {})
+            ctx = resp.get("context_tracker", {})
             if ctx:
-                print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}")
+                print(
+                    f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}"
+                )
             return
     except Exception:
         pass  # Socket unreachable — fall through to systemd / PID file
@@ -1767,7 +1871,9 @@ def daemon_status():
     if not IS_WINDOWS:
         result = _sp.run(
             ["systemctl", "--user", "is-active", "toolrecall-daemon"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         active = result.stdout.strip()
         if active == "active":
@@ -1779,16 +1885,31 @@ def daemon_status():
                 print(f"  Transport: {_default_socket_path()}")
                 print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
                 print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
-                print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
-                servers = resp.get('multiplex_servers', [])
+                print(
+                    f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}"
+                )
+                servers = resp.get("multiplex_servers", [])
                 if servers:
-                    names = [s['name'] if isinstance(s, dict) else s for s in servers]
+                    names = [s["name"] if isinstance(s, dict) else s for s in servers]
                     print(f"  MCP Servers: {', '.join(names)}")
-                ctx = resp.get('context_tracker', {})
+                ctx = resp.get("context_tracker", {})
                 if ctx:
-                    print(f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}")
-                status = _sp.run(["systemctl", "--user", "show", "-P", "ActiveEnterTimestamp", "toolrecall-daemon"],
-                                 capture_output=True, text=True, timeout=5)
+                    print(
+                        f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}"
+                    )
+                status = _sp.run(
+                    [
+                        "systemctl",
+                        "--user",
+                        "show",
+                        "-P",
+                        "ActiveEnterTimestamp",
+                        "toolrecall-daemon",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
                 if status.returncode == 0 and status.stdout.strip():
                     print(f"  Since: {status.stdout.strip()}")
             except Exception:

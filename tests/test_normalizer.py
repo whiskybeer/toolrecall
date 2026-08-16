@@ -73,21 +73,15 @@ class TestNormalizeToolArgs:
     """Tool call argument normalization — strips non-semantic keys."""
 
     def test_strips_timestamp_by_default(self):
-        result = normalize_tool_args(
-            {"path": "/tmp/file", "timestamp": "2026-07-09T12:00:00"}
-        )
+        result = normalize_tool_args({"path": "/tmp/file", "timestamp": "2026-07-09T12:00:00"})
         assert json.loads(result) == {"path": "/tmp/file"}
 
     def test_strips_session_id_by_default(self):
-        result = normalize_tool_args(
-            {"path": "/tmp/file", "session_id": "abc123"}
-        )
+        result = normalize_tool_args({"path": "/tmp/file", "session_id": "abc123"})
         assert json.loads(result) == {"path": "/tmp/file"}
 
     def test_strips_request_id(self):
-        result = normalize_tool_args(
-            {"path": "/tmp/file", "request_id": "req-456"}
-        )
+        result = normalize_tool_args({"path": "/tmp/file", "request_id": "req-456"})
         assert json.loads(result) == {"path": "/tmp/file"}
 
     def test_strips_trace_id(self):
@@ -105,9 +99,7 @@ class TestNormalizeToolArgs:
 
     def test_normalizes_values(self):
         """Whitespace stripping and key sorting still apply."""
-        result = normalize_tool_args(
-            {"flags": ["-l"], "path": "  /tmp  "}
-        )
+        result = normalize_tool_args({"flags": ["-l"], "path": "  /tmp  "})
         assert json.loads(result) == {"flags": ["-l"], "path": "/tmp"}
 
     def test_empty_args(self):
@@ -115,9 +107,7 @@ class TestNormalizeToolArgs:
 
     def test_case_sensitive_keys(self):
         """Non-semantic keys are matched case-sensitively (lowercase)."""
-        result = normalize_tool_args(
-            {"path": "/tmp", "Timestamp": "2026-07-09"}
-        )
+        result = normalize_tool_args({"path": "/tmp", "Timestamp": "2026-07-09"})
         # "Timestamp" with capital T is NOT stripped
         assert "Timestamp" in json.loads(result)
 

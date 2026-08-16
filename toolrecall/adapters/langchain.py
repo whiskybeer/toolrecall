@@ -98,9 +98,7 @@ class ToolRecallCache:
             return None
 
         key = self._make_key(prompt, llm_string)
-        result = cached_mcp_check(
-            ADAPTER_SERVER, "llm_generate", {"key": key}, ttl=self._ttl
-        )
+        result = cached_mcp_check(ADAPTER_SERVER, "llm_generate", {"key": key}, ttl=self._ttl)
 
         if result.get("cached"):
             logger.info("Cache HIT  langchain/llm  - key=%s...", key[:40])
@@ -108,6 +106,7 @@ class ToolRecallCache:
                 data = json.loads(result["data"])
                 from langchain_core.outputs import ChatGeneration
                 from langchain_core.messages import AIMessage
+
                 generations = []
                 for item in data:
                     msg = AIMessage(content=item.get("text", ""))
@@ -137,7 +136,7 @@ class ToolRecallCache:
         try:
             # Serialize ChatGeneration objects as dicts via model_dump
             serialized = json.dumps(
-                [g.model_dump() if hasattr(g, 'model_dump') else str(g) for g in return_val],
+                [g.model_dump() if hasattr(g, "model_dump") else str(g) for g in return_val],
                 ensure_ascii=False,
             )
             check_result = cached_mcp_check(
@@ -211,9 +210,7 @@ class ToolRecallCallbackHandler:
         arguments = {"input": str(output)}
 
         try:
-            check_result = cached_mcp_check(
-                ADAPTER_SERVER, name, arguments, ttl=self._ttl
-            )
+            check_result = cached_mcp_check(ADAPTER_SERVER, name, arguments, ttl=self._ttl)
             cached_mcp_store(
                 check_result.get("key", ""),
                 ADAPTER_SERVER,
@@ -222,9 +219,7 @@ class ToolRecallCallbackHandler:
                 str(output),
                 ttl=self._ttl,
             )
-            logger.info(
-                "Cache STORE langchain/tool:%s  -  %d chars", name, len(str(output))
-            )
+            logger.info("Cache STORE langchain/tool:%s  -  %d chars", name, len(str(output)))
         except Exception as e:
             logger.warning("Failed to cache tool result for %s: %s", name, e)
 

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Probe OpenRouter DeepSeek V4 Flash context limit at different sizes."""
-import json, os, urllib.request, urllib.error, socket, sys
+
+import json
+import os
+import urllib.request
+import urllib.error
+import socket
 
 key = None
 with open(os.path.expanduser("~/.hermes/.env")) as f:
@@ -11,11 +16,13 @@ with open(os.path.expanduser("~/.hermes/.env")) as f:
 
 for target_chars in [50000, 100000, 150000, 200000, 300000]:
     msg = "x" * target_chars  # ~0.25 tok/char
-    body = json.dumps({
-        "model": "deepseek/deepseek-v4-flash",
-        "messages": [{"role": "user", "content": msg}],
-        "max_tokens": 2,
-    }).encode()
+    body = json.dumps(
+        {
+            "model": "deepseek/deepseek-v4-flash",
+            "messages": [{"role": "user", "content": msg}],
+            "max_tokens": 2,
+        }
+    ).encode()
 
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",

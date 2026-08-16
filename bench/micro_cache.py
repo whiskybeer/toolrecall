@@ -31,6 +31,7 @@ def bench(fn, n=1000, warmup=50):
 def call_mcp_uncached():
     """Simulate an MCP subprocess call: fork a minimal Python process."""
     import subprocess
+
     subprocess.run(
         [sys.executable, "-c", "import json; print(json.dumps({'ok': True}))"],
         capture_output=True,
@@ -41,6 +42,7 @@ def call_mcp_uncached():
 def call_mcp_cached():
     """Simulate MCP call served from cache: read a tiny value from SQLite."""
     import sqlite3
+
     con = sqlite3.connect(f"file:{CACHE_DB}?mode=ro", uri=True)
     con.execute("SELECT data FROM mcp_cache LIMIT 1").fetchone()
     con.close()
@@ -55,10 +57,9 @@ def read_file_uncached():
 def read_file_cached():
     """Read a small file via ToolRecall file_cache SQLite lookup."""
     import sqlite3
+
     con = sqlite3.connect(f"file:{CACHE_DB}?mode=ro", uri=True)
-    con.execute(
-        "SELECT content FROM file_cache WHERE path = ?", (TEST_FILE,)
-    ).fetchone()
+    con.execute("SELECT content FROM file_cache WHERE path = ?", (TEST_FILE,)).fetchone()
     con.close()
 
 
@@ -75,6 +76,7 @@ def create_test_fixtures():
 
     # Ensure mcp_cache has at least one entry
     import sqlite3
+
     con = sqlite3.connect(CACHE_DB)
     count = con.execute("SELECT COUNT(*) FROM mcp_cache").fetchone()[0]
     con.close()
@@ -92,10 +94,11 @@ if __name__ == "__main__":
 
     # Check that the test file is cached in file_cache
     import sqlite3
+
     con = sqlite3.connect(CACHE_DB)
-    cached = con.execute(
-        "SELECT COUNT(*) FROM file_cache WHERE path = ?", (TEST_FILE,)
-    ).fetchone()[0]
+    cached = con.execute("SELECT COUNT(*) FROM file_cache WHERE path = ?", (TEST_FILE,)).fetchone()[
+        0
+    ]
     if not cached:
         print("Test file not in file_cache. This run will measure cold read.")
     con.close()
@@ -125,7 +128,7 @@ if __name__ == "__main__":
     out["file_warm_cache"] = bench(read_file_cached, n=n)
 
     # Speedup ratios (median only)
-    for prefix in (["mcp", "file"] if HAS_MCP else ["file"]):
+    for prefix in ["mcp", "file"] if HAS_MCP else ["file"]:
         cold_key = f"{prefix}_cold_subprocess" if prefix == "mcp" else f"{prefix}_cold_disk"
         warm_key = f"{prefix}_warm_cache"
         out[f"{prefix}_speedup_median"] = round(

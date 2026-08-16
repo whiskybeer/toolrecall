@@ -43,14 +43,17 @@ def _patch_transport(path):
     client module internal state + forces a reconnect.
     """
     import toolrecall.client as cl
+
     cl.set_socket_path(path)
     import toolrecall.transport as tp
+
     tp.DEFAULT_PATH = path  # mb reads from transport module directly
 
 
 def _fresh_client_module():
     """Force re-import of client module (for tests that modify singleon)."""
     import toolrecall.client as cl
+
     cl._client = None
 
 
@@ -96,7 +99,7 @@ class MockDaemon:
                     conn.close()
                     continue
                 msg_len = int.from_bytes(raw[:4], "big")
-                payload = json.loads(raw[4:4+msg_len].decode("utf-8"))
+                payload = json.loads(raw[4 : 4 + msg_len].decode("utf-8"))
                 self.received.append(payload)
                 cmd = payload.get("cmd", "")
                 # Response matching actual daemon format
@@ -105,7 +108,11 @@ class MockDaemon:
                     "cached_terminal": {"output": "daemon shell output", "cached": True},
                     "cached_skill": {"content": "daemon skill content", "cached": True},
                     "cached_write": {"path": payload.get("path"), "unchanged": False},
-                    "cached_patch": {"path": payload.get("path"), "unchanged": True, "reason": "already_applied"},
+                    "cached_patch": {
+                        "path": payload.get("path"),
+                        "unchanged": True,
+                        "reason": "already_applied",
+                    },
                     "docs_search": {"result": "docs_search daemon result"},
                     "docs_get_page": {"result": "docs_get_page daemon result"},
                     "cache_status": {"result": "Cache status from daemon"},
@@ -132,6 +139,7 @@ class MockDaemon:
 # No-daemon tests (singleton, fallback detection)
 # ═══════════════════════════════════════════════════════════
 
+
 class TestClientNoDaemon(unittest.TestCase):
     """Behavior when no daemon is running — singleton, ping, path."""
 
@@ -143,12 +151,14 @@ class TestClientNoDaemon(unittest.TestCase):
 
     def tearDown(self):
         import toolrecall.client as cl
+
         cl._client = None
         # Don't restore DEFAULT_PATH — the next test's setUp patches it
 
     def test_get_client_returns_singleton(self):
         """_get_client() returns same TransportClient on repeated calls."""
         from toolrecall.client import _get_client
+
         c1 = _get_client()
         c2 = _get_client()
         self.assertIs(c1, c2)
@@ -156,30 +166,33 @@ class TestClientNoDaemon(unittest.TestCase):
     def test_get_client_uses_correct_path(self):
         """_get_client().path matches our patched DEFAULT_PATH."""
         from toolrecall.client import _get_client
+
         client = _get_client()
         self.assertEqual(client.path, self.sock_path)
 
     def test_daemon_running_returns_false(self):
         """daemon_running() returns False when no daemon on socket."""
         from toolrecall.client import daemon_running
+
         self.assertFalse(daemon_running())
 
     def test_set_socket_path_resets_singleton(self):
         """set_socket_path() clears _client and changes DEFAULT_PATH."""
         import toolrecall.client as cl
+
         c1 = cl._get_client()
         new_path = os.path.join(self.tmpdir, "new.sock")
         cl.set_socket_path(new_path)
         self.assertIsNone(cl._client, "Singleton should be cleared")
         c2 = cl._get_client()
         self.assertIsNot(c1, c2, "Should be a new client")
-        self.assertEqual(c2.path, new_path,
-                         "New client should use the updated socket path")
+        self.assertEqual(c2.path, new_path, "New client should use the updated socket path")
 
 
 # ═══════════════════════════════════════════════════════════
 # Daemon-first tests (mock daemon running)
 # ═══════════════════════════════════════════════════════════
+
 
 class TestClientDaemonFirst(unittest.TestCase):
     """Functions route through daemon when it's available."""
@@ -195,12 +208,14 @@ class TestClientDaemonFirst(unittest.TestCase):
     def tearDown(self):
         self.daemon.stop()
         import toolrecall.client as cl
+
         cl._client = None
         # Don't restore — next setUp patches it
 
     def test_mcp_call_routed_via_daemon(self):
         """mcp_call sends cmd=mcp_call payload and returns daemon result."""
         from toolrecall.client import mcp_call
+
         result = mcp_call("github", "list_issues", {"owner": "whiskybeer"})
         self.assertIn("result", result)
         self.assertEqual(result["result"]["status"], "ok")
@@ -208,67 +223,78 @@ class TestClientDaemonFirst(unittest.TestCase):
     def test_mcp_call_with_bypass(self):
         """mcp_call with bypass_cache=True includes ttl=0 in payload."""
         from toolrecall.client import mcp_call
+
         mcp_call("time", "get_time", {"timezone": "UTC"}, bypass_cache=True)
-        sent = [r for r in self.daemon.received
-                if r.get("cmd") == "mcp_call" and r.get("ttl") == 0]
+        sent = [r for r in self.daemon.received if r.get("cmd") == "mcp_call" and r.get("ttl") == 0]
         self.assertGreater(len(sent), 0, "ttl=0 must be in sent payload")
 
     def test_mcp_list_servers(self):
         """mcp_list_servers returns server list from daemon."""
         from toolrecall.client import mcp_list_servers
+
         result = mcp_list_servers()
         self.assertIn("result", result)
         self.assertEqual(result["result"][0]["name"], "github")
 
     def test_cached_read(self):
         from toolrecall.client import cached_read
+
         result = cached_read("/tmp/test.txt")
         self.assertEqual(result.get("content"), "daemon content")
 
     def test_cached_terminal(self):
         from toolrecall.client import cached_terminal
+
         result = cached_terminal("echo hello")
         self.assertEqual(result.get("output"), "daemon shell output")
 
     def test_cached_skill(self):
         from toolrecall.client import cached_skill
+
         result = cached_skill("test-skill")
         self.assertEqual(result.get("content"), "daemon skill content")
 
     def test_cached_write(self):
         from toolrecall.client import cached_write
+
         result = cached_write("/tmp/test.txt", "hello")
         self.assertFalse(result.get("unchanged", True))
         self.assertEqual(result.get("path"), "/tmp/test.txt")
 
     def test_cached_patch(self):
         from toolrecall.client import cached_patch
+
         result = cached_patch("/tmp/test.txt", "old", "new")
         self.assertTrue(result.get("unchanged", False))
         self.assertEqual(result.get("reason"), "already_applied")
 
     def test_docs_search(self):
         from toolrecall.client import docs_search
+
         result = docs_search("python", source="docs")
         self.assertIn("daemon", result)
 
     def test_docs_get_page(self):
         from toolrecall.client import docs_get_page
+
         result = docs_get_page("docs", "readme.md")
         self.assertIn("daemon", result)
 
     def test_cache_status(self):
         from toolrecall.client import cache_status
+
         result = cache_status()
         self.assertIn("daemon", result)
 
     def test_cache_invalidate(self):
         from toolrecall.client import cache_invalidate
+
         result = cache_invalidate()
         self.assertIn("daemon", result)
 
     def test_refresh_file(self):
         from toolrecall.client import refresh_file
+
         result = refresh_file("/tmp/test.txt")
         self.assertFalse(result.get("cached", True))
 
@@ -276,6 +302,7 @@ class TestClientDaemonFirst(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════
 # Fallback tests (no daemon — direct SQLite)
 # ═══════════════════════════════════════════════════════════
+
 
 class TestClientFallbackDirect(unittest.TestCase):
     """When daemon is unavailable, client falls back to direct SQLite.
@@ -306,6 +333,7 @@ class TestClientFallbackDirect(unittest.TestCase):
         _patch_transport(self.sock_path)
         _fresh_client_module()
         from toolrecall.cache import _init
+
         _init()
 
     def tearDown(self):
@@ -321,11 +349,13 @@ class TestClientFallbackDirect(unittest.TestCase):
         else:
             os.environ["TOOLRECALL_SCAN_DIRS"] = self._orig_scan_dirs
         import toolrecall.client as cl
+
         cl._client = None
         # Don't restore — next setUp patches it
 
     def test_cached_read_fallback(self):
         from toolrecall.client import cached_read
+
         result = cached_read(self.test_file)
         self.assertIn("content", result)
         self.assertIn("fallback content", result.get("content", ""))
@@ -335,12 +365,14 @@ class TestClientFallbackDirect(unittest.TestCase):
         os.environ["TOOLRECALL_MCP_ALLOWED_PATHS"] = self.tmpdir
         _fresh_client_module()
         from toolrecall.client import cached_read
+
         result = cached_read("/etc/hosts")
         self.assertIn("error", result)
         self.assertIn("access denied", result["error"])
 
     def test_cached_terminal_fallback(self):
         from toolrecall.client import cached_terminal
+
         result = cached_terminal("echo fallback_works")
         # SECURITY: fail-closed — terminal requires the daemon
         self.assertIn("error", result)
@@ -348,11 +380,13 @@ class TestClientFallbackDirect(unittest.TestCase):
 
     def test_cached_skill_fallback(self):
         from toolrecall.client import cached_skill
+
         result = cached_skill("nonexistent-skill")
         self.assertTrue("error" in result or "content" in result)
 
     def test_cached_write_fallback(self):
         from toolrecall.client import cached_write
+
         path = os.path.join(self.tmpdir, "written.txt")
         result = cached_write(path, "fallback content")
         # SECURITY: fail-closed — write requires the daemon
@@ -361,6 +395,7 @@ class TestClientFallbackDirect(unittest.TestCase):
 
     def test_cached_patch_fallback(self):
         from toolrecall.client import cached_patch
+
         path = os.path.join(self.tmpdir, "patch_target.txt")
         with open(path, "w") as f:
             f.write("old content")
@@ -371,27 +406,32 @@ class TestClientFallbackDirect(unittest.TestCase):
 
     def test_cache_status_fallback(self):
         from toolrecall.client import cache_status
+
         result = cache_status()
         self.assertIsInstance(result, str)
         self.assertIn("Cache Status", result)
 
     def test_cache_invalidate_fallback(self):
         from toolrecall.client import cache_invalidate
+
         result = cache_invalidate()
         self.assertIn("direct", result)
 
     def test_docs_search_fallback(self):
         from toolrecall.client import docs_search
+
         result = docs_search("python")
         self.assertIsInstance(result, str)
 
     def test_docs_get_page_fallback(self):
         from toolrecall.client import docs_get_page
+
         result = docs_get_page("nonexistent", "nope.md")
         self.assertIsInstance(result, str)
 
     def test_refresh_file_fallback(self):
         from toolrecall.client import refresh_file
+
         result = refresh_file(self.test_file)
         self.assertIn("content", result)
         self.assertIn("fallback content", result.get("content", ""))

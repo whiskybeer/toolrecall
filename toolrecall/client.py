@@ -9,6 +9,7 @@ local execution when the daemon is not running.
 """
 
 import atexit
+from typing import Any
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 
@@ -34,9 +35,10 @@ def _get_direct_docs():
         from toolrecall import docs as _direct_docs
     return _direct_docs
 
+
 # ─── Shared Connection ───────────────────────────────────────
 
-_client: TransportClient = None  # Shared transport connection
+_client: TransportClient | None = None  # Shared transport connection
 _last_check = 0.0
 
 # Pre-bind DEFAULT_PATH as module attribute so _patch_transport in
@@ -69,7 +71,9 @@ def _check_daemon() -> bool:
 # ─── Core API ─────────────────────────────────────────────────
 
 
-def mcp_call(server: str, tool: str, arguments: dict = None, bypass_cache: bool = False) -> dict:
+def mcp_call(
+    server: str, tool: str, arguments: dict | None = None, bypass_cache: bool = False
+) -> dict:
     """Call a tool on a multiplexed MCP server via the daemon.
 
     Requires the ToolRecall daemon to be running with MCP Multiplexer enabled.
@@ -82,7 +86,7 @@ def mcp_call(server: str, tool: str, arguments: dict = None, bypass_cache: bool 
         bypass_cache: If True, skip cache and force a fresh call
     """
     client = _get_client()
-    payload = {
+    payload: dict[str, Any] = {
         "cmd": "mcp_call",
         "server": server,
         "tool": tool,
@@ -128,10 +132,12 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
         return resp  # Success or real error from Daemon
     # Fallback: check allowed_paths ourselves, then read directly
     from toolrecall.config import load_config
+
     cfg = load_config()
     allowed_paths = cfg.mcp_allowed_paths
     if allowed_paths:
         from toolrecall.path_utils import check_path_allowed
+
         if not check_path_allowed(path, allowed_paths):
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
     return _get_direct_cache().cached_read(path, source=source)
@@ -153,17 +159,18 @@ def cached_shell_exec(command: str) -> dict:
         return resp
     # Fall back to direct wrapper stripping + cached_terminal
     from toolrecall.cache import cached_shell_exec as _direct_shell_exec
+
     return _direct_shell_exec(command)
 
 
-def cached_terminal(command: str, ttl: int = None) -> dict:
+def cached_terminal(command: str, ttl: int | None = None) -> dict:
     """Run command via daemon or direct SQLite.
 
     Sends command to daemon for execution caching with optional TTL.
     Falls back to local execution with same TTL logic when daemon is down.
     """
     client = _get_client()
-    payload = {"cmd": "cached_terminal", "command": command}
+    payload: dict[str, Any] = {"cmd": "cached_terminal", "command": command}
     if ttl is not None:
         payload["ttl"] = ttl
     resp = client.send(payload)
@@ -173,7 +180,9 @@ def cached_terminal(command: str, ttl: int = None) -> dict:
     # operation that requires the daemon's SecurityGate. Without the
     # daemon, we cannot enforce allow_terminal or allowed_terminal_commands.
     # The user must restart the daemon to use this feature.
-    return {"error": "daemon_unavailable: cached_terminal requires the daemon. Restart with 'toolrecall daemon'."}
+    return {
+        "error": "daemon_unavailable: cached_terminal requires the daemon. Restart with 'toolrecall daemon'."
+    }
 
 
 def cached_skill(name: str) -> dict:
@@ -204,7 +213,9 @@ def cached_write(path: str, content: str) -> dict:
     # operation that requires the daemon's SecurityGate. Without the
     # daemon, we cannot enforce the path allowlist.
     # The user must restart the daemon to use this feature.
-    return {"error": "daemon_unavailable: cached_write requires the daemon. Restart with 'toolrecall daemon'."}
+    return {
+        "error": "daemon_unavailable: cached_write requires the daemon. Restart with 'toolrecall daemon'."
+    }
 
 
 def cached_patch(path: str, old_string: str, new_string: str) -> dict:
@@ -215,18 +226,21 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
     is the single source of truth for the path allowlist.
     """
     client = _get_client()
-    resp = client.send({"cmd": "cached_patch", "path": path,
-                         "old_string": old_string, "new_string": new_string})
+    resp = client.send(
+        {"cmd": "cached_patch", "path": path, "old_string": old_string, "new_string": new_string}
+    )
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     # SECURITY: fail-closed on daemon unavailable — patch is a gated
     # operation that requires the daemon's SecurityGate. Without the
     # daemon, we cannot enforce the path allowlist.
     # The user must restart the daemon to use this feature.
-    return {"error": "daemon_unavailable: cached_patch requires the daemon. Restart with 'toolrecall daemon'."}
+    return {
+        "error": "daemon_unavailable: cached_patch requires the daemon. Restart with 'toolrecall daemon'."
+    }
 
 
-def docs_search(query: str, source: str = None) -> str:
+def docs_search(query: str, source: str | None = None) -> str:
     """Search knowledge base via daemon or direct SQLite.
 
     Daemon-first search over indexed docs.
@@ -323,6 +337,7 @@ def set_socket_path(path: str):
     """
     global _client, _DEFAULT_PATH, DEFAULT_PATH
     import toolrecall.transport as _tp
+
     _tp.DEFAULT_PATH = path
     # Also update the local reference imported at top of client.py
     _reimport_default_path()
@@ -335,6 +350,7 @@ def _reimport_default_path():
     Used by set_socket_path() to ensure _get_client() uses the updated path.
     """
     import toolrecall.transport
+
     global _DEFAULT_PATH
     _DEFAULT_PATH = toolrecall.transport.DEFAULT_PATH
 
@@ -361,7 +377,7 @@ def context_set_checkpoint(name: str = "") -> dict:
     return resp
 
 
-def context_get_dirty(checkpoint: int = None) -> dict:
+def context_get_dirty(checkpoint: int | None = None) -> dict:
     """Get dirty and clean files since a checkpoint.
 
     Dirty = files that were written/patched since the checkpoint.
@@ -381,7 +397,7 @@ def context_get_dirty(checkpoint: int = None) -> dict:
         }
     """
     client = _get_client()
-    payload = {"cmd": "context_get_dirty"}
+    payload: dict[str, Any] = {"cmd": "context_get_dirty"}
     if checkpoint is not None:
         payload["checkpoint"] = checkpoint
     resp = client.send(payload)

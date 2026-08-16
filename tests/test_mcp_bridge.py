@@ -31,7 +31,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import toolrecall.mcp_bridge
 from toolrecall.mcp_bridge import MCPBridge, TOOL_DEFINITIONS, CMD_TO_MCP
 from toolrecall.transport import (
-    create_socket, bind_socket, send_message, receive_message,
+    create_socket,
+    bind_socket,
+    send_message,
+    receive_message,
 )
 
 
@@ -84,20 +87,26 @@ class MockDaemonServer:
                     send_message(conn, self.call_responses[cmd])
                 elif cmd == "mcp_call":
                     # Echo with mock result
-                    send_message(conn, {
-                        "result": {
-                            "status": "ok",
-                            "server": req.get("server"),
-                            "tool": req.get("tool"),
-                        }
-                    })
+                    send_message(
+                        conn,
+                        {
+                            "result": {
+                                "status": "ok",
+                                "server": req.get("server"),
+                                "tool": req.get("tool"),
+                            }
+                        },
+                    )
                 elif cmd == "mcp_list_servers":
-                    send_message(conn, {
-                        "result": [
-                            {"name": "github", "running": True, "tool_names": ["list_issues"]},
-                            {"name": "time", "running": True, "tool_names": ["get_time"]},
-                        ]
-                    })
+                    send_message(
+                        conn,
+                        {
+                            "result": [
+                                {"name": "github", "running": True, "tool_names": ["list_issues"]},
+                                {"name": "time", "running": True, "tool_names": ["get_time"]},
+                            ]
+                        },
+                    )
                 else:
                     send_message(conn, {"result": {"echo": cmd, **req}})
                 conn.close()
@@ -128,9 +137,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
     def test_initialize_returns_capabilities(self):
         """Initialize returns protocol version, server info, security."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "initialize", "id": 1
-        })
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "initialize", "id": 1})
         self.assertIsNotNone(resp)
         self.assertIn("result", resp)
         r = resp["result"]
@@ -141,9 +148,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
     def test_initialize_security_info(self):
         """Initialize result includes security gates from daemon ping."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "initialize", "id": 1
-        })
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "initialize", "id": 1})
         sec = resp["result"]["serverInfo"]["security"]
         self.assertIn("allowed_paths", sec)
         self.assertIn("allow_terminal", sec)
@@ -153,9 +158,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
     def test_tools_list_returns_all_with_gates_open(self):
         """When all gates enabled, all 17 tools are listed (context tools always visible)."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/list", "id": 1
-        })
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
         # File tools
@@ -185,15 +188,15 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         """terminal is hidden when daemon has allow_terminal=False."""
         # Override daemon response for this test
         daemon2 = MockDaemonServer(self.sock_path)
-        daemon2.start(ping_response={
-            "allowed_paths": ["/tmp"],
-            "allow_terminal": False,  # Terminal DISABLED
-            "allow_invalidate": True,
-            "multiplex_enabled": True,
-        })
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/list", "id": 1
-        })
+        daemon2.start(
+            ping_response={
+                "allowed_paths": ["/tmp"],
+                "allow_terminal": False,  # Terminal DISABLED
+                "allow_invalidate": True,
+                "multiplex_enabled": True,
+            }
+        )
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
         names = [t["name"] for t in resp["result"]["tools"]]
         self.assertNotIn("terminal", names)
         self.assertIn("read_file", names)
@@ -201,30 +204,30 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     def test_tools_list_hides_invalidate_when_disabled(self):
         """cache_invalidate is hidden when allow_invalidate=False."""
         daemon2 = MockDaemonServer(self.sock_path)
-        daemon2.start(ping_response={
-            "allowed_paths": ["/tmp"],
-            "allow_terminal": False,
-            "allow_invalidate": False,  # Invalidate DISABLED
-            "multiplex_enabled": True,
-        })
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/list", "id": 1
-        })
+        daemon2.start(
+            ping_response={
+                "allowed_paths": ["/tmp"],
+                "allow_terminal": False,
+                "allow_invalidate": False,  # Invalidate DISABLED
+                "multiplex_enabled": True,
+            }
+        )
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
         names = [t["name"] for t in resp["result"]["tools"]]
         self.assertNotIn("cache_invalidate", names)
 
     def test_tools_list_hides_mcp_when_multiplex_disabled(self):
         """mcp_call/mcp_list_servers hidden when multiplex_enabled=False."""
         daemon2 = MockDaemonServer(self.sock_path)
-        daemon2.start(ping_response={
-            "allowed_paths": ["/tmp"],
-            "allow_terminal": True,
-            "allow_invalidate": True,
-            "multiplex_enabled": False,  # Multiplex DISABLED
-        })
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/list", "id": 1
-        })
+        daemon2.start(
+            ping_response={
+                "allowed_paths": ["/tmp"],
+                "allow_terminal": True,
+                "allow_invalidate": True,
+                "multiplex_enabled": False,  # Multiplex DISABLED
+            }
+        )
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
         names = [t["name"] for t in resp["result"]["tools"]]
         self.assertNotIn("mcp_call", names)
         self.assertNotIn("mcp_list_servers", names)
@@ -233,176 +236,234 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
     def test_tool_call_cached_read(self):
         """cached_read calls daemon with cmd=cached_read and path argument."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cached_read", "arguments": {"path": "/tmp/test.txt"}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cached_read", "arguments": {"path": "/tmp/test.txt"}},
+            }
+        )
         self.assertIn("result", resp)
         content = resp["result"]["content"][0]["text"]
         self.assertIn("/tmp/test.txt", content)
 
     def test_tool_call_cached_read_with_bypass(self):
         """cached_read with bypass_cache=true sends cache_refresh_file to daemon."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "cached_read",
-                "arguments": {"path": "/tmp/test.txt", "bypass_cache": True}
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {
+                    "name": "cached_read",
+                    "arguments": {"path": "/tmp/test.txt", "bypass_cache": True},
+                },
             }
-        })
+        )
         self.assertIn("result", resp)
 
     # ── Tools/Call: cached_terminal ────────────────────────
 
     def test_tool_call_cached_terminal(self):
         """cached_terminal calls daemon with cmd=cached_terminal."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cached_terminal", "arguments": {"command": "echo hello"}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cached_terminal", "arguments": {"command": "echo hello"}},
+            }
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_cached_skill(self):
         """cached_skill calls daemon with cmd=cached_skill."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cached_skill", "arguments": {"name": "test-skill"}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cached_skill", "arguments": {"name": "test-skill"}},
+            }
+        )
         self.assertIn("result", resp)
 
     # ── Tools/Call: docs_search / docs_get_page ────────────
 
     def test_tool_call_docs_search(self):
         """docs_search calls daemon with cmd=docs_search and query."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "docs_search", "arguments": {"query": "python", "source": "docs"}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {
+                    "name": "docs_search",
+                    "arguments": {"query": "python", "source": "docs"},
+                },
+            }
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_docs_get_page(self):
         """docs_get_page calls daemon with cmd=docs_get_page."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "docs_get_page",
-                "arguments": {"source": "docs", "path": "readme.md"}
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {
+                    "name": "docs_get_page",
+                    "arguments": {"source": "docs", "path": "readme.md"},
+                },
             }
-        })
+        )
         self.assertIn("result", resp)
 
     # ── Tools/Call: cache operations ───────────────────────
 
     def test_tool_call_cache_status(self):
         """cache_status calls daemon with cmd=cache_status."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cache_status", "arguments": {}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cache_status", "arguments": {}},
+            }
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_cache_invalidate(self):
         """cache_invalidate calls daemon with cmd=cache_invalidate."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cache_invalidate", "arguments": {}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cache_invalidate", "arguments": {}},
+            }
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_cache_refresh_file(self):
         """cache_refresh_file calls daemon with cmd=cache_refresh_file."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "cache_refresh_file",
-                "arguments": {"path": "/tmp/test.txt"}
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cache_refresh_file", "arguments": {"path": "/tmp/test.txt"}},
             }
-        })
+        )
         self.assertIn("result", resp)
 
     # ── Tools/Call: MCP multiplex ──────────────────────────
 
     def test_tool_call_mcp_call(self):
         """mcp_call sends to daemon with server/tool/arguments packed."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "mcp_call",
-                "arguments": {
-                    "server": "github",
-                    "tool": "list_issues",
-                    "arguments": {"owner": "whiskybeer", "repo": "toolrecall"},
-                }
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {
+                    "name": "mcp_call",
+                    "arguments": {
+                        "server": "github",
+                        "tool": "list_issues",
+                        "arguments": {"owner": "whiskybeer", "repo": "toolrecall"},
+                    },
+                },
             }
-        })
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_mcp_call_with_bypass(self):
         """mcp_call with bypass_cache sets ttl=0."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "mcp_call",
-                "arguments": {
-                    "server": "time",
-                    "tool": "get_time",
-                    "arguments": {"timezone": "UTC"},
-                    "bypass_cache": True,
-                }
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {
+                    "name": "mcp_call",
+                    "arguments": {
+                        "server": "time",
+                        "tool": "get_time",
+                        "arguments": {"timezone": "UTC"},
+                        "bypass_cache": True,
+                    },
+                },
             }
-        })
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_mcp_list_servers(self):
         """mcp_list_servers returns available server list."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "mcp_list_servers", "arguments": {}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "mcp_list_servers", "arguments": {}},
+            }
+        )
         self.assertIn("result", resp)
 
     # ── Tools/Call: Context Tracker ──────────────────────
 
     def test_tool_call_context_set_checkpoint(self):
         """context_set_checkpoint calls daemon with cmd=context_set_checkpoint."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "context_set_checkpoint",
-                "arguments": {"name": "before_edit"}
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "context_set_checkpoint", "arguments": {"name": "before_edit"}},
             }
-        })
+        )
         self.assertIn("result", resp)
         text = resp["result"]["content"][0]["text"]
         self.assertIn("context_set_checkpoint", text)
 
     def test_tool_call_context_get_dirty(self):
         """context_get_dirty calls daemon with cmd=context_get_dirty."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {
-                "name": "context_get_dirty",
-                "arguments": {"checkpoint": 1}
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "context_get_dirty", "arguments": {"checkpoint": 1}},
             }
-        })
+        )
         self.assertIn("result", resp)
         text = resp["result"]["content"][0]["text"]
         self.assertIn("context_get_dirty", text)
 
     def test_tool_call_context_get_stats(self):
         """context_get_stats calls daemon with cmd=context_get_stats."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "context_get_stats", "arguments": {}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "context_get_stats", "arguments": {}},
+            }
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_context_reset(self):
         """context_reset calls daemon with cmd=context_reset."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "context_reset", "arguments": {}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "context_reset", "arguments": {}},
+            }
+        )
         self.assertIn("result", resp)
 
     # ── Tools/Call: source=agent_tool tracking ───────────
@@ -410,70 +471,86 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     def test_tool_call_cached_read_sends_source_agent_tool(self):
         """cached_read adds source=agent_tool to the daemon request."""
         daemon2 = MockDaemonServer(self.sock_path)
-        daemon2.start(call_responses={
-            "cached_read": {"result": {"echo": "cached_read", "source": "agent_tool"}},
-        })
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cached_read", "arguments": {"path": "/tmp/test.txt"}}
-        })
+        daemon2.start(
+            call_responses={
+                "cached_read": {"result": {"echo": "cached_read", "source": "agent_tool"}},
+            }
+        )
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cached_read", "arguments": {"path": "/tmp/test.txt"}},
+            }
+        )
         self.assertIn("result", resp)
 
     def test_tool_call_read_file_sends_source_agent_tool(self):
         """read_file (native alias) adds source=agent_tool to the daemon request."""
         daemon2 = MockDaemonServer(self.sock_path)
-        daemon2.start(call_responses={
-            "cached_read": {"result": {"echo": "cached_read", "source": "agent_tool"}},
-        })
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "read_file", "arguments": {"path": "/tmp/test.txt"}}
-        })
+        daemon2.start(
+            call_responses={
+                "cached_read": {"result": {"echo": "cached_read", "source": "agent_tool"}},
+            }
+        )
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "read_file", "arguments": {"path": "/tmp/test.txt"}},
+            }
+        )
         self.assertIn("result", resp)
 
     # ── Error handling ─────────────────────────────────────
 
     def test_unknown_tool_returns_error(self):
         """Unknown tool returns JSON-RPC error -32601."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "nonexistent_tool", "arguments": {}}
-        })
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "nonexistent_tool", "arguments": {}},
+            }
+        )
         self.assertIn("error", resp)
         self.assertEqual(resp["error"]["code"], -32601)
 
     def test_unknown_method_returns_error(self):
         """Unknown method returns JSON-RPC error -32601."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "boogie", "id": 1
-        })
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "boogie", "id": 1})
         self.assertIn("error", resp)
         self.assertEqual(resp["error"]["code"], -32601)
 
     def test_notifications_ignored(self):
         """notifications/initialized returns None (silently ignored)."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "notifications/initialized"
-        })
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"})
         self.assertIsNone(resp)
 
     def test_close_method_ignored(self):
         """Close method returns None (silently ignored)."""
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "close", "id": 1
-        })
+        resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "close", "id": 1})
         self.assertIsNone(resp)
 
     def test_daemon_error_propagates(self):
         """If daemon returns error, bridge wraps it as JSON-RPC error."""
         daemon2 = MockDaemonServer(self.sock_path)
-        daemon2.start(call_responses={
-            "cached_read": {"error": "access denied"},
-        })
-        resp = self.bridge.handle_request({
-            "jsonrpc": "2.0", "method": "tools/call", "id": 1,
-            "params": {"name": "cached_read", "arguments": {"path": "/etc/shadow"}}
-        })
+        daemon2.start(
+            call_responses={
+                "cached_read": {"error": "access denied"},
+            }
+        )
+        resp = self.bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {"name": "cached_read", "arguments": {"path": "/etc/shadow"}},
+            }
+        )
         self.assertIn("error", resp)
         # Bridge wraps daemon errors under -32603
         self.assertEqual(resp["error"]["code"], -32603)
@@ -523,7 +600,9 @@ class TestCmdToMCPMapping(unittest.TestCase):
     def test_all_tools_mapped(self):
         """Every tool in TOOL_DEFINITIONS has a corresponding CMD_TO_MCP entry."""
         for tdef in TOOL_DEFINITIONS:
-            self.assertIn(tdef["name"], CMD_TO_MCP, f"Missing CMD_TO_MCP entry for '{tdef['name']}'")
+            self.assertIn(
+                tdef["name"], CMD_TO_MCP, f"Missing CMD_TO_MCP entry for '{tdef['name']}'"
+            )
 
     def test_native_aliases_map_to_cached_cmds(self):
         """Native-named aliases map to their cached_* daemon commands, not to themselves."""
@@ -535,8 +614,11 @@ class TestCmdToMCPMapping(unittest.TestCase):
         }
         for native_name, daemon_cmd in native_to_cmd.items():
             self.assertIn(native_name, CMD_TO_MCP, f"Missing native alias '{native_name}'")
-            self.assertEqual(CMD_TO_MCP[native_name], daemon_cmd,
-                             f"Native alias '{native_name}' should map to '{daemon_cmd}'")
+            self.assertEqual(
+                CMD_TO_MCP[native_name],
+                daemon_cmd,
+                f"Native alias '{native_name}' should map to '{daemon_cmd}'",
+            )
 
     def test_original_names_map_to_themselves(self):
         """Original tool names (cached_*, docs_*, cache_*, mcp_*) map to themselves."""
@@ -544,8 +626,9 @@ class TestCmdToMCPMapping(unittest.TestCase):
         for tdef in TOOL_DEFINITIONS:
             name = tdef["name"]
             if name not in native_names:
-                self.assertEqual(CMD_TO_MCP[name], name,
-                                 f"Original tool '{name}' should map to itself")
+                self.assertEqual(
+                    CMD_TO_MCP[name], name, f"Original tool '{name}' should map to itself"
+                )
 
 
 class TestMainFunctionDaemonCheck(unittest.TestCase):

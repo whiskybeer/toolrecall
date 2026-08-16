@@ -17,8 +17,12 @@ import shutil
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.docs import (
-    _get_db, _ensure_tables, index_agent_memory, index_directory,
-    docs_search, docs_get_page
+    _get_db,
+    _ensure_tables,
+    index_agent_memory,
+    index_directory,
+    docs_search,
+    docs_get_page,
 )
 
 
@@ -44,11 +48,7 @@ class TestMemoryIndex(unittest.TestCase):
 
         # Write a test USER.md
         with open(os.path.join(self.memory_dir, "USER.md"), "w") as f:
-            f.write(
-                "Robin prefers dense no-fluff responses\n"
-                "§\n"
-                "Always test before UI changes\n"
-            )
+            f.write("Robin prefers dense no-fluff responses\n§\nAlways test before UI changes\n")
 
     def tearDown(self):
         # Clean up the isolated test directory
@@ -95,8 +95,7 @@ class TestMemoryIndex(unittest.TestCase):
         ).fetchone()
         conn.close()
 
-        self.assertGreater(fts_row["cnt"], 0,
-                           "FTS5 trigger should sync 'security' match")
+        self.assertGreater(fts_row["cnt"], 0, "FTS5 trigger should sync 'security' match")
 
     def test_docs_get_page_returns_entry(self):
         """Individual memory entries are retrievable by path (fuzzy match)."""

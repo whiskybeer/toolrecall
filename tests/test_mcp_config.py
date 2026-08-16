@@ -80,9 +80,7 @@ servers_config.npx_time = { command = "npx", args = ["-y", "@modelcontextprotoco
 
     def test_real_config_file_parses(self):
         """Prove the actual toolrecall.toml parses without errors."""
-        actual_path = os.path.join(
-            os.path.dirname(__file__), "..", "toolrecall", "config.toml"
-        )
+        actual_path = os.path.join(os.path.dirname(__file__), "..", "toolrecall", "config.toml")
         self.assertTrue(os.path.exists(actual_path))
         with open(actual_path, "rb") as f:
             data = tomllib.load(f)

@@ -72,6 +72,7 @@ def summary():
 
 # ── 1. Stop running processes ──────────────────────────────────
 
+
 def step_stop_daemon():
     global REMOVED
     print("\n[1/9] Stopping running processes...")
@@ -103,7 +104,8 @@ def step_stop_daemon():
     try:
         subprocess.run(
             ["pkill", "-f", "toolrecall daemon"],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
@@ -115,6 +117,7 @@ def step_stop_daemon():
 
 
 # ── 2. Systemd user service ────────────────────────────────────
+
 
 def step_systemd():
     global REMOVED, SKIPPED
@@ -144,6 +147,7 @@ def step_systemd():
 
 # ── 3. Data directory ──────────────────────────────────────────
 
+
 def step_data_dir():
     global REMOVED, SKIPPED
     print(f"\n[3/9] Data directory ({TR_DIR})...")
@@ -162,6 +166,7 @@ def step_data_dir():
 
 # ── 4. Hermes config edits ─────────────────────────────────────
 
+
 def edit_config_file(path: str, label: str):
     """Remove toolrecall references from a YAML config file."""
     if not os.path.isfile(path):
@@ -171,12 +176,11 @@ def edit_config_file(path: str, label: str):
         content = f.read()
 
     original = content
-    changed = False
 
     # Remove mcp_servers.toolrecall block (multi-line)
     content = re.sub(
-        r'^  toolrecall:\n(?:    .+\n)+',
-        '',
+        r"^  toolrecall:\n(?:    .+\n)+",
+        "",
         content,
         flags=re.MULTILINE,
     )
@@ -218,6 +222,7 @@ def step_hermes_config():
 
 # ── 5. Sandbox config ──────────────────────────────────────────
 
+
 def step_sandbox():
     global REMOVED, SKIPPED
     print("\n[5/9] Sandbox config...")
@@ -236,7 +241,7 @@ def step_sandbox():
     if confirm("Remove toolrecall path references from sandbox.yaml?"):
         content = content.replace(REPO_DIR, "")
         # Clean up empty list items left behind
-        content = re.sub(r'\n\s*-\s*""\s*', '', content)
+        content = re.sub(r'\n\s*-\s*""\s*', "", content)
         with open(SANDBOX_CONFIG, "w") as f:
             f.write(content)
         log("Cleaned sandbox.yaml", "✓")
@@ -247,6 +252,7 @@ def step_sandbox():
 
 
 # ── 6. Cron jobs ──────────────────────────────────────────────
+
 
 def step_cron():
     global REMOVED, SKIPPED
@@ -275,6 +281,7 @@ def step_cron():
 
 # ── 7. Hermes skills ───────────────────────────────────────────
 
+
 def step_skills():
     global REMOVED, SKIPPED
     print("\n[7/9] Hermes skills...")
@@ -295,6 +302,7 @@ def step_skills():
 
 # ── 8. Pip/pipx package ────────────────────────────────────────
 
+
 def step_pip():
     global REMOVED, SKIPPED
     print("\n[9/9] Pip/pipx package...")
@@ -303,7 +311,10 @@ def step_pip():
     pipx_found = False
     try:
         r = subprocess.run(
-            ["pipx", "list"], capture_output=True, text=True, timeout=15,
+            ["pipx", "list"],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         pipx_found = r.returncode == 0 and "toolrecall" in r.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -314,7 +325,8 @@ def step_pip():
             try:
                 subprocess.run(
                     ["pipx", "uninstall", "toolrecall"],
-                    capture_output=True, timeout=30,
+                    capture_output=True,
+                    timeout=30,
                 )
                 log("Uninstalled pipx package", "✓")
                 REMOVED += 1
@@ -329,7 +341,9 @@ def step_pip():
     # Check pip
     result = subprocess.run(
         [sys.executable, "-m", "pip", "show", "toolrecall"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         log("Not pip-installed (local repo only)", "−")
@@ -338,7 +352,8 @@ def step_pip():
     if confirm("Uninstall pip package 'toolrecall'?"):
         subprocess.run(
             [sys.executable, "-m", "pip", "uninstall", "-y", "toolrecall"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         log("Uninstalled pip package", "✓")
         REMOVED += 1
@@ -349,11 +364,13 @@ def step_pip():
 
 # ── Main ───────────────────────────────────────────────────────
 
+
 def main():
     global FORCE
     parser = argparse.ArgumentParser(description="ToolRecall Uninstaller")
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Skip all confirmations (non-interactive)",
     )
     args = parser.parse_args()

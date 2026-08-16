@@ -3,6 +3,7 @@
 Covers: scalars, lists, nested sections, inline tables, special strings,
 error cases, round-trip with real config.
 """
+
 import pytest
 import datetime
 from toolrecall.toml_serializer import dumps, dump, format_section, _escape_basic, _format_value
@@ -89,6 +90,7 @@ class TestFormatValue:
 
     def test_inline_table(self):
         from toolrecall.toml_serializer import _format_inline_table
+
         result = _format_inline_table({"a": 1, "b": 2})
         assert "{" in result
         assert "1" in result
@@ -108,7 +110,7 @@ class TestDumps:
     def test_bare_keys(self):
         result = dumps({"title": "ToolRecall", "version": 42})
         assert result.strip().startswith('title = "ToolRecall"')
-        assert 'version = 42' in result
+        assert "version = 42" in result
 
     def test_single_section(self):
         result = dumps({"storage": {"backend": "sqlite"}})
@@ -252,6 +254,7 @@ class TestRealConfig:
             dump(data, fh)
 
         import tomllib
+
         with open(f, "rb") as fh:
             parsed = tomllib.load(fh)
 
@@ -271,6 +274,7 @@ class TestRealConfig:
         with open(f, "w") as fh:
             dump({}, fh)
         import tomllib
+
         with open(f, "rb") as fh:
             parsed = tomllib.load(fh)
         assert parsed == {}

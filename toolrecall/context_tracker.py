@@ -79,6 +79,7 @@ def _is_sensitive(path: str) -> bool:
     """
     try:
         from toolrecall._db import _is_sensitive_path
+
         return _is_sensitive_path(path)
     except Exception:
         return True
@@ -99,7 +100,6 @@ def format_stale_block(paths: list[str]) -> str:
         lines.append(f"... and {hidden} more (call context_get_stale for the full list)")
     lines.append(STALE_MARKER_CLOSE)
     return "\n".join(lines)
-
 
 
 class ContextTracker:
@@ -162,10 +162,7 @@ class ContextTracker:
             # dirtied since the last checkpoint have been "dropped" from
             # the agent's context. Estimate their token cost so the
             # healthcheck metric is always live.
-            clean_read = [
-                p for p in self._read_set
-                if p not in self._dirty
-            ]
+            clean_read = [p for p in self._read_set if p not in self._dirty]
             for p in clean_read:
                 try:
                     size = os.path.getsize(p)
@@ -247,13 +244,12 @@ class ContextTracker:
             # - checkpoint=N     → scope to checkpoint N
             # - checkpoint=0     → scope to checkpoint 0 (post-reset)
             dirty_list = [
-                path for path, info in self._dirty.items()
-                if info.get("tick", 0) >= target
+                path for path, info in self._dirty.items() if info.get("tick", 0) >= target
             ]
             read_but_not_dirty = [
-                p for p in self._read_set
-                if p not in self._dirty
-                or self._dirty[p].get("tick", 0) < target
+                p
+                for p in self._read_set
+                if p not in self._dirty or self._dirty[p].get("tick", 0) < target
             ]
             clean_list = list(set(read_but_not_dirty))
 
@@ -336,16 +332,18 @@ class ContextTracker:
                     # File was deleted after being read. The context
                     # copy is still stale — arguably more so.
                     size, mtime = 0, None
-                entries.append({
-                    "path": path,
-                    "read_seq": r_seq,
-                    "write_seq": w_seq,
-                    "size": size,
-                    "est_tokens": size // 4,
-                    "mtime": mtime,
-                })
+                entries.append(
+                    {
+                        "path": path,
+                        "read_seq": r_seq,
+                        "write_seq": w_seq,
+                        "size": size,
+                        "est_tokens": size // 4,
+                        "mtime": mtime,
+                    }
+                )
 
-            entries.sort(key=lambda e: e["path"])
+            entries.sort(key=lambda e: str(e["path"]))
             return {
                 "stale": entries,
                 "paths": [e["path"] for e in entries],
@@ -364,10 +362,7 @@ class ContextTracker:
         """
         with self._lock:
             dirty_list = list(self._dirty.keys())
-            read_but_not_dirty = [
-                p for p in self._read_set
-                if p not in self._dirty
-            ]
+            read_but_not_dirty = [p for p in self._read_set if p not in self._dirty]
             clean_list = list(set(read_but_not_dirty))
 
             return {

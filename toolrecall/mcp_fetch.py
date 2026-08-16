@@ -37,9 +37,7 @@ _LOG: logging.Logger | None = None
 #   100KB  = 100 * 1024        —  quick API calls, small pages
 #   1MB   = 1024 * 1024       —  larger pages, API responses
 #   10MB  = 10 * 1024 * 1024  —  bigger files (no streaming, beware RAM!)
-MAX_CONTENT_BYTES = int(os.environ.get(
-    "TOOLRECALL_FETCH_MAX_BYTES", str(512 * 1024)
-))
+MAX_CONTENT_BYTES = int(os.environ.get("TOOLRECALL_FETCH_MAX_BYTES", str(512 * 1024)))
 if MAX_CONTENT_BYTES < 0:
     MAX_CONTENT_BYTES = 0  # no safety limit (not recommended)
 
@@ -50,14 +48,20 @@ TOOLS = [
     {
         "name": "fetch_url",
         "description": "Fetch a URL and return its content. Supports HTTP/HTTPS. "
-                       "Content is truncated at the configured max_bytes limit. "
-                       "Returns: status, headers, content.",
+        "Content is truncated at the configured max_bytes limit. "
+        "Returns: status, headers, content.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "URL to fetch (http/https only)"},
-                "max_bytes": {"type": "integer", "description": "Max bytes to read (default: configured max limit, capped at that limit)"},
-                "raw": {"type": "boolean", "description": "Return raw bytes instead of attempting text decode"},
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Max bytes to read (default: configured max limit, capped at that limit)",
+                },
+                "raw": {
+                    "type": "boolean",
+                    "description": "Return raw bytes instead of attempting text decode",
+                },
             },
             "required": ["url"],
         },
@@ -94,9 +98,9 @@ def _setup():
         return
     _LOG = logging.getLogger("toolrecall.fetch")
     _LOG.setLevel(logging.DEBUG)
-    _fh = logging.FileHandler(os.path.expanduser(
-        os.environ.get("TOOLRECALL_FETCH_LOG", "~/.toolrecall/fetch_api.log")
-    ))
+    _fh = logging.FileHandler(
+        os.path.expanduser(os.environ.get("TOOLRECALL_FETCH_LOG", "~/.toolrecall/fetch_api.log"))
+    )
     _fh.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     _LOG.addHandler(_fh)
 
@@ -250,7 +254,9 @@ def main():
             elif "error" in result:
                 resp["error"] = {"code": -32000, "message": result["error"]}
             else:
-                resp["result"] = {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+                resp["result"] = {
+                    "content": [{"type": "text", "text": json.dumps(result, indent=2)}]
+                }
         elif method in ("notifications/initialized", "close"):
             continue
         else:

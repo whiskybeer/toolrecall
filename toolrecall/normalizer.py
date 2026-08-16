@@ -20,10 +20,19 @@ from typing import Any
 
 # Keys that are non-semantic noise — stripping them broadens cache hits
 # across different agent invocations, session IDs, and request tracing.
-NON_SEMANTIC_KEYS = frozenset({
-    "timestamp", "request_id", "session_id", "nonce", "trace_id",
-    "span_id", "correlation_id", "_t", "_r",
-})
+NON_SEMANTIC_KEYS = frozenset(
+    {
+        "timestamp",
+        "request_id",
+        "session_id",
+        "nonce",
+        "trace_id",
+        "span_id",
+        "correlation_id",
+        "_t",
+        "_r",
+    }
+)
 
 # Config values — set by normalize_tool_args() or overridable defaults.
 # These are module-level so they can be set once per process but also
@@ -48,7 +57,9 @@ def configure(*, sort_lists: bool | None = None, strip_strings: bool | None = No
         _STRIP_STRINGS = strip_strings
 
 
-def normalize_json(obj: Any, *, sort_lists: bool | None = None, strip_strings: bool | None = None) -> str:
+def normalize_json(
+    obj: Any, *, sort_lists: bool | None = None, strip_strings: bool | None = None
+) -> str:
     """Normalize any JSON-serializable object into a deterministic string.
 
     Args:
@@ -76,15 +87,20 @@ def normalize_json(obj: Any, *, sort_lists: bool | None = None, strip_strings: b
 def _normalize_value(value: Any, *, sort_lists: bool, strip_strings: bool) -> Any:
     """Recursively normalize a JSON value for deterministic hashing."""
     if isinstance(value, dict):
-        return {k: _normalize_value(v, sort_lists=sort_lists, strip_strings=strip_strings)
-                for k, v in sorted(value.items())}
+        return {
+            k: _normalize_value(v, sort_lists=sort_lists, strip_strings=strip_strings)
+            for k, v in sorted(value.items())
+        }
     elif isinstance(value, list):
-        items = [_normalize_value(v, sort_lists=sort_lists, strip_strings=strip_strings)
-                 for v in value]
+        items = [
+            _normalize_value(v, sort_lists=sort_lists, strip_strings=strip_strings) for v in value
+        ]
         # Sort lists of primitives so order doesn't matter
         # (configurable — set sort_lists=False to preserve argument order)
-        if sort_lists and items and all(
-            isinstance(x, (str, int, float, bool, type(None))) for x in items
+        if (
+            sort_lists
+            and items
+            and all(isinstance(x, (str, int, float, bool, type(None))) for x in items)
         ):
             try:
                 items.sort(key=str)
@@ -96,8 +112,13 @@ def _normalize_value(value: Any, *, sort_lists: bool, strip_strings: bool) -> An
     return value
 
 
-def normalize_tool_args(args: dict, strip_noise: bool = True,
-                        *, sort_lists: bool | None = None, strip_strings: bool | None = None) -> str:
+def normalize_tool_args(
+    args: dict,
+    strip_noise: bool = True,
+    *,
+    sort_lists: bool | None = None,
+    strip_strings: bool | None = None,
+) -> str:
     """Normalize tool call arguments into a deterministic cache key.
 
     Strips non-semantic fields (timestamps, session IDs, etc.) before

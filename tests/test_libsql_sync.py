@@ -23,9 +23,13 @@ class TestLibSQLSyncBackend(unittest.TestCase):
     def setUp(self):
         # Isolate env
         self._env = {}
-        for k in ["TOOLRECALL_STORAGE_BACKEND", "TOOLRECALL_SYNC_ENABLED",
-                   "TOOLRECALL_SYNC_URL", "TOOLRECALL_SYNC_TOKEN",
-                   "TOOLRECALL_LIBSQL_DB_PATH"]:
+        for k in [
+            "TOOLRECALL_STORAGE_BACKEND",
+            "TOOLRECALL_SYNC_ENABLED",
+            "TOOLRECALL_SYNC_URL",
+            "TOOLRECALL_SYNC_TOKEN",
+            "TOOLRECALL_LIBSQL_DB_PATH",
+        ]:
             self._env[k] = os.environ.pop(k, None)
         self._tmp_db = "/tmp/test_libsql_sync.test"
 
@@ -45,6 +49,7 @@ class TestLibSQLSyncBackend(unittest.TestCase):
         """sync_configured() returns False when nothing is configured."""
         from toolrecall.storage.libsql_sync import sync_configured
         from toolrecall.config import load_config
+
         cfg = load_config()
         self.assertFalse(sync_configured(cfg))
 
@@ -99,6 +104,7 @@ class TestLibSQLSyncBackend(unittest.TestCase):
         """stats_info() returns expected keys for libsql-sync backend."""
         from toolrecall.storage.libsql_sync import stats_info
         from toolrecall.config import load_config
+
         cfg = load_config()
         info = stats_info(cfg)
         self.assertIn("sync_enabled", info)
@@ -154,6 +160,7 @@ class TestLibSQLSyncBackend(unittest.TestCase):
     def test_09_SUPPORTS_SYNC_is_true(self):
         """SUPPORTS_SYNC is True for the sync backend."""
         from toolrecall.storage.libsql_sync import SUPPORTS_SYNC
+
         self.assertTrue(SUPPORTS_SYNC)
 
     def test_10_resolve_backend_name(self):
@@ -173,8 +180,7 @@ class TestLibSQLSyncBackend(unittest.TestCase):
         os.environ["TOOLRECALL_STORAGE_BACKEND"] = "libsql-sync"
         cfg = load_config()
         path = active_db_path(cfg)
-        self.assertTrue(path.endswith("cache-libsql.db"),
-                        f"Expected cache-libsql.db, got {path}")
+        self.assertTrue(path.endswith("cache-libsql.db"), f"Expected cache-libsql.db, got {path}")
 
 
 if __name__ == "__main__":

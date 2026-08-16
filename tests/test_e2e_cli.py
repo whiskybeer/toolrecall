@@ -57,6 +57,7 @@ class TestE2ECLI(unittest.TestCase):
                 import socket
                 import struct
                 import json
+
                 try:
                     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     s.settimeout(2)

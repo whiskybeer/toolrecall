@@ -35,6 +35,7 @@ def _api_base() -> str:
         return env.rstrip("/")
     try:
         from toolrecall.config import load_config
+
         return load_config().turso_api_base
     except Exception:
         return "https://api.turso.tech"
@@ -318,12 +319,15 @@ def cmd_turso_init():
     if os.path.exists(env_path):
         with open(env_path) as f:
             env_existing = f.read()
-    env_content = _upsert_env_lines(env_existing, {
-        "TOOLRECALL_SYNC_ENABLED": "true" if enable_now else "false",
-        "TOOLRECALL_SYNC_URL": sync_url,
-        "TOOLRECALL_SYNC_TOKEN": db_token,
-        "TOOLRECALL_SYNC_INTERVAL": "60",
-    })
+    env_content = _upsert_env_lines(
+        env_existing,
+        {
+            "TOOLRECALL_SYNC_ENABLED": "true" if enable_now else "false",
+            "TOOLRECALL_SYNC_URL": sync_url,
+            "TOOLRECALL_SYNC_TOKEN": db_token,
+            "TOOLRECALL_SYNC_INTERVAL": "60",
+        },
+    )
     _write_private(env_path, env_content)
 
     print()
@@ -354,7 +358,9 @@ def _set_sync_enabled(value: bool) -> None:
         content = re.sub(
             r"(?m)^(\s*)sync_enabled\s*=\s*\S+(.*)$",
             rf"\g<1>sync_enabled = {flag}\g<2>",
-            content, count=1)
+            content,
+            count=1,
+        )
     elif "[storage]" in content:
         content = content.replace("[storage]", f"[storage]\nsync_enabled = {flag}", 1)
     else:

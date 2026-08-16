@@ -114,9 +114,14 @@ def _csv_escape(s: str) -> str:
     return s.replace(",", ";").replace("\n", " ").replace("\r", " ")
 
 
-def _log_proxy_usage(cache_status: str, target_host: str, target_path: str,
-                     request_hash: str, body: str = "",
-                     prompt_tokens_override: int = 0) -> None:
+def _log_proxy_usage(
+    cache_status: str,
+    target_host: str,
+    target_path: str,
+    request_hash: str,
+    body: str = "",
+    prompt_tokens_override: int = 0,
+) -> None:
     """Append one usage row to the proxy_usage.csv log.
 
     Thread-safe via lock. Best-effort — never raises, never blocks
@@ -131,19 +136,23 @@ def _log_proxy_usage(cache_status: str, target_host: str, target_path: str,
         prompt_tokens_override: if > 0, use this instead of parsing (for STREAM)
     """
     usage = _try_parse_usage(body)
-    pt = prompt_tokens_override if prompt_tokens_override > 0 else (usage.get("prompt_tokens", 0) or 0)
+    pt = (
+        prompt_tokens_override
+        if prompt_tokens_override > 0
+        else (usage.get("prompt_tokens", 0) or 0)
+    )
     ct = usage.get("completion_tokens", 0) or 0
-    crt = (usage.get("cache_read_input_tokens", 0) or
-           usage.get("cache_read_tokens", 0) or 0)
-    cwt = (usage.get("cache_creation_input_tokens", 0) or
-           usage.get("cache_write_tokens", 0) or 0)
+    crt = usage.get("cache_read_input_tokens", 0) or usage.get("cache_read_tokens", 0) or 0
+    cwt = usage.get("cache_creation_input_tokens", 0) or usage.get("cache_write_tokens", 0) or 0
     ts = time.time()
     with _USAGE_LOG_LOCK:
         try:
             with open(_USAGE_LOG_PATH, "a") as f:
-                f.write(f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
-                        f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
-                        f",{pt},{ct},{crt},{cwt}\n")
+                f.write(
+                    f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
+                    f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
+                    f",{pt},{ct},{crt},{cwt}\n"
+                )
         except OSError:
             pass  # best-effort — never break the proxy over a log write
 
@@ -177,6 +186,7 @@ def _host_allowed(host: str) -> bool:
     cloud-metadata endpoints or internal services (py/full-ssrf).
     """
     return host.split(":", 1)[0] in FORWARD_HOSTS
+
 
 # Path-based routing: maps distinctive path prefixes to API hosts.
 # Used when the SDK sends Host: localhost (OPENAI_BASE_URL=http://localhost:8569).
@@ -267,10 +277,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
           3. Path-based routing: /v1/chat/completions -> api.openai.com
           4. Authorization header override: API key prefix tells us the real provider
         """
-        target_host = (
-            self.headers.get("X-Target-Host")
-            or self.headers.get("Host", "")
-        )
+        target_host = self.headers.get("X-Target-Host") or self.headers.get("Host", "")
+        if target_host is None:
+            target_host = ""
         target_path = self.path
 
         # Path-based routing fallback: when Host is localhost (SDK redirect),
@@ -292,7 +301,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             elif auth.startswith("Bearer xai-"):
                 target_host = "api.x.ai"
             # Legacy Anthropic tiebreaker for x-api-key / anthropic-version headers
-            elif target_host == "api.openai.com" and target_path in ("/v1/models", "/v1/embeddings", "/v1/files"):
+            elif target_host == "api.openai.com" and target_path in (
+                "/v1/models",
+                "/v1/embeddings",
+                "/v1/files",
+            ):
                 anthro_key = self.headers.get("x-api-key", "")
                 anthro_version = self.headers.get("anthropic-version", "")
                 if anthro_version or (anthro_key and not auth.startswith("Bearer ")):
@@ -343,27 +356,39 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         if is_streaming:
             log.info(
                 "STREAM: %s %s%s — bypassing cache, chunked relay",
-                method, target_host, target_path,
+                method,
+                target_host,
+                target_path,
             )
             self._forward_streaming(method, target_host, target_path, target_scheme, body_bytes)
             return
 
         # Check cache — only serve cached 2xx responses
-        cached = self._client.send({
-            "cmd": "cached_api_check",
-            "request_hash": request_hash,
-        })
+        cached = self._client.send(
+            {
+                "cmd": "cached_api_check",
+                "request_hash": request_hash,
+            }
+        )
         if cached.get("cached"):
             status = cached.get("status", 200)
             # Don't replay non-2xx responses even if cached
             if status < 200 or status >= 300:
-                log.warning("Skipping cached non-2xx response (status %d) for %s %s%s",
-                            status, method, target_host, target_path)
+                log.warning(
+                    "Skipping cached non-2xx response (status %d) for %s %s%s",
+                    status,
+                    method,
+                    target_host,
+                    target_path,
+                )
             else:
                 log.info(
                     "API CACHE HIT: %s %s%s (hash=%s, saved ~%s tokens)",
-                    method, target_host, target_path,
-                    request_hash[:12], cached.get("tokens_not_read_from_disk", "?"),
+                    method,
+                    target_host,
+                    target_path,
+                    request_hash[:12],
+                    cached.get("tokens_not_read_from_disk", "?"),
                 )
                 self.send_response(status)
                 for hdr_key, hdr_val in cached.get("headers", {}).items():
@@ -372,7 +397,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("X-ToolRecall-Cache", "HIT")
                 self.end_headers()
                 cached_body = cached["body"]
-                self.wfile.write(cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body)
+                self.wfile.write(
+                    cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body
+                )
                 # Log usage — the cached body still contains the original usage field
                 _log_proxy_usage("HIT", target_host, target_path, request_hash, cached_body)
                 return
@@ -380,7 +407,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Cache MISS — forward to real API
         log.info("API CACHE MISS: %s %s%s — forwarding...", method, target_host, target_path)
         resp_status, resp_headers, resp_body = self._forward(
-            method, target_host, target_path, target_scheme, body_bytes,
+            method,
+            target_host,
+            target_path,
+            target_scheme,
+            body_bytes,
         )
 
         # Store in cache — only cache 2xx responses
@@ -395,19 +426,25 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             headers_dict.pop("Content-Encoding", None)
             headers_dict.pop("content-encoding", None)
             # Body must be str for JSON transport (api_cache schema stores TEXT)
-            body_str = resp_body.decode("utf-8", errors="replace") if isinstance(resp_body, bytes) else resp_body
-            self._client.send({
-                "cmd": "cached_api_store",
-                "request_hash": request_hash,
-                "method": method,
-                "host": target_host,
-                "path": target_path,
-                "request_body_hash": body_hash,
-                "response_status": resp_status,
-                "response_headers": headers_dict,
-                "response_body": body_str,
-                "ttl": 300,
-            })
+            body_str = (
+                resp_body.decode("utf-8", errors="replace")
+                if isinstance(resp_body, bytes)
+                else resp_body
+            )
+            self._client.send(
+                {
+                    "cmd": "cached_api_store",
+                    "request_hash": request_hash,
+                    "method": method,
+                    "host": target_host,
+                    "path": target_path,
+                    "request_body_hash": body_hash,
+                    "response_status": resp_status,
+                    "response_headers": headers_dict,
+                    "response_body": body_str,
+                    "ttl": 300,
+                }
+            )
 
         # Respond with Content-Length (body is flat from .read())
         resp_body_bytes = resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8")
@@ -422,7 +459,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Log usage from the live response body
         if 200 <= resp_status < 300:
-            _log_proxy_usage("MISS", target_host, target_path, request_hash, body_str if isinstance(resp_body, bytes) else resp_body)
+            _log_proxy_usage(
+                "MISS",
+                target_host,
+                target_path,
+                request_hash,
+                body_str if isinstance(resp_body, bytes) else resp_body,
+            )
         else:
             _log_proxy_usage("MISS", target_host, target_path, request_hash)
 
@@ -441,8 +484,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
     def do_PATCH(self):
         self._handle("PATCH")
 
-    def _forward(self, method: str, host: str, path: str,
-                 scheme: str, body: bytes) -> tuple:
+    def _forward(self, method: str, host: str, path: str, scheme: str, body: bytes) -> tuple:
         """Forward request to the real API server.
 
         Returns (status_code, list_of_headers, body_bytes).
@@ -452,9 +494,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # method is reached from a path that skipped the _handle gate.
         if not _host_allowed(host):
             log.warning("Blocked forward to non-allowlisted host %r (SSRF guard)", host)
-            return 403, [("Content-Type", "application/json")], json.dumps({
-                "error": "Forbidden: non-allowlisted target host",
-            }).encode()
+            return (
+                403,
+                [("Content-Type", "application/json")],
+                json.dumps(
+                    {
+                        "error": "Forbidden: non-allowlisted target host",
+                    }
+                ).encode(),
+            )
 
         # SECURITY: Never fall back to plaintext HTTP for known API hosts.
         # Loopback targets (localhost, 127.0.0.1, ::1) always use HTTP since
@@ -467,15 +515,26 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 conn = http.client.HTTPSConnection(host, timeout=_FORWARD_TIMEOUT)
         except Exception as e:
             log.error("Cannot establish HTTPS connection to %s: %s", host, e)
-            return 502, [("Content-Type", "application/json")], json.dumps({
-                "error": f"HTTPS connection failed: {e}",
-            })
+            return (
+                502,
+                [("Content-Type", "application/json")],
+                json.dumps(
+                    {
+                        "error": f"HTTPS connection failed: {e}",
+                    }
+                ),
+            )
 
         # Copy headers, dropping the ones we shouldn't forward
         headers = {}
-        skip_headers = {"host", "connection", "proxy-connection",
-                        "transfer-encoding", "content-length",
-                        "accept-encoding"}
+        skip_headers = {
+            "host",
+            "connection",
+            "proxy-connection",
+            "transfer-encoding",
+            "content-length",
+            "accept-encoding",
+        }
         for k, v in self.headers.items():
             if k.lower() not in skip_headers:
                 headers[k] = v
@@ -489,12 +548,17 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             return resp.status, resp_headers, resp_body
         except Exception as e:
             log.error("Forward failed for %s %s%s: %s", method, host, path, e)
-            return 502, [("Content-Type", "application/json")], json.dumps({
-                "error": f"Forward failed: {e}",
-            })
+            return (
+                502,
+                [("Content-Type", "application/json")],
+                json.dumps(
+                    {
+                        "error": f"Forward failed: {e}",
+                    }
+                ),
+            )
 
-    def _forward_streaming(self, method: str, host: str, path: str,
-                           scheme: str, body: bytes):
+    def _forward_streaming(self, method: str, host: str, path: str, scheme: str, body: bytes):
         """Forward request and relay response as chunked/streaming.
 
         Streamed responses are not cacheable. A usage log entry is written
@@ -512,6 +576,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         import http.client
+
         is_loopback = host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
         try:
             if is_loopback:
@@ -519,8 +584,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             else:
                 conn = http.client.HTTPSConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
         except Exception as e:
-            log.error("Cannot establish %s connection to %s: %s",
-                       "HTTP" if is_loopback else "HTTPS", host, e)
+            log.error(
+                "Cannot establish %s connection to %s: %s",
+                "HTTP" if is_loopback else "HTTPS",
+                host,
+                e,
+            )
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -528,8 +597,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         headers = {}
-        skip_headers = {"host", "connection", "proxy-connection",
-                        "transfer-encoding", "content-length"}
+        skip_headers = {
+            "host",
+            "connection",
+            "proxy-connection",
+            "transfer-encoding",
+            "content-length",
+        }
         for k, v in self.headers.items():
             if k.lower() not in skip_headers:
                 headers[k] = v
@@ -543,8 +617,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
             # Relay headers, dropping transfer-encoding (we'll use chunked)
             for k, v in resp.getheaders():
-                if k.lower() not in ("transfer-encoding", "content-encoding",
-                                     "content-length", "connection"):
+                if k.lower() not in (
+                    "transfer-encoding",
+                    "content-encoding",
+                    "content-length",
+                    "connection",
+                ):
                     self.send_header(k, v)
             self.send_header("X-ToolRecall-Cache", "STREAM")
             self.send_header("X-ToolRecall-Stream", "passthrough")
@@ -569,14 +647,20 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Log STREAM usage — prompt tokens estimated from request body,
         # completion tokens unavailable (SSE chunks, not parseable here).
         import hashlib
+
         stream_body_hash = hashlib.sha256(body).hexdigest() if body else ""
         pt_est = max(1, len(body) // 4) if body else 0
         log.info(
             "STREAM: %s %s%s (body=%d bytes, ~%d est prompt tokens)",
-            method, host, path, len(body or b""), pt_est,
+            method,
+            host,
+            path,
+            len(body or b""),
+            pt_est,
         )
-        _log_proxy_usage("STREAM", host, path, request_hash=stream_body_hash,
-                         prompt_tokens_override=pt_est)
+        _log_proxy_usage(
+            "STREAM", host, path, request_hash=stream_body_hash, prompt_tokens_override=pt_est
+        )
 
     def log_message(self, format, *args):
         log.debug("ForwardProxy: " + format, *args)
@@ -586,11 +670,12 @@ class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     """Threaded HTTP server — handles requests in parallel threads.
     One streaming request no longer blocks all other proxy traffic.
     """
+
     allow_reuse_address = True
     daemon_threads = True
 
 
-def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
+def run_forward_proxy(bind: str = "127.0.0.1", port: int | None = None):
     """Start the ToolRecall forward proxy (caching API responses).
 
     Port priority:
@@ -608,6 +693,7 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int = None):
         actual_port = server.server_port
     except OSError as e:
         import errno
+
         if e.errno == errno.EADDRINUSE:
             log.error("Port %d already in use", port)
             return

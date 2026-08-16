@@ -48,6 +48,7 @@ class TestDaemonLifecycle(unittest.TestCase):
         bogus = os.path.join(tempfile.mkdtemp(), "nonexistent.sock")
         # Import here to avoid ImportError on test collection if transport is broken
         from toolrecall.transport import TransportClient
+
         client = TransportClient(path=bogus)
         result = client.send({"cmd": "ping"})
         self.assertIn("error", result)
