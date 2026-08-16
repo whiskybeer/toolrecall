@@ -53,5 +53,64 @@ class TestRecallConfigGate(unittest.TestCase):
         self.assertFalse(cfg.get("recall", "enabled", default=False))
 
 
+class TestRecallSchema(unittest.TestCase):
+    """recall_cache table must exist with the expected columns after _init()."""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.mkdtemp()
+        self._db_path = os.path.join(self._tmp, "test_recall_cache.db")
+        os.environ["TOOLRECALL_CACHE_DB"] = self._db_path
+        from toolrecall._db import _db_lock, _db_real
+        import toolrecall._db as _db_mod
+
+        _db_lock.acquire()
+        if _db_real is not None:
+            _db_real.close()
+            _db_mod._db_real = None
+        _db_lock.release()
+        _db._cached_config = None
+        from toolrecall.cache import _init
+
+        _init()
+
+    def tearDown(self):
+        import shutil
+
+        os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _columns(self, table):
+        from toolrecall._db import _db as _db_call
+
+        with _db_call() as conn:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return {r[1] for r in rows}
+
+    def test_recall_cache_table_exists_with_expected_columns(self):
+        cols = self._columns("recall_cache")
+        expected = {
+            "node_id",
+            "fingerprint",
+            "content",
+            "content_type",
+            "reproducible",
+            "summary",
+            "tokens",
+            "cached_at",
+        }
+        self.assertTrue(expected.issubset(cols), f"missing: {expected - cols}")
+
+    def test_recall_cache_node_id_is_primary_key(self):
+        from toolrecall._db import _db as _db_call
+
+        with _db_call() as conn:
+            pk = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='recall_cache'"
+            ).fetchone()
+        self.assertIsNotNone(pk)
+
+
 if __name__ == "__main__":
     unittest.main()

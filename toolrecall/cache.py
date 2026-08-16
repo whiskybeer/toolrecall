@@ -340,6 +340,17 @@ expires_at REAL NOT NULL,
 hits INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_api_expires ON api_cache(expires_at);
+CREATE TABLE IF NOT EXISTS recall_cache (
+    node_id        TEXT PRIMARY KEY,
+    fingerprint    TEXT NOT NULL,
+    content        TEXT NOT NULL,
+    content_type   TEXT NOT NULL,
+    reproducible   INTEGER NOT NULL,
+    summary        TEXT DEFAULT '',
+    tokens         INTEGER DEFAULT 0,
+    cached_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recall_type ON recall_cache(content_type);
 """
 
 
