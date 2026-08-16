@@ -86,5 +86,49 @@ class TestE2ERecallBridgeVisibility(unittest.TestCase):
         self.assertNotIn("recall_get", names)
 
 
+class TestE2ERecallCLI(unittest.TestCase):
+    """`toolrecall context recall store/get` roundtrip against a real daemon."""
+
+    def setUp(self):
+        os.environ["TOOLRECALL_RECALL_ENABLED"] = "true"
+        self.addCleanup(os.environ.pop, "TOOLRECALL_RECALL_ENABLED", None)
+        self.daemon = E2EDaemon()
+        self.daemon.start()
+        from toolrecall import client as _client
+
+        _client.set_socket_path(self.daemon.socket_path)
+        self.addCleanup(_client.set_socket_path, "")
+
+    def tearDown(self):
+        self.daemon.stop()
+
+    def test_cli_store_then_get_roundtrip(self):
+        import contextlib
+        import io
+        import sys as _sys
+        from unittest import mock
+
+        from toolrecall import cli
+
+        # store: pipe content via stdin
+        _sys.argv = ["toolrecall", "context", "recall", "store", "fp-cli", "web"]
+        out = io.StringIO()
+        with (
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+            mock.patch.object(cli.sys, "stdin", io.StringIO("cli raw content")),
+        ):
+            cli.cmd_context()
+        node_id = out.getvalue().strip()
+        self.assertTrue(node_id, "expected a node_id from recall store")
+
+        # get: restore the content
+        _sys.argv = ["toolrecall", "context", "recall", "get", node_id]
+        out2 = io.StringIO()
+        with contextlib.redirect_stdout(out2):
+            cli.cmd_context()
+        self.assertIn("cli raw content", out2.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
