@@ -1,5 +1,13 @@
 # LiteLLM Dedup Hook — Benchmark & Methodology
 
+> **dedup** = **deduplication**: removing byte-identical *duplicate* content that
+> repeats within a request. In agent loops the same tool output / file contents
+> get re-sent every turn; the hook detects a block already present earlier in the
+> request and replaces the later copy with a stub. "Deduplication" is used in
+> the stored-data sense (delete redundant secondary copies); only input-prompt
+> tokens are ever trimmed — nothing the model hasn't already seen is dropped
+> (keep-first, see "How the hook works").
+
 Billing-verified measurement of the `toolrecall.adapters.litellm` gateway dedup
 hook on **real SWE-bench Lite agent workloads**.
 

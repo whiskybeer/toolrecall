@@ -146,6 +146,12 @@ toolrecall mcp              # Exposes cached tools via MCP
 
 ## LiteLLM Proxy — Pre-Call Content Dedup
 
+> **dedup** = **deduplication**: stripping byte-identical *duplicate* content that
+> appears more than once in a single request. In agent loops the same file
+> contents / tool output get re-sent every turn; the hook keeps the first copy
+> and stubs later repeats. Only redundant copies are removed — nothing the model
+> hasn't already seen is dropped (keep-first preserves provider prefix caching).
+
 ```python
 # proxy_config.yaml
 litellm_settings:

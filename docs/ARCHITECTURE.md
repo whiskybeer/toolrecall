@@ -18,7 +18,7 @@ policy — all from a single background process.
 | **OS-level shim** | `.pth` file patches `open()`, `subprocess.run/Popen` in every Python process |
 | **Context Tracker** | Tracks dirty/clean files, auto-hints agents which files to drop from context |
 | **Security gate** | Path allowlist, terminal policy, sensitive-file blocklist — framework-agnostic |
-| **LiteLLM proxy hook** | `async_pre_call_hook` dedup of repeated content blocks in gateway requests | `toolrecall/adapters/litellm.py` | opt-in, fails open, zero new deps |
+| **LiteLLM proxy hook** | `async_pre_call_hook` dedup of repeated content blocks in gateway requests → `toolrecall/adapters/litellm.py`. opt-in, fails open, zero new deps |
 | **Framework adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
 | **Storage backends** | sqlite (default), libsql, or libsql-sync with Turso Cloud |
 | **Replay mode** | Record agent sessions, replay deterministically in CI |
@@ -456,6 +456,11 @@ Drop-in adapters for popular agent frameworks. All communicate with the daemon o
 | **LangChain / LangGraph** | `ToolRecallCache` (LLM cache) + `ToolRecallCallbackHandler` (tool cache) | `pip install toolrecall[langchain]` |
 | **herdr** | `tr` binary + MCP bridge — every pane inherits the cache | Build `tr`, run `toolrecall mcp` |
 | **Odysseus** | `install_agent_cache()` + `install_mcp_cache()` | `pip install toolrecall`, then `odysseus.install_agent_cache()` |
+| **LiteLLM proxy** | `async_pre_call_hook` content dedup on gateway requests | Add `toolrecall.adapters.litellm.handler` to `litellm_settings: callbacks` in your proxy config |
+
+> Note: unlike the adapters above, the **LiteLLM proxy hook** is *standalone* — it
+> hooks gateway requests directly and composes with, but does **not** require, the
+> daemon (see `toolrecall/adapters/litellm.py`).
 
 See `toolrecall/adapters/README.md` for full documentation.
 
