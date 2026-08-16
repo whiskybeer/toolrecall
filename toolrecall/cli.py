@@ -826,60 +826,189 @@ server {
 
 
 def cmd_shim():
-    """Install or uninstall the transparent OS-level cache shim (.pth file)."""
-    action = sys.argv[2] if len(sys.argv) > 2 else "status"
-    
-    if action == "--install" or action == "install":
-        import shutil
-        site_pkgs = None
-        for p in sys.path:
-            if p.endswith("site-packages") and os.path.isdir(p):
-                site_pkgs = p
-                break
-        if not site_pkgs:
-            print("Error: could not find site-packages directory")
-            return
-        
-        pth_src = os.path.join(os.path.dirname(__file__), "tr_shim.pth")
-        pth_dst = os.path.join(site_pkgs, "tr_shim.pth")
-        shutil.copy2(pth_src, pth_dst)
-        print(f"✅ Shim installed: {pth_dst}")
-        print("   Every Python process will now auto-cache open() and subprocess.run()")
-        print("   via the ToolRecall daemon.")
-        print("   Disable with: TOOLRECALL_SHIM_DISABLE=1")
-        
-    elif action == "--uninstall" or action == "uninstall":
-        site_pkgs = None
-        for p in sys.path:
-            if p.endswith("site-packages") and os.path.isdir(p):
-                site_pkgs = p
-                break
-        if not site_pkgs:
-            print("Error: could not find site-packages directory")
-            return
-        
-        pth_path = os.path.join(site_pkgs, "tr_shim.pth")
-        if os.path.exists(pth_path):
-            os.remove(pth_path)
-            print(f"✅ Shim removed: {pth_path}")
-        else:
-            print("Shim not installed.")
-            
-    elif action == "--status" or action == "status":
-        for p in sys.path:
-            if p.endswith("site-packages"):
-                pth = os.path.join(p, "tr_shim.pth")
-                if os.path.exists(pth):
-                    print(f"✅ Shim installed: {pth}")
-                    return
-        print("❌ Shim not installed")
-        
-    else:
-        print("Usage: toolrecall shim [--install|--uninstall|--status]")
+    """Install/uninstall/inspect the transparent cache shim (.pth) agent-agnostically.
+
+    Modes:
+      toolrecall shim --install                current venv only (back-compat)
+      toolrecall shim --install --venv <path>  target one venv (root or bin/python)
+      toolrecall shim --install --all          discover + install into every venv
+      toolrecall shim --status [--venv <path> | --all]
+      toolrecall shim --uninstall [--venv <path> | --all]
+    Any unrecognized flag prints usage and exits non-zero (no silent swallowing).
+    """
+    from toolrecall import venvs as venv_mod
+
+    args = sys.argv[2:]
+
+    def usage(exit_code: int = 1):
+        print("Usage: toolrecall shim [--install|--uninstall|--status] [--venv <path>|--all]")
         print()
-        print("  --install     Install .pth file -> every Python process auto-caches")
-        print("  --uninstall   Remove .pth file")
-        print("  --status      Check if shim is installed")
+        print("  --install            Install .pth shim into a Python env")
+        print("  --uninstall          Remove the .pth shim (leaves the package)")
+        print("  --status             Report shim state")
+        print("  --venv <path>        Target a specific venv (root dir or its bin/python)")
+        print("  --all                Apply to every discovered venv (excl. toolrecall's own)")
+        print("  --yes / -y           Skip the opt-in confirmation prompt (default is NO)")
+        print()
+        print("Python-vs-bridge model:")
+        print("  Python agents w/ own venv (Hermes, Codex, OpenCode): .pth shim in that venv")
+        print("  Non-Python agents (Claude Code, Cursor, Cline): MCP bridge `toolrecall mcp`")
+        sys.exit(exit_code)
+
+    action = None
+    target = None
+    all_flag = False
+    yes_flag = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--install", "install"):
+            action = "install"
+        elif a in ("--uninstall", "uninstall"):
+            action = "uninstall"
+        elif a in ("--status", "status"):
+            action = "status"
+        elif a in ("--venv", "-v"):
+            if i + 1 >= len(args):
+                print("Error: --venv requires a path argument")
+                usage(2)
+            target = args[i + 1]
+            i += 1
+        elif a in ("--all", "-a"):
+            all_flag = True
+        elif a in ("--yes", "-y"):
+            yes_flag = True
+        elif a in ("-h", "--help"):
+            usage(0)
+        else:
+            print(f"Error: unknown shim flag: {a}")
+            usage(2)
+        i += 1
+
+    if action is None:
+        action = "status"  # bare `toolrecall shim` → status (back-compat)
+
+    def make_venv(path: str):
+        """Resolve `path` (venv root OR its bin/python) to a Venv, or None."""
+        p = os.path.expanduser(path)
+        if os.path.isdir(p) and os.path.isfile(os.path.join(p, "pyvenv.cfg")):
+            # venv root
+            launcher = None
+            bindir = os.path.join(p, "bin")
+            if os.path.isdir(bindir):
+                for name in sorted(os.listdir(bindir)):
+                    if name.startswith("python3"):
+                        full = os.path.join(bindir, name)
+                        if os.access(full, os.X_OK):
+                            launcher = full
+                            break
+            if not launcher:
+                print(f"Error: no python launcher found in {p}/bin")
+                return None
+            sp = venv_mod._site_packages_of(launcher)
+            if not sp:
+                print(f"Error: could not resolve site-packages for {launcher}")
+                return None
+            return venv_mod.Venv(root=p, python=launcher, site_packages=sp)
+        if os.path.isfile(p) and os.path.basename(p).startswith("python"):
+            # direct python path
+            root = os.path.dirname(os.path.dirname(p))
+            sp = venv_mod._site_packages_of(p)
+            if not sp:
+                print(f"Error: could not resolve site-packages for {p}")
+                return None
+            return venv_mod.Venv(root=root, python=p, site_packages=sp)
+        print(f"Error: not a venv root or python path: {path}")
+        return None
+
+    current_env = None
+    for p in sys.path:
+        if p.endswith("site-packages") and os.path.isdir(p):
+            # current interpreter's own venv
+            py = sys.executable
+            current_env = venv_mod.Venv(
+                root=os.path.dirname(os.path.dirname(p)),
+                python=py,
+                site_packages=p,
+            )
+            break
+
+    if target:
+        v = make_venv(target)
+        if v is None:
+            sys.exit(2)
+        targets = [v]
+    elif all_flag:
+        found = venv_mod.discover_python_venvs()
+        if not found:
+            print("No Python venvs discovered (other than toolrecall's own).")
+            return
+        print(f"Discovered {len(found)} venv(s):")
+        for v in found:
+            print(f"  {v.python}")
+        targets = found
+    else:
+        if current_env is None:
+            print("Error: could not find the current environment's site-packages")
+            sys.exit(2)
+        targets = [current_env]
+
+    if action == "status":
+        for v in targets:
+            st = venv_mod.shim_status(v)
+            ok = st["probe_ok"]
+            pth = "present" if st["pth_present"] else "missing"
+            pkg = "ok" if st["package_importable"] else "MISSING"
+            icon = "✅" if ok else "❌"
+            print(f"{icon} {v.root}")
+            print(f"     python: {v.python}")
+            print(f"     package: {pkg} | shim: {pth} | probe: {'pass' if ok else 'FAIL'}")
+        return
+
+    if action == "install":
+        for v in targets:
+            if not yes_flag and not os.environ.get("TOOLRECALL_NONINTERACTIVE"):
+                if not _confirm_install(v):
+                    print(f"  skipped (opt-out): {v.root}")
+                    continue
+            if venv_mod.ensure_shim(v):
+                print(f"✅ Shim active in {v.root} (verified: import toolrecall.shim OK)")
+            else:
+                print(f"⚠️  Shim install FAILED in {v.root} — see diagnosis below")
+                st = venv_mod.shim_status(v)
+                if not st["package_importable"]:
+                    print(f"     `toolrecall` not importable in {v.python}; "
+                          "install it (pip/uv) or check the venv is writable")
+                elif not st["pth_present"]:
+                    print(f"     could not write {v.site_packages}/tr_shim.pth")
+                else:
+                    print(f"     import probe failed in {v.python}")
+        return
+
+    if action == "uninstall":
+        for v in targets:
+            if venv_mod.uninstall_shim(v):
+                print(f"✅ Shim removed from {v.root}")
+            else:
+                print(f"⚠️  Could not remove shim from {v.root}")
+
+
+def _confirm_install(v) -> bool:
+    """Show the opt-in prompt for shimming a Python venv. Default DISABLED (N)."""
+    try:
+        print()
+        print(f"Detected Python agent venv: {v.root}")
+        print("  ToolRecall's .pth shim patches open()/subprocess for EVERY python")
+        print("  process in this venv for transparent caching.")
+        print()
+        print("  Risks:    broad interception of non-agent reads; stale-content caching;")
+        print("            behavior changes if daemon is down.")
+        print("  Benefits: zero-config cache, ~99% hit rate, terminal dedup, token savings.")
+        print()
+        resp = input("  Enable shim? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return resp in ("y", "yes")
 
 
 SYSTEMD_SERVICE_CONTENT = """[Unit]
@@ -991,18 +1120,20 @@ def cmd_setup():
 
 
 def _ensure_agent_integration():
-    """Auto-detect supported agents and wire up ToolRecall MCP.
+    """Auto-detect supported agents and wire up ToolRecall access.
 
-    Currently detects:
-      - Hermes Agent (via hermes binary on PATH)
-      - OpenCode/Crush (via ~/.opencode/ directory)
-      - Claude Code (via claude binary on PATH or ~/.claude.json)
+    Python agents with their own venv (Hermes, Codex, OpenCode) get the
+    transparent cache via a ``.pth`` shim dropped into that venv's
+    site-packages. This is **opt-in and default-disabled**: installing a shim
+    patches open()/subprocess for EVERY python process in the venv, so we only
+    do it after an explicit yes (or ``--yes`` / ``TOOLRECALL_NONINTERACTIVE``
+    with ``--yes``). The ✅ is only printed after a probe confirms
+    ``import toolrecall.shim`` works in that venv from a neutral cwd.
 
-    For Claude Code: prefers `claude mcp add` (automatic, no user action needed)
-    when the binary is on PATH. Falls back to writing ~/.claude.json directly.
-
-    For Hermes: transparent caching is provided by the OS-level .pth shim
-    (toolrecall/shim.py) — no per-agent config needed.
+    Non-Python agents use the MCP bridge instead:
+      - Claude Code: prefers `claude mcp add` (automatic), falls back to
+        writing ~/.claude.json directly.
+      - OpenCode/Crush: writes ~/.opencode/opencode.jsonc.
 
     Returns dict with keys: 'hermes', 'opencode', 'claude' — bool per agent.
     """
@@ -1013,16 +1144,70 @@ def _ensure_agent_integration():
 
     result = {}
 
-    # ─── Hermes Agent ───────────────────────────────
+    # ─── Hermes Agent (and any Python agent in its own venv) ───────────────
+    # The OS-level .pth shim is agent-agnostic; detection is just "is there a
+    # Python env we could shim?". We only auto-install into the Hermes venv on
+    # explicit opt-in. This REPLACES the old behavior that printed an
+    # unverified "✅ active" just because the `hermes` binary existed on PATH.
+    from toolrecall import venvs as venv_mod
     hermes_bin = shutil.which("hermes")
     if hermes_bin:
-        # Hermes Agent uses the OS-level .pth shim (installed in Hermes' venv
-        # site-packages). No per-agent config needed — the shim
-        # patches builtins.open() and subprocess.run() on every Python process.
-        print("  ✅ Hermes transparent cache active via OS-level .pth shim")
-        result["hermes"] = True
+        # Locate the Hermes venv via generic discovery (by venv containing the
+        # hermes launcher, or by matching the binary's own environment).
+        target = None
+        for v in venv_mod.discover_python_venvs():
+            launcher_bin = os.path.join(os.path.dirname(v.python), "hermes")
+            if os.path.isfile(launcher_bin):
+                target = v
+                break
+        if target is None:
+            # Fall back to the current interpreter if it has a `hermes` launcher
+            cur_l = os.path.join(os.path.dirname(sys.executable), "hermes")
+            if os.path.isfile(cur_l):
+                for p in sys.path:
+                    if p.endswith("site-packages") and os.path.isdir(p):
+                        target = venv_mod.Venv(
+                            root=os.path.dirname(os.path.dirname(p)),
+                            python=sys.executable, site_packages=p,
+                        )
+                        break
 
-    # ─── OpenCode / Crush ────────────────────────────
+        if target is not None:
+            yes = "--yes" in sys.argv
+            interactive = "TOOLRECALL_NONINTERACTIVE" not in os.environ
+            if yes:
+                # Explicit --yes → auto-install with verification
+                done = venv_mod.ensure_shim(target)
+                result["hermes"] = done
+                if done:
+                    print(f"  ✅ Hermes transparent cache active in {target.root} "
+                          "(verified: import toolrecall.shim probe passed)")
+                else:
+                    print(f"  ⚠️  Hermes shim install FAILED in {target.root}")
+                    print("     `toolrecall` may not be installed in that venv "
+                          "or the venv is read-only.")
+            elif interactive:
+                # Interactive without --yes → show opt-in prompt (default N)
+                if not _confirm_install(target):
+                    print("  ℹ️  Hermes detected but shim not enabled (opt-in, default off).")
+                    result["hermes"] = False
+                else:
+                    done = venv_mod.ensure_shim(target)
+                    result["hermes"] = done
+                    if done:
+                        print(f"  ✅ Hermes shim active in {target.root} "
+                              "(verified: import toolrecall.shim OK)")
+                    else:
+                        print(f"  ⚠️  Hermes shim install FAILED in {target.root}")
+                        print("     `toolrecall` may not be installed in that venv "
+                              "or the venv is read-only.")
+            else:
+                # Non-interactive without --yes (e.g. `setup` in CI) → leave off
+                result["hermes"] = False
+        else:
+            result["hermes"] = False
+
+    # ─── OpenCode / Crush ────────────────────────────────────────────────
     OC_DIR = os.path.expanduser("~/.opencode")
     if os.path.isdir(OC_DIR):
         oc_config_path = os.path.join(OC_DIR, "opencode.jsonc")
