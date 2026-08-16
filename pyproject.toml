@@ -42,6 +42,7 @@ libsql-sync = ["pyturso>=0.1"]
 dev = [
     "pytest >= 9.0",
     "ruff >= 0.1",
+    "mypy >= 1.8",
 ]
 
 [project.urls]

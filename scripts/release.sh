@@ -135,8 +135,8 @@ vault_crossref() {
 
 run_tests() {
     echo "  running unit test suite (excluding e2e + ADK)..."
-    python3 -m pytest tests/ -q --tb=short -p no:capture \
-        -k "not test_client_without_daemon and not e2e and not adk and not gemini" 2>&1 | tail -15
+    # De-duplicated from the Makefile so the selection stays in one place.
+    make test-unit 2>&1 | tail -15
 }
 
 changelog_edit() {
