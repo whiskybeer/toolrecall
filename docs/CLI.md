@@ -132,15 +132,31 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 ### `toolrecall shim`
 
 - **File:** `cli.py : cmd_shim()`
-- **Purpose:** Install/uninstall OS-level cache shim.
-- **What it does:** Installs a `.pth` file in site-packages that auto-imports `toolrecall.shim`, monkey-patching `open()` and `subprocess.run()` in every Python process.
+- **Purpose:** Install/uninstall/inspect the OS-level cache shim (agent-agnostic).
+- **What it does:** Installs `tr_shim.pth` into a target venv's site-packages so
+  every Python process there auto-imports `toolrecall.shim`. **Opt-in, default
+  off** — interactive-install prompts `[y/N]` (default N); use `--yes`/`-y` to
+  skip. The "active" confirmation is only printed after a neutral-cwd
+  `import toolrecall.shim` probe passes.
+- **Agent type → mechanism:**
+  - Python agents in their own venv (Hermes, Codex, OpenCode, Cline) → shim.
+  - Non-Python agents (Claude Code, Cursor, Windsurf) → MCP bridge (`toolrecall mcp`).
+  - See `docs/HERMES_TRANSPARENT_CACHE.md`.
 - **Usage:**
-  - `toolrecall shim --install` — install shim into current Python env
-  - `toolrecall shim --install --venv ~/.hermes/hermes-agent/venv` — install into a specific venv
-  - `toolrecall shim --uninstall` — remove shim
-  - `toolrecall shim --status` — check if shim is installed
-  - `toolrecall shim --status --venv ~/.hermes/hermes-agent/venv` — check in a specific venv
-- **⚠️  Important when using `pipx` or `uv tool install`:** The shim is installed into the **current Python environment**. If toolrecall is installed via `pipx` or `uv tool install`, that's an isolated environment — the shim won't activate in your agent's Python runtime. Use `--venv` to target the right venv, or run `toolrecall setup` which auto-detects agent venvs.
+  - `toolrecall shim --install` — install into the current Python env (opt-in)
+  - `toolrecall shim --install --venv <path>` — install into a specific venv
+    (accepts a venv root or its `bin/python`; probe-verified)
+  - `toolrecall shim --install --all` — discover every venv and install (opt-in)
+  - `toolrecall shim --uninstall [--venv <path>|--all]` — remove the shim
+  - `toolrecall shim --status [--venv <path>|--all]` — per-venv: package present,
+    `.pth` present, and `probe: pass` (verified) or `probe: FAIL`
+  - Unknown flags → usage + non-zero exit (no silent swallow)
+- **⚠️  Important when using `pipx` or `uv tool install`:** The shim is installed into the **current Python environment** only. If toolrecall is installed via `pipx` or `uv tool install`, that's an isolated environment — the shim won't activate in your agent's runtime. Use `--venv <path>` to target the right venv, `--all` to sweep every venv, or run `toolrecall setup`.
+- **Healthcheck indicator:** `toolrecall stats`/healthcheck shows `shim=active|inactive`
+  (derived from `shim --status --all`, `probe: pass` = active). `shim=active` with
+  nonzero `file_cache` = caching working; `mcp_cache=0` alongside is expected
+  (shim bypasses the MCP bridge). `shim=inactive` → install with `--venv`/`--all`.
+  See `docs/TROUBLESHOOTING.md` §16.
 
 ### `toolrecall nginx`
 

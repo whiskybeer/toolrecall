@@ -176,3 +176,28 @@ the CLI process opens its own connection. SQLite's WAL lock contention causes th
 - Only use direct `cached_read()` imports when the daemon is stopped.
 
 This is by design — the daemon is the cache owner, not a shared library.
+
+## 16. Healthcheck shows `mcp_hits=0` / `mcp_cache=0` — is caching broken?
+
+**Symptom:** `toolrecall stats` / healthcheck shows `mcp_hits=0, mcp_missed=0`
+(and often `term_hits=0, term_missed=0`) while `file_cache` shows thousands of
+hits. It looks like the MCP layer is broken.
+
+**Cause: this is expected, not a bug.** The healthcheck's always-visible
+`shim=active|inactive` field disambiguates the two cases:
+
+- **`shim=active`** → the agent is a Python process using the **shim**, so all
+  file reads go to the daemon *directly via the shim*, **bypassing the MCP
+  bridge**. `mcp_cache` correctly stays at 0 because no file-read traffic ever
+  routes through the bridge. `file_cache` shows the real activity. Everything
+  is working as designed.
+- **`shim=inactive`** → the `.pth` shim is not installed in any venv, so the
+  transparent caching code paths never run for a Python agent. Fix with:
+  ```bash
+  toolrecall shim --status --all              # see which venvs lack a verified shim
+  toolrecall shim --install --venv <path>     # opt-in; probe-verified after install
+  ```
+
+**Rule of thumb:** with file reads happening, *nonzero `file_cache`* is the
+proof caching works. `mcp_cache=0` alongside `shim=active` means the bridge is
+intentionally idle, not broken. See `docs/HERMES_TRANSPARENT_CACHE.md`.

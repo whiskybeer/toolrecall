@@ -29,7 +29,9 @@ from the cache. **The agent never notices.**
 |-------------|---------------|---------|
 | `builtins.open` (read-only `r`/`rt`) | `cached_read` | mtime-based, in-memory + SQLite |
 
-> **Why does the shim NOT intercept `subprocess.run` / `Popen`?** (Option B, v0.8.19)
+> **Why does the shim NOT intercept `subprocess.run` / `Popen`?** (Option B,
+> **scheduled v0.8.19**; on the current **v0.8.18 the shim still intercepts
+> `subprocess.run`/`Popen`** — this section describes the v0.8.19+ behavior.)
 > Routing terminal commands through the daemon was **fundamentally lossy**: the
 > daemon strips the config `source`/`cd`/`export`/`printf-cwd` wrapper lines and runs
 > the inner command in the daemon's own working directory and environment, not the
@@ -135,3 +137,13 @@ Codex CLI as a Node binary, OpenCode) are unaffected — they use MCP
 |----------|-------|--------|------|
 | OS-level shim | All Python processes | `toolrecall shim --install` | Global — affects every script |
 | MCP tools (`cached_read`, etc.) | Agents that opt in via MCP | Per-agent MCP config | Agent must choose cached tools |
+
+## Why `mcp_cache` is 0 when the shim is active
+
+When the shim is installed, a Python agent's file reads go **directly through
+the shim to the daemon**, bypassing the MCP bridge entirely. Consequently
+`mcp_hits`/`mcp_cache` stay at `0` — **by design, not a bug**. The bridge is
+present but idle for file reads; `file_cache` shows the real activity. This is
+normal for a shim-based agent and no action is needed. (Healthcheck: `shim=active`
+with nonzero `file_cache` = working as intended. The `shim=` field distinguishes
+this from the case where the shim is actually missing.)
