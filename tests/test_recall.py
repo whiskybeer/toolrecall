@@ -208,5 +208,18 @@ class TestRecallDaemonGate(unittest.TestCase):
         self.assertIn("Missing", resp.get("error", ""))
 
 
+class TestRecallBridgeDefs(unittest.TestCase):
+    """Bridge must expose the recall tools and route them to the daemon."""
+
+    def test_bridge_defines_recall_tools(self):
+        from toolrecall.mcp_bridge import TOOL_DEFINITIONS, CMD_TO_MCP
+
+        names = {t["name"] for t in TOOL_DEFINITIONS}
+        self.assertIn("recall_store", names)
+        self.assertIn("recall_get", names)
+        self.assertEqual(CMD_TO_MCP["recall_store"], "recall_store")
+        self.assertEqual(CMD_TO_MCP["recall_get"], "recall_get")
+
+
 if __name__ == "__main__":
     unittest.main()

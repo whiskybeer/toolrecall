@@ -1184,6 +1184,7 @@ class DaemonServer:
             "allow_invalidate": self.security.allow_invalidate,
             "multiplex_enabled": self.security.allow_multiplex,
             "emit_context_hints": self.cfg.mcp_emit_context_hints,
+            "recall_enabled": self.cfg.recall_enabled,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
             "context_tracker": {
                 "checkpoint": ctx.get("checkpoint", 0),
