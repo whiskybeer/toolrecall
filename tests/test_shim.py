@@ -184,18 +184,21 @@ class TestShimOpenRouting(unittest.TestCase):
         shim_mod._ENABLED = self._orig_enabled
         shim_mod._thread_local.active = False
 
-    def test_cache_hit_returns_stringio(self):
-        """When cached_read returns content, _shim_open returns a StringIO."""
+    def test_cache_hit_returns_real_file(self):
+        """When cached_read returns content, _shim_open returns a real file
+        object (backed by a temp file), not a StringIO."""
         shim_mod._TR = {
             "read": lambda p, **kwargs: {"cached": True, "content": "cached file content"},
         }
-        shim_mod._original_open = MagicMock(return_value=io.StringIO("should not be called"))
+        # _original_open (captured at import, before the shim patched
+        # builtins.open) is used by the temp-file materializer; leave it as
+        # the real open so the returned handle has full file semantics.
 
         result = shim_mod._shim_open("/some/file", "r")
-        self.assertIsInstance(result, io.StringIO)
+        self.assertNotIsInstance(result, io.StringIO)
         self.assertEqual(result.read(), "cached file content")
-        # Original open should NOT have been called
-        shim_mod._original_open.assert_not_called()
+        self.assertTrue(hasattr(result, "fileno"))
+        result.close()
 
     def test_cache_miss_falls_back_to_original_open(self):
         """When cached_read returns no content, fall back to _original_open."""
@@ -305,15 +308,22 @@ class TestShimOpenRouting(unittest.TestCase):
         shim_mod._TR["read"].assert_not_called()
 
     def test_rt_mode_is_intercepted(self):
-        """'rt' mode is a pure read and should be intercepted."""
+        """'rt' mode is a pure read and should be intercepted.
+
+        The intercepted hit must still return a real file object (real
+        fileno / buffer semantics), never a StringIO.
+        """
         shim_mod._TR = {
             "read": MagicMock(return_value={"cached": True, "content": "cached rt content"}),
         }
-        shim_mod._original_open = MagicMock()
+        # _original_open (captured at import, before builtins.open was
+        # patched to _shim_open) is the real open used by the materializer.
 
         result = shim_mod._shim_open("/some/file", "rt")
-        self.assertIsInstance(result, io.StringIO)
+        self.assertNotIsInstance(result, io.StringIO)
         self.assertEqual(result.read(), "cached rt content")
+        self.assertTrue(hasattr(result, "fileno"))
+        result.close()
 
 
 class TestOptionBNoSubprocess(unittest.TestCase):

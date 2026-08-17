@@ -124,6 +124,53 @@ def _should_skip(path: str | bytes | os.PathLike) -> bool:
 _original_open = builtins.open
 
 
+def _open_cached_content(content, mode="r", *args, **kwargs):
+    """Return a *real* file object backed by the cached ``content`` str.
+
+    The shim must hand back something that behaves like a normal
+    ``open(path, *args, **kwargs)`` result: consumers legitimately rely on
+    ``.fileno()``, ``.buffer``, ``.name``, ``os.fstat()``, mmap, select, or
+    piping the handle to a subprocess. A plain ``io.StringIO`` provides none
+    of that and crashes terminal/bash-style callers, so on a cache hit we
+    materialize the cached bytes into a temporary file and return a real
+    handle. The temp file is unlinked immediately after open; on POSIX the
+    inode stays alive until the returned handle is closed.
+
+    Any exception (disk full, encoding error, ...) propagates so the caller's
+    ``except`` falls back to reading the original path directly.
+    """
+    import tempfile
+
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".toolrecall-shim-", suffix=".tmp")
+        # Persist cached bytes with the same encoding the re-opened handle
+        # will use, so the round-trip is lossless for any encoding.
+        enc = kwargs.get("encoding") or "utf-8"
+        with os.fdopen(fd, "w", encoding=enc) as f:
+            f.write(content)
+        fd = None  # ownership moved into the with-block
+        handle = _original_open(tmp_path, mode, *args, **kwargs)
+        try:
+            os.unlink(tmp_path)  # POSIX: inode lives until handle is closed
+        except OSError:
+            pass
+        return handle
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
+
+
 def _shim_open(path, mode="r", *args, **kwargs):
     # Don't intercept non-file paths (integers = file descriptors,
     # None, or capture objects from test frameworks).
@@ -155,9 +202,7 @@ def _shim_open(path, mode="r", *args, **kwargs):
                 # real cached_read (from cache.py) reads the file directly
                 # and records stats exactly once.
                 if result and result.get("cached", False) and "content" in result:
-                    import io
-
-                    return io.StringIO(result["content"])
+                    return _open_cached_content(result["content"], mode, *args, **kwargs)
             except Exception:
                 pass
         return _original_open(path_str, mode, *args, **kwargs)
