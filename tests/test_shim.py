@@ -431,6 +431,88 @@ class TestApplyRemove(unittest.TestCase):
         # Restore for other tests
         importlib.reload(shim_mod)
 
+    def test_apply_noop_when_marker_file_present(self):
+        """Persistent marker file disables the shim at import (shim --disable).
+
+        Runs a SUBPROCESS with a fresh interpreter so the marker env var is set
+        BEFORE toolrecall.shim is imported — the import-time gate then sees the
+        marker and must leave builtins.open unpatched. This is hermetic: no
+        importlib.reload, so it cannot leak client/cache state into later tests.
+        """
+        import subprocess as _sp
+        import sys as _sys
+
+        with tempfile.TemporaryDirectory() as marker_dir:
+            marker = os.path.join(marker_dir, "shim.disabled")
+            with open(marker, "w") as f:
+                f.write("disabled")
+            code = (
+                "import os, builtins; "
+                "from toolrecall import shim as m; "
+                "print('ENABLED', m._ENABLED); "
+                "print('PATCHED', builtins.open is m._shim_open); "
+                "print('DISABLED', m._marker_disabled())"
+            )
+            env = dict(os.environ)
+            env["TOOLRECALL_SHIM_MARKER"] = marker
+            r = _sp.run(
+                [_sys.executable, "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            out = r.stdout
+            self.assertIn("ENABLED False", out)
+            self.assertIn("PATCHED False", out)
+            self.assertIn("DISABLED True", out)
+
+    def test_apply_noop_when_marker_absent_subprocess(self):
+        """Without a marker, a fresh interpreter patches open() (sanity check)."""
+        import subprocess as _sp
+        import sys as _sys
+
+        code = (
+            "import builtins; "
+            "from toolrecall import shim as m; "
+            "print('PATCHED', builtins.open is m._shim_open)"
+        )
+        env = dict(os.environ)
+        env.pop("TOOLRECALL_SHIM_DISABLE", None)
+        env.pop("TOOLRECALL_SHIM_MARKER", None)
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env["PYTHONPATH"] = repo + os.pathsep + env.get("PYTHONPATH", "")
+        r = _sp.run(
+            [_sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+            cwd="/tmp",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("PATCHED True", r.stdout)
+
+    def test_disable_enable_roundtrip(self):
+        """enable()/disable() write/clear the marker and flip the import gate.
+
+        Tests the marker primitives directly without importlib.reload, which
+        re-imports the client/cache chain and leaks state into later tests in
+        the same process.
+        """
+        with tempfile.TemporaryDirectory() as marker_dir:
+            marker = os.path.join(marker_dir, "shim.disabled")
+            with patch.dict(os.environ, {"TOOLRECALL_SHIM_MARKER": marker}):
+                # disable → marker present, predicate flips
+                self.assertTrue(shim_mod.disable())
+                self.assertTrue(os.path.isfile(shim_mod._marker_path()))
+                self.assertTrue(shim_mod._marker_disabled())
+                # enable → marker gone, predicate flips back
+                self.assertTrue(shim_mod.enable())
+                self.assertFalse(os.path.exists(shim_mod._marker_path()))
+                self.assertFalse(shim_mod._marker_disabled())
+
     # ─── Bug 4 fix: pytest detection uses basename, not substring ───
 
     def test_apply_skips_when_pytest_in_argv(self):

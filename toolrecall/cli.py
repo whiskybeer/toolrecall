@@ -888,6 +888,8 @@ def cmd_shim():
       toolrecall shim --install --all          discover + install into every venv
       toolrecall shim --status [--venv <path> | --all]
       toolrecall shim --uninstall [--venv <path> | --all]
+      toolrecall shim --disable             persistent disable (marker file)
+      toolrecall shim --enable              clear the persistent disable marker
     Any unrecognized flag prints usage and exits non-zero (no silent swallowing).
     """
     from toolrecall import venvs as venv_mod
@@ -895,11 +897,15 @@ def cmd_shim():
     args = sys.argv[2:]
 
     def usage(exit_code: int = 1):
-        print("Usage: toolrecall shim [--install|--uninstall|--status] [--venv <path>|--all]")
+        print(
+            "Usage: toolrecall shim [--install|--uninstall|--status|--disable|--enable] [--venv <path>|--all]"
+        )
         print()
         print("  --install            Install .pth shim into a Python env")
         print("  --uninstall          Remove the .pth shim (leaves the package)")
         print("  --status             Report shim state")
+        print("  --disable            Persistently disable the shim (marker file)")
+        print("  --enable             Re-enable the shim (clear the disable marker)")
         print("  --venv <path>        Target a specific venv (root dir or its bin/python)")
         print("  --all                Apply to every discovered venv (excl. toolrecall's own)")
         print("  --yes / -y           Skip the opt-in confirmation prompt (default is NO)")
@@ -922,6 +928,10 @@ def cmd_shim():
             action = "uninstall"
         elif a in ("--status", "status"):
             action = "status"
+        elif a in ("--disable", "disable"):
+            action = "disable"
+        elif a in ("--enable", "enable"):
+            action = "enable"
         elif a in ("--venv", "-v"):
             if i + 1 >= len(args):
                 print("Error: --venv requires a path argument")
@@ -941,6 +951,28 @@ def cmd_shim():
 
     if action is None:
         action = "status"  # bare `toolrecall shim` → status (back-compat)
+
+    if action in ("disable", "enable"):
+        # Global marker operations — independent of any venv target.
+        import toolrecall.shim as shim_mod
+
+        if action == "disable":
+            if shim_mod.disable():
+                print("✅ Shim DISABLED (persistent).")
+                print(
+                    "   Existing processes keep running as-is; new Python processes skip the shim."
+                )
+                print("   Re-enable with: toolrecall shim --enable")
+                print(f"   Marker: {shim_mod._marker_path()}")
+            else:
+                print(f"⚠️  Could not write disable marker: {shim_mod._marker_path()}")
+        else:
+            if shim_mod.enable():
+                print("✅ Shim ENABLED.")
+                print("   New Python processes will apply the shim again.")
+            else:
+                print("⚠️  Could not clear the disable marker.")
+        return
 
     def make_venv(path: str):
         """Resolve `path` (venv root OR its bin/python) to a Venv, or None."""
@@ -1008,6 +1040,11 @@ def cmd_shim():
         targets = [current_env]
 
     if action == "status":
+        import toolrecall.shim as shim_mod
+
+        if shim_mod._marker_disabled():
+            print(f"⚠️  Shim globally DISABLED via marker: {shim_mod._marker_path()}")
+            print("    Run `toolrecall shim --enable` to re-enable.\n")
         for v in targets:
             st = venv_mod.shim_status(v)
             ok = st["probe_ok"]
@@ -1499,6 +1536,82 @@ def _prepare_opencode_config(config_path):
     return config
 
 
+def _revert_proxy_wiring_in_text(path_hint: str, text: str) -> str:
+    """Strip the exact :8569 base-URL override lines ToolRecall wires.
+
+    Non-destructive: only removes lines that point at localhost/127.0.0.1:8569,
+    leaving everything else (including real-host overrides) intact.
+    """
+    out = []
+    for line in text.splitlines(keepends=True):
+        if (
+            ":" in line
+            and "8569" in line
+            and ("OPENAI_BASE_URL" in line or "ANTHROPIC_BASE_URL" in line or "base_url" in line)
+            and ("localhost" in line or "127.0.0.1" in line)
+        ):
+            continue  # drop the ToolRecall proxy override
+        out.append(line)
+    return "".join(out)
+
+
+_PROXY_WIRING_FILES = [
+    os.path.expanduser("~/.bashrc"),
+    os.path.expanduser("~/.profile"),
+    os.path.expanduser("~/.hermes/config.yaml"),
+]
+
+
+def _revert_proxy_wiring() -> list:
+    """Revert agent base-URL pointing at the ToolRecall forward proxy.
+
+    Returns list of human-readable changes made. Backs up each touched file it
+    actually edits (timestamped sibling), so the revert is reversible.
+    """
+    import shutil as _shutil
+    import time as _time
+
+    changed = []
+    for path in _PROXY_WIRING_FILES:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path) as f:
+                text = f.read()
+        except OSError:
+            continue
+        new_text = _revert_proxy_wiring_in_text(path, text)
+        if new_text == text:
+            continue
+        backup = f"{path}.toolrecall-bak.{_time.strftime('%Y%m%d-%H%M%S')}"
+        _shutil.copy2(path, backup)
+        with open(path, "w") as f:
+            f.write(new_text)
+        changed.append(f"{path}  (backup: {backup})")
+    return changed
+
+
+def cmd_stop():
+    """Stop the ToolRecall daemon and revert agent proxy base-URL wiring."""
+    from toolrecall.daemon import stop_daemon
+
+    print("=" * 56)
+    print("  ToolRecall Stop")
+    print("=" * 56)
+    stop_daemon()
+    print()
+    print("  Reverting forward-proxy base-URL wiring (agents → direct provider)...")
+    changed = _revert_proxy_wiring()
+    if changed:
+        for c in changed:
+            print(f"    ⚙️  {c}")
+    else:
+        print("    ℹ️  No :8569 base-URL overrides found — nothing to revert.")
+    print()
+    print("✅ ToolRecall stopped. Agents now call their providers directly.")
+    print("   Restart with: toolrecall daemon")
+
+
 def cmd_restart():
     """Health check + restart via systemd: config check → systemctl --user restart → verify.
     Auto-installs OS-level shim if not present."""
@@ -1620,6 +1733,24 @@ def cmd_restart():
     else:
         print("  ✅ Restart complete — everything looks good")
     print("=" * 56)
+
+
+def cmd_healthcheck():
+    """Run the generalized daemon/cache healthcheck.
+
+    Local-only: reuses ToolRecall's own transport/pid/lock paths. Exit code:
+      0  healthy
+      1  daemon down or abnormal pid/lock/socket state
+      2  hard failure (e.g. healthcheck module import error)
+    """
+    try:
+        from toolrecall import healthcheck as _hc
+
+        code = _hc.run("--json" in sys.argv[2:])
+    except Exception as e:  # noqa: BLE001  (surface a hard failure as exit 2)
+        print(f"toolrecall healthcheck error: {e}")
+        code = 2
+    sys.exit(code)
 
 
 def cmd_context():
@@ -1800,6 +1931,7 @@ def main():
         print("Commands:")
         print("  setup           One-shot setup: config + systemd service + shim + start")
         print("  restart         Health check + clean daemon restart")
+        print("  stop            Stop daemon + revert forward-proxy base-URL wiring")
         print("  init            Create default config.toml and .env")
         print("  status          Cache status and stats")
         print("  stats           Detailed stats (JSON)")
@@ -1850,6 +1982,7 @@ def main():
         "init": cmd_init,
         "setup": cmd_setup,
         "restart": cmd_restart,
+        "stop": cmd_stop,
         "status": cmd_status,
         "stats": cmd_stats,
         "invalidate": cmd_invalidate,
@@ -1864,6 +1997,7 @@ def main():
         "mcp": cmd_mcp,
         "daemon": cmd_daemon,
         "shim": cmd_shim,
+        "healthcheck": cmd_healthcheck,
         "context": cmd_context,
     }
 

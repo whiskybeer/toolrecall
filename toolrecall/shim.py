@@ -29,6 +29,8 @@ Uninstall:
 
 Config:
     TOOLRECALL_SHIM_DISABLE=1  — disable shim at runtime
+    toolrecall shim --disable  — persistent disable (writes ~/.toolrecall/shim.disabled)
+    toolrecall shim --enable   — clear the persistent disable marker
 """
 
 import os
@@ -36,7 +38,28 @@ import builtins
 import sys
 import threading
 
-_ENABLED = not os.environ.get("TOOLRECALL_SHIM_DISABLE", "")
+
+def _marker_path() -> str:
+    """Path of the persistent disable marker.
+
+    Honors ``TOOLRECALL_SHIM_MARKER`` to point at a custom location (useful for
+    tests and multi-daemon setups). Defaults to ~/.toolrecall/shim.disabled.
+    """
+    override = os.environ.get("TOOLRECALL_SHIM_MARKER", "")
+    if override:
+        return override
+    return os.path.join(os.path.expanduser("~/.toolrecall"), "shim.disabled")
+
+
+def _marker_disabled() -> bool:
+    """True if a persistent disable marker file exists."""
+    p = _marker_path()
+    if not p:
+        return False
+    return os.path.isfile(p)
+
+
+_ENABLED = not (os.environ.get("TOOLRECALL_SHIM_DISABLE", "") or _marker_disabled())
 
 # ─── Re-entrancy guard ───
 # Prevents infinite recursion when the shim's own code path (importing
@@ -233,6 +256,33 @@ def apply():
 def remove():
     """Restore the original builtins.open."""
     builtins.open = _original_open
+
+
+def disable() -> bool:
+    """Persistently disable the shim by writing the marker file.
+
+    Returns True on success. Existing processes keep running as-is; new
+    Python processes will skip the shim (marker is honored at import).
+    """
+    try:
+        p = _marker_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("disabled")
+        return True
+    except OSError:
+        return False
+
+
+def enable() -> bool:
+    """Re-enable the shim by removing the persistent disable marker."""
+    try:
+        p = _marker_path()
+        if p and os.path.exists(p):
+            os.remove(p)
+        return True
+    except OSError:
+        return False
 
 
 # ─── Auto-apply on .pth import ───
