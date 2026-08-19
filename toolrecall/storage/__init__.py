@@ -83,7 +83,10 @@ def open_backend(cfg):
     """
     name = resolve_backend_name(cfg)
     db_path = active_db_path(cfg)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    # A relative path like "cache.db" has an empty dirname -- makedirs("")
+    # raises FileNotFoundError. Create the current directory instead so a
+    # bare TOOLRECALL_CACHE_DB=cache.db works on a fresh system.
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     conn = _backend_module(name).connect(cfg, db_path)
     restrict_db_perms(db_path)
     return conn

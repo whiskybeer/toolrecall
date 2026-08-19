@@ -129,12 +129,19 @@ if [ -z "$KNOWLEDGE_PATH" ]; then
     KNOWLEDGE_PATH="~/.toolrecall/knowledge.db"
 fi
 
-# Create config
+# Ensure the database's parent directory exists (e.g. ~/.toolrecall/)
 TR_DIR=$(eval echo "${DB_PATH%/*}")
 mkdir -p "$TR_DIR"
 
-# Write config
-CONFIG_FILE="$TR_DIR/toolrecall.toml"
+# Write the config where config.py actually reads it. config.py searches (in
+# order of priority): CWD, ~/.config/toolrecall/toolrecall.toml, /etc/toolrecall/.
+# A file placed next to the DB (e.g. ~/.toolrecall/toolrecall.toml) is NEVER
+# read, which made --db/--proxy/--scan silently fall back to defaults.
+# Note: config.py hardcodes ~/.config (it does NOT honour XDG_CONFIG_HOME),
+# so we must write to exactly that path for the values to be picked up.
+CONFIG_DIR="$HOME/.config/toolrecall"
+mkdir -p "$CONFIG_DIR"
+CONFIG_FILE="$CONFIG_DIR/toolrecall.toml"
 cat > "$CONFIG_FILE" << TOML
 [paths]
 cache_db = "$DB_PATH"
