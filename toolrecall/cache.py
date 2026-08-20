@@ -348,7 +348,8 @@ CREATE TABLE IF NOT EXISTS recall_cache (
     reproducible   INTEGER NOT NULL,
     summary        TEXT DEFAULT '',
     tokens         INTEGER DEFAULT 0,
-    cached_at      REAL NOT NULL
+    cached_at      REAL NOT NULL,
+    expires_at     REAL
 );
 CREATE INDEX IF NOT EXISTS idx_recall_type ON recall_cache(content_type);
 """
@@ -1651,6 +1652,9 @@ def garbage_collect() -> int:
             now = time.time()
             c1 = conn.execute("DELETE FROM terminal_cache WHERE expires_at < ?", (now,)).rowcount
             c2 = conn.execute("DELETE FROM mcp_cache WHERE expires_at < ?", (now,)).rowcount
+            c4 = conn.execute(
+                "DELETE FROM recall_cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now,)
+            ).rowcount
             ONE_DAY = 86400
             c3 = conn.execute(
                 """
@@ -1667,7 +1671,7 @@ def garbage_collect() -> int:
         # VACUUM must run in its own connection (auto-commits, can't be in a transaction)
         with _db() as conn:
             conn.execute("VACUUM")
-        return c1 + c2 + c3
+        return c1 + c2 + c3 + c4
     except Exception as e:
         warnings.warn(f"ToolRecall GC failed: {e}")
         return -1

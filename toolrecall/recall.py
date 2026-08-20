@@ -59,6 +59,7 @@ def store(
     content_type: str,
     reproducible: bool,
     summary: str = "",
+    ttl: float = 0,
 ) -> str:
     """Persist a content block out-of-band and return its node_id pointer.
 
@@ -68,20 +69,24 @@ def store(
         content_type: one of file|terminal|script|code|api|mcp|browser|web|other.
         reproducible: whether this block is deterministically re-fetchable.
         summary: optional short semantic pointer left with the entry.
+        ttl: seconds until expiry (0 = never expire — default).
 
     Returns:
         The node_id to store in-context; later passed to :func:`get`.
     """
     nid = node_id(fingerprint)
     tokens = _estimate_tokens(content)
+    now = time.time()
+    expires_at = (now + ttl) if ttl and ttl > 0 else None
     with _db() as conn:
         conn.execute(
             "INSERT INTO recall_cache (node_id, fingerprint, content, content_type, "
-            "reproducible, summary, tokens, cached_at) "
-            "VALUES (?,?,?,?,?,?,?,?) "
+            "reproducible, summary, tokens, cached_at, expires_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(node_id) DO UPDATE SET "
             "content=excluded.content, summary=excluded.summary, "
-            "tokens=excluded.tokens, cached_at=excluded.cached_at",
+            "tokens=excluded.tokens, cached_at=excluded.cached_at, "
+            "expires_at=excluded.expires_at",
             (
                 nid,
                 fingerprint,
@@ -90,7 +95,8 @@ def store(
                 1 if reproducible else 0,
                 summary,
                 tokens,
-                time.time(),
+                now,
+                expires_at,
             ),
         )
     return nid
@@ -100,15 +106,20 @@ def get(node_id_: str) -> dict | None:
     """Restore a persisted block by node_id.
 
     Returns a dict with ``content``, ``summary``, ``content_type``,
-    ``reproducible`` and ``tokens``; None if never stored.
+    ``reproducible`` and ``tokens``; None if never stored **or expired**
+    (an expired row is lazily purged so stale data can never be retrieved).
     """
     with _db() as conn:
         row = conn.execute(
-            "SELECT content, summary, content_type, reproducible, tokens "
+            "SELECT content, summary, content_type, reproducible, tokens, expires_at "
             "FROM recall_cache WHERE node_id=?",
             (node_id_,),
         ).fetchone()
     if not row:
+        return None
+    # Expired: treat as a miss (never return stale bytes) and purge.
+    if row[5] is not None and row[5] < time.time():
+        delete(node_id_)
         return None
     return {
         "content": row[0],
@@ -117,6 +128,32 @@ def get(node_id_: str) -> dict | None:
         "reproducible": bool(row[3]),
         "tokens": row[4],
     }
+
+
+def delete(node_id_: str) -> int:
+    """Remove a persisted block by node_id (or fingerprint). Returns rows deleted."""
+    with _db() as conn:
+        cur = conn.execute(
+            "DELETE FROM recall_cache WHERE node_id=? OR fingerprint=?", (node_id_, node_id_)
+        )
+    return cur.rowcount
+
+
+def clear() -> int:
+    """Remove ALL recall-cache entries. Returns rows deleted."""
+    with _db() as conn:
+        cur = conn.execute("DELETE FROM recall_cache")
+    return cur.rowcount
+
+
+def purge_expired() -> int:
+    """Delete every expired recall entry. Returns rows deleted."""
+    with _db() as conn:
+        cur = conn.execute(
+            "DELETE FROM recall_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (time.time(),),
+        )
+    return cur.rowcount
 
 
 def stats() -> dict:
