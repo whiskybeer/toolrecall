@@ -120,17 +120,35 @@ Full detail: [Context Tracker](docs/CONTEXT_TRACKER.md) · [Agent integration](d
 
 ---
 
-## Recall Tier *(opt-in)*
+## Recall Tier *(opt-in, experimental)*
 
-> **TL;DR:** The Context Tracker can safely drop *file* content because re-reading from cache is byte-identical. The **Recall Tier** (default OFF) extends the same drop-and-restore contract to **non-reproducible** content — web/API/ephemeral output whose re-fetch would not return identical bytes.
+> **TL;DR:** Keep only a pointer to output you probably won't need; restore it on the rare turn you're wrong.
 
-The tracker's dirty/clean model is lossless *because* it can re-fetch a file deterministically. That guarantee doesn't hold for a one-shot API result or a live web snapshot: re-fetching yields different bytes, so today that content is forced to stay in context at full token cost. The Recall Tier closes this gap:
+Most blocks an agent sees are reproducible — a file at a path, a command, an API call keyed by request hash. Re-reading is byte-identical, so dropping the content is free. **Non-reproducible** content — a one-shot API response, a live web snapshot, ephemeral tool output that would never come back identical — can't be re-fetched, so it has historically been forced to sit in the context window at full token cost, every turn, just in case it's needed again.
 
-1. **`recall_store`** persists the raw content out-of-band and returns a tiny **`node_id`** pointer to keep in context.
-2. The agent drops the verbose raw block from context (tokens saved), keeping only the pointer.
-3. **`recall_get(node_id)`** restores the raw bytes on demand — the lossless-recoverable eviction contract for non-reproducible content.
+The Recall Tier lets an agent do something else entirely: **evict it by default, restore on demand.** It works like a scratchpad that's always there but only billed when opened:
 
-Everything reproducible keeps byte-identical semantics; the tier fires only for the non-reproducible tail. It is **opt-in** (`[recall].enabled = true`) and adds **zero runtime dependencies**. Savings are attributed to a dedicated `recall` sink in `cache_stats`, so they are never double-counted against file-cache savings.
+1. **`recall_store`** persists the raw content out-of-band and returns a tiny deterministic **`node_id`** pointer.
+2. The agent keeps **only** the pointer in context.
+3. **`recall_get(node_id)`** restores the raw bytes **on demand** — the exact lossless-recoverable eviction contract the Context Tracker already gives reproducible files, extended to the non-reproducible tail.
+
+**How this is different from a cache hit.** A cache hit *avoids* an LLM round-trip; a `recall_get` *is* one, because it re-inserts the bytes. The win is never in the turn you call `get` — it's in all the turns you don't have to. A 10k-token block stored on turn 5 and never re-read costs 0 for the remaining 195 turns of a 200-turn task instead of 1.95M token-turns of sitting in context.
+
+### When to use it (and when not to)
+
+| Use it when… | Don't bother when… |
+|---|---|
+| The block is a non-reproducible one-shot (web/API response, ephemeral output) | Content that is reproducible — the normal cache already handles it, losslessly |
+| You need to bound context size but can't depend on a re-fetch | You'll definitely need the block again soon (eviction is only worth it if eviction usually stands) |
+| The pointer is meaningfully smaller than the content | The content is tiny to begin with |
+
+The feature is off by default and adds **zero runtime dependencies**. Enable with `[recall].enabled = true` (or `TOOLRECALL_RECALL_ENABLED=true`). The default TTL is **0 = never expire** — set `[recall].ttl` (or `TOOLRECALL_RECALL_TTL`) in seconds to bound how long entries live. Expired entries are treated as cache misses, purged lazily on read, and swept from disk by the regular GC cycle; they are never returned and never count as cached.
+
+> **Status: experimental.** The tier works and is tested (roundtrip, dedup, TTL expiry, lazy purge, GC sweep), but it is not yet driven by any first-party shim or adapter — no agent calls `recall_store` automatically today. You opt into it explicitly (via CLI or MCP) or not at all. See [docs/RECALL_TIER.md](docs/RECALL_TIER.md) for the contract.
+
+### Accounting and honesty
+
+Every `recall_get` hit records the entry's token count in a dedicated `recall` sink in `cache_status`, tracked separately from file-cache hits. **This is a "bytes served" counter, not a savings claim.** It means "this much content was restored via the recall tier" — useful for understanding what the pool is doing, not a number that belongs in a cost-savings banner. Real savings from eviction-only use (never restoring) are invisible to accounting by definition: the win is that the context window stayed small, and there's nothing to count.
 
 Full detail: [Recall Tier](docs/RECALL_TIER.md)
 
