@@ -21,6 +21,7 @@ import threading
 import time
 import unittest
 import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from toolrecall.transport import (
@@ -35,14 +36,47 @@ class TestSocketPath(unittest.TestCase):
     """_default_socket_path() returns correct paths per platform."""
 
     def test_posix_default_no_xdg(self):
-        """Without XDG_RUNTIME_DIR, path resolves to ~/.toolrecall/toolrecall.sock."""
+        """Without XDG_RUNTIME_DIR, path resolves to ~/.toolrecall when no systemd runtime dir.
+
+        When /run/user/<uid> exists (a systemd-logind session), the client
+        prefers it so it agrees with the systemd-managed daemon. This test
+        simulates a bare container with no runtime dir to exercise the home
+        fallback.
+        """
         old_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
         os.environ.pop("TOOLRECALL_PORT", None)
+        os.environ.pop("TOOLRECALL_TRANSPORT", None)
+        os.environ.pop("TOOLRECALL_UDS_PATH", None)
+        uid = os.getuid()
         try:
-            path = _default_socket_path()
+            with patch.object(os.path, "isdir", side_effect=lambda p: p != f"/run/user/{uid}"):
+                path = _default_socket_path()
             self.assertFalse(_is_tcp(path), "POSIX default should be UDS, not TCP")
             self.assertTrue(path.endswith("toolrecall.sock"), f"Unexpected path: {path}")
             self.assertIn(".toolrecall", path)
+        finally:
+            if old_xdg:
+                os.environ["XDG_RUNTIME_DIR"] = old_xdg
+
+    def test_posix_default_no_xdg_prefers_runtime_dir(self):
+        """No XDG_RUNTIME_DIR but /run/user/<uid> exists → prefer the runtime-dir socket.
+
+        This is the duplicate-daemon fix: cron/agent shells have an empty
+        XDG_RUNTIME_DIR, while the systemd-managed daemon is bound under
+        /run/user/<uid>. The client must resolve the SAME socket or it will
+        ping the wrong path, think the daemon is down, and auto-start a
+        duplicate.
+        """
+        old_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
+        os.environ.pop("TOOLRECALL_TRANSPORT", None)
+        os.environ.pop("TOOLRECALL_UDS_PATH", None)
+        uid = os.getuid()
+        try:
+            with patch.object(os.path, "isdir", side_effect=lambda p: p == f"/run/user/{uid}"):
+                path = _default_socket_path()
+            expected = f"/run/user/{uid}/toolrecall.sock"
+            self.assertEqual(path, expected,
+                             "client should prefer the systemd runtime-dir socket even with empty XDG")
         finally:
             if old_xdg:
                 os.environ["XDG_RUNTIME_DIR"] = old_xdg

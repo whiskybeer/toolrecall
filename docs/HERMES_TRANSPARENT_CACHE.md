@@ -19,17 +19,26 @@ documented here never actually loaded. The shim is the agent-agnostic
 mechanism that works for Hermes, Codex CLI, Aider, OpenCode, and any other
 Python-based agent.
 
-The shim monkey-patches `builtins.open`, `subprocess.run`, and `subprocess.Popen` at the Python
-interpreter level. The agent still calls native tools — but the underlying
-file reads and subprocess executions are served from the cache.
-**The agent never notices.**
+The shim monkey-patches `builtins.open` for read-only file access at the Python
+interpreter level. The agent still calls native tools — but file reads are served
+from the cache. **The agent never notices.**
 
 ### Tools intercepted (via the shim)
 
 | Native Call | Cache Backend | Benefit |
 |-------------|---------------|---------|
-| `builtins.open` (file reads) | `cached_read` | mtime-based, in-memory + SQLite |
-| `subprocess.run` / `Popen` | `cached_terminal` | TTL-based, SQLite |
+| `builtins.open` (read-only `r`/`rt`) | `cached_read` | mtime-based, in-memory + SQLite |
+
+> **Why does the shim NOT intercept `subprocess.run` / `Popen`?** (Option B, v0.8.19)
+> Routing terminal commands through the daemon was **fundamentally lossy**: the
+> daemon strips the config `source`/`cd`/`export`/`printf-cwd` wrapper lines and runs
+> the inner command in the daemon's own working directory and environment, not the
+> calling agent's. Every plain command (`pwd`, `git status`, `ls`) produced output
+> from the wrong directory, which then got **cached and replayed** — surfacing as
+> garbled shell output and offline-looking sessions. Terminal command output is now
+> executed **natively** in the agent's process (correct cwd + env + shell state), and
+> is never transparently cached at the shim layer. Commands you know are read-only
+> and deterministic remain cachable *explicitly* via the daemon's `cached_terminal`.
 
 ### Enable
 
@@ -69,10 +78,10 @@ modified while the cache still holds the old hash.
 
 ### 3. Global scope
 
-The shim patches `open()`, `subprocess.run()`, and `subprocess.Popen()` for **every** Python process
-on the machine — not just the agent. This is by design (zero agent-side
-config) but means a buggy shim affects all Python scripts. Use
-`TOOLRECALL_SHIM_DISABLE=1` to bypass per-process.
+The shim patches `open()` for **every** Python process on the machine — not just
+the agent. This is by design (zero agent-side config) but means a buggy shim
+affects all Python scripts that read files. Use `TOOLRECALL_SHIM_DISABLE=1` to
+bypass per-process. Subprocess/terminal calls are never intercepted.
 
 ### 4. Infrastructure file noise
 
@@ -97,16 +106,14 @@ Empty list = bypass NOTHING. Add your framework's internal paths as needed.
 
 ### 5. Visibility into agent behavior
 
-Because the shim intercepts every `open()`, `subprocess.run()`, and `subprocess.Popen()` call, the
-ToolRecall healthcheck and stats (`toolrecall stats`) provide a real-time
-dashboard of what the agent is doing:
+Because the shim intercepts every read-only `open()` call, the ToolRecall
+healthcheck and stats (`toolrecall stats`) provide a real-time dashboard of
+what the agent is doing:
 
 - **Which files are being read** — the access log shows every file path with
   timestamps, hit rates, and token counts. If the agent is reading unexpected
   files (e.g. config files on every turn, transient temp files), you'll see it
   immediately.
-- **Which commands are being run** — terminal commands are cached and logged,
-  revealing what the agent is executing under the hood.
 - **Detecting cache-bypass** — if the hit rate drops to 0% after >100 calls,
   the agent may be using native tools instead of cached paths.
 - **Finding infrastructure noise** — the access log reveals which files are

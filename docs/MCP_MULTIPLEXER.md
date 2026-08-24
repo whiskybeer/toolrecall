@@ -32,7 +32,6 @@ flowchart LR
     MUX --> T
     MUX --> F
     MUX --> E
-end
 
 - **Single daemon** — all agents share one persistent process
 - **Lazy loading** — servers boot *only* on first call, not at daemon start

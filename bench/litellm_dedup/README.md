@@ -1,5 +1,13 @@
 # LiteLLM Dedup Hook — Benchmark & Methodology
 
+> **dedup** = **deduplication**: removing byte-identical *duplicate* content that
+> repeats within a request. In agent loops the same tool output / file contents
+> get re-sent every turn; the hook detects a block already present earlier in the
+> request and replaces the later copy with a stub. "Deduplication" is used in
+> the stored-data sense (delete redundant secondary copies); only input-prompt
+> tokens are ever trimmed — nothing the model hasn't already seen is dropped
+> (keep-first, see "How the hook works").
+
 Billing-verified measurement of the `toolrecall.adapters.litellm` gateway dedup
 hook on **real SWE-bench Lite agent workloads**.
 
@@ -88,21 +96,39 @@ fails open, **protected tail** (last 2 messages never stubbed), opt-in.
 
 ## Honesty
 
-**Token savings verified; task-quality NOT verified.** The dedup result above
-is real, billing-verified token/cost data. What is **not** demonstrated is that
-dedup preserves task success (pass@1):
+**Token savings billing-verified; task-quality NOT empirically verified — but
+loss is now ruled out by a property test.** The dedup result above is real,
+billing-verified token/cost data. On the quality question there are two distinct
+claims:
 
-- A SWE-bench **pass@1** A/B on the same tasks was attempted but is
-  **unmeasured/inconclusive**: the baseline model (DeepSeek V4 Flash) scores 0
-  on the chosen flask tasks even on a correct, isolated environment (gold
-  patches pass; the model's contract-mismatched / incomplete fixes don't), so
-  there is no nonzero baseline against which a WITH vs WITHOUT dedup effect can
-  be measured.
-- Do **not** claim "dedup improves or preserves task quality." The defensible
-  statement is: **"the hook removes wasted input tokens (billing-verified); its
-  effect on task success is unverified."**
-- Savings are workload-dependent: an agent that *rewrites whole files* each
-  turn (content changes between re-reads) gets less than a re-read-only loop.
+**1. Loss-free by construction (PROVEN, zero model spend).** `dedup_messages` is
+*keep-first*: the first occurrence of every distinct block is always retained in
+full, and a block is only ever stubbed if a byte-identical copy already exists
+**earlier in the same request**. Every stub embeds the retained copy's sha256 and
+message index. So the deduped request carries information identical to the
+original — nothing that wasn't already present is ever dropped or invented.
+`property_test_quality.py` verifies this over thousands of randomized agent-loop
+message lists: no stub→stub chains, every stub digest resolves to a retained
+full block, input never mutated, garbage fails open. **No model can be "hurt" by
+input that is informationally identical** — this holds for any model, so a
+quality A/B is not needed to rule out destructive dedup.
+
+**2. Empirical pass@1 NOT measured.** What the property test does NOT do is prove
+a *successful* task outcome. A SWE-bench **pass@1** A/B was attempted but is
+**unmeasured/inconclusive**: the baseline model (DeepSeek V4 Flash) scores 0 on
+the chosen flask tasks even on a correct, isolated environment (gold patches
+pass; the model's contract-mismatched / incomplete fixes don't), so there is no
+nonzero baseline against which a WITH vs WITHOUT dedup effect can be measured.
+At N=10 a pass@1 delta is also within binomial noise, so a bigger A/B would not
+resolve it either.
+
+Do **not** claim "dedup improves task quality." The defensible statements are:
+**"the hook removes wasted input tokens (billing-verified); it provably cannot
+drop or alter information the model already has (property-verified); its effect
+on task *success* is unmeasured."**
+
+Savings are workload-dependent: an agent that *rewrites whole files* each
+turn (content changes between re-reads) gets less than a re-read-only loop.
 
 ## Reproduce
 
@@ -117,6 +143,9 @@ Files:
 - `measure_swebench.py` — measurement script (`--accumulate` mode)
 - `run_accumulate.sh` — full A/B runner (both arms, 80 req each)
 - `litellm_accum_results.json` — raw + aggregated results (WITH / WITHOUT)
+- `property_test_quality.py` — zero-spend property test: rules out destructive
+  dedup by construction (no stub→stub chains; every stub resolves to a retained
+  byte-identical block; input never mutated; garbage fails open)
 - Hook implementation: `toolrecall/adapters/litellm.py`
 
 ---

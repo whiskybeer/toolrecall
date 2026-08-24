@@ -52,6 +52,7 @@ def _default_socket_path() -> str:
         return env_path
 
     xdg = os.environ.get("XDG_RUNTIME_DIR")
+    expected_dir = f"/run/user/{os.getuid()}"
     if xdg:
         # Verify that XDG_RUNTIME_DIR matches the actual user UID.
         # Hermes sessions may inherit a wrong XDG_RUNTIME_DIR (e.g.
@@ -59,10 +60,17 @@ def _default_socket_path() -> str:
         # is UID 1004). When the env var doesn't match os.getuid(),
         # prefer the correct path to avoid talking to a different
         # daemon's socket.
-        expected_dir = f"/run/user/{os.getuid()}"
-        if xdg != expected_dir and os.path.exists(expected_dir):
+        if xdg != expected_dir and os.path.isdir(expected_dir):
             return os.path.join(expected_dir, "toolrecall.sock")
         return os.path.join(xdg, "toolrecall.sock")
+    # XDG_RUNTIME_DIR is unset (e.g. cron/agent shells that don't inherit
+    # the systemd user session environment). If the systemd-logind runtime
+    # dir for THIS uid exists, a daemon is very likely bound there (the
+    # systemd unit gets XDG_RUNTIME_DIR set automatically). Prefer it so
+    # the client and the systemd-managed daemon agree on the socket and we
+    # don't auto-start a duplicate daemon on ~/.toolrecall/toolrecall.sock.
+    if os.path.isdir(expected_dir):
+        return os.path.join(expected_dir, "toolrecall.sock")
     home = Path.home() / ".toolrecall"
     home.mkdir(parents=True, exist_ok=True)
     return str(home / "toolrecall.sock")

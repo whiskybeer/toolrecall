@@ -18,7 +18,7 @@ policy — all from a single background process.
 | **OS-level shim** | `.pth` file patches `open()`, `subprocess.run/Popen` in every Python process |
 | **Context Tracker** | Tracks dirty/clean files, auto-hints agents which files to drop from context |
 | **Security gate** | Path allowlist, terminal policy, sensitive-file blocklist — framework-agnostic |
-| **LiteLLM proxy hook** | `async_pre_call_hook` dedup of repeated content blocks in gateway requests | `toolrecall/adapters/litellm.py` | opt-in, fails open, zero new deps |
+| **LiteLLM proxy hook** | `async_pre_call_hook` dedup of repeated content blocks in gateway requests → `toolrecall/adapters/litellm.py`. opt-in, fails open, zero new deps |
 | **Framework adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
 | **Storage backends** | sqlite (default), libsql, or libsql-sync with Turso Cloud |
 | **Replay mode** | Record agent sessions, replay deterministically in CI |
@@ -193,9 +193,10 @@ flowchart TB
 
 **OS-level Shim** (`toolrecall shim --install`):
 - Installs `tr_shim.pth` into site-packages. Every Python process auto-caches:
-  - `builtins.open` -> `cached_read` before touching disk
-  - `subprocess.run` -> `cached_terminal` before forking
-  - `subprocess.Popen` -> `cached_shell_exec` (strips agent wrappers) before forking
+  - `builtins.open` (read-only) -> `cached_read` before touching disk
+- Subprocess/terminal calls are NEVER intercepted (Option B, v0.8.19): routing
+  them through the daemon ran them in the daemon's cwd/env and replayed the
+  wrong output. Terminal output runs natively now.
 - Transparent — zero agent-side configuration needed
 - Disable per-process with `TOOLRECALL_SHIM_DISABLE=1`
 
@@ -327,31 +328,22 @@ toolrecall shim --install
 ```
 
 This installs `tr_shim.pth` into site-packages. Every Python process auto-imports
-`toolrecall.shim`, which monkey-patches:
+`toolrecall.shim`, which patches:
 
-- `builtins.open` -> `cached_read` before touching disk
-- `subprocess.run` -> `cached_terminal` before forking
-- `subprocess.Popen` -> `cached_shell_exec` (strips agent wrappers) before forking
+- `builtins.open` (read-only) -> `cached_read` before touching disk
 
-The `cached_shell_exec` function (v0.8.14+) strips agent-specific shell wrappers
-(fabric shell, Claude Code hermetic_run, aider script wrappers) before checking
-the cache — so the same command through different agents gets a hit.
-
-**Security gate (v0.8.18+):** `cached_shell_exec` is gated identically to
-`cached_terminal` — dispatch routes through the `SecurityGate.check_terminal`
-allowlist, so a client cannot run shell commands via `cached_shell_exec` when
-`allow_terminal` is false or the command is outside `allowed_terminal_commands`.
-This closes the prior bypass where shell-exec dispatch skipped the allowlist
-check entirely. Regression tests: `tests/test_shell_exec_gate.py`.
+Subprocess/terminal calls are intentionally NOT patched (Option B, v0.8.19):
+see the note above — routing them through the daemon's cwd/env produced and
+replayed wrong output. `cached_shell_exec` / `cached_terminal` remain available
+as explicit daemon-side calls but are no longer wired into the shim.
 
 ```python
 # tr_shim.pth contains one line:
 import toolrecall.shim
 
 # shim.py then:
-#   builtins.open = _shim_open           # routes through cache
-#   subprocess.run = _shim_run           # routes through cache
-#   subprocess.Popen = _shim_popen       # routes through cached_shell_exec
+#   builtins.open = _shim_open           # routes read-mode through cache
+#   (subprocess.run / Popen are left untouched — run natively)
 #   TOOLRECALL_SHIM_DISABLE=1  -> skip shim per-process
 ```
 
@@ -464,6 +456,11 @@ Drop-in adapters for popular agent frameworks. All communicate with the daemon o
 | **LangChain / LangGraph** | `ToolRecallCache` (LLM cache) + `ToolRecallCallbackHandler` (tool cache) | `pip install toolrecall[langchain]` |
 | **herdr** | `tr` binary + MCP bridge — every pane inherits the cache | Build `tr`, run `toolrecall mcp` |
 | **Odysseus** | `install_agent_cache()` + `install_mcp_cache()` | `pip install toolrecall`, then `odysseus.install_agent_cache()` |
+| **LiteLLM proxy** | `async_pre_call_hook` content dedup on gateway requests | Add `toolrecall.adapters.litellm.handler` to `litellm_settings: callbacks` in your proxy config |
+
+> Note: unlike the adapters above, the **LiteLLM proxy hook** is *standalone* — it
+> hooks gateway requests directly and composes with, but does **not** require, the
+> daemon (see `toolrecall/adapters/litellm.py`).
 
 See `toolrecall/adapters/README.md` for full documentation.
 

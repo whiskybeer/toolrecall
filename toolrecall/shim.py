@@ -1,22 +1,28 @@
 """
-toolrecall.shim — Transparent OS-level cache shim.
+toolrecall.shim — Transparent OS-level file-read cache shim.
 
 Installation (one-time):
     toolrecall shim --install
 
-This creates a .pth file in site-packages that auto-pathes
-`open()`, `subprocess.run()`, and `subprocess.Popen()` on
-every Python process startup. Zero imports needed from the
-calling code — any Python process (Hermes, Codex, Aider,
-Cursor, scripts) transparently benefits.
+This creates a .pth file in site-packages that auto-patches `open()`
+(read-only) on every Python process startup. Zero imports needed from the
+calling code — any Python process (Hermes, Codex, Aider, Cursor, scripts)
+transparently benefits from file-read caching.
 
-The Popen shim automatically detects and strips common agent
-shell wrappers (source snapshot, cd, eval, printf cwd markers,
-exit code capture) and routes the inner command through the
-daemon's `cached_terminal` with allowlist security. This works
-agent-agnostically — Hermes, Codex, Claude Code, and any other
-agent that wraps commands in a bash -c infrastructure layer are
-all covered without agent-side code changes.
+Scope (Option B — see CHANGELOG v0.8.19):
+    Patches ONLY `builtins.open` for read (`r`/`rt`) mode. It does NOT
+    intercept `subprocess.run()`/`subprocess.Popen()`. Terminal command
+    output is NOT transparently cached at the shim layer: doing so is
+    fundamentally lossy because it runs the command in the daemon's working
+    directory and environment rather than the calling agent's, then replays
+    the (wrong) output. That wrong-cwd class of bug surfaced as garbled
+    shell output and offline-looking sessions. Terminal/output caching that
+    is known to be read-only and deterministic stays available explicitly
+    via the daemon (`cached_terminal`), never through the implicit shim.
+
+File-read caching is safe to shim because it is keyed on path + mtime +
+size — a read is deterministic given the same bytes, so a cache hit can
+never return wrong content.
 
 Uninstall:
     toolrecall shim --uninstall
@@ -60,6 +66,7 @@ def _exit_shim(prev: bool):
 # ─── Lazy-load client on first call ───
 _TR = None
 
+
 def _get_tr():
     global _TR
     if _TR is None and _ENABLED:
@@ -68,12 +75,8 @@ def _get_tr():
             # the same package directory as this shim module — not from
             # wherever sys.path resolves "toolrecall" (which can be the
             # source tree if an editable install shadows site-packages).
-            from .client import (
-                cached_read as cr,
-                cached_terminal as ct,
-                cached_shell_exec as cse,
-            )
-            _TR = {"read": cr, "terminal": ct, "shell_exec": cse}
+            from .client import cached_read as cr
+            _TR = {"read": cr}
         except ImportError:
             _TR = False
     return _TR
@@ -84,9 +87,10 @@ def _get_tr():
 # TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var) on first call to _should_skip().
 # Files matching these prefixes bypass the shim and go directly to the
 # real open() — they are tiny, rewritten constantly, and never benefit
-# from caching.  Intercepting them just pollutes the cache stats with noise.
+# from caching. Intercepting them just pollutes the cache stats with noise.
 # Empty list = bypass NOTHING (all open() calls go through the shim).
 _SKIP_PREFIXES = None
+
 
 def _load_skip_prefixes():
     """Load exclude prefixes from config. Call once on first use."""
@@ -99,6 +103,7 @@ def _load_skip_prefixes():
         _SKIP_PREFIXES = list(cfg.shim_exclude_prefixes)
     except Exception:
         _SKIP_PREFIXES = []
+
 
 def _should_skip(path: str | bytes | os.PathLike) -> bool:
     """Check if a path is an internal infrastructure file that should bypass the shim."""
@@ -113,6 +118,7 @@ def _should_skip(path: str | bytes | os.PathLike) -> bool:
 
 # ─── Patch open() ───
 _original_open = builtins.open
+
 
 def _shim_open(path, mode='r', *args, **kwargs):
     # Don't intercept non-file paths (integers = file descriptors,
@@ -154,288 +160,32 @@ def _shim_open(path, mode='r', *args, **kwargs):
         _exit_shim(prev)
 
 
-# ─── Patch subprocess ───
-import re  # noqa: E402  (deliberate late import — must not run at module import)
-import subprocess as _sp  # noqa: E402  (deliberate late import — must not run at module import)
-_original_run = _sp.run
-_original_popen = _sp.Popen
-
-# Shell metacharacters that indicate a string command is not a simple
-# single-word call — routing it through cached_terminal would mangle it.
-_SHELL_METACHARS = re.compile(r'[|;&><$`*?()\[\]{}#!~^]')
-
-
-def _is_safe_string_command(cmd: str, kwargs: dict) -> bool:
-    """Check if a string command is safe to route through cached_terminal.
-
-    Safe = the caller wants captured output (capture_output=True or
-    stdout=PIPE, text=True) so we can return a CompletedProcess with
-    stdout/stderr.
-
-    Security model:
-    - cwd: Safe — passed through to daemon, changes execution context
-      but NOT the command content. Different cwd = different cache key
-      (executed fresh, not cached when cwd differs).
-    - check: Safe — just changes error handling, not command behavior.
-      The shim returns the exit code; caller can check it.
-    - timeout: Safe — affects how long we wait, not what the command does.
-      Passed through to daemon.
-    - env: UNSAFE — custom environment changes command behavior.
-      BLOCKED from caching. Executes fresh every time.
-    - input: UNSAFE — stdin data changes command behavior.
-      BLOCKED from caching. Executes fresh every time.
-
-    Shell metacharacters cause a fallthrough to the original subprocess,
-    since shlex.split would mangle them.
-    """
-    import subprocess
-
-    # Must have capturing enabled
-    capture = kwargs.get("capture_output", False)
-    stdout = kwargs.get("stdout", None)
-    if not capture and stdout is not subprocess.PIPE:
-        return False
-
-    # Must have text=True or universal_newlines=True — cached_terminal returns str, not bytes
-    if not kwargs.get("text", False) and not kwargs.get("universal_newlines", False):
-        return False
-
-    # env: custom environment changes command behavior — BLOCKED from cache
-    if "env" in kwargs:
-        return False
-
-    # input: stdin data changes command behavior — BLOCKED from cache
-    if "input" in kwargs:
-        return False
-
-    # cwd and check and timeout are safe — they affect execution context,
-    # not command content. Handled in _shim_run.
-    # check and timeout are ignored by cached_terminal (it always captures).
-    # cwd is passed to the daemon.
-
-    # Shell metacharacters
-    if _SHELL_METACHARS.search(cmd):
-        return False
-    return True
-
-
-def _is_safe_popen_call(args: tuple, kwargs: dict) -> str | None:
-    """Check if a Popen call can be routed through cached_terminal.
-
-    Popen is often called with list args like [bash, "-c", "the command"].
-    When the last element is a safe string command and stdout=PIPE + text=True,
-    we can extract the command and route through cached_terminal.
-
-    Returns the extracted command string, or None if unsafe.
-    """
-    import subprocess
-
-    # Must have capturing enabled
-    stdout = kwargs.get("stdout", None)
-    if stdout is not subprocess.PIPE:
-        return None
-
-    # Must have text=True or universal_newlines=True
-    if not kwargs.get("text", False) and not kwargs.get("universal_newlines", False):
-        return None
-
-    # env and input change command behavior — BLOCKED from cache
-    if any(k in kwargs for k in ('env', 'input')):
-        return None
-
-    # cwd is safe (execution context, not content) — pass through.
-    # check/timeout are safe — caller's error/preference handling.
-
-    # shell=True with a string command
-    if kwargs.get("shell", False):
-        cmd = args[0] if args else kwargs.get("args", "")
-        if isinstance(cmd, str) and not _SHELL_METACHARS.search(cmd):
-            return cmd
-        return None
-
-    # List args: must end with a safe string command.
-    # Common patterns: [bash, "-c", "cmd"] or [sh, "-c", "cmd"]
-    cmd_list = args[0] if args else kwargs.get("args", [])
-    if not isinstance(cmd_list, (list, tuple)) or len(cmd_list) < 2:
-        return None
-
-    last = cmd_list[-1]
-    # The last arg must be a string (the actual command)
-    if not isinstance(last, str):
-        return None
-
-    # Check for a shell-exec pattern where the second-to-last is "-c"
-    shell_flags = {"-c", "-l", "-lc", "-cl"}
-    if len(cmd_list) >= 3 and cmd_list[-2] in shell_flags:
-        # It's a shell -c invocation — return the last arg as-is.
-        # Wrapped commands contain metacharacters (source, cd, eval, printf, exit).
-        # The metacharacter check is bypassed here because _shim_popen Step 1
-        # routes through cached_shell_exec which strips wrappers internally,
-        # and the daemon's allowed_terminal_commands regex allowlist provides
-        # the real security gate.
-        return last
-    return None
-
-
-def _shim_run(*args, **kwargs):
-    tr = _get_tr()
-    if tr and args:
-        cmd = args[0] if args else kwargs.get("args", "")
-        if isinstance(cmd, str) and _is_safe_string_command(cmd, kwargs):
-            try:
-                result = tr["terminal"](cmd)
-                if result and "output" in result and "exit_code" in result:
-                    from subprocess import CompletedProcess
-
-                    stdout = result.get("output", "")
-                    stderr = result.get("error", result.get("stderr", ""))
-                    return CompletedProcess(
-                        args=args[0] if args else kwargs.get("args", []),
-                        returncode=result["exit_code"],
-                        stdout=stdout,
-                        stderr=stderr,
-                    )
-            except Exception:
-                pass
-    return _original_run(*args, **kwargs)
-
-
-class _CachedPopen:
-    """Lightweight Popen-compatible wrapper for cached terminal output.
-
-    Provides the interface that _wait_for_process (Hermes's BaseEnvironment)
-    and other Popen consumers expect: .stdout, .poll(), .wait(), .pid, .returncode.
-    """
-
-    def __init__(self, cmd: str, output: str, exit_code: int, stderr: str = ""):
-        import io
-
-        self.stdout = io.StringIO(output)
-        self.stderr = io.StringIO(stderr)
-        self.pid = -1
-        self.args = cmd
-        self._returncode = exit_code
-        self._polled = False
-        self._communicated = False
-
-    def poll(self):
-        if not self._polled:
-            self._polled = True
-        return self._returncode
-
-    def wait(self, timeout=None):
-        return self._returncode
-
-    def communicate(self, input=None, timeout=None):
-        if self._communicated:
-            return ("", "")
-        self._communicated = True
-        out = self.stdout.getvalue() if hasattr(self.stdout, "getvalue") else ""
-        err = self.stderr.getvalue() if hasattr(self.stderr, "getvalue") else ""
-        return (out, err)
-
-    def kill(self):
-        pass
-
-    def terminate(self):
-        pass
-
-    @property
-    def returncode(self):
-        return self._returncode
-
-    def __enter__(self):
-        # subprocess.run() uses `with Popen(...) as process:`. Return self so
-        # cached terminal output works as a drop-in Popen context manager.
-        # Without this, the shimmed Popen crashes subprocess.run with
-        # "'_CachedPopen' object does not support the context manager protocol".
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Mirror subprocess.Popen.__exit__: close the streams opened by
-        # communicate(), and never suppress an exception.
-        if hasattr(self, "stdout") and self.stdout is not None:
-            try:
-                self.stdout.close()
-            except Exception:
-                pass
-        if hasattr(self, "stderr") and self.stderr is not None:
-            try:
-                self.stderr.close()
-            except Exception:
-                pass
-        return False
-
-    def __repr__(self):
-        return f"<_CachedPopen returncode={self._returncode}>"
-
-
-def _shim_popen(*args, **kwargs):
-    tr = _get_tr()
-    if tr:
-        cmd = _is_safe_popen_call(args, kwargs)
-        if cmd:
-            try:
-                # Step 1: try cached_shell_exec — strips agent wrappers
-                # (source, cd, eval, printf cwd markers, self.exit) and caches
-                # the inner command via cached_terminal with allowlist security.
-                result = tr["shell_exec"](cmd)
-                if result and "output" in result and "exit_code" in result:
-                    output = result.get("output", "")
-                    exit_code = result["exit_code"]
-                    stderr = result.get("error", result.get("stderr", ""))
-                    return _CachedPopen(cmd, output, exit_code, stderr)
-            except Exception:
-                pass
-            try:
-                # Step 2: fall back to direct cached_terminal (no wrapper stripping)
-                result = tr["terminal"](cmd)
-                if result and "output" in result and "exit_code" in result:
-                    output = result.get("output", "")
-                    exit_code = result["exit_code"]
-                    stderr = result.get("error", result.get("stderr", ""))
-                    return _CachedPopen(cmd, output, exit_code, stderr)
-            except Exception:
-                pass
-    return _original_popen(*args, **kwargs)
-
-
 def apply():
-    """Apply all shim monkey-patches. Called once on .pth import.
+    """Apply the shim monkey-patch. Called once on .pth import.
 
-    Skips patching when running under pytest (interferes with capture)
-    unless force=True is passed (for tests that explicitly test the shim).
+    Patches ONLY builtins.open for read-mode caching. Intentionally does
+    NOT touch subprocess.run/Popen — see module docstring (Option B).
+    Skips patching when running under pytest (interferes with capture).
     """
     if not _ENABLED:
         return
-    # Don't patch when running under pytest — interferes with stdout/stderr capture.
-    # At .pth load time, pytest isn't in sys.modules yet. Detection:
-    # - pytest binary: sys.argv[0] basename starts with 'pytest'
-    # - python3 -m pytest: sys.argv[0] is '-m' (module mode — can't tell which module)
-    # - PYTEST_CURRENT_TEST env var is set during test execution
+    # Don't patch when running under pytest.
     _argv = sys.argv[:5] if sys.argv else []
     if any(os.path.basename(str(a)).startswith("pytest") for a in _argv[:1]):
         return
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return
-    # For 'python3 -m pytest tests/...' — check for pytest in remaining args
     if _argv and _argv[0] == "-m" and any(
         "pytest" in str(a)
         for a in _argv[1:]
     ):
         return
     builtins.open = _shim_open
-    if _sp:
-        _sp.run = _shim_run
-        _sp.Popen = _shim_popen
 
 
 def remove():
-    """Restore all original functions."""
+    """Restore the original builtins.open."""
     builtins.open = _original_open
-    if _sp:
-        _sp.run = _original_run
-        _sp.Popen = _original_popen
 
 
 # ─── Auto-apply on .pth import ───
