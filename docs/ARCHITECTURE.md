@@ -333,9 +333,9 @@ This installs `tr_shim.pth` into site-packages. Every Python process auto-import
 
 - `builtins.open` (read-only) -> `cached_read` before touching disk
 
-Subprocess/terminal calls are intentionally NOT patched (**Option B, scheduled
-v0.8.19**; on the current v0.8.18 the shim still intercepts `subprocess.run`/
-`Popen`). Routing them through the daemon's cwd/env produced and replayed wrong
+Subprocess/terminal calls are intentionally NOT patched (**Option B, shipped in
+v0.8.19**; the shim no longer intercepts `subprocess.run`/`Popen`). Routing them
+through the daemon's cwd/env produced and replayed wrong
 output. `cached_shell_exec` / `cached_terminal` remain available as explicit
 daemon-side calls but are no longer wired into the shim once on v0.8.19+.
 

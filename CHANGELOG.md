@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.19] — 2026-08-24
+
+### Added
+- **Context recall tier (`toolrecall recall`)** — new optional stack, default-off gated on `[recall].enabled`: `recall_cache` schema table, `recall store/get` CLI + daemon `recall_store`/`recall_get` commands, MCP `recall_store`/`recall_get` tools, `recall_stats` with per-sink accounting, and a reproducible content classifier. Purpose documented in README / `RECALL_TIER.md` / `CONFIG_REFERENCE` with TTL-behavior tests.
+- **TTL expiry for recall entries** — recall cache entries support time-to-live expiry; `docs(recall)` clarifies purpose, TTL behavior + tests.
+- **Agent-agnostic `.pth` shim** — venv discovery + opt-in `.pth` shim (`toolrecall shim`) now works across agents; CLI reference + agent-type mechanism matrix added (`--venv`/`--all`/`--status`/`--uninstall`).
+- **Generalized healthcheck** — `toolrecall healthcheck` generalized; persistent shim disable/enable.
+- **`make` bench/docker/validate targets** — `make` gains bench/docker/validate targets; uv dev-deps + mypy gating fixed.
+- **Cross-platform setup** — relative DB-path robustness + cross-platform setup hardening.
+
+### Fixed
+- **Shim no longer intercepts `subprocess.run`/`subprocess.Popen` (Option B)** — the shim now patches only `builtins.open` for read-only `r`/`rt` access (keyed on path + mtime + size); terminal output runs natively in the agent's process, never transparently cached at the shim layer. `cached_shell_exec`/`cached_terminal` remain as explicit daemon-side calls (gated by `SecurityGate.check_terminal`). Regression tests: `tests/test_shim.py::TestOptionBNoSubprocess`.
+- **Shim serves cache hits as real files + size-aware invalidation** — `fix(shim)`.
+- **Socket divergence fixed** — shim + transport layer.
+
+### Changed
+- **CodeReview/security** — security scan (shell=True/eval/exec, `/etc`/`/dev` allowlist), doc/architecture audit, pre-commit hygiene: all clean.
+- **MCP multiplexer docs** — removed orphaned `end` in mermaid diagram, defined `dedup` correctly; ARCHITECTURE table row fixed; LiteLLM standalone hook added to adapter docs.
+
 ## [Unreleased] — shim Option B
 
 ### Fixed
