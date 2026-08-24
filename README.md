@@ -120,6 +120,22 @@ Full detail: [Context Tracker](docs/CONTEXT_TRACKER.md) · [Agent integration](d
 
 ---
 
+## Recall Tier *(opt-in)*
+
+> **TL;DR:** The Context Tracker can safely drop *file* content because re-reading from cache is byte-identical. The **Recall Tier** (default OFF) extends the same drop-and-restore contract to **non-reproducible** content — web/API/ephemeral output whose re-fetch would not return identical bytes.
+
+The tracker's dirty/clean model is lossless *because* it can re-fetch a file deterministically. That guarantee doesn't hold for a one-shot API result or a live web snapshot: re-fetching yields different bytes, so today that content is forced to stay in context at full token cost. The Recall Tier closes this gap:
+
+1. **`recall_store`** persists the raw content out-of-band and returns a tiny **`node_id`** pointer to keep in context.
+2. The agent drops the verbose raw block from context (tokens saved), keeping only the pointer.
+3. **`recall_get(node_id)`** restores the raw bytes on demand — the lossless-recoverable eviction contract for non-reproducible content.
+
+Everything reproducible keeps byte-identical semantics; the tier fires only for the non-reproducible tail. It is **opt-in** (`[recall].enabled = true`) and adds **zero runtime dependencies**. Savings are attributed to a dedicated `recall` sink in `cache_stats`, so they are never double-counted against file-cache savings.
+
+Full detail: [Recall Tier](docs/RECALL_TIER.md)
+
+---
+
 ## Input Dedup Hook
 
 > **TL;DR:** AI agents re-read the same files over and over, and every read pastes that file into the message they send to the model. This hook removes the repeated copies before they're billed — cutting input tokens with cost measured, not estimated.
@@ -217,6 +233,19 @@ toolrecall setup                # config -> systemd service -> daemon start
 > ```
 > The `toolrecall` package must also be installed in that venv (`import toolrecall` must work).
 
+**Agent type → mechanism:** pick based on what your agent is:
+
+| Agent type | Mechanism | Needs `toolrecall` in the venv? | Setup action |
+|---|---|---|---|
+| Python agent, own venv (Hermes, Codex, OpenCode, Cline) | `.pth` shim in the agent venv (transparent `open()`/`subprocess` cache) | yes | `toolrecall shim --install --venv <path>` (opt-in) |
+| Non-Python agent (Claude Code, Cursor, Cline, Windsurf) | MCP bridge (`toolrecall mcp`) | n/a | register an MCP server |
+| System python / global interpreter | shim in user site-packages | yes | `toolrecall shim --install` |
+
+> The `.pth` shim is **opt-in, default off** — `toolrecall shim --install` or
+> `--venv`/`--all` prompts before enabling. Use `--yes` to skip the prompt.
+> Verify with `toolrecall shim --status [--all]` (prints `probe: pass` only when
+> the shim actually imports in that venv from a neutral cwd).
+
 `toolrecall setup` creates `~/.config/toolrecall/toolrecall.toml` with default-deny security, generates a systemd user unit, and starts the daemon. After this, every `toolrecall` command "just works".
 
 Daemon auto-start fallback: systemd -> os.fork() -> DETACHED_PROCESS (Linux -> Docker/macOS -> Windows).
@@ -252,10 +281,13 @@ toolrecall mcp            Start MCP Bridge                           [auto-start
 toolrecall serve          Forward proxy (cache API responses)        [auto-starts]
 toolrecall serve --9000   Custom port forward proxy
 toolrecall replay         Record/replay agent sessions
-toolrecall shim --install Install OS-level cache shim (.pth file)
+toolrecall shim --install [--venv <path>|--all]  Install OS-level cache shim (.pth) — opt-in
+toolrecall shim --status [--venv <path>|--all]   Check shim presence + import probe
+toolrecall shim --uninstall [--venv <path>|--all] Remove .pth shim
 toolrecall turso          Turso Cloud sync: init, enable, disable, status
 toolrecall init           Create default config.toml and .env
 toolrecall config-set     Set a config value
+toolrecall context        Inspect Context Tracker / Recall Tier        [auto-starts]
 toolrecall index          Index knowledge DB (FTS5 search)  [not file cache pre-warm]
 toolrecall index-memory   Index agent memory stores
 toolrecall index-dir      Index a directory for FTS5 search [not file cache pre-warm]
@@ -281,6 +313,9 @@ terminal_default_ttl = 60
 [mcp_multiplex]
 enabled = true
 servers = ["time", "sequential-thinking"]
+
+[recall]
+enabled = false   # opt-in Recall Tier (lossless-recoverable eviction)
 
 [forward_proxy]
 # Starts on :8569 automatically with the daemon
@@ -320,6 +355,7 @@ servers = ["time", "sequential-thinking"]
 - [Context Stale](docs/CONTEXT_STALE.md) — provably stale files in agent conversations
 - [Context Tracker](docs/CONTEXT_TRACKER.md) — checkpoint-based dirty-file tracking
 - [AGENTS.md](docs/AGENTS.md) — agent instructions for MCP context tracker integration
+- [Recall Tier](docs/RECALL_TIER.md) — opt-in lossless-recoverable eviction for non-reproducible content
 - [Testing Guide](docs/TESTING.md) — test philosophy, per-file coverage
 - [How It Works](docs/HOW_IT_WORKS.md) — quick technical overview
 - [libSQL Backend](docs/LIBSQL_COMPARISON.md) — multi-writer, vector search, cloud sync
