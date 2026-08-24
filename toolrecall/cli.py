@@ -1123,8 +1123,75 @@ WantedBy=default.target
 """
 
 
+def _host_os() -> str:
+    """Classify the host OS: 'macos', 'windows', or 'linux'.
+
+    systemd autostart only applies on Linux; macOS uses launchd, and
+    Windows has no per-user service manager we target here.
+    """
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "linux"
+
+
+# macOS LaunchAgent plist (equivalent of the Linux systemd user service).
+# Loaded at login via RunAtLoad; KeepAlive restarts the daemon if it exits.
+LAUNCH_AGENT_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{toolrecall_bin}</string>
+        <string>daemon</string>
+        <string>--foreground</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+"""
+
+
+def _install_macos_launch_agent() -> tuple[bool, str]:
+    """Install a macOS LaunchAgent that starts the ToolRecall daemon at login.
+
+    Writes a plist to ~/Library/LaunchAgents and, if possible, loads it
+    immediately with launchctl. Even when launchctl is unavailable, the
+    RunAtLoad plist guarantees an autostart at the next login.
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+
+    label = "toolrecall-daemon"
+    agents_dir = os.path.expanduser("~/Library/LaunchAgents")
+    plist_path = os.path.join(agents_dir, label + ".plist")
+
+    # Prefer the on-disk binary and resolve to an absolute path -- launchd
+    # does NOT expand "~" inside ProgramArguments.
+    toolrecall_bin = _shutil.which("toolrecall") or os.path.expanduser("~/.local/bin/toolrecall")
+    if not toolrecall_bin or not os.path.exists(toolrecall_bin):
+        return False, "macOS autostart skipped: toolrecall binary not found"
+
+    try:
+        os.makedirs(agents_dir, exist_ok=True)
+        with open(plist_path, "w") as f:
+            f.write(LAUNCH_AGENT_PLIST.format(label=label, toolrecall_bin=toolrecall_bin))
+        # Best-effort immediate load; non-fatal, next-login start still applies.
+        _sp.run(["launchctl", "load", plist_path], capture_output=True, timeout=10)
+        return True, f"macOS autostart: LaunchAgent installed ({plist_path})"
+    except Exception:
+        return False, "macOS autostart could not be installed"
+
+
 def cmd_setup():
-    """One-shot setup: init config → install systemd service → ensure daemon + shim."""
+    """One-shot setup: init config → install autostart service → ensure daemon + shim."""
     import os
 
     print("=" * 56)
@@ -1144,30 +1211,52 @@ def cmd_setup():
     else:
         steps_ok.append("config: found")
 
-    # ─── 2. Systemd user service (optional) ─────────
-    import subprocess
+    # ─── 2. Autostart service (OS-specific) ────────
+    if _host_os() == "macos":
+        ok, msg = _install_macos_launch_agent()
+        (steps_ok if ok else errors).append(msg)
+    elif _host_os() == "linux":
+        import subprocess
 
-    try:
-        systemd_dir = os.path.expanduser("~/.config/systemd/user")
-        service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
-        os.makedirs(systemd_dir, exist_ok=True)
+        try:
+            systemd_dir = os.path.expanduser("~/.config/systemd/user")
+            service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
+            os.makedirs(systemd_dir, exist_ok=True)
 
-        toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
-        if not os.path.exists(toolrecall_bin):
-            import shutil
+            toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
+            if not os.path.exists(toolrecall_bin):
+                import shutil
 
-            toolrecall_bin = shutil.which("toolrecall") or toolrecall_bin
-        service_content = SYSTEMD_SERVICE_CONTENT % (toolrecall_bin + " daemon --foreground")
-        with open(service_path, "w") as f:
-            f.write(service_content)
+                toolrecall_bin = shutil.which("toolrecall") or toolrecall_bin
+            service_content = SYSTEMD_SERVICE_CONTENT % (toolrecall_bin + " daemon --foreground")
+            with open(service_path, "w") as f:
+                f.write(service_content)
 
-        subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=10)
-        subprocess.run(
-            ["systemctl", "--user", "enable", "toolrecall-daemon"], capture_output=True, timeout=10
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=10
+            )
+            enabled = subprocess.run(
+                ["systemctl", "--user", "enable", "toolrecall-daemon"],
+                capture_output=True,
+                timeout=10,
+            )
+            if enabled.returncode == 0:
+                steps_ok.append("systemd service: written + enabled")
+            else:
+                steps_ok.append(
+                    "systemd service: written (enable failed — run "
+                    "`systemctl --user enable toolrecall-daemon`)"
+                )
+        except FileNotFoundError:
+            # No systemctl on this Linux (e.g. minimal container) — daemon
+            # still starts via _ensure_daemon's direct-launch fallback.
+            steps_ok.append(
+                "systemd service: written (systemctl not found — daemon runs via direct launch)"
+            )
+    else:  # windows
+        steps_ok.append(
+            "autostart: not installed (Windows — start `toolrecall daemon` per session)"
         )
-        steps_ok.append("systemd service: written + enabled")
-    except FileNotFoundError:
-        pass  # No systemd — _ensure_daemon will use fork
 
     # ─── 3. Daemon (auto-start) ────────────
     if _ensure_daemon():

@@ -57,6 +57,7 @@ ENV_MAP = {
     "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
+    "TOOLRECALL_RECALL_TTL": ("recall", "ttl"),
 }
 
 
@@ -289,6 +290,19 @@ class Config:
         if isinstance(val, str):
             return val.strip().lower() in ("1", "true", "yes", "on")
         return bool(val)
+
+    @property
+    def recall_ttl(self) -> float:
+        """Seconds until a recalled block expires (0 = never expire).
+
+        Default 0 (never expire) — preserves current behavior until the
+        tier is enabled and a TTL is set. Env override: TOOLRECALL_RECALL_TTL
+        """
+        val = self.get("recall", "ttl", default=0)
+        try:
+            return float(val or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     @property
     def turso_api_base(self) -> str:

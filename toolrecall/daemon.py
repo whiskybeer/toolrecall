@@ -1370,6 +1370,7 @@ class DaemonServer:
             content_type=req.get("content_type", "other"),
             reproducible=bool(req.get("reproducible")),
             summary=req.get("summary", ""),
+            ttl=self.cfg.recall_ttl,
         )
         # Accounting: store = a disk-write miss for the recall sink.
         _cache_record("recall", hit=False, tokens_read=max(1, len(content) // 3))

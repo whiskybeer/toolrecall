@@ -194,11 +194,10 @@ flowchart TB
 **OS-level Shim** (`toolrecall shim --install`):
 - Installs `tr_shim.pth` into site-packages. Every Python process auto-caches:
   - `builtins.open` (read-only) -> `cached_read` before touching disk
-- Subprocess/terminal calls are NEVER intercepted (**Option B, scheduled v0.8.19**;
-  on the current v0.8.18 the shim still intercepts `subprocess.run`/`Popen` until
-  you upgrade). Routing them through the daemon ran them in the daemon's cwd/env
-  and replayed the wrong output, so Option B removes terminal interception and
-  runs terminal output natively. `cached_terminal` remains available explicitly.
+- Subprocess/terminal calls are **NEVER intercepted (Option B)**. Routing them
+  through the daemon ran them in the daemon's cwd/env and replayed the wrong
+  output, so the shim does not patch subprocess/terminal; terminal output runs
+  natively. `cached_terminal` remains available explicitly.
 - Transparent — zero agent-side configuration needed
 - Disable per-process with `TOOLRECALL_SHIM_DISABLE=1`
 

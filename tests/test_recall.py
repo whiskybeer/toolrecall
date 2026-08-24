@@ -196,6 +196,113 @@ class TestRecallStore(unittest.TestCase):
         self.assertGreater(st["tokens"], 0)
 
 
+class TestRecallTTL(unittest.TestCase):
+    """TTL expiry semantics: expires_at persistence, lazy purge, GC sweep."""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.mkdtemp()
+        self._db_path = os.path.join(self._tmp, "test_recall_ttl.db")
+        os.environ["TOOLRECALL_CACHE_DB"] = self._db_path
+        from toolrecall._db import _db_lock, _db_real
+
+        import toolrecall._db as _db_mod
+
+        _db_lock.acquire()
+        if _db_real is not None:
+            _db_real.close()
+            _db_mod._db_real = None
+        _db_lock.release()
+        _db._cached_config = None
+        from toolrecall.cache import _init
+
+        _init()
+
+    def tearDown(self):
+        import shutil
+
+        os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _expires_at(self, node_id_):
+        from toolrecall._db import _db as _db_call
+
+        with _db_call() as conn:
+            row = conn.execute(
+                "SELECT expires_at FROM recall_cache WHERE node_id=?", (node_id_,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def _set_expired(self, node_id_):
+        import time
+
+        from toolrecall._db import _db as _db_call
+
+        with _db_call() as conn:
+            conn.execute(
+                "UPDATE recall_cache SET expires_at=? WHERE node_id=?",
+                (time.time() - 100, node_id_),
+            )
+
+    def _count(self) -> int:
+        from toolrecall._db import _db as _db_call
+
+        with _db_call() as conn:
+            return conn.execute("SELECT COUNT(*) FROM recall_cache").fetchone()[0]
+
+    def test_default_ttl_never_expires(self):
+        from toolrecall import recall
+
+        nid = recall.store(fingerprint="fp", content="x", content_type="web", reproducible=False)
+        self.assertIsNone(self._expires_at(nid))
+        self.assertIsNotNone(recall.get(nid))
+
+    def test_positive_ttl_sets_expires_at(self):
+        import time
+
+        from toolrecall import recall
+
+        ttl = 3600.0
+        nid = recall.store(
+            fingerprint="fp", content="x", content_type="web", reproducible=False, ttl=ttl
+        )
+        exp = self._expires_at(nid)
+        self.assertIsNotNone(exp)
+        self.assertAlmostEqual(exp, time.time() + ttl, delta=5)
+
+    def test_expired_entry_is_a_miss_and_is_purged(self):
+        from toolrecall import recall
+
+        nid = recall.store(fingerprint="fp", content="x", content_type="web", reproducible=False)
+        self._set_expired(nid)
+        before = self._count()
+        self.assertIsNone(recall.get(nid))
+        self.assertEqual(self._count(), before - 1)
+
+    def test_gc_sweeps_expired_keeps_live(self):
+        from toolrecall.cache import garbage_collect
+        from toolrecall import recall
+
+        expired = recall.store(
+            fingerprint="gc-exp", content="x", content_type="web", reproducible=False
+        )
+        keep = recall.store(
+            fingerprint="gc-keep", content="y", content_type="web", reproducible=False
+        )
+        self._set_expired(expired)
+        garbage_collect()
+        self.assertIsNone(self._expires_at(expired), "expired row should be GC'd")
+        self.assertIsNotNone(recall.get(keep), "live row must survive GC")
+
+    def test_stats_reports_only_live_rows(self):
+        from toolrecall import recall
+
+        nid = recall.store(fingerprint="fp", content="x", content_type="web", reproducible=False)
+        self._set_expired(nid)
+        self.assertEqual(recall.stats()["total"], 1)
+
+
 class TestRecallDaemonGate(unittest.TestCase):
     """Daemon handlers refuse to run while the recall tier is disabled."""
 
