@@ -467,6 +467,45 @@ def context_reset() -> dict:
     return resp
 
 
+def recall_store(
+    *,
+    fingerprint: str,
+    content: str,
+    content_type: str = "other",
+    reproducible: bool = False,
+    summary: str = "",
+) -> dict:
+    """Persist a block out-of-band; return the node_id pointer to keep in context.
+
+    Client for the daemon's ``recall_store`` command. Use for non-reproducible
+    content (web / API / ephemeral output) that cannot be re-fetched identically.
+    """
+    client = _get_client()
+    payload = {
+        "cmd": "recall_store",
+        "fingerprint": fingerprint,
+        "content": content,
+        "content_type": content_type,
+        "reproducible": reproducible,
+        "summary": summary,
+    }
+    return client.send(payload)
+
+
+def recall_get(node_id: str) -> dict:
+    """Restore a persisted block by node_id (raw bytes + summary)."""
+    client = _get_client()
+    payload = {"cmd": "recall_get", "node_id": node_id}
+    return client.send(payload)
+
+
+def recall_stats() -> dict:
+    """Return recall-cache aggregate totals (entries + persisted tokens)."""
+    client = _get_client()
+    payload = {"cmd": "recall_stats"}
+    return client.send(payload)
+
+
 # Direct fallbacks are lazy-imported via _get_direct_cache() / _get_direct_docs().
 # This avoids opening a second SQLite connection when the daemon is already running.
 # The cache module (and its DB connection) is only loaded when the daemon is

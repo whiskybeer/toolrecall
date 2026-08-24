@@ -213,6 +213,54 @@ TOOL_DEFINITIONS = [
         "description": "Reset the context tracker. Call context_set_checkpoint after.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "recall_store",
+        "description": "Persist a non-reproducible content block out-of-band and return a "
+        "node_id to keep in context. Use for web/API/ephemeral output that cannot "
+        "be re-fetched identically. Later recall_get(node_id) restores the raw bytes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {
+                    "type": "string",
+                    "description": "Stable key identifying this block (drives node_id dedup).",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Raw content to persist out-of-band.",
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": "web|api|terminal|file|mcp|browser|other",
+                },
+                "reproducible": {
+                    "type": "boolean",
+                    "description": "False for non-reproducible content (the recall tier's target).",
+                    "default": False,
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Optional short semantic pointer left with the entry.",
+                    "default": "",
+                },
+            },
+            "required": ["fingerprint", "content"],
+        },
+    },
+    {
+        "name": "recall_get",
+        "description": "Restore a persisted content block by node_id (raw bytes + summary).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "node_id returned by recall_store.",
+                }
+            },
+            "required": ["node_id"],
+        },
+    },
 ]
 
 CMD_TO_MCP = {
@@ -237,6 +285,8 @@ CMD_TO_MCP = {
     "context_get_stale": "context_get_stale",
     "context_get_stats": "context_get_stats",
     "context_reset": "context_reset",
+    "recall_store": "recall_store",
+    "recall_get": "recall_get",
 }
 
 
@@ -441,6 +491,7 @@ class MCPBridge:
         allow_terminal = info.get("allow_terminal", False)
         allow_invalidate = info.get("allow_invalidate", False)
         multiplex_enabled = info.get("multiplex_enabled", False)
+        recall_enabled = info.get("recall_enabled", False)
 
         tools = []
         for tdef in TOOL_DEFINITIONS:
@@ -448,6 +499,8 @@ class MCPBridge:
             if name == "terminal" and not allow_terminal:
                 continue
             if name == "cache_invalidate" and not allow_invalidate:
+                continue
+            if name in ("recall_store", "recall_get") and not recall_enabled:
                 continue
             if name in ("mcp_call", "mcp_list_servers") and not multiplex_enabled:
                 continue

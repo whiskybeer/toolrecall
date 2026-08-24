@@ -1707,8 +1707,89 @@ def cmd_context():
 
         sys.exit(1 if stale else 0)
 
+    if sub == "recall":
+        rsub = args[1] if len(args) > 1 else ""
+        if rsub in ("", "--help", "-h", "help"):
+            print("Usage: toolrecall context recall <command>")
+            print("")
+            print("Commands:")
+            print("  store <fingerprint> [content_type]   Persist stdin content, print node_id")
+            print("  get   <node_id>                      Restore a stored block")
+            print(
+                "  status                               Count + tokens in recall cache (if enabled)"
+            )
+            print("")
+            print("Options for 'store':")
+            print("  --reproducible    Mark block as deterministically re-fetchable")
+            print('  --summary "..."    Optional short semantic pointer')
+            print("Options for 'get':")
+            print("  --json            Print the full entry as JSON")
+            return
+
+        if rsub == "store":
+            if len(args) < 3:
+                print(
+                    "Usage: toolrecall context recall store <fingerprint> [content_type]",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            fingerprint = args[2]
+            content_type = args[3] if len(args) > 3 else "other"
+            reproducible = "--reproducible" in args
+            summary = ""
+            if "--summary" in args:
+                i = args.index("--summary")
+                if i + 1 < len(args):
+                    summary = args[i + 1]
+            content = sys.stdin.read()
+            if not content:
+                print(
+                    "  \u26a0\ufe0f  No input on stdin — pipe the content to persist.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            resp = _call(
+                lambda: client.recall_store(
+                    fingerprint=fingerprint,
+                    content=content,
+                    content_type=content_type,
+                    reproducible=reproducible,
+                    summary=summary,
+                )
+            )
+            print(resp.get("node_id", ""))
+            return
+
+        if rsub == "get":
+            if len(args) < 3:
+                print("Usage: toolrecall context recall get <node_id>", file=sys.stderr)
+                sys.exit(2)
+            node_id_ = args[2]
+            resp = _call(lambda: client.recall_get(node_id_))
+            entry = resp.get("entry")
+            if entry is None:
+                print(f"  \u274c  No entry for node_id: {node_id_}", file=sys.stderr)
+                sys.exit(1)
+            if "--json" in args:
+                print(_json.dumps(entry, indent=2))
+                return
+            if entry.get("summary"):
+                print(f"# {entry['summary']}")
+            print(entry.get("content", ""))
+            return
+
+        if rsub == "status":
+            resp = _call(client.recall_stats)
+            print(f"  recall entries:   {resp.get('total', 0)}")
+            print(f"  persisted tokens: {resp.get('tokens', 0):,}")
+            return
+
+        print(f"Unknown recall command: {rsub}")
+        print("Available: store, get, status")
+        sys.exit(2)
+
     print(f"Unknown context command: {sub}")
-    print("Available: status, stale")
+    print("Available: status, stale, recall")
     sys.exit(2)
 
 

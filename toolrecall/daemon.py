@@ -1151,6 +1151,12 @@ class DaemonServer:
                 return self._handle_context_get_stats(request)
             elif cmd == "context_reset":
                 return self._handle_context_reset(request)
+            elif cmd == "recall_store":
+                return self._handle_recall_store(request)
+            elif cmd == "recall_get":
+                return self._handle_recall_get(request)
+            elif cmd == "recall_stats":
+                return self._handle_recall_stats(request)
             else:
                 return {"error": f"Unknown command: {cmd}"}
 
@@ -1180,6 +1186,7 @@ class DaemonServer:
             "allow_invalidate": self.security.allow_invalidate,
             "multiplex_enabled": self.security.allow_multiplex,
             "emit_context_hints": self.cfg.mcp_emit_context_hints,
+            "recall_enabled": self.cfg.recall_enabled,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
             "context_tracker": {
                 "checkpoint": ctx.get("checkpoint", 0),
@@ -1346,6 +1353,52 @@ class DaemonServer:
         if req.get("mcp_origin"):
             _cache_record("mcp_cache", hit=result.get("unchanged", False), path=path)
         return result
+
+    def _handle_recall_store(self, req: dict) -> dict:
+        """Persist a non-reproducible content block; return a node_id pointer."""
+        if not self.cfg.recall_enabled:
+            return {"error": "recall tier disabled (enable [recall].enabled)"}
+        fingerprint = req.get("fingerprint", "")
+        content = req.get("content", "")
+        if not fingerprint or not content:
+            return {"error": "Missing 'fingerprint' or 'content'"}
+        from toolrecall import recall
+
+        nid = recall.store(
+            fingerprint=fingerprint,
+            content=content,
+            content_type=req.get("content_type", "other"),
+            reproducible=bool(req.get("reproducible")),
+            summary=req.get("summary", ""),
+        )
+        # Accounting: store = a disk-write miss for the recall sink.
+        _cache_record("recall", hit=False, tokens_read=max(1, len(content) // 3))
+        return {"node_id": nid}
+
+    def _handle_recall_get(self, req: dict) -> dict:
+        """Restore a persisted block by node_id."""
+        if not self.cfg.recall_enabled:
+            return {"error": "recall tier disabled (enable [recall].enabled)"}
+        node_id_ = req.get("node_id", "")
+        if not node_id_:
+            return {"error": "Missing 'node_id'"}
+        from toolrecall import recall
+
+        entry = recall.get(node_id_)
+        if entry is not None:
+            # Accounting: a get hit = tokens served from the recall sink
+            # that would have been re-sent into the context.
+            tokens = int(entry.get("tokens") or 0)
+            _cache_record("recall", hit=True, tokens_saved=tokens, context_tokens=tokens)
+        return {"entry": entry}
+
+    def _handle_recall_stats(self, req: dict) -> dict:
+        """Return recall-cache aggregate totals."""
+        if not self.cfg.recall_enabled:
+            return {"error": "recall tier disabled (enable [recall].enabled)"}
+        from toolrecall import recall
+
+        return recall.stats()
 
     def _handle_docs_search(self, req: dict) -> dict:
         query = req.get("query", "")

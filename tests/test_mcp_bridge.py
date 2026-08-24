@@ -58,6 +58,7 @@ class MockDaemonServer:
                 "allow_terminal": True,
                 "allow_invalidate": True,
                 "multiplex_enabled": True,
+                "recall_enabled": True,
             }
         self.call_responses = call_responses or {}
 
@@ -157,7 +158,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     # ── Tools/List ─────────────────────────────────────────
 
     def test_tools_list_returns_all_with_gates_open(self):
-        """When all gates enabled, all 17 tools are listed (context tools always visible)."""
+        """When all gates enabled, all 19 tools are listed (context tools always visible)."""
         resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
@@ -182,7 +183,10 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         self.assertIn("context_get_dirty", names)
         self.assertIn("context_get_stats", names)
         self.assertIn("context_reset", names)
-        self.assertEqual(len(tools), 17)
+        # Recall tier
+        self.assertIn("recall_store", names)
+        self.assertIn("recall_get", names)
+        self.assertEqual(len(tools), 19)
 
     def test_tools_list_hides_terminal_when_disabled(self):
         """terminal is hidden when daemon has allow_terminal=False."""
@@ -558,11 +562,11 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
 
 class TestToolDefinitions(unittest.TestCase):
-    """TOOL_DEFINITIONS contains valid schemas for all 17 tools."""
+    """TOOL_DEFINITIONS contains valid schemas for all 19 tools."""
 
-    def test_has_all_17_tools(self):
-        """There are exactly 17 tool definitions."""
-        self.assertEqual(len(TOOL_DEFINITIONS), 17)
+    def test_has_all_19_tools(self):
+        """There are exactly 19 tool definitions."""
+        self.assertEqual(len(TOOL_DEFINITIONS), 19)
 
     def test_each_tool_has_valid_schema(self):
         """Every tool has name, description, and inputSchema with properties."""

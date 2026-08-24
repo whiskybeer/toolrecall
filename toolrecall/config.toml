@@ -39,6 +39,14 @@ terminal_default_ttl = 300  # 5 minutes for unknown commands
 # Values: "md5" (default) or "sha256"
 # hash_algorithm = "md5"
 
+# ─── Recall Tier (opt-in, default OFF) ───────────────
+# Lossless-recoverable eviction: persist non-reproducible content out-of-band,
+# drop it from context, leave a node_id pointer, restore on demand.
+# OFF by default — deterministic cache behavior is unchanged until enabled.
+[recall]
+enabled = false
+# summarizer = ""   # Phase 2: optional external summarize command for enrichment
+
 # When true, log a WARNING when shell=True fallback is used
 # (occurs when shlex.split() fails on a complex command).
 # Default: true — helps detect if the agent is being tricked
