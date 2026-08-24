@@ -554,7 +554,7 @@ def cached_read(path: str, source: str = "") -> dict:
 
     # ── 1. In-memory cache (fast path) ──
     entry = _file_cache.get(path)
-    if entry and entry["mtime"] == stat.st_mtime:
+    if entry and entry["mtime"] == stat.st_mtime and entry["size"] == stat.st_size:
         tokens = _estimate_tokens(entry["content"])
         context_tokens = tokens if source == "agent_tool" else 0
         _record(
@@ -567,13 +567,14 @@ def cached_read(path: str, source: str = "") -> dict:
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT content, mtime FROM file_cache WHERE path_hash = ?", (path_hash,)
+                "SELECT content, mtime, size FROM file_cache WHERE path_hash = ?",
+                (path_hash,),
             ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None
 
-    if row and row["mtime"] == stat.st_mtime:
+    if row and row["mtime"] == stat.st_mtime and row["size"] == stat.st_size:
         _file_cache.put(
             path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size}
         )

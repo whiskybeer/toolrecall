@@ -29,6 +29,8 @@ Uninstall:
 
 Config:
     TOOLRECALL_SHIM_DISABLE=1  — disable shim at runtime
+    toolrecall shim --disable  — persistent disable (writes ~/.toolrecall/shim.disabled)
+    toolrecall shim --enable   — clear the persistent disable marker
 """
 
 import os
@@ -36,7 +38,28 @@ import builtins
 import sys
 import threading
 
-_ENABLED = not os.environ.get("TOOLRECALL_SHIM_DISABLE", "")
+
+def _marker_path() -> str:
+    """Path of the persistent disable marker.
+
+    Honors ``TOOLRECALL_SHIM_MARKER`` to point at a custom location (useful for
+    tests and multi-daemon setups). Defaults to ~/.toolrecall/shim.disabled.
+    """
+    override = os.environ.get("TOOLRECALL_SHIM_MARKER", "")
+    if override:
+        return override
+    return os.path.join(os.path.expanduser("~/.toolrecall"), "shim.disabled")
+
+
+def _marker_disabled() -> bool:
+    """True if a persistent disable marker file exists."""
+    p = _marker_path()
+    if not p:
+        return False
+    return os.path.isfile(p)
+
+
+_ENABLED = not (os.environ.get("TOOLRECALL_SHIM_DISABLE", "") or _marker_disabled())
 
 # ─── Re-entrancy guard ───
 # Prevents infinite recursion when the shim's own code path (importing
@@ -124,6 +147,53 @@ def _should_skip(path: str | bytes | os.PathLike) -> bool:
 _original_open = builtins.open
 
 
+def _open_cached_content(content, mode="r", *args, **kwargs):
+    """Return a *real* file object backed by the cached ``content`` str.
+
+    The shim must hand back something that behaves like a normal
+    ``open(path, *args, **kwargs)`` result: consumers legitimately rely on
+    ``.fileno()``, ``.buffer``, ``.name``, ``os.fstat()``, mmap, select, or
+    piping the handle to a subprocess. A plain ``io.StringIO`` provides none
+    of that and crashes terminal/bash-style callers, so on a cache hit we
+    materialize the cached bytes into a temporary file and return a real
+    handle. The temp file is unlinked immediately after open; on POSIX the
+    inode stays alive until the returned handle is closed.
+
+    Any exception (disk full, encoding error, ...) propagates so the caller's
+    ``except`` falls back to reading the original path directly.
+    """
+    import tempfile
+
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix=".toolrecall-shim-", suffix=".tmp")
+        # Persist cached bytes with the same encoding the re-opened handle
+        # will use, so the round-trip is lossless for any encoding.
+        enc = kwargs.get("encoding") or "utf-8"
+        with os.fdopen(fd, "w", encoding=enc) as f:
+            f.write(content)
+        fd = None  # ownership moved into the with-block
+        handle = _original_open(tmp_path, mode, *args, **kwargs)
+        try:
+            os.unlink(tmp_path)  # POSIX: inode lives until handle is closed
+        except OSError:
+            pass
+        return handle
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
+
+
 def _shim_open(path, mode="r", *args, **kwargs):
     # Don't intercept non-file paths (integers = file descriptors,
     # None, or capture objects from test frameworks).
@@ -155,9 +225,7 @@ def _shim_open(path, mode="r", *args, **kwargs):
                 # real cached_read (from cache.py) reads the file directly
                 # and records stats exactly once.
                 if result and result.get("cached", False) and "content" in result:
-                    import io
-
-                    return io.StringIO(result["content"])
+                    return _open_cached_content(result["content"], mode, *args, **kwargs)
             except Exception:
                 pass
         return _original_open(path_str, mode, *args, **kwargs)
@@ -188,6 +256,33 @@ def apply():
 def remove():
     """Restore the original builtins.open."""
     builtins.open = _original_open
+
+
+def disable() -> bool:
+    """Persistently disable the shim by writing the marker file.
+
+    Returns True on success. Existing processes keep running as-is; new
+    Python processes will skip the shim (marker is honored at import).
+    """
+    try:
+        p = _marker_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("disabled")
+        return True
+    except OSError:
+        return False
+
+
+def enable() -> bool:
+    """Re-enable the shim by removing the persistent disable marker."""
+    try:
+        p = _marker_path()
+        if p and os.path.exists(p):
+            os.remove(p)
+        return True
+    except OSError:
+        return False
 
 
 # ─── Auto-apply on .pth import ───

@@ -15,6 +15,7 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 |------|----------|------|
 | `toolrecall setup` | `cmd_setup()` | `toolrecall/cli.py` |
 | `toolrecall restart` | `cmd_restart()` | `toolrecall/cli.py` |
+| `toolrecall stop` | `cmd_stop()` | `toolrecall/cli.py` |
 | `toolrecall init` | `cmd_init()` | `toolrecall/cli.py` |
 | `toolrecall status` | `cmd_status()` | `toolrecall/cli.py` |
 | `toolrecall stats` | `cmd_stats()` | `toolrecall/cli.py` |
@@ -180,6 +181,18 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **Purpose:** Health check + clean daemon restart. Verifies config integrity
   before restarting the systemd service.
 
+### `toolrecall stop`
+
+- **File:** `cli.py : cmd_stop()`
+- **Purpose:** Stop the daemon and **revert the forward-proxy base-URL wiring** agents
+  were pointed at, so they call their providers directly again.
+- **Note:** The forward proxy (`:8569`) is owned by the daemon process and stops with
+  it — stopping the daemon automatically takes the proxy down.
+- **Revert scope:** Strips only the exact `localhost`/`127.0.0.1:8569` override lines from
+  `~/.bashrc`, `~/.profile`, and `~/.hermes/config.yaml` (each touched file is backed up
+  with a timestamped sibling). Real-host overrides and unrelated lines are left intact.
+- **Restart with:** `toolrecall daemon`
+
 ### `toolrecall replay`
 
 - **File:** `cli.py : cmd_replay()` → dispatches subcommands
@@ -206,6 +219,23 @@ Each function imports its dependencies lazily — running `toolrecall status` do
   - `toolrecall turso disable` — disable background sync
   - `toolrecall turso status` — show sync status
 - **Full reference:** [libSQL Backend](LIBSQL_COMPARISON.md)
+
+### `toolrecall healthcheck`
+
+- **File:** `cli.py : cmd_healthcheck()` → `toolrecall/healthcheck.py`
+- **Purpose:** One-shot daemon/cache health status for operators and cron
+  watchdogs. Reuses ToolRecall's **own** transport/pid/lock paths — no
+  hardcoded per-machine config.
+- **What it reports:** daemon process count, `daemon.pid` liveness, `daemon-*.lck`
+  lock-file count, UDS socket presence, shim state (`active`/`inactive`), and
+  cache hit-rate.
+- **Exit codes:**
+  - `0` — healthy
+  - `1` — daemon down or abnormal pid/lock/socket state (warns, with `note:` line)
+  - `2` — hard error
+- **Cron usage:** `TOOLRECALL_BIN=... toolrecall healthcheck` (cron shells don't
+  inherit `~/.local/bin` PATH). The Hermes watchdog wraps this command and adds
+  category-level zero-hits interpretation; the core signal lives here.
 
 ### `toolrecall context`
 

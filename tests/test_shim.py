@@ -184,18 +184,21 @@ class TestShimOpenRouting(unittest.TestCase):
         shim_mod._ENABLED = self._orig_enabled
         shim_mod._thread_local.active = False
 
-    def test_cache_hit_returns_stringio(self):
-        """When cached_read returns content, _shim_open returns a StringIO."""
+    def test_cache_hit_returns_real_file(self):
+        """When cached_read returns content, _shim_open returns a real file
+        object (backed by a temp file), not a StringIO."""
         shim_mod._TR = {
             "read": lambda p, **kwargs: {"cached": True, "content": "cached file content"},
         }
-        shim_mod._original_open = MagicMock(return_value=io.StringIO("should not be called"))
+        # _original_open (captured at import, before the shim patched
+        # builtins.open) is used by the temp-file materializer; leave it as
+        # the real open so the returned handle has full file semantics.
 
         result = shim_mod._shim_open("/some/file", "r")
-        self.assertIsInstance(result, io.StringIO)
+        self.assertNotIsInstance(result, io.StringIO)
         self.assertEqual(result.read(), "cached file content")
-        # Original open should NOT have been called
-        shim_mod._original_open.assert_not_called()
+        self.assertTrue(hasattr(result, "fileno"))
+        result.close()
 
     def test_cache_miss_falls_back_to_original_open(self):
         """When cached_read returns no content, fall back to _original_open."""
@@ -305,15 +308,22 @@ class TestShimOpenRouting(unittest.TestCase):
         shim_mod._TR["read"].assert_not_called()
 
     def test_rt_mode_is_intercepted(self):
-        """'rt' mode is a pure read and should be intercepted."""
+        """'rt' mode is a pure read and should be intercepted.
+
+        The intercepted hit must still return a real file object (real
+        fileno / buffer semantics), never a StringIO.
+        """
         shim_mod._TR = {
             "read": MagicMock(return_value={"cached": True, "content": "cached rt content"}),
         }
-        shim_mod._original_open = MagicMock()
+        # _original_open (captured at import, before builtins.open was
+        # patched to _shim_open) is the real open used by the materializer.
 
         result = shim_mod._shim_open("/some/file", "rt")
-        self.assertIsInstance(result, io.StringIO)
+        self.assertNotIsInstance(result, io.StringIO)
         self.assertEqual(result.read(), "cached rt content")
+        self.assertTrue(hasattr(result, "fileno"))
+        result.close()
 
 
 class TestOptionBNoSubprocess(unittest.TestCase):
@@ -420,6 +430,88 @@ class TestApplyRemove(unittest.TestCase):
         self.assertIs(builtins.open, original_builtins_open)
         # Restore for other tests
         importlib.reload(shim_mod)
+
+    def test_apply_noop_when_marker_file_present(self):
+        """Persistent marker file disables the shim at import (shim --disable).
+
+        Runs a SUBPROCESS with a fresh interpreter so the marker env var is set
+        BEFORE toolrecall.shim is imported — the import-time gate then sees the
+        marker and must leave builtins.open unpatched. This is hermetic: no
+        importlib.reload, so it cannot leak client/cache state into later tests.
+        """
+        import subprocess as _sp
+        import sys as _sys
+
+        with tempfile.TemporaryDirectory() as marker_dir:
+            marker = os.path.join(marker_dir, "shim.disabled")
+            with open(marker, "w") as f:
+                f.write("disabled")
+            code = (
+                "import os, builtins; "
+                "from toolrecall import shim as m; "
+                "print('ENABLED', m._ENABLED); "
+                "print('PATCHED', builtins.open is m._shim_open); "
+                "print('DISABLED', m._marker_disabled())"
+            )
+            env = dict(os.environ)
+            env["TOOLRECALL_SHIM_MARKER"] = marker
+            r = _sp.run(
+                [_sys.executable, "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            out = r.stdout
+            self.assertIn("ENABLED False", out)
+            self.assertIn("PATCHED False", out)
+            self.assertIn("DISABLED True", out)
+
+    def test_apply_noop_when_marker_absent_subprocess(self):
+        """Without a marker, a fresh interpreter patches open() (sanity check)."""
+        import subprocess as _sp
+        import sys as _sys
+
+        code = (
+            "import builtins; "
+            "from toolrecall import shim as m; "
+            "print('PATCHED', builtins.open is m._shim_open)"
+        )
+        env = dict(os.environ)
+        env.pop("TOOLRECALL_SHIM_DISABLE", None)
+        env.pop("TOOLRECALL_SHIM_MARKER", None)
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env["PYTHONPATH"] = repo + os.pathsep + env.get("PYTHONPATH", "")
+        r = _sp.run(
+            [_sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+            cwd="/tmp",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("PATCHED True", r.stdout)
+
+    def test_disable_enable_roundtrip(self):
+        """enable()/disable() write/clear the marker and flip the import gate.
+
+        Tests the marker primitives directly without importlib.reload, which
+        re-imports the client/cache chain and leaks state into later tests in
+        the same process.
+        """
+        with tempfile.TemporaryDirectory() as marker_dir:
+            marker = os.path.join(marker_dir, "shim.disabled")
+            with patch.dict(os.environ, {"TOOLRECALL_SHIM_MARKER": marker}):
+                # disable → marker present, predicate flips
+                self.assertTrue(shim_mod.disable())
+                self.assertTrue(os.path.isfile(shim_mod._marker_path()))
+                self.assertTrue(shim_mod._marker_disabled())
+                # enable → marker gone, predicate flips back
+                self.assertTrue(shim_mod.enable())
+                self.assertFalse(os.path.exists(shim_mod._marker_path()))
+                self.assertFalse(shim_mod._marker_disabled())
 
     # ─── Bug 4 fix: pytest detection uses basename, not substring ───
 

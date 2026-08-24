@@ -8,7 +8,7 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 
 **One warm daemon instead of five cold Node processes.** Under 200 KB install. Python 3.11+ stdlib only.
 
-> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
+> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
 ```bash
 pipx install toolrecall
@@ -201,7 +201,7 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 | $0 dev loops — repeated API calls cost nothing | Forward Proxy | Any agent |
 | Deterministic CI tests for agent behavior | Replay Mode | Any agent |
 | Guardrails between agents and your machine | Security Gate | Any agent |
-| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents (Hermes, Cline, ADK) — bounded context growth. **Not** for agents with built-in context management |
+| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents (Hermes, Cline, ADK) — bounded context growth. **Not** for agents with built-in context management (Claude Code, Cursor, Codex CLI) |
 | All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
 
 ---
