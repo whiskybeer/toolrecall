@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Robin Schultka
+# SPDX-License-Identifier: MIT
+# Source: https://github.com/whiskybeer/toolrecall
 """
 Google ADK Adapter — @cached_tool decorator for ADK @tool functions.
 Requires: google-adk (optional dependency — install via pip install google-adk)

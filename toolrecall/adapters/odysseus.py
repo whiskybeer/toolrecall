@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Robin Schultka
+# SPDX-License-Identifier: MIT
+# Source: https://github.com/whiskybeer/toolrecall
 """Odysseus Adapter — transparent ToolRecall caching for the Odysseus AI workspace.
 
 Bridges ToolRecall's SQLite-backed cache into Odysseus's agent loop and MCP

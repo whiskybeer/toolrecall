@@ -73,6 +73,25 @@ def _is_tcp(path: str) -> bool:
     return path.startswith("tcp://")
 
 
+# Wildcard hosts that would expose the IPC socket to every network interface.
+# ToolRecall's transport is strictly local (a UDS on POSIX, loopback TCP on
+# Windows), so binding to any of these is a security risk — never allow them.
+_WILDCARD_HOSTS = {"", "0.0.0.0", "::"}
+
+
+def _safe_bind_host(host: str) -> str:
+    """Coerce a wildcard/all-interfaces host to loopback (127.0.0.1).
+
+    Binding to ``''`` or ``0.0.0.0`` accepts connections from any interface
+    (CodeQL ``py/bind-socket-all-network-interfaces``). Since the transport is
+    inherently local, map any wildcard host back to loopback so a
+    ``tcp://0.0.0.0:port`` or ``tcp://:port`` path can never listen publicly.
+    """
+    if host is None or host.strip() in _WILDCARD_HOSTS:
+        return "127.0.0.1"
+    return host
+
+
 def _parse_tcp(path: str) -> tuple:
     """Parse tcp://host:port into (host, port)."""
     assert path.startswith("tcp://"), f"Not a TCP path: {path}"
@@ -94,6 +113,8 @@ def bind_socket(sock: socket.socket, path: str):
     """Bind a socket to its path/address."""
     if _is_tcp(path):
         host, port = _parse_tcp(path)
+        # Local-only IPC: never bind to all interfaces ('' / 0.0.0.0 / ::).
+        host = _safe_bind_host(host)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
     else:

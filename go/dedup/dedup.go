@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Robin Schultka
+// SPDX-License-Identifier: MIT
+// Source: https://github.com/whiskybeer/toolrecall
+//
 // Package dedup is a pure, dependency-free Go port of ToolRecall's
 // request-level duplicate-content dedup.
 //

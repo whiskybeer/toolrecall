@@ -24,7 +24,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from toolrecall.transport import (
-    _default_socket_path, _is_tcp, _parse_tcp,
+    _default_socket_path, _is_tcp, _parse_tcp, _safe_bind_host,
     create_socket, bind_socket, connect_socket,
     send_message, receive_message,
     TransportClient,
@@ -124,6 +124,18 @@ class TestTCPHelpers(unittest.TestCase):
         self.assertEqual(host, "0.0.0.0")
         self.assertEqual(port, 9090)
 
+    def test_safe_bind_host_coerces_wildcards(self):
+        """Wildcard hosts ('' / 0.0.0.0 / ::) are coerced to loopback."""
+        self.assertEqual(_safe_bind_host(""), "127.0.0.1")
+        self.assertEqual(_safe_bind_host("   "), "127.0.0.1")
+        self.assertEqual(_safe_bind_host("0.0.0.0"), "127.0.0.1")
+        self.assertEqual(_safe_bind_host("::"), "127.0.0.1")
+
+    def test_safe_bind_host_keeps_specific_interface(self):
+        """A specific loopback/fixed interface is left untouched."""
+        self.assertEqual(_safe_bind_host("127.0.0.1"), "127.0.0.1")
+        self.assertEqual(_safe_bind_host("127.0.0.2"), "127.0.0.2")
+
 
 class TestSocketLifecycle(unittest.TestCase):
     """create_socket, bind_socket, connect_socket work together via UDS."""
@@ -158,6 +170,20 @@ class TestSocketLifecycle(unittest.TestCase):
         bind_socket(sock, path)
         bound_port = sock.getsockname()[1]
         self.assertGreater(bound_port, 0)
+        sock.close()
+
+    def test_bind_wildcard_tcp_coerced_to_loopback(self):
+        """A tcp://0.0.0.0:port path never exposes all interfaces.
+
+        Regression for CodeQL py/bind-socket-all-network-interfaces: the server
+        must end up listening on 127.0.0.1, not on every interface.
+        """
+        path = "tcp://0.0.0.0:0"  # port 0 = OS-assigned
+        sock = create_socket(path)
+        bind_socket(sock, path)
+        bound_addr = sock.getsockname()
+        self.assertEqual(bound_addr[0], "127.0.0.1")
+        self.assertGreater(bound_addr[1], 0)
         sock.close()
 
     def test_connect_to_bound_unix_socket(self):
