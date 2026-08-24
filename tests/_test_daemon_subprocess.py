@@ -1,11 +1,14 @@
 """Minimal UDS daemon for integration testing."""
+
 import os
 import socket
 import json
 import tempfile
 
 UDS = os.environ.get("TOOLRECALL_UDS_PATH", os.path.join(tempfile.gettempdir(), "tc_test.sock"))
-CACHE_DB = os.environ.get("TOOLRECALL_CACHE_DB", os.path.join(tempfile.gettempdir(), "test_cache.db"))
+CACHE_DB = os.environ.get(
+    "TOOLRECALL_CACHE_DB", os.path.join(tempfile.gettempdir(), "test_cache.db")
+)
 
 os.makedirs(os.path.dirname(UDS), exist_ok=True)
 try:

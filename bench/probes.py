@@ -22,8 +22,8 @@ class ProbeSet:
 
     def __init__(self, seed: int):
         self.rng = random.Random(seed)
-        self.planted = {}       # probe_id -> (turn, nonce)
-        self.schedule = {}      # turn -> [probe_id, ...]
+        self.planted = {}  # probe_id -> (turn, nonce)
+        self.schedule = {}  # turn -> [probe_id, ...]
 
     def plant(self, turn: int, file_path: str = "") -> tuple[str, str]:
         """Create a new probe.
@@ -41,9 +41,7 @@ class ProbeSet:
             self.schedule.setdefault(turn + lag, []).append(pid)
 
         if file_path:
-            snippet = (
-                f"/** BUILD_TOKEN_{pid} = {nonce}. Record this value. */\n"
-            )
+            snippet = f"/** BUILD_TOKEN_{pid} = {nonce}. Record this value. */\n"
         else:
             snippet = (
                 f"Record this project constant, you will need it later. "
@@ -57,10 +55,7 @@ class ProbeSet:
 
     def question(self, pid: str) -> str:
         """Return the recall question for a probe."""
-        return (
-            f"What is the value of BUILD_TOKEN_{pid}? "
-            f"Answer with the value only, nothing else."
-        )
+        return f"What is the value of BUILD_TOKEN_{pid}? Answer with the value only, nothing else."
 
     def score(self, pid: str, answer: str) -> bool:
         """Deterministic substring match — no grader model needed."""

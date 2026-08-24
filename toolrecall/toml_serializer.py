@@ -20,6 +20,7 @@
 # For ToolRecall's use case (writing config.toml) this is sufficient.
 
 import datetime
+from typing import Any
 
 
 def _escape_basic(s: str) -> str:
@@ -79,18 +80,15 @@ def _format_list(val: list, indent: int = 0) -> str:
     if not val:
         return "[]"
 
-    all_simple = all(
-        isinstance(v, (str, int, float, bool, type(None)))
-        for v in val
-    )
+    all_simple = all(isinstance(v, (str, int, float, bool, type(None))) for v in val)
 
     if all_simple and len(val) <= 5:
         items = ", ".join(_format_value(v) for v in val)
         return f"[{items}]"
     else:
         pad = "  " * (indent + 1)
-        items = [_format_value(v, indent + 1) for v in val]
-        inner = ",\n".join(f"{pad}{item}" for item in items)
+        items_list = [_format_value(v, indent + 1) for v in val]
+        inner = ",\n".join(f"{pad}{item}" for item in items_list)
         close_pad = "  " * indent
         return f"[\n{inner},\n{close_pad}]"
 
@@ -123,7 +121,7 @@ def format_section(section_name: str, data: dict, indent: int = 0) -> str:
     lines = [header]
 
     plain_keys = {}
-    sub_sections = {}
+    sub_sections: dict[str, Any] = {}
 
     for k, v in data.items():
         if isinstance(v, dict):
@@ -171,7 +169,7 @@ def _is_inline_compatible(d: dict) -> bool:
     return True
 
 
-def dumps(data: dict, comment: str = None) -> str:
+def dumps(data: dict, comment: str | None = None) -> str:
     """Serialize a dict to TOML string."""
     lines = []
     if comment:
@@ -202,7 +200,7 @@ def dumps(data: dict, comment: str = None) -> str:
     return "\n".join(lines)
 
 
-def dump(data: dict, file, comment: str = None):
+def dump(data: dict, file, comment: str | None = None):
     """Serialize a dict to TOML and write to a file-like object."""
     text = dumps(data, comment=comment)
     file.write(text)

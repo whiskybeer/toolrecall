@@ -110,6 +110,7 @@ def _parse_tcp(path: str) -> tuple:
 
 # ─── Transport Functions ──────────────────────────────────
 
+
 def create_socket(path: str) -> socket.socket:
     """Create a socket appropriate for the transport type."""
     if _is_tcp(path):
@@ -192,32 +193,33 @@ def receive_message(sock: socket.socket) -> dict | None:
 
 # ─── Client ───────────────────────────────────────────────
 
+
 class TransportClient:
     """Platform-agnostic IPC client (UDS on POSIX, TCP on Windows).
-    
+
     Stateless — connects per request.
     """
-    
-    def __init__(self, path: str = None):
+
+    def __init__(self, path: str | None = None):
         self._path = path or _default_socket_path()
-    
+
     @property
     def path(self) -> str:
         return self._path
-    
+
     @property
     def is_tcp(self) -> bool:
         return _is_tcp(self._path)
 
     def close(self):
         """No-op — TransportClient is stateless (connects per request).
-        
+
         Added for API compatibility: client.py's atexit cleanup calls
         _client.close(), which previously raised AttributeError because
         TransportClient had no close() method.
         """
         pass
-    
+
     def send(self, payload: dict, timeout: float = 5.0) -> dict:
         """Send a request and receive response."""
         try:
@@ -230,13 +232,18 @@ class TransportClient:
             if resp is None:
                 return {"error": "Empty response"}
             return resp
-        except (ConnectionRefusedError, FileNotFoundError,
-                socket.timeout, OSError, ConnectionResetError,
-                BrokenPipeError):
+        except (
+            ConnectionRefusedError,
+            FileNotFoundError,
+            socket.timeout,
+            OSError,
+            ConnectionResetError,
+            BrokenPipeError,
+        ):
             return {"error": "daemon_unavailable"}
         except Exception as e:
             return {"error": str(e)}
-    
+
     def ping(self, timeout: float = 1.0) -> bool:
         """Fast connectivity check."""
         try:

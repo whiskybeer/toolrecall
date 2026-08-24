@@ -23,11 +23,13 @@ class TestToolRecallCacheE2E:
     def test_llm_cache_miss_then_hit(self):
         """First call misses, second hits — same result, LLM called once."""
         from toolrecall.adapters.langchain import _ensure_base
+
         _ensure_base()
         from toolrecall.adapters.langchain import ToolRecallCache
         from langchain_core.globals import set_llm_cache
         from langchain_google_genai import ChatGoogleGenerativeAI
         from toolrecall.client import daemon_running
+
         assert daemon_running()
 
         cache = ToolRecallCache(ttl=120)
@@ -46,11 +48,13 @@ class TestToolRecallCacheE2E:
     def test_different_prompts_different_cache(self):
         """Different prompts produce different cache entries."""
         from toolrecall.adapters.langchain import _ensure_base
+
         _ensure_base()
         from toolrecall.adapters.langchain import ToolRecallCache
         from langchain_core.globals import set_llm_cache
         from langchain_google_genai import ChatGoogleGenerativeAI
         from toolrecall.client import daemon_running
+
         assert daemon_running()
 
         cache = ToolRecallCache(ttl=120)
@@ -66,11 +70,13 @@ class TestToolRecallCacheE2E:
     def test_cache_clear(self):
         """clear() invalidates all cached entries."""
         from toolrecall.adapters.langchain import _ensure_base
+
         _ensure_base()
         from toolrecall.adapters.langchain import ToolRecallCache
         from langchain_core.globals import set_llm_cache
         from langchain_google_genai import ChatGoogleGenerativeAI
         from toolrecall.client import daemon_running
+
         assert daemon_running()
 
         cache = ToolRecallCache(ttl=120)
@@ -95,6 +101,7 @@ class TestToolRecallCallbackHandlerE2E:
     def test_callback_handler_does_not_raise(self):
         """on_tool_start/on_tool_end/on_tool_error don't raise when daemon is running."""
         from toolrecall.adapters.langchain import _ensure_base
+
         _ensure_base()
         from toolrecall.adapters.langchain import ToolRecallCallbackHandler
 

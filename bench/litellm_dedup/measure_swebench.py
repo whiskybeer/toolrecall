@@ -115,7 +115,6 @@ import sys
 import time
 import argparse
 import urllib.request
-from pathlib import Path
 from datetime import datetime
 
 # ── Config ──────────────────────────────────────────────────────────────────
@@ -140,7 +139,7 @@ METHODOLOGY = {
     "description": "LiteLLM dedup measurement on real SWE-bench Lite instances",
     "arms": {
         "with_dedup": "LiteLLM proxy with toolrecall.adapters.litellm.handler callback",
-        "without_dedup": "Same proxy with TOOLRECALL_DEDUP_DISABLED=1 (hook passes through)"
+        "without_dedup": "Same proxy with TOOLRECALL_DEDUP_DISABLED=1 (hook passes through)",
     },
     "workload_description": (
         "8-turn agent debugging conversation constructed from real SWE-bench "
@@ -174,6 +173,7 @@ METHODOLOGY = {
 
 # ── SWE-bench instance loading ─────────────────────────────────────────────
 
+
 def load_instances(n: int = 3):
     """Load n diverse SWE-bench Lite instances from local HF cache."""
     from datasets import load_dataset
@@ -193,7 +193,7 @@ def load_instances(n: int = 3):
             break
     # Fallback: fill remaining from start of dataset
     if len(chosen) < n:
-        chosen.extend(list(ds)[len(chosen):n])
+        chosen.extend(list(ds)[len(chosen) : n])
 
     return {
         "instances": chosen[:n],
@@ -330,7 +330,6 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
             file_blocks[fpath] = block
 
     messages = []
-    turn_info = []
     file_block_message_positions = []
     tool_call_id = 0
 
@@ -344,14 +343,16 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
             # Assistant triggers a tool call
             tool_call_id += 1
             msg["content"] = None
-            msg["tool_calls"] = [{
-                "id": f"call_{tool_call_id}",
-                "type": "function",
-                "function": {
-                    "name": "read_file",
-                    "arguments": json.dumps({"path": content.replace("read_file ", "")}),
+            msg["tool_calls"] = [
+                {
+                    "id": f"call_{tool_call_id}",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": content.replace("read_file ", "")}),
+                    },
                 }
-            }]
+            ]
         else:
             msg["content"] = content
         messages.append(msg)
@@ -360,7 +361,9 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
             file_block_message_positions.append(idx)
 
     # System prompt
-    add("system", "You are a senior software engineer debugging an issue in an open-source project.")
+    add(
+        "system", "You are a senior software engineer debugging an issue in an open-source project."
+    )
 
     used_templates = [t for t in TURN_TEMPLATES if t[0] <= max_turns]
     file_blocks_used = set()
@@ -386,7 +389,10 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
             if source_read_count == 1:
                 add("assistant", "I've read the source files. Let me trace the code flow.")
             elif source_read_count == 2:
-                add("assistant", "I've re-read the code. The issue is in how the data flows through this path.")
+                add(
+                    "assistant",
+                    "I've re-read the code. The issue is in how the data flows through this path.",
+                )
             elif source_read_count == 3:
                 add("assistant", "Confirmed. The approach is sound — I'll implement the fix now.")
             elif source_read_count >= 4:
@@ -394,9 +400,11 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
 
         elif action == "reason":
             add("user", "Propose a fix strategy. Which functions need to change and how?")
-            add("assistant",
+            add(
+                "assistant",
                 f"Fix strategy: modify the relevant functions to handle the edge case.\n\n"
-                f"Proposed patch:\n{patch[:2000]}")
+                f"Proposed patch:\n{patch[:2000]}",
+            )
 
         elif action == "read_tests":
             # Read test files
@@ -406,35 +414,42 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
                     add("tool", file_blocks[fpath], is_file_block=True)
                     file_blocks_used.add(fpath)
 
-            add("user", f"Run the tests that must pass:\n{json.dumps(instance.get('FAIL_TO_PASS', []))}")
+            add(
+                "user",
+                f"Run the tests that must pass:\n{json.dumps(instance.get('FAIL_TO_PASS', []))}",
+            )
             add("assistant", "All tests pass. The fix is complete.")
 
         # Snapshot the FULL accumulating context the agent would send as its
         # request at this turn — turn N = N requests in a real agent loop.
         turn_snapshots.append(list(messages))
 
-    ret = (messages, {
-        "instance_id": instance["instance_id"],
-        "repo": repo,
-        "base_commit": commit,
-        "turns_constructed": len(used_templates),
-        "total_messages": len(messages),
-        "source_files_changed": files,
-        "test_files_changed": test_files,
-        "files_successfully_fetched": list(file_contents.keys()),
-        "files_fetch_errors": fetch_errors,
-        "file_block_message_positions": file_block_message_positions,
-        "n_file_block_occurrences": len(file_block_message_positions),
-        "n_unique_files_in_blocks": len(file_blocks_used),
-        "source_read_count": source_read_count,
-        "duplicate_structure": (
-            f"Source files read {source_read_count} times → "
-            f"{len(file_blocks_used)} unique files × {source_read_count} reads = "
-            f"{len(file_block_message_positions)} total tool messages, "
-            f"of which {len(file_block_message_positions) - len(file_blocks_used)} are duplicates"
-        ),
-        "total_chars_of_file_blocks": sum(len(fb) for fb in file_blocks.values()),
-    }, file_blocks)
+    ret = (
+        messages,
+        {
+            "instance_id": instance["instance_id"],
+            "repo": repo,
+            "base_commit": commit,
+            "turns_constructed": len(used_templates),
+            "total_messages": len(messages),
+            "source_files_changed": files,
+            "test_files_changed": test_files,
+            "files_successfully_fetched": list(file_contents.keys()),
+            "files_fetch_errors": fetch_errors,
+            "file_block_message_positions": file_block_message_positions,
+            "n_file_block_occurrences": len(file_block_message_positions),
+            "n_unique_files_in_blocks": len(file_blocks_used),
+            "source_read_count": source_read_count,
+            "duplicate_structure": (
+                f"Source files read {source_read_count} times → "
+                f"{len(file_blocks_used)} unique files × {source_read_count} reads = "
+                f"{len(file_block_message_positions)} total tool messages, "
+                f"of which {len(file_block_message_positions) - len(file_blocks_used)} are duplicates"
+            ),
+            "total_chars_of_file_blocks": sum(len(fb) for fb in file_blocks.values()),
+        },
+        file_blocks,
+    )
     if with_snapshots:
         return ret + (turn_snapshots,)
     return ret
@@ -442,13 +457,16 @@ def build_session_convo(instance: dict, max_turns: int = 8, with_snapshots: bool
 
 # ── Proxy call ──────────────────────────────────────────────────────────────
 
+
 def send_to_proxy(messages: list) -> dict:
     """Send a chat completion request to LiteLLM. Returns usage info."""
-    body = json.dumps({
-        "model": MODEL,
-        "messages": messages,
-        "max_tokens": 5,
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "model": MODEL,
+            "messages": messages,
+            "max_tokens": 5,
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         LITELLM_URL,
@@ -472,11 +490,12 @@ def send_to_proxy(messages: list) -> dict:
 
 # ── Measurement runner ──────────────────────────────────────────────────────
 
+
 def measure(label: str, disabled: bool = False) -> dict:
     """Run measurement across N SWE-bench instances."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {label}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Load instances
     print(f"\n  Loading up to {N_INSTANCES} SWE-bench Lite instances...")
@@ -491,7 +510,7 @@ def measure(label: str, disabled: bool = False) -> dict:
     for idx, inst in enumerate(instances):
         inst_id = inst["instance_id"]
         repo = inst["repo"]
-        print(f"\n  [{idx+1}/{len(instances)}] {inst_id} ({repo})")
+        print(f"\n  [{idx + 1}/{len(instances)}] {inst_id} ({repo})")
 
         # Build conversation
         convo, info, file_blocks = build_session_convo(inst, max_turns=MAX_TURNS)
@@ -504,9 +523,11 @@ def measure(label: str, disabled: bool = False) -> dict:
         n_file_blocks = info["n_file_block_occurrences"]
         n_expected_dups = max(0, n_file_blocks - len(info["files_successfully_fetched"]))
 
-        print(f"    Messages: {info['total_messages']} | "
-              f"File block occurrences: {n_file_blocks} | "
-              f"Unique files: {info['n_unique_files_in_blocks']}")
+        print(
+            f"    Messages: {info['total_messages']} | "
+            f"File block occurrences: {n_file_blocks} | "
+            f"Unique files: {info['n_unique_files_in_blocks']}"
+        )
         print(f"    Content: {total_chars:,} chars")
         print(f"    Duplicate occurrences beyond first: {n_expected_dups}")
 
@@ -564,11 +585,11 @@ def measure(label: str, disabled: bool = False) -> dict:
             "dataset": "princeton-nlp/swe-bench-lite (test split)",
             "hooks": (
                 "callbacks: toolrecall.adapters.litellm.handler"
-                if not disabled else
-                "callbacks: toolrecall.adapters.litellm.handler (TOOLRECALL_DEDUP_DISABLED=1)"
+                if not disabled
+                else "callbacks: toolrecall.adapters.litellm.handler (TOOLRECALL_DEDUP_DISABLED=1)"
             ),
             "separate_api_key_per_arm": True,
-            "separate_api_key_verification": "OpenRouter dashboard per-key billed spend"
+            "separate_api_key_verification": "OpenRouter dashboard per-key billed spend",
         },
         "results": {
             "label": label,
@@ -583,6 +604,7 @@ def measure(label: str, disabled: bool = False) -> dict:
 
 # ── Accumulating-loop measurement (Phase 1: real agent, turn N = N requests) ──
 
+
 def measure_accumulating(label: str, disabled: bool = False) -> dict:
     """
     Measure like a REAL agent: for each instance, send turn N as a single
@@ -590,15 +612,17 @@ def measure_accumulating(label: str, disabled: bool = False) -> dict:
     8 turns = 80 requests per arm. This produces a per-turn savings CURVE,
     not a single constant, and tests the keep-first prefix-caching property.
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {label}  (accumulating loop)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     result = load_instances(N_INSTANCES)
     instances = result["instances"]
     print(f"  Source: {result['source']} ({result['available']} available)")
-    print(f"  Requests: {N_INSTANCES} instances × {MAX_TURNS} turns = "
-          f"{N_INSTANCES * MAX_TURNS} requests")
+    print(
+        f"  Requests: {N_INSTANCES} instances × {MAX_TURNS} turns = "
+        f"{N_INSTANCES * MAX_TURNS} requests"
+    )
 
     instance_results = []
     total_prompt = 0
@@ -609,10 +633,11 @@ def measure_accumulating(label: str, disabled: bool = False) -> dict:
     for idx, inst in enumerate(instances):
         inst_id = inst["instance_id"]
         repo = inst["repo"]
-        print(f"\n  [{idx+1}/{len(instances)}] {inst_id} ({repo})")
+        print(f"\n  [{idx + 1}/{len(instances)}] {inst_id} ({repo})")
 
         convo, info, file_blocks, turn_snapshots = build_session_convo(
-            inst, max_turns=MAX_TURNS, with_snapshots=True)
+            inst, max_turns=MAX_TURNS, with_snapshots=True
+        )
         assert len(turn_snapshots) == MAX_TURNS, "snapshot count mismatch"
 
         turn_rows = []
@@ -638,33 +663,39 @@ def measure_accumulating(label: str, disabled: bool = False) -> dict:
             inst_prompt += pt
             inst_cost += cost
             n_requests += 1
-            turn_rows.append({
-                "turn": t_idx,
-                "n_messages": len(snap),
-                "prompt_tokens": pt,
-                "completion_tokens": ct,
-                "cache_read_tokens": cached,
-                "cost": cost,
-                "latency_s": round(elapsed, 2),
-                "error": err,
-            })
-            print(f"    t{t_idx}: {pt:>8,} tok (cache_read={cached}) {'❌ '+str(err) if err else ''}")
+            turn_rows.append(
+                {
+                    "turn": t_idx,
+                    "n_messages": len(snap),
+                    "prompt_tokens": pt,
+                    "completion_tokens": ct,
+                    "cache_read_tokens": cached,
+                    "cost": cost,
+                    "latency_s": round(elapsed, 2),
+                    "error": err,
+                }
+            )
+            print(
+                f"    t{t_idx}: {pt:>8,} tok (cache_read={cached}) {'❌ ' + str(err) if err else ''}"
+            )
             time.sleep(0.4)
 
         total_prompt += inst_prompt
         total_cost_billed += inst_cost
 
-        instance_results.append({
-            "instance_id": inst_id,
-            "repo": repo,
-            "base_commit": info["base_commit"],
-            "turns": turn_rows,
-            "n_file_block_occurrences": info["n_file_block_occurrences"],
-            "unique_file_blocks": info["n_unique_files_in_blocks"],
-            "sum_prompt_tokens": inst_prompt,
-            "sum_cost_billed": round(inst_cost, 8),
-            "n_errors": inst_errors,
-        })
+        instance_results.append(
+            {
+                "instance_id": inst_id,
+                "repo": repo,
+                "base_commit": info["base_commit"],
+                "turns": turn_rows,
+                "n_file_block_occurrences": info["n_file_block_occurrences"],
+                "unique_file_blocks": info["n_unique_files_in_blocks"],
+                "sum_prompt_tokens": inst_prompt,
+                "sum_cost_billed": round(inst_cost, 8),
+                "n_errors": inst_errors,
+            }
+        )
 
     return {
         "methodology": METHODOLOGY,
@@ -680,8 +711,8 @@ def measure_accumulating(label: str, disabled: bool = False) -> dict:
             "dataset": "princeton-nlp/swe-bench-lite (test split)",
             "hooks": (
                 "callbacks: toolrecall.adapters.litellm.handler"
-                if not disabled else
-                "callbacks: toolrecall.adapters.litellm.handler (TOOLRECALL_DEDUP_DISABLED=1)"
+                if not disabled
+                else "callbacks: toolrecall.adapters.litellm.handler (TOOLRECALL_DEDUP_DISABLED=1)"
             ),
         },
         "results": {
@@ -704,15 +735,14 @@ def compare_accumulating(with_path: str, without_path: str):
     with open(without_path) as f:
         wo = json.load(f)
 
-    w_inst = w["results"]["instances"]
-    wo_inst = wo["results"]["instances"]
-
-    print(f"\n{'='*76}")
-    print(f"  SWE-BENCH LITE — DEDUP — ACCUMULATING AGENT LOOP")
-    print(f"  {w['config']['n_instances']} instances × {w['config']['turns_per_instance']} turns"
-          f" = {w['config']['n_requests']} requests/arm")
+    print(f"\n{'=' * 76}")
+    print("  SWE-BENCH LITE — DEDUP — ACCUMULATING AGENT LOOP")
+    print(
+        f"  {w['config']['n_instances']} instances × {w['config']['turns_per_instance']} turns"
+        f" = {w['config']['n_requests']} requests/arm"
+    )
     print(f"  Model: {w['config']['model']}")
-    print(f"{'='*76}")
+    print(f"{'=' * 76}")
 
     # Aggregate per-turn across instances
     def per_turn(d):
@@ -745,9 +775,9 @@ def compare_accumulating(with_path: str, without_path: str):
     w_cache = sum(g["cache_read"] for g in wg.values())
     wo_cache = sum(g["cache_read"] for g in wog.values())
 
-    print(f"\n  SAVINGS CURVE (aggregate over instances):\n")
+    print("\n  SAVINGS CURVE (aggregate over instances):\n")
     print(f"  {'Turn':>5}  {'WITH':>10}  {'WITHOUT':>10}  {'Saved':>10}  {'%':>7}")
-    print(f"  {'-'*46}")
+    print(f"  {'-' * 46}")
     for t in sorted(wg.keys()):
         wp = wg[t]["prompt"]
         wop = wog[t]["prompt"]
@@ -755,30 +785,35 @@ def compare_accumulating(with_path: str, without_path: str):
         p = (d / wop * 100) if wop else 0
         print(f"  {t:>5}  {wp:>10,}  {wop:>10,}  {d:>10,}  {p:>6.1f}%")
 
-    print(f"\n  {'─'*46}")
+    print(f"\n  {'─' * 46}")
     print(f"  {'CUMULATIVE':>30}")
     print(f"  {'Total prompt tokens':>30}  {wt:>10,}  {wot:>10,}  {saved:>10,}  {pct:>6.1f}%")
-    print(f"  {'Est. cost (@price)':>30}  ${w_rate:>9.4f}  ${wo_rate:>9.4f}  ${wo_rate-w_rate:>9.4f}")
+    print(
+        f"  {'Est. cost (@price)':>30}  ${w_rate:>9.4f}  ${wo_rate:>9.4f}  ${wo_rate - w_rate:>9.4f}"
+    )
     print(f"  {'Billed cost (OpenRouter)':>30}  ${w_billed:>9.4f}  ${wo_billed:>9.4f}")
     print(f"  {'Effective $/M (billed/tok)':>30}  ${w_eff:>9.4f}  ${wo_eff:>9.4f}")
     print(f"  {'Cache-read tokens (provider)':>30}  {w_cache:>10,}  {wo_cache:>10,}")
-    print(f"\n  Phase 2 — prefix-caching claim (keep-first preserves provider cache):")
-    print(f"    Compare cache-read tokens and effective \$/M between arms.")
-    print(f"    If keep-first works, WITH cache ≈ WITHOUT cache (dedup doesn't break")
-    print(f"    the provider's cacheable prefix) and effective rates match.")
-    print(f"    Δ effective = ${abs(wo_eff-w_eff):.4f}/M "
-          f"({'OK (no damage)' if abs(wo_eff-w_eff)<3.0 else 'CHECK — possible prefix damage'})")
+    print("\n  Phase 2 — prefix-caching claim (keep-first preserves provider cache):")
+    print(r"    Compare cache-read tokens and effective \$/M between arms.")
+    print("    If keep-first works, WITH cache ≈ WITHOUT cache (dedup doesn't break")
+    print("    the provider's cacheable prefix) and effective rates match.")
+    print(
+        f"    Δ effective = ${abs(wo_eff - w_eff):.4f}/M "
+        f"({'OK (no damage)' if abs(wo_eff - w_eff) < 3.0 else 'CHECK — possible prefix damage'})"
+    )
     print(f"\n  Errors: WITH={w['results']['n_errors']}  WITHOUT={wo['results']['n_errors']}")
     print(f"  Data: {with_path}, {without_path}")
 
 
 # ── Comparison and reporting ────────────────────────────────────────────────
 
+
 def _format_instances_table(title: str, data: dict):
     """Pretty-print instance results."""
     print(f"  {title}")
     print(f"  {'Instance':>35}  {'Tokens':>10}  {'Chars':>10}  {'Msgs':>5}  {'Files':>5}")
-    print(f"  {'-'*75}")
+    print(f"  {'-' * 75}")
     for inst in data:
         iid = inst["instance_id"]
         pt = inst.get("prompt_tokens_billed", 0)
@@ -812,11 +847,11 @@ def compare(with_path: str, without_path: str):
     cost_saved = (wot - wt) / 1_000_000 * w["config"]["price_per_m_input"]
 
     # Methodology header
-    print(f"\n{'='*72}")
-    print(f"  SWE-BENCH LITE — DEDUP MEASUREMENT RESULTS")
+    print(f"\n{'=' * 72}")
+    print("  SWE-BENCH LITE — DEDUP MEASUREMENT RESULTS")
     print(f"  Methodology v{METHODOLOGY['version']}")
-    print(f"{'='*72}")
-    print(f"")
+    print(f"{'=' * 72}")
+    print("")
     print(f"  Dataset:        {w['config']['dataset']}")
     print(f"  Instances:      {n_match}")
     print(f"  Turns/instance: {w['config']['max_turns_per_instance']}")
@@ -824,25 +859,29 @@ def compare(with_path: str, without_path: str):
     print(f"  Price:          ${w['config']['price_per_m_input']}/M input tokens")
     print(f"  Arm A (with):   {w['config']['hooks']}")
     print(f"  Arm B (without):{wo['config']['hooks']}")
-    print(f"")
-    print(f"  {'─'*72}")
-    print(f"  AGGREGATE RESULTS")
-    print(f"  {'─'*72}")
+    print("")
+    print(f"  {'─' * 72}")
+    print("  AGGREGATE RESULTS")
+    print(f"  {'─' * 72}")
     print(f"  {'':>30}  {'WITH dedup':>12}  {'WITHOUT':>12}  {'Saved':>12}  {'%':>7}")
-    print(f"  {'─'*66}")
+    print(f"  {'─' * 66}")
     print(f"  {'Total prompt tokens':>30}  {wt:>12,}  {wot:>12,}  {saved:>12,}  {pct:>6.1f}%")
-    print(f"  {'Cost estimate':>30}  ${w['results']['total_cost_estimate']:>10.6f}"
-          f"  ${wo['results']['total_cost_estimate']:>10.6f}"
-          f"  ${cost_saved:>10.6f}")
-    print(f"  {'Total chars sent':>30}  {w['results']['total_chars_sent']:>12,}"
-          f"  {wo['results']['total_chars_sent']:>12,}"
-          f"  {wot - wt:>12,}")
-    print(f"")
-    print(f"  {'─'*72}")
-    print(f"  PER-INSTANCE BREAKDOWN")
-    print(f"  {'─'*72}")
+    print(
+        f"  {'Cost estimate':>30}  ${w['results']['total_cost_estimate']:>10.6f}"
+        f"  ${wo['results']['total_cost_estimate']:>10.6f}"
+        f"  ${cost_saved:>10.6f}"
+    )
+    print(
+        f"  {'Total chars sent':>30}  {w['results']['total_chars_sent']:>12,}"
+        f"  {wo['results']['total_chars_sent']:>12,}"
+        f"  {wot - wt:>12,}"
+    )
+    print("")
+    print(f"  {'─' * 72}")
+    print("  PER-INSTANCE BREAKDOWN")
+    print(f"  {'─' * 72}")
     print(f"  {'Instance':>35}  {'With':>10}  {'Without':>10}  {'Δ':>10}  {'%':>7}")
-    print(f"  {'─'*75}")
+    print(f"  {'─' * 75}")
 
     w_by_id = {i["instance_id"]: i for i in w_instances}
     for inst in wo_instances:
@@ -856,10 +895,10 @@ def compare(with_path: str, without_path: str):
         p = (d / wo_pt * 100) if wo_pt else 0
         print(f"  {iid:>35}  {w_pt:>10,}  {wo_pt:>10,}  {d:>10,}  {p:>6.1f}%")
 
-    print(f"")
-    print(f"  {'─'*72}")
-    print(f"  DUPLICATE STRUCTURE (per instance)")
-    print(f"  {'─'*72}")
+    print("")
+    print(f"  {'─' * 72}")
+    print("  DUPLICATE STRUCTURE (per instance)")
+    print(f"  {'─' * 72}")
     for inst in wo_instances:
         iid = inst["instance_id"]
         n_blocks = inst.get("file_block_occurrences", 0)
@@ -867,46 +906,54 @@ def compare(with_path: str, without_path: str):
         n_msgs = inst.get("messages_in_request", 0)
         chars = inst.get("total_chars_in_request", 0)
         print(f"  {iid:>35}")
-        print(f"    Messages: {n_msgs}  |  File block occurrences: {n_blocks} "
-              f"({n_unique} unique)  |  {chars:,} chars")
+        print(
+            f"    Messages: {n_msgs}  |  File block occurrences: {n_blocks} "
+            f"({n_unique} unique)  |  {chars:,} chars"
+        )
         print(f"    Dedup eligible: {n_blocks - n_unique} of {n_blocks} blocks are duplicates")
 
-    print(f"")
-    print(f"  {'─'*72}")
-    print(f"  VERIFICATION")
-    print(f"  {'─'*72}")
-    print(f"  Check https://openrouter.ai/dashboard for per-key billed spend:")
-    print(f"    - 'with' key    = dedup arm")
-    print(f"    - 'without' key = no-dedup arm")
-    print(f"")
-    print(f"  {'─'*72}")
-    print(f"  CAVEATS")
-    print(f"  {'─'*72}")
+    print("")
+    print(f"  {'─' * 72}")
+    print("  VERIFICATION")
+    print(f"  {'─' * 72}")
+    print("  Check https://openrouter.ai/dashboard for per-key billed spend:")
+    print("    - 'with' key    = dedup arm")
+    print("    - 'without' key = no-dedup arm")
+    print("")
+    print(f"  {'─' * 72}")
+    print("  CAVEATS")
+    print(f"  {'─' * 72}")
     for c in METHODOLOGY["caveats"]:
         print(f"  • {c}")
-    print(f"")
-    print(f"  Reproduce:")
+    print("")
+    print("  Reproduce:")
     print(f"  {METHODOLOGY['reproduce']}")
     print(f"  Data files: {with_path}, {without_path}")
-    print(f"")
+    print("")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
+
 
 def main():
     parser = argparse.ArgumentParser(
         description="LiteLLM dedup measurement on real SWE-bench workloads"
     )
-    parser.add_argument("--disabled", action="store_true",
-                        help="Run WITHOUT dedup (TOOLRECALL_DEDUP_DISABLED=1)")
-    parser.add_argument("--json", action="store_true",
-                        help="Output JSON (machine-readable)")
-    parser.add_argument("--key", type=str, default=None,
-                        help="OpenRouter key (KEY=VALUE or just VALUE)")
-    parser.add_argument("--compare", nargs=2, metavar=("WITH", "WITHOUT"),
-                        help="Compare two JSON result files")
-    parser.add_argument("--accumulate", action="store_true",
-                        help="Run the accumulating agent loop (turn N = N requests)")
+    parser.add_argument(
+        "--disabled", action="store_true", help="Run WITHOUT dedup (TOOLRECALL_DEDUP_DISABLED=1)"
+    )
+    parser.add_argument("--json", action="store_true", help="Output JSON (machine-readable)")
+    parser.add_argument(
+        "--key", type=str, default=None, help="OpenRouter key (KEY=VALUE or just VALUE)"
+    )
+    parser.add_argument(
+        "--compare", nargs=2, metavar=("WITH", "WITHOUT"), help="Compare two JSON result files"
+    )
+    parser.add_argument(
+        "--accumulate",
+        action="store_true",
+        help="Run the accumulating agent loop (turn N = N requests)",
+    )
     args = parser.parse_args()
 
     if args.compare:
@@ -939,6 +986,7 @@ def main():
         # Route progress to stderr so stdout stays pure JSON
         if args.json:
             import contextlib
+
             with contextlib.redirect_stdout(sys.stderr):
                 result = measure_accumulating(label, disabled=args.disabled)
         else:
@@ -946,6 +994,7 @@ def main():
     else:
         if args.json:
             import contextlib
+
             with contextlib.redirect_stdout(sys.stderr):
                 result = measure(label, disabled=args.disabled)
         else:

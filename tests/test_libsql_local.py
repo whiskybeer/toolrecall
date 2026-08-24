@@ -18,11 +18,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # backend=libsql into every other test in the same session.
 try:
     import libsql_experimental  # noqa: F401
+
     _HAS_LIBSQL = True
 except ImportError:
     _HAS_LIBSQL = False
 
-from toolrecall._db import _open_db, _LibSQLConnection, _LibSQLCursor, _LibSQLRow
+from toolrecall._db import _open_db, _LibSQLConnection
 from toolrecall.config import load_config
 
 
@@ -47,6 +48,7 @@ class TestLibSQLLocal(unittest.TestCase):
         os.environ.clear()
         os.environ.update(cls._orig_environ)
         import shutil
+
         shutil.rmtree(cls.tmpdir, ignore_errors=True)
 
     def setUp(self):
@@ -299,7 +301,7 @@ class TestLibSQLLocal(unittest.TestCase):
         conn.commit()
         row1 = conn.execute("SELECT * FROM t WHERE id = 1").fetchone()
         self.assertIsNone(row1["null_val"])
-        self.assertEqual(row1["blob_val"], b"\x00\x11\"")
+        self.assertEqual(row1["blob_val"], b'\x00\x11"')
         row2 = conn.execute("SELECT * FROM t WHERE id = 2").fetchone()
         self.assertIsNone(row2["blob_val"])
         self.assertEqual(row2["null_val"], "not null")
@@ -343,6 +345,7 @@ class TestLibSQLLocal(unittest.TestCase):
     def test_21_stats_info(self):
         """stats_info() returns expected keys for libsql backend."""
         from toolrecall.storage.libsql import stats_info
+
         info = stats_info(self.cfg)
         self.assertIn("sync_enabled", info)
         self.assertIn("sync_url", info)
@@ -352,6 +355,7 @@ class TestLibSQLLocal(unittest.TestCase):
     def test_22_sync_configured_local(self):
         """sync_configured() is False without sync_url/token (pure local)."""
         from toolrecall.storage.libsql import sync_configured
+
         self.assertFalse(sync_configured(self.cfg))
 
     def test_23_sync_configured_full_opt_in(self):
@@ -369,6 +373,7 @@ class TestLibSQLLocal(unittest.TestCase):
     def test_24_active_db_path_libsql(self):
         """active_db_path() returns the libsql-specific path when backend=libsql."""
         from toolrecall.storage import active_db_path
+
         self.assertTrue(active_db_path(self.cfg).endswith("test_libsql.db"))
 
 

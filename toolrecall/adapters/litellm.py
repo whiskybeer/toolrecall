@@ -219,8 +219,8 @@ handler = ToolRecallDedupHandler()
 if __name__ == "__main__":
     import asyncio
 
-    FILE_A = ("def cache_lookup(key):\n    ...\n" * 60)  # ~1.9K chars
-    FILE_B = ("SELECT * FROM turn_log;\n" * 80)  # ~1.9K chars
+    FILE_A = "def cache_lookup(key):\n    ...\n" * 60  # ~1.9K chars
+    FILE_B = "SELECT * FROM turn_log;\n" * 80  # ~1.9K chars
 
     # NOTE: matching is whole-block exact (hash of the full string / text part),
     # not substring search. A file embedded inside a longer string is a

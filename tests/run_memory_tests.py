@@ -1,7 +1,7 @@
 """Run memory-index tests in isolated subprocess to avoid Config singleton conflicts.
 
 The toolrecall Config is a process-global singleton. Other tests initialize it
-with default env vars before test_memory_index.py's TOOLRECALL_KNOWLEDGE_DB 
+with default env vars before test_memory_index.py's TOOLRECALL_KNOWLEDGE_DB
 takes effect. This runner spawns a fresh Python process, ensuring the env var
 is set before Config is first loaded anywhere.
 
@@ -14,6 +14,7 @@ import subprocess
 import sys
 import os
 import tempfile
+
 
 def main():
     test_file = os.path.join(os.path.dirname(__file__), "test_memory_index.py")
@@ -46,6 +47,7 @@ def main():
             os.unlink(db_path)
         except OSError:
             pass
+
 
 if __name__ == "__main__":
     main()

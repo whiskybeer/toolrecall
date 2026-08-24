@@ -68,7 +68,9 @@ class TestSymlinkPathCheck(unittest.TestCase):
             mcp_dangerous_tool_keywords = []
             mcp_cognitive_check_enabled = True
             mcp_ast_check_enabled = True
+
         from toolrecall.daemon import SecurityGate
+
         self.gate = SecurityGate(MockConfig())
         self.tmpdir = tempfile.mkdtemp()
         self.real_dir = os.path.join(self.tmpdir, "real_target")
@@ -96,9 +98,11 @@ class TestSymlinkPathCheck(unittest.TestCase):
     def test_symlink_under_allowed(self):
         """A file reached through a symlink whose non-resolved path is under an allowed dir."""
         err = self.gate.check_read_path(self.link_file)
-        self.assertIsNone(err,
+        self.assertIsNone(
+            err,
             f"Symlinked file {self.link_file} (real: {os.path.realpath(self.link_file)}) "
-            f"should be allowed when the symlink itself is under an allowed path, got: {err}")
+            f"should be allowed when the symlink itself is under an allowed path, got: {err}",
+        )
 
     def test_symlink_resolved_under_allowed(self):
         """When both resolved and symlink paths are under allowed dirs."""
@@ -158,35 +162,46 @@ class TestAccessLogFiltering(unittest.TestCase):
     def test_record_with_path_creates_entry(self):
         """_record(category, hit, path='/some/file') should create an access_log entry."""
         from toolrecall.cache import _record
+
         count_before = self._count_access_log()
         _record("file_cache", hit=True, path="/test/some_file.txt", tokens_saved=100)
         count_after = self._count_access_log()
-        self.assertEqual(count_after, count_before + 1,
-                         "access_log should have one more entry after _record with path")
+        self.assertEqual(
+            count_after,
+            count_before + 1,
+            "access_log should have one more entry after _record with path",
+        )
 
     def test_record_without_path_skips_entry(self):
         """_record(category, hit, path='') should NOT create an access_log entry."""
         from toolrecall.cache import _record
+
         count_before = self._count_access_log()
         _record("terminal_cache", hit=True)  # path defaults to ''
         count_after = self._count_access_log()
-        self.assertEqual(count_after, count_before,
-                         "access_log should NOT get an entry when path is empty")
+        self.assertEqual(
+            count_after, count_before, "access_log should NOT get an entry when path is empty"
+        )
 
     def test_record_with_mcp_cache_no_path(self):
         """MCP cache hits without path should not pollute access_log."""
         from toolrecall.cache import _record
+
         count_before = self._count_access_log()
         _record("mcp_cache", hit=False)
         _record("api_cache", hit=True, tokens_saved=500)
         _record("browser_cache", hit=True)
         count_after = self._count_access_log()
-        self.assertEqual(count_after, count_before,
-                         "MCP/API/browser cache calls without path must not create entries")
+        self.assertEqual(
+            count_after,
+            count_before,
+            "MCP/API/browser cache calls without path must not create entries",
+        )
 
     def test_mixed_path_and_no_path(self):
         """Only entries WITH a path appear in the access log."""
         from toolrecall.cache import _record
+
         _record("file_cache", hit=False, path="/etc/hosts")
         _record("terminal_cache", hit=True)  # no path - skip
         _record("file_cache", hit=True, path="/etc/resolv.conf", tokens_saved=50)
@@ -205,22 +220,24 @@ class TestAccessLogFiltering(unittest.TestCase):
         cached_read(tmp.name)  # hit
         entries = self._get_access_log_entries()
         file_entries = [e for e in entries if e["category"] == "file_cache"]
-        self.assertGreaterEqual(len(file_entries), 1,
-                                "cached_read should create file_cache access_log entries")
+        self.assertGreaterEqual(
+            len(file_entries), 1, "cached_read should create file_cache access_log entries"
+        )
         hit_entries = [e for e in file_entries if e["hit"]]
-        self.assertGreaterEqual(len(hit_entries), 1,
-                                "At least one hit should be in access_log")
+        self.assertGreaterEqual(len(hit_entries), 1, "At least one hit should be in access_log")
         os.unlink(tmp.name)
 
     def test_cached_terminal_does_not_pollute_access_log(self):
         """cached_terminal calls _record with no path, so no access_log entry."""
         from toolrecall.cache import _record
+
         count_before = self._count_access_log()
         _record("terminal_cache", hit=False)
         _record("terminal_cache", hit=True)
         count_after = self._count_access_log()
-        self.assertEqual(count_after, count_before,
-                         "cached_terminal should not create access_log entries")
+        self.assertEqual(
+            count_after, count_before, "cached_terminal should not create access_log entries"
+        )
 
 
 class TestDaemonAutoStart(unittest.TestCase):
@@ -240,7 +257,9 @@ class TestDaemonAutoStart(unittest.TestCase):
             self.skipTest("toolrecall not on PATH (source checkout without install)")
         result = subprocess.run(
             [toolrecall_bin, "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("ToolRecall", result.stdout)
@@ -252,7 +271,9 @@ class TestDaemonAutoStart(unittest.TestCase):
             self.skipTest("toolrecall not on PATH (source checkout without install)")
         result = subprocess.run(
             [toolrecall_bin, "daemon", "--help"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("Usage: toolrecall daemon", result.stdout)
@@ -261,16 +282,17 @@ class TestDaemonAutoStart(unittest.TestCase):
         """python -m toolrecall should fail (no __main__.py)."""
         result = subprocess.run(
             [sys.executable, "-m", "toolrecall", "daemon", "--help"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         # This may succeed if toolrecall is installed with entry_points
         # (the console_scripts entry point also registers a __main__)
         # So we only check that the command doesn't crash — it should
         # either fail or succeed gracefully.
         self.assertTrue(
-            result.returncode == 0 and "ToolRecall" in result.stdout or
-            result.returncode != 0,
-            f"Should either work or fail gracefully, got exit={result.returncode} stderr={result.stderr!r}"
+            result.returncode == 0 and "ToolRecall" in result.stdout or result.returncode != 0,
+            f"Should either work or fail gracefully, got exit={result.returncode} stderr={result.stderr!r}",
         )
 
 
@@ -290,6 +312,7 @@ class TestMCPCacheFS(unittest.TestCase):
         """Run the MCP Cache FS server with given input, return parsed responses."""
         from toolrecall.mcp_cache_fs import main as mcp_main
         import io
+
         stdin_content = "\n".join(json.dumps(msg) for msg in input_lines)
         sys.stdin = io.StringIO(stdin_content)
         captured = io.StringIO()
@@ -316,19 +339,23 @@ class TestMCPCacheFS(unittest.TestCase):
 
     def test_initialize_returns_server_info(self):
         """The initialize handshake returns server metadata."""
-        responses = self._run_mcp_server([
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-        ])
+        responses = self._run_mcp_server(
+            [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            ]
+        )
         self.assertEqual(len(responses), 1)
         result = responses[0].get("result", {})
         self.assertEqual(result.get("serverInfo", {}).get("name"), "toolrecall-cache-fs")
 
     def test_tools_list_returns_four_tools(self):
         """tools/list returns read_file, terminal, write_file, patch (native names)."""
-        responses = self._run_mcp_server([
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        ])
+        responses = self._run_mcp_server(
+            [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            ]
+        )
         tools_result = None
         for r in responses:
             if r.get("id") == 2:
@@ -343,13 +370,20 @@ class TestMCPCacheFS(unittest.TestCase):
 
     def test_cached_read_existing_file(self):
         """read_file returns content of an existing file."""
-        responses = self._run_mcp_server([
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-                "name": "read_file",
-                "arguments": {"path": self.test_file},
-            }},
-        ])
+        responses = self._run_mcp_server(
+            [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "read_file",
+                        "arguments": {"path": self.test_file},
+                    },
+                },
+            ]
+        )
         read_result = None
         for r in responses:
             if r.get("id") == 2:
@@ -363,13 +397,20 @@ class TestMCPCacheFS(unittest.TestCase):
 
     def test_cached_read_nonexistent_file(self):
         """read_file returns error for nonexistent file."""
-        responses = self._run_mcp_server([
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-                "name": "read_file",
-                "arguments": {"path": "/nonexistent/path/file.txt"},
-            }},
-        ])
+        responses = self._run_mcp_server(
+            [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "read_file",
+                        "arguments": {"path": "/nonexistent/path/file.txt"},
+                    },
+                },
+            ]
+        )
         read_result = None
         for r in responses:
             if r.get("id") == 2:
@@ -380,9 +421,11 @@ class TestMCPCacheFS(unittest.TestCase):
 
     def test_ping_returns_empty(self):
         """Ping method returns empty result."""
-        responses = self._run_mcp_server([
-            {"jsonrpc": "2.0", "id": 1, "method": "ping"},
-        ])
+        responses = self._run_mcp_server(
+            [
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            ]
+        )
         self.assertEqual(len(responses), 1)
         self.assertEqual(responses[0].get("result"), {})
 
@@ -397,6 +440,7 @@ class TestMCPCacheFSRealDaemon(unittest.TestCase):
     def setUp(self):
         try:
             from toolrecall.transport import TransportClient, DEFAULT_PATH
+
             tc = TransportClient(DEFAULT_PATH)
             resp = tc.send({"cmd": "ping"})
             if not resp.get("pong"):
@@ -416,6 +460,7 @@ class TestMCPCacheFSRealDaemon(unittest.TestCase):
         file (deterministic) rather than a live daemon.
         """
         import tomllib
+
         cfg_path = os.path.join(os.path.dirname(__file__), "..", "toolrecall", "config.toml")
         with open(cfg_path, "rb") as f:
             cfg = tomllib.load(f)
@@ -428,6 +473,7 @@ class TestMCPCacheFSRealDaemon(unittest.TestCase):
     def test_shipped_config_allow_terminal_false(self):
         """The shipped config.toml must default allow_terminal=false (opt-in)."""
         import tomllib
+
         cfg_path = os.path.join(os.path.dirname(__file__), "..", "toolrecall", "config.toml")
         with open(cfg_path, "rb") as f:
             cfg = tomllib.load(f)

@@ -19,6 +19,7 @@ from toolrecall.storage.libsql import _LibSQLConnection
 
 try:
     import turso.sync as turso_sync
+
     _HAS_PYTURSO = True
 except ImportError:
     turso_sync = None
@@ -29,11 +30,7 @@ SUPPORTS_SYNC = True
 
 def sync_configured(cfg) -> bool:
     """Full opt-in policy: explicit enable (default false) AND credentials."""
-    return bool(
-        cfg.libsql_sync_enabled
-        and cfg.libsql_sync_url
-        and cfg.libsql_sync_token
-    )
+    return bool(cfg.libsql_sync_enabled and cfg.libsql_sync_url and cfg.libsql_sync_token)
 
 
 def stats_info(cfg) -> dict:

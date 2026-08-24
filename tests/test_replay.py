@@ -40,9 +40,12 @@ class TestReplayManager:
     # ── Recording ───────────────────────────────────────────────────────
 
     def test_record_single_call(self):
-        result = self.replay.record_call("test1", "cached_read",
-                                       {"path": "/tmp/test.txt"},
-                                       {"output": "file content", "cached": False})
+        result = self.replay.record_call(
+            "test1",
+            "cached_read",
+            {"path": "/tmp/test.txt"},
+            {"output": "file content", "cached": False},
+        )
         assert result["scenario"] == "test1"
         assert result["call_index"] == 0
         assert len(result["args_hash"]) == 16
@@ -56,63 +59,59 @@ class TestReplayManager:
 
     def test_record_strips_noise_keys(self):
         """Timestamps and session IDs should be stripped before hashing."""
-        r1 = self.replay.record_call("test1", "cached_read",
-                                   {"path": "/tmp/x", "timestamp": "2026-07-09"},
-                                   "resp")
-        r2 = self.replay.record_call("test1", "cached_read",
-                                   {"path": "/tmp/x", "session_id": "sess-abc"},
-                                   "resp")
+        r1 = self.replay.record_call(
+            "test1", "cached_read", {"path": "/tmp/x", "timestamp": "2026-07-09"}, "resp"
+        )
+        r2 = self.replay.record_call(
+            "test1", "cached_read", {"path": "/tmp/x", "session_id": "sess-abc"}, "resp"
+        )
         # Both should have the same args_hash (noise stripped)
         assert r1["args_hash"] == r2["args_hash"]
 
     def test_record_sorts_keys(self):
         """Key order shouldn't matter for the hash."""
-        r1 = self.replay.record_call("test1", "cached_read",
-                                   {"b": 2, "a": 1}, "resp")
-        r2 = self.replay.record_call("test1", "cached_read",
-                                   {"a": 1, "b": 2}, "resp")
+        r1 = self.replay.record_call("test1", "cached_read", {"b": 2, "a": 1}, "resp")
+        r2 = self.replay.record_call("test1", "cached_read", {"a": 1, "b": 2}, "resp")
         assert r1["args_hash"] == r2["args_hash"]
 
     # ── Replay ──────────────────────────────────────────────────────────
 
     def test_find_replay_hit(self):
-        self.replay.record_call("test1", "cached_read",
-                              {"path": "/tmp/test.txt"},
-                              {"output": "file content", "cached": True})
-        result = self.replay.find_replay("test1", "cached_read",
-                                       {"path": "/tmp/test.txt"})
+        self.replay.record_call(
+            "test1",
+            "cached_read",
+            {"path": "/tmp/test.txt"},
+            {"output": "file content", "cached": True},
+        )
+        result = self.replay.find_replay("test1", "cached_read", {"path": "/tmp/test.txt"})
         assert result is not None
         assert result["output"] == "file content"
 
     def test_find_replay_miss_wrong_tool(self):
-        self.replay.record_call("test1", "cached_read",
-                              {"path": "/tmp/test.txt"}, "resp")
-        result = self.replay.find_replay("test1", "cached_terminal",
-                                       {"command": "hostname"})
+        self.replay.record_call("test1", "cached_read", {"path": "/tmp/test.txt"}, "resp")
+        result = self.replay.find_replay("test1", "cached_terminal", {"command": "hostname"})
         assert result is None
 
     def test_find_replay_miss_wrong_scenario(self):
-        self.replay.record_call("test1", "cached_read",
-                              {"path": "/tmp/test.txt"}, "resp")
-        result = self.replay.find_replay("test2", "cached_read",
-                                       {"path": "/tmp/test.txt"})
+        self.replay.record_call("test1", "cached_read", {"path": "/tmp/test.txt"}, "resp")
+        result = self.replay.find_replay("test2", "cached_read", {"path": "/tmp/test.txt"})
         assert result is None
 
     def test_find_replay_hit_noise_keys_stripped(self):
         """Replay should hit despite different noise keys."""
-        self.replay.record_call("test1", "cached_read",
-                              {"path": "/tmp/x", "timestamp": "t1"}, "cached resp")
-        result = self.replay.find_replay("test1", "cached_read",
-                                       {"path": "/tmp/x", "session_id": "s2"})
+        self.replay.record_call(
+            "test1", "cached_read", {"path": "/tmp/x", "timestamp": "t1"}, "cached resp"
+        )
+        result = self.replay.find_replay(
+            "test1", "cached_read", {"path": "/tmp/x", "session_id": "s2"}
+        )
         assert result is not None
         assert result == "cached resp"
 
     def test_find_replay_hit_sorted_keys(self):
         """Replay should hit regardless of key order."""
-        self.replay.record_call("test1", "cached_read",
-                              {"b": 2, "a": 1}, "sorted resp")
-        result = self.replay.find_replay("test1", "cached_read",
-                                       {"a": 1, "b": 2})
+        self.replay.record_call("test1", "cached_read", {"b": 2, "a": 1}, "sorted resp")
+        result = self.replay.find_replay("test1", "cached_read", {"a": 1, "b": 2})
         assert result is not None
 
     # ── Scenario Management ────────────────────────────────────────────
@@ -127,10 +126,8 @@ class TestReplayManager:
         assert len(scenarios) == 2
 
     def test_get_scenario(self):
-        self.replay.record_call("test1", "cached_read",
-                              {"path": "/a"}, "resp a")
-        self.replay.record_call("test1", "cached_terminal",
-                              {"command": "hostname"}, "resp b")
+        self.replay.record_call("test1", "cached_read", {"path": "/a"}, "resp a")
+        self.replay.record_call("test1", "cached_terminal", {"command": "hostname"}, "resp b")
         calls = self.replay.get_scenario("test1")
         assert len(calls) == 2
         assert calls[0]["tool_name"] == "cached_read"
@@ -149,8 +146,7 @@ class TestReplayManager:
     # ── Export / Import ─────────────────────────────────────────────────
 
     def test_export_scenario(self):
-        self.replay.record_call("test1", "cached_read",
-                              {"path": "/a"}, {"output": "data"})
+        self.replay.record_call("test1", "cached_read", {"path": "/a"}, {"output": "data"})
         exported = self.replay.export_scenario("test1")
         assert exported["toolrecall_replay_export"] is True
         assert exported["scenario_name"] == "test1"
@@ -170,10 +166,18 @@ class TestReplayManager:
             "exported_at": 1000.0,
             "call_count": 2,
             "calls": [
-                {"call_index": 0, "tool_name": "cached_read",
-                 "args": {"path": "/a"}, "response": "resp a"},
-                {"call_index": 1, "tool_name": "cached_terminal",
-                 "args": {"command": "hostname"}, "response": "resp b"},
+                {
+                    "call_index": 0,
+                    "tool_name": "cached_read",
+                    "args": {"path": "/a"},
+                    "response": "resp a",
+                },
+                {
+                    "call_index": 1,
+                    "tool_name": "cached_terminal",
+                    "args": {"command": "hostname"},
+                    "response": "resp b",
+                },
             ],
         }
         result = self.replay.import_scenario(exported)
@@ -194,8 +198,14 @@ class TestReplayManager:
             "scenario_name": "dup",
             "exported_at": 2000.0,
             "call_count": 1,
-            "calls": [{"call_index": 0, "tool_name": "cached_read",
-                       "args": {"path": "/a"}, "response": "new"}],
+            "calls": [
+                {
+                    "call_index": 0,
+                    "tool_name": "cached_read",
+                    "args": {"path": "/a"},
+                    "response": "new",
+                }
+            ],
         }
         result = self.replay.import_scenario(exported, overwrite=False)
         # Without overwrite, existing entries are preserved (INSERT OR IGNORE)
@@ -211,8 +221,7 @@ class TestReplayManager:
     # ── Round-trip: export → import ─────────────────────────────────────
 
     def test_export_import_roundtrip(self):
-        self.replay.record_call("orig", "cached_read",
-                              {"path": "/data"}, {"result": "ok"})
+        self.replay.record_call("orig", "cached_read", {"path": "/data"}, {"result": "ok"})
         exported = self.replay.export_scenario("orig")
         # Import into a new name
         exported["scenario_name"] = "copy"
@@ -319,8 +328,7 @@ class TestReplayIntercept:
 
     def test_intercept_replay_hit(self):
         replay = ReplayManager()
-        replay.record_call("test-rep", "cached_read",
-                         {"path": "/tmp/x"}, {"output": "cached"})
+        replay.record_call("test-rep", "cached_read", {"path": "/tmp/x"}, {"output": "cached"})
         start_replay("test-rep")
         result = intercept_call("cached_read", {"path": "/tmp/x"})
         assert result is not None
@@ -336,18 +344,15 @@ class TestReplayIntercept:
 
     def test_intercept_replay_hit_despite_noise(self):
         replay = ReplayManager()
-        replay.record_call("test-rep", "cached_read",
-                         {"path": "/tmp/x", "timestamp": "t1"}, "data")
+        replay.record_call("test-rep", "cached_read", {"path": "/tmp/x", "timestamp": "t1"}, "data")
         start_replay("test-rep")
-        result = intercept_call("cached_read",
-                                 {"path": "/tmp/x", "session_id": "s2"})
+        result = intercept_call("cached_read", {"path": "/tmp/x", "session_id": "s2"})
         assert result is not None
         assert result["replay_hit"]
 
     def test_record_response(self):
         start_recording("test-rec")
-        result = record_response("cached_read", {"path": "/tmp/x"},
-                                  {"output": "file content"})
+        result = record_response("cached_read", {"path": "/tmp/x"}, {"output": "file content"})
         assert result["scenario"] == "test-rec"
         # Verify it was actually recorded
         replay = ReplayManager()
@@ -360,14 +365,11 @@ class TestReplayIntercept:
 
     def test_record_response_explicit_scenario(self):
         start_recording("default-scenario")
-        record_response("cached_read", {"path": "/tmp/x"},
-                                  "data", scenario="override-scenario")
+        record_response("cached_read", {"path": "/tmp/x"}, "data", scenario="override-scenario")
         replay = ReplayManager()
         # Should be recorded under override, not default
-        assert replay.find_replay("override-scenario", "cached_read",
-                                {"path": "/tmp/x"}) == "data"
-        assert replay.find_replay("default-scenario", "cached_read",
-                                {"path": "/tmp/x"}) is None
+        assert replay.find_replay("override-scenario", "cached_read", {"path": "/tmp/x"}) == "data"
+        assert replay.find_replay("default-scenario", "cached_read", {"path": "/tmp/x"}) is None
 
     def test_full_record_replay_cycle(self):
         """Record a session, then replay it — end-to-end."""

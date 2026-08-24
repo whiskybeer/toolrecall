@@ -87,7 +87,7 @@ class TestShimOpenReentrancy(unittest.TestCase):
         call_log = []
 
         # Mock _original_open to track calls
-        def mock_open(path, mode='r', *args, **kwargs):
+        def mock_open(path, mode="r", *args, **kwargs):
             call_log.append(("open", path, mode))
             return io.StringIO("real content")
 
@@ -120,13 +120,13 @@ class TestShimOpenReentrancy(unittest.TestCase):
             # This internal open() must NOT recurse into the shim.
             # We call real_original_open directly to simulate what
             # cached_read does internally (it opens files for DB access).
-            with real_original_open(path, 'r') as f:
+            with real_original_open(path, "r") as f:
                 return {"content": f.read()}
 
         shim_mod._TR = {"read": mock_cached_read}
 
         # Wrap _original_open to count calls but delegate to the real open
-        def mock_original_open(path, mode='r', *args, **kwargs):
+        def mock_original_open(path, mode="r", *args, **kwargs):
             call_count["original_open"] += 1
             return real_original_open(path, mode, *args, **kwargs)
 
@@ -134,7 +134,8 @@ class TestShimOpenReentrancy(unittest.TestCase):
 
         # Wrap _shim_open to track entry count
         original_shim_open = shim_mod._shim_open
-        def tracking_shim_open(path, mode='r', *args, **kwargs):
+
+        def tracking_shim_open(path, mode="r", *args, **kwargs):
             call_count["shim_open"] += 1
             return original_shim_open(path, mode, *args, **kwargs)
 
@@ -155,8 +156,9 @@ class TestShimOpenReentrancy(unittest.TestCase):
             # (at most 5: one outer shim, plus a few during _get_tr import
             # chain which loads config and client modules)
             self.assertGreaterEqual(call_count["shim_open"], 1)
-            self.assertLessEqual(call_count["shim_open"], 5,
-                                "Shim open should not recurse excessively")
+            self.assertLessEqual(
+                call_count["shim_open"], 5, "Shim open should not recurse excessively"
+            )
         finally:
             os.unlink(temp_path)
             builtins.open = real_original_open
@@ -276,7 +278,7 @@ class TestShimOpenRouting(unittest.TestCase):
         real_file = MagicMock()
         shim_mod._original_open = MagicMock(return_value=real_file)
 
-        result = shim_mod._shim_open("/some/file", "r+")
+        _ = shim_mod._shim_open("/some/file", "r+")
         shim_mod._TR["read"].assert_not_called()
         shim_mod._original_open.assert_called_once_with("/some/file", "r+")
 
@@ -333,22 +335,26 @@ class TestOptionBNoSubprocess(unittest.TestCase):
     def test_apply_does_not_patch_subprocess_popen(self):
         """apply() must leave subprocess.Popen untouched (run natively)."""
         import subprocess
+
         original_popen = subprocess.Popen
         shim_mod.apply()
         try:
-            self.assertIs(subprocess.Popen, original_popen,
-                          "Option B: subprocess.Popen must NOT be shimmed")
+            self.assertIs(
+                subprocess.Popen, original_popen, "Option B: subprocess.Popen must NOT be shimmed"
+            )
         finally:
             shim_mod.remove()
 
     def test_apply_does_not_patch_subprocess_run(self):
         """apply() must leave subprocess.run untouched."""
         import subprocess
+
         original_run = subprocess.run
         shim_mod.apply()
         try:
-            self.assertIs(subprocess.run, original_run,
-                          "Option B: subprocess.run must NOT be shimmed")
+            self.assertIs(
+                subprocess.run, original_run, "Option B: subprocess.run must NOT be shimmed"
+            )
         finally:
             shim_mod.remove()
 
@@ -405,6 +411,7 @@ class TestApplyRemove(unittest.TestCase):
     def test_apply_noop_when_disabled(self):
         # Reload _ENABLED with env var set
         import importlib
+
         importlib.reload(shim_mod)
         self.assertFalse(shim_mod._ENABLED)
         # apply should be a no-op

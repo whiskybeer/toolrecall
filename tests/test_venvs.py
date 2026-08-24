@@ -34,7 +34,8 @@ class TestVenvDiscovery(unittest.TestCase):
         own_exec = os.path.realpath(sys.executable)
         for v in found:
             self.assertNotEqual(
-                os.path.realpath(v.python), own_exec,
+                os.path.realpath(v.python),
+                own_exec,
                 "discovery must exclude toolrecall's own interpreter",
             )
 
@@ -70,9 +71,10 @@ class TestEnsureShimRealVenv(unittest.TestCase):
             # --system-site-packages lets the .pth import resolve `toolrecall`
             # from the base interpreter without a (possibly offline) pip step.
             r = subprocess.run(
-                [sys.executable, "-m", "venv", "--system-site-packages",
-                 cls.venv_root],
-                capture_output=True, text=True, timeout=120,
+                [sys.executable, "-m", "venv", "--system-site-packages", cls.venv_root],
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if r.returncode != 0:
                 raise RuntimeError(f"venv creation failed: {r.stderr[:300]}")
@@ -93,8 +95,7 @@ class TestEnsureShimRealVenv(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def _v(self):
-        return venv_mod.Venv(root=self.venv_root, python=self.py,
-                             site_packages=self.sp)
+        return venv_mod.Venv(root=self.venv_root, python=self.py, site_packages=self.sp)
 
     def test_ensure_shim_happy_path(self):
         if self.skip:
@@ -135,9 +136,10 @@ class TestShimCLIArgParsing(unittest.TestCase):
         old_argv, old_stdout = sys.argv, sys.stdout
         buf = io.StringIO()
         sys.stdout = buf
-        sys.argv = [ "toolrecall", "shim" ] + argv
+        sys.argv = ["toolrecall", "shim"] + argv
         try:
             from toolrecall import cli
+
             try:
                 cli.cmd_shim()
             except SystemExit as e:
@@ -183,8 +185,7 @@ class TestConfirmInstall(unittest.TestCase):
     """W4: prompt defaults to disabled; explicit yes enables."""
 
     def _fake_venv(self):
-        return venv_mod.Venv(root="/fake/root", python="/fake/python",
-                             site_packages="/fake/sp")
+        return venv_mod.Venv(root="/fake/root", python="/fake/python", site_packages="/fake/sp")
 
     def test_eof_returns_false(self):
         stdout = io.StringIO()
@@ -193,17 +194,20 @@ class TestConfirmInstall(unittest.TestCase):
         try:
             with patch("builtins.input", side_effect=EOFError):
                 from toolrecall.cli import _confirm_install
+
                 self.assertFalse(_confirm_install(self._fake_venv()))
         finally:
             sys.stdout = old_stdout
 
     def test_yes_returns_true(self):
         from toolrecall.cli import _confirm_install
+
         with patch("builtins.input", side_effect=["y"]):
             self.assertTrue(_confirm_install(self._fake_venv()))
 
     def test_no_returns_false(self):
         from toolrecall.cli import _confirm_install
+
         with patch("builtins.input", side_effect=["n"]):
             self.assertFalse(_confirm_install(self._fake_venv()))
 

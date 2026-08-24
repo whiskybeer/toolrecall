@@ -6,7 +6,6 @@ work, .env upserts don't accumulate tokens, and secret files get 0600.
 """
 
 import os
-import re
 import stat
 import sys
 import tempfile
@@ -50,14 +49,22 @@ class TestSyncOptInGating(unittest.TestCase):
         os.environ["TOOLRECALL_SYNC_TOKEN"] = "tok"
         _db._cached_config = None
         from toolrecall.config import load_config
+
         cfg = load_config()
         # url+token set, but master switch is off by default:
         self.assertFalse(cfg.libsql_sync_enabled)
 
     def test_sync_enabled_env_coercion(self):
         from toolrecall.config import load_config
-        for raw, expected in [("true", True), ("1", True), ("yes", True),
-                              ("false", False), ("0", False), ("", False)]:
+
+        for raw, expected in [
+            ("true", True),
+            ("1", True),
+            ("yes", True),
+            ("false", False),
+            ("0", False),
+            ("", False),
+        ]:
             os.environ["TOOLRECALL_SYNC_ENABLED"] = raw
             cfg = load_config()
             self.assertEqual(cfg.libsql_sync_enabled, expected, f"raw={raw!r}")
@@ -65,6 +72,7 @@ class TestSyncOptInGating(unittest.TestCase):
 
     def test_turso_api_base_customizable(self):
         from toolrecall.config import load_config
+
         self.assertEqual(load_config().turso_api_base, "https://api.turso.tech")
         os.environ["TOOLRECALL_TURSO_API_BASE"] = "https://turso.internal.example/"
         cfg = load_config()
@@ -98,7 +106,7 @@ class TestPrivateFileWrite(unittest.TestCase):
     def test_write_private_sets_0600(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "secret.toml")
-            _write_private(p, "sync_token = \"s\"\n")
+            _write_private(p, 'sync_token = "s"\n')
             mode = stat.S_IMODE(os.stat(p).st_mode)
             self.assertEqual(mode, 0o600)
             with open(p) as f:
@@ -133,7 +141,7 @@ class TestSetSyncEnabled(unittest.TestCase):
         self.assertIn("# note", out)  # trailing comment preserved
 
     def test_insert_flag_when_missing(self):
-        out = self._run_with_config("[storage]\nbackend = \"libsql\"\n", True)
+        out = self._run_with_config('[storage]\nbackend = "libsql"\n', True)
         self.assertRegex(out, r"(?m)^sync_enabled = true")
         self.assertIn('backend = "libsql"', out)
 
@@ -157,6 +165,7 @@ class TestPromptFunctions(unittest.TestCase):
         os.environ["TURSO_PLATFORM_API_TOKEN"] = "supersecret-token"
         # grab stdout; secret must NOT appear anywhere in the prompt echo
         import io
+
         buf = io.StringIO()
         with mock.patch("sys.stdout", buf):
             val = _prompt_secret("Platform API token")

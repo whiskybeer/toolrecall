@@ -28,8 +28,11 @@ os.environ["TOOLRECALL_SCAN_DIRS"] = ""
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.docs import (
-    index_agent_memory, index_directory, index_all,
-    docs_search, docs_get_page
+    index_agent_memory,
+    index_directory,
+    index_all,
+    docs_search,
+    docs_get_page,
 )
 from toolrecall.cache import cached_read, _init
 
@@ -60,11 +63,7 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
                 "Deployment: systemd user service preferred\n"
             )
         with open(os.path.join(self.mem_dir, "USER.md"), "w") as f:
-            f.write(
-                "Robin: prefers dense responses\n"
-                "§\n"
-                "Always test before changes\n"
-            )
+            f.write("Robin: prefers dense responses\n§\nAlways test before changes\n")
 
     def test_full_pipeline_memory(self):
         """Index → FTS5 search → get_page returns consistent results."""
@@ -92,8 +91,9 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
         self.assertIn("Budget", result)
 
         result2 = docs_search("Q3", source="agent-memory")
-        self.assertIn("No results", result2,
-                      "Other source should NOT return cross-contaminated results")
+        self.assertIn(
+            "No results", result2, "Other source should NOT return cross-contaminated results"
+        )
 
     def test_multiple_source_isolation(self):
         """Entries from different sources don't cross-contaminate."""
@@ -143,6 +143,7 @@ class TestKnowledgeDBPipeline(unittest.TestCase):
     def test_index_all_with_memory_config(self):
         """index_all() includes memory when config enables it."""
         from toolrecall.config import load_config
+
         cfg = load_config()
 
         cfg.get("sources", "memory")
@@ -224,6 +225,7 @@ class TestDaemonSubprocess(unittest.TestCase):
     def _send_command(self, action: str) -> dict:
         import socket
         import json
+
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             sock.settimeout(3)

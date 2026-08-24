@@ -47,8 +47,10 @@ REPLAY_TABLE = "replay_scenarios"
 
 # ─── Scenario Mode ─────────────────────────────────────────────────────────────
 
+
 class _Mode:
     """Replay mode state — which scenario is active and whether we're recording or replaying."""
+
     __slots__ = ("scenario", "mode")
 
     def __init__(self):
@@ -87,6 +89,7 @@ def active_mode() -> _Mode:
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_hash(tool_name: str, args: dict) -> str:
     """Deterministic hash of tool name + normalized arguments."""
     args_json = normalize_tool_args(args)
@@ -95,6 +98,7 @@ def _make_hash(tool_name: str, args: dict) -> str:
 
 
 # ─── ReplayManager ────────────────────────────────────────────────────────────────
+
 
 class ReplayManager:
     """Manages recording and replay of tool call scenarios.
@@ -249,9 +253,7 @@ class ReplayManager:
             Number of deleted rows
         """
         with _db() as conn:
-            cur = conn.execute(
-                f"DELETE FROM {REPLAY_TABLE} WHERE scenario_name = ?", (name,)
-            )
+            cur = conn.execute(f"DELETE FROM {REPLAY_TABLE} WHERE scenario_name = ?", (name,))
         return cur.rowcount
 
     def export_scenario(self, name: str) -> dict:
@@ -334,6 +336,7 @@ class ReplayManager:
 
 # ─── Convenience functions ─────────────────────────────────────────────────────
 
+
 def start_recording(scenario: str) -> dict:
     """Start recording mode for a scenario.
 
@@ -411,7 +414,9 @@ def intercept_call(tool_name: str, args: dict) -> Optional[dict]:
     manager = ReplayManager()
 
     if _active.is_replaying():
-        response = manager.find_replay(_active.scenario, tool_name, args)
+        scenario = _active.scenario
+        assert scenario is not None
+        response = manager.find_replay(scenario, tool_name, args)
         if response is not None:
             return {"replay_hit": True, "data": response}
         return {"replay_hit": False, "message": f"No replay found for {tool_name}"}
@@ -422,7 +427,9 @@ def intercept_call(tool_name: str, args: dict) -> Optional[dict]:
     return None
 
 
-def record_response(tool_name: str, args: dict, response: Any, scenario: Optional[str] = None) -> dict:
+def record_response(
+    tool_name: str, args: dict, response: Any, scenario: Optional[str] | None = None
+) -> dict:
     """Record a tool response after real execution.
 
     Called by the daemon after a tool executes successfully while replay

@@ -18,8 +18,6 @@ Workload is loaded from bench/workloads.py.
 
 import argparse
 import os
-import re
-import sqlite3
 import sys
 import time
 
@@ -32,8 +30,8 @@ from agent import make_agent_turn, AgentResult, _call_llm
 from workloads import load_workload
 
 # Tunable constants
-CONTEXT_LIMIT = 1_048_576   # exhaustion threshold
-PROBE_INTERVAL = 25       # plant a probe every N turns
+CONTEXT_LIMIT = 1_048_576  # exhaustion threshold
+PROBE_INTERVAL = 25  # plant a probe every N turns
 
 
 def request_tokens(messages: list[dict]) -> int:
@@ -45,6 +43,7 @@ def request_tokens(messages: list[dict]) -> int:
     """
     try:
         import tiktoken
+
         enc = tiktoken.get_encoding("cl100k_base")
     except ImportError:
         total = sum(len(str(m)) for m in messages)
@@ -69,9 +68,16 @@ def request_tokens(messages: list[dict]) -> int:
     return num_tokens
 
 
-def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
-            dry_run: bool = False, provider: str = "openrouter",
-            model: str = None, delay: float = 0.0):
+def run_arm(
+    arm: str,
+    workload_id: str,
+    seed: int = 42,
+    max_turns: int = 500,
+    dry_run: bool = False,
+    provider: str = "openrouter",
+    model: str = None,
+    delay: float = 0.0,
+):
     """Run a single arm of the benchmark.
 
     Args:
@@ -92,7 +98,7 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
 
     # Get the appropriate agent turn function
     if dry_run:
-        agent_turn_fn = lambda convo, step: _dummy_turn(convo, step)
+        agent_turn_fn = _dummy_turn
     else:
         agent_turn_fn = make_agent_turn(arm, provider=provider, model=model)
 
@@ -105,6 +111,7 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
     # read/dirty state from daemon's normal operation before benchmark
     if arm == "toolrecall":
         from toolrecall.client import context_reset
+
         context_reset()
 
     for turn in range(1, max_turns + 1):
@@ -132,7 +139,9 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
                 probe_resp = _call_llm(probe_convo, provider=provider, model=model, arm=arm)
                 ans_text = ""
                 if "error" not in probe_resp:
-                    ans_text = probe_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    ans_text = (
+                        probe_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    )
                     convo.append({"role": "user", "content": question})
                     convo.append({"role": "assistant", "content": ans_text})
             # Use the same connection as the turn logger (per-run DB)
@@ -196,8 +205,11 @@ def run_arm(arm: str, workload_id: str, seed: int = 42, max_turns: int = 500,
             cto_suffix = ""
             if arm == "toolrecall" and not result.context_tracker_ok:
                 cto_suffix = " [TRACKER DOWN]"
-            print(f"  turn {turn:>4} | req_tok={req_tokens:>7} | "
-                  f"prov_tok={pt:>7} | ok={result.ok}{err_suffix}{cto_suffix}", flush=True)
+            print(
+                f"  turn {turn:>4} | req_tok={req_tokens:>7} | "
+                f"prov_tok={pt:>7} | ok={result.ok}{err_suffix}{cto_suffix}",
+                flush=True,
+            )
 
         # Rate-limit avoidance delay
         if delay > 0 and not dry_run:
@@ -211,13 +223,19 @@ def _dummy_turn(convo: list[dict], step) -> AgentResult:
     """Dummy agent turn for dry-run testing — no LLM call, no cost."""
     time.sleep(0.01)
     new_convo = list(convo) + [step.message]
-    new_convo.append({
-        "role": "assistant",
-        "content": f"[dry-run] processed: {step.message.get('content', '')[:50]}..."
-    })
+    new_convo.append(
+        {
+            "role": "assistant",
+            "content": f"[dry-run] processed: {step.message.get('content', '')[:50]}...",
+        }
+    )
     return AgentResult(
-        usage={"prompt_tokens": 100, "completion_tokens": 20,
-               "cache_read_tokens": 0, "cache_write_tokens": 0},
+        usage={
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
         conversation=new_convo,
         ok=True,
     )
@@ -226,19 +244,26 @@ def _dummy_turn(convo: list[dict], step) -> AgentResult:
 def main():
     parser = argparse.ArgumentParser(description="Run a single benchmark arm")
     parser.add_argument("arm", choices=["naive", "prefix", "toolrecall"])
-    parser.add_argument("workload", nargs="?", default="bugfix",
-                        help="Workload name: bugfix, feature, analysis")
+    parser.add_argument(
+        "workload", nargs="?", default="bugfix", help="Workload name: bugfix, feature, analysis"
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-turns", type=int, default=500)
-    parser.add_argument("--provider", default="openrouter",
-                        choices=["openrouter", "anthropic", "gemini", "deepseek"],
-                        help="LLM provider (default: openrouter)")
-    parser.add_argument("--model", default=None,
-                        help="Model name override (uses provider default if unset)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Skip LLM calls — use dummy agent for testing")
-    parser.add_argument("--delay", type=float, default=0.0,
-                        help="Seconds to wait between turns (default: 0.0)")
+    parser.add_argument(
+        "--provider",
+        default="openrouter",
+        choices=["openrouter", "anthropic", "gemini", "deepseek"],
+        help="LLM provider (default: openrouter)",
+    )
+    parser.add_argument(
+        "--model", default=None, help="Model name override (uses provider default if unset)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Skip LLM calls — use dummy agent for testing"
+    )
+    parser.add_argument(
+        "--delay", type=float, default=0.0, help="Seconds to wait between turns (default: 0.0)"
+    )
     args = parser.parse_args()
 
     print(f"Arm: {args.arm}")
@@ -261,11 +286,13 @@ def main():
         delay=args.delay,
     )
     print(f"\nRun complete: {run_id}")
-    print(f"To rerun: python3 bench/run_arm.py {args.arm} {args.workload} "
-          f"--seed {args.seed} --max-turns {args.max_turns} "
-          f"--provider {args.provider}"
-          + (f" --model {args.model}" if args.model else "")
-          + (f" --delay {args.delay}" if args.delay else ""))
+    print(
+        f"To rerun: python3 bench/run_arm.py {args.arm} {args.workload} "
+        f"--seed {args.seed} --max-turns {args.max_turns} "
+        f"--provider {args.provider}"
+        + (f" --model {args.model}" if args.model else "")
+        + (f" --delay {args.delay}" if args.delay else "")
+    )
 
 
 if __name__ == "__main__":

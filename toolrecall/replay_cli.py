@@ -95,6 +95,7 @@ def _cmd_replay(rest: list[str]) -> None:
         return
     scenario = rest[0]
     from toolrecall.replay import start_replay, ReplayManager
+
     # Verify scenario exists
     replay = ReplayManager()
     scenarios = replay.list_scenarios()
@@ -113,6 +114,7 @@ def _cmd_replay(rest: list[str]) -> None:
 
 def _cmd_stop() -> None:
     from toolrecall.replay import stop
+
     result = stop()
     if result["replay_mode"] == "stopped":
         print(f"🔴 Replay stopped (was: {result['was']}, scenario: {result['scenario']})")
@@ -122,6 +124,7 @@ def _cmd_stop() -> None:
 
 def _cmd_status() -> None:
     from toolrecall.replay import status
+
     s = status()
     print(f"Replay Mode: {s['replay_mode']}")
     print(f"Scenario: {s['scenario'] or '(none)'}")
@@ -134,6 +137,7 @@ def _cmd_status() -> None:
 
 def _cmd_list() -> None:
     from toolrecall.replay import ReplayManager
+
     replay = ReplayManager()
     scenarios = replay.list_scenarios()
     if not scenarios:
@@ -152,6 +156,7 @@ def _cmd_show(rest: list[str]) -> None:
         print("Error: Missing scenario name. Usage: toolrecall replay show <name>")
         return
     from toolrecall.replay import ReplayManager
+
     replay = ReplayManager()
     calls = replay.get_scenario(rest[0])
     if not calls:
@@ -174,6 +179,7 @@ def _cmd_export(rest: list[str]) -> None:
         return
     scenario = rest[0]
     from toolrecall.replay import ReplayManager
+
     replay = ReplayManager()
     data = replay.export_scenario(scenario)
     print(json.dumps(data, indent=2))
@@ -190,12 +196,17 @@ def _cmd_import(rest: list[str]) -> None:
     with open(filepath) as f:
         data = json.load(f)
     from toolrecall.replay import ReplayManager
+
     replay = ReplayManager()
     # Check if exists
     existing = [s["name"] for s in replay.list_scenarios()]
     overwrite = False
     if data.get("scenario_name") in existing:
-        yn = input(f"Scenario '{data['scenario_name']}' already exists. Overwrite? [y/N] ").strip().lower()
+        yn = (
+            input(f"Scenario '{data['scenario_name']}' already exists. Overwrite? [y/N] ")
+            .strip()
+            .lower()
+        )
         if yn != "y":
             print("Import cancelled.")
             return
@@ -214,6 +225,7 @@ def _cmd_delete(rest: list[str]) -> None:
         print("Cancelled.")
         return
     from toolrecall.replay import ReplayManager
+
     replay = ReplayManager()
     count = replay.delete_scenario(scenario)
     print(f"Deleted scenario '{scenario}' ({count} calls removed).")
@@ -222,5 +234,6 @@ def _cmd_delete(rest: list[str]) -> None:
 def time_str(ts: float) -> str:
     """Format a Unix timestamp to a readable string."""
     import datetime
+
     dt = datetime.datetime.fromtimestamp(ts)
     return dt.strftime("%Y-%m-%d %H:%M:%S")

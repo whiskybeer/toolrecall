@@ -43,7 +43,13 @@ def show_summary(rows: list[dict]):
     total_cache_read = 0
     total_cache_write = 0
     by_status: dict[str, dict] = defaultdict(
-        lambda: {"prompt_tokens": 0, "completion_tokens": 0, "cache_read": 0, "cache_write": 0, "count": 0}
+        lambda: {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cache_read": 0,
+            "cache_write": 0,
+            "count": 0,
+        }
     )
 
     for r in rows:
@@ -72,35 +78,55 @@ def show_summary(rows: list[dict]):
     print(f"  Cache write tokens:{fmt(total_cache_write)}  (provider prefix cache write)")
     print()
 
-    print(f"  {'Status':<8} {'Count':<8} {'Prompt Tokens':<16} {'Completion':<14} {'Cache Read':<14} {'Cache Write'}")
-    print(f"  {'-'*8} {'-'*8} {'-'*16} {'-'*14} {'-'*14} {'-'*12}")
+    print(
+        f"  {'Status':<8} {'Count':<8} {'Prompt Tokens':<16} {'Completion':<14} {'Cache Read':<14} {'Cache Write'}"
+    )
+    print(f"  {'-' * 8} {'-' * 8} {'-' * 16} {'-' * 14} {'-' * 14} {'-' * 12}")
     for status in ["HIT", "MISS", "STREAM"]:
         s = by_status.get(status)
         if s and s["count"] > 0:
-            print(f"  {status:<8} {fmt(s['count']):<8} {fmt(s['prompt_tokens']):<16} {fmt(s['completion_tokens']):<14} {fmt(s['cache_read']):<14} {fmt(s['cache_write']):<12}")
+            print(
+                f"  {status:<8} {fmt(s['count']):<8} {fmt(s['prompt_tokens']):<16} {fmt(s['completion_tokens']):<14} {fmt(s['cache_read']):<14} {fmt(s['cache_write']):<12}"
+            )
 
     # Other/unknown statuses
     others = {k: v for k, v in by_status.items() if k not in ("HIT", "MISS", "STREAM")}
     if others:
         for status, s in others.items():
-            print(f"  {status:<8} {fmt(s['count']):<8} {fmt(s['prompt_tokens']):<16} {fmt(s['completion_tokens']):<14} {fmt(s['cache_read']):<14} {fmt(s['cache_write']):<12}")
+            print(
+                f"  {status:<8} {fmt(s['count']):<8} {fmt(s['prompt_tokens']):<16} {fmt(s['completion_tokens']):<14} {fmt(s['cache_read']):<14} {fmt(s['cache_write']):<12}"
+            )
 
     # Actual tokens sent to LLM (MISS + STREAM)
-    sent = by_status.get("MISS", {}).get("prompt_tokens", 0) + by_status.get("STREAM", {}).get("prompt_tokens", 0)
+    sent = by_status.get("MISS", {}).get("prompt_tokens", 0) + by_status.get("STREAM", {}).get(
+        "prompt_tokens", 0
+    )
     saved = by_status.get("HIT", {}).get("prompt_tokens", 0)
     total = sent + saved
     if total > 0:
-        print(f"\n  Actual tokens sent to LLM:  {fmt(sent)} ({sent/total*100:.1f}%)")
-        print(f"  Tokens saved by proxy:      {fmt(saved)} ({saved/total*100:.1f}%)")
+        print(f"\n  Actual tokens sent to LLM:  {fmt(sent)} ({sent / total * 100:.1f}%)")
+        print(f"  Tokens saved by proxy:      {fmt(saved)} ({saved / total * 100:.1f}%)")
     print()
 
 
 def show_by_status(rows: list[dict]):
     """Print per-status breakdown as a compact table."""
     import io
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["timestamp", "status", "host", "path", "prompt_tokens", "completion_tokens", "cache_read", "cache_write"])
+    writer.writerow(
+        [
+            "timestamp",
+            "status",
+            "host",
+            "path",
+            "prompt_tokens",
+            "completion_tokens",
+            "cache_read",
+            "cache_write",
+        ]
+    )
     prev = None
     for r in rows:
         st = r.get("cache_status", "?")
@@ -108,17 +134,21 @@ def show_by_status(rows: list[dict]):
             if prev is not None:
                 output.write("\n")
             prev = st
-            writer.writerow([f"--- {st} ({sum(1 for x in rows if x.get('cache_status')==st)} rows) ---"])
-        writer.writerow([
-            r.get("timestamp", ""),
-            st,
-            r.get("target_host", ""),
-            r.get("target_path", ""),
-            r.get("prompt_tokens", ""),
-            r.get("completion_tokens", ""),
-            r.get("cache_read_tokens", ""),
-            r.get("cache_write_tokens", ""),
-        ])
+            writer.writerow(
+                [f"--- {st} ({sum(1 for x in rows if x.get('cache_status') == st)} rows) ---"]
+            )
+        writer.writerow(
+            [
+                r.get("timestamp", ""),
+                st,
+                r.get("target_host", ""),
+                r.get("target_path", ""),
+                r.get("prompt_tokens", ""),
+                r.get("completion_tokens", ""),
+                r.get("cache_read_tokens", ""),
+                r.get("cache_write_tokens", ""),
+            ]
+        )
     print(output.getvalue())
 
 
@@ -126,13 +156,17 @@ def show_recent(rows: list[dict], n: int = 10):
     """Show the N most recent entries."""
     recent = rows[-n:] if len(rows) >= n else rows
     print(f"Last {len(recent)} proxy requests:")
-    print(f"  {'ts':<12} {'status':<7} {'host':<20} {'path':<28} {'ptok':<8} {'ctok':<8} {'cread':<8}")
-    print(f"  {'-'*12} {'-'*7} {'-'*20} {'-'*28} {'-'*8} {'-'*8} {'-'*8}")
+    print(
+        f"  {'ts':<12} {'status':<7} {'host':<20} {'path':<28} {'ptok':<8} {'ctok':<8} {'cread':<8}"
+    )
+    print(f"  {'-' * 12} {'-' * 7} {'-' * 20} {'-' * 28} {'-' * 8} {'-' * 8} {'-' * 8}")
     for r in recent:
         ts = r.get("timestamp", "")
         if ts and "." in ts:
             ts = ts.split(".")[0]  # trim subsecond
-        print(f"  {ts:<12} {r.get('cache_status','?'):<7} {r.get('target_host',''):<20} {r.get('target_path',''):<28} {r.get('prompt_tokens',''):<8} {r.get('completion_tokens',''):<8} {r.get('cache_read_tokens',''):<8}")
+        print(
+            f"  {ts:<12} {r.get('cache_status', '?'):<7} {r.get('target_host', ''):<20} {r.get('target_path', ''):<28} {r.get('prompt_tokens', ''):<8} {r.get('completion_tokens', ''):<8} {r.get('cache_read_tokens', ''):<8}"
+        )
     print()
 
 

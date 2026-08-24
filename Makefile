@@ -16,12 +16,14 @@ SHELL := /bin/bash
 HAVE_UV := $(shell command -v uv >/dev/null 2>&1 && echo yes || echo no)
 ifeq ($(HAVE_UV),yes)
     PY_RUN   := uv run
+    PYTHON   := uv run python
     PIP_INST := uv pip install
-    PIP_SYNC := uv sync
+    PIP_SYNC := uv sync --extra dev
     VENV_ACT := . .venv/bin/activate
 else
     $(warning uv not found — falling back to pip. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh)
     PY_RUN   := python3
+    PYTHON   := python3
     PIP_INST := pip install
     PIP_SYNC := pip install -e ".[dev]"
     VENV_ACT := :
@@ -38,6 +40,7 @@ help:
 	@echo ""
 	@echo "Testing"
 	@echo "  make test           Run full test suite"
+	@echo "  make test-unit      Release-gate selection (excl. e2e/ADK)"
 	@echo "  make test-fast      Run unit tests only (skip e2e)"
 	@echo "  make test-e2e       Run end-to-end daemon tests"
 	@echo "  make test-file      Run a single test file (FILE=tests/test_*.py)"
@@ -50,6 +53,22 @@ help:
 	@echo ""
 	@echo "Type Checking"
 	@echo "  make type           Run mypy (if installed)"
+	@echo ""
+	@echo "Pre-push Gate"
+	@echo "  make validate       check + type + test-unit in one command"
+	@echo ""
+	@echo "Benchmarks"
+	@echo "  make bench-env      Create/install /tmp/bench-env harness venv"
+	@echo "  make bench-run      Single arm (ARM= WORKLOAD= SEED= TURNS=)"
+	@echo "  make bench-interleave  Interleaved paired run (WORKLOAD= SEEDS= TURNS=)"
+	@echo "  make bench-dry      Dry run, no API calls (ARM= WORKLOAD=)"
+	@echo "  make bench-analyze  Charts + report from benchmark DB"
+	@echo ""
+	@echo "Docker"
+	@echo "  make docker-build   docker compose build"
+	@echo "  make docker-up      Build + start stack"
+	@echo "  make docker-down    docker compose down"
+	@echo "  make docker-test    Build + run Dockerfile.test image"
 	@echo ""
 	@echo "Clean"
 	@echo "  make clean          Remove cache, temp files, __pycache__"
@@ -80,16 +99,22 @@ setup:
 
 .PHONY: sync
 sync:
-	uv sync --frozen
+	uv sync --frozen --extra dev
 
 # ─── Testing ──────────────────────────────────────────────────
 
 .PHONY: test
-test:
+test: test-dedup
 	$(PY_RUN) -m pytest tests/ -v --tb=short --no-header
 
+# Selection mirrors the release gate (scripts/release.sh stage 6). Single
+# source of truth for what ships — used by both `make validate` and the release.
+.PHONY: test-unit
+test-unit:
+	$(PY_RUN) -m pytest tests/ -q --tb=short -p no:capture -k "not test_client_without_daemon and not e2e and not adk and not gemini"
+
 .PHONY: test-fast
-test-fast:
+test-fast: test-dedup
 	$(PY_RUN) -m pytest tests/ -v --tb=short --no-header -k "not e2e"
 
 .PHONY: test-e2e
@@ -100,6 +125,10 @@ test-e2e:
 test-file:
 	$(PY_RUN) -m pytest $(FILE) -v --tb=short
 
+.PHONY: test-dedup
+test-dedup:
+	$(PY_RUN) bench/litellm_dedup/property_test_quality.py
+
 .PHONY: test-kw
 test-kw:
 	$(PY_RUN) -m pytest tests/ -v --tb=short -k "$(KW)"
@@ -108,12 +137,15 @@ test-kw:
 
 .PHONY: lint
 lint:
-	$(PY_RUN) ruff check toolrecall/ tests/
+	$(PY_RUN) ruff check toolrecall/ tests/ bench/ scripts/
 
 .PHONY: format
 format:
-	$(PY_RUN) ruff format toolrecall/ tests/
+	$(PY_RUN) ruff format toolrecall/ tests/ bench/ scripts/
 
+# CI gate. Note: bench/ deliberately excluded from `check` — it contains scratch
+# + string-patch scripts (fix_clean.py, final_fix.py) whose embedded patch strings
+# ruff reformatting would corrupt; lint/format still cover them for dev hygiene.
 .PHONY: check
 check:
 	$(PY_RUN) ruff check toolrecall/ tests/
@@ -123,11 +155,79 @@ check:
 
 .PHONY: type
 type:
-	@if $(PY_RUN) -c "import mypy" 2>/dev/null; then
-		$(PY_RUN) -m mypy toolrecall/ --ignore-missing-imports --strict-optional
+	@if $(PYTHON) -c "import mypy" 2>/dev/null; then
+		$(PYTHON) -m mypy toolrecall/ --ignore-missing-imports --strict-optional
 	else
 		@echo "⚠️  mypy not installed. Run: $(PIP_INST) mypy"
 	fi
+
+# ─── Pre-push gate ─────────────────────────────────────────────
+# One command combining lint + format-check + type-check + the release test
+# selection. This is what CI / a pre-push hook should run.
+.PHONY: validate
+validate: check type test-unit
+	@echo "✓ validate passed (lint + format + type + unit tests)"
+
+# ─── Benchmarks ─────────────────────────────────────────────────
+# Three-arm benchmark (naive / prefix / toolrecall), see bench/README.md.
+# bench deps (tiktoken, numpy, pandas, matplotlib, scipy) are NOT in the
+# project's dev extras, so the harness uses its own venv at /tmp/bench-env.
+# The toolrecall arm imports `toolrecall.client`, so the repo root is put on
+# PYTHONPATH (mirrors the README's `PYTHONPATH=~/toolrecall`).
+BENCH_ENV := /tmp/bench-env
+BENCH_BIN := $(BENCH_ENV)/bin
+BENCH_PY  := $(BENCH_BIN)/python3
+BENCH_REQ := tiktoken numpy pandas matplotlib scipy
+# Exported so the sub-process can `import toolrecall` from the repo root.
+export PYTHONPATH := $(CURDIR)
+
+.PHONY: bench-env
+bench-env:
+	@if [ ! -x $(BENCH_PY) ]; then \
+		python3 -m venv $(BENCH_ENV); \
+	fi
+	@$(BENCH_BIN)/pip install -q $(BENCH_REQ)
+	@echo "✓ bench env ready at $(BENCH_ENV)"
+
+# Single arm:  make bench-run ARM=toolrecall WORKLOAD=review SEED=42 TURNS=30
+.PHONY: bench-run
+bench-run: bench-env
+	$(BENCH_PY) bench/run_arm.py $(ARM) $(WORKLOAD) --seed $(or $(SEED),42) --max-turns $(or $(TURNS),30)
+
+# Interleaved paired run: make bench-interleave WORKLOAD=review SEEDS=3 TURNS=200
+.PHONY: bench-interleave
+bench-interleave: bench-env
+	$(BENCH_PY) bench/interleave.py $(WORKLOAD) --seeds $(or $(SEEDS),3) --max-turns $(or $(TURNS),200)
+
+# Dry run (tests plumbing, no API calls): make bench-dry ARM=toolrecall WORKLOAD=review
+.PHONY: bench-dry
+bench-dry: bench-env
+	$(BENCH_PY) bench/run_arm.py $(ARM) $(WORKLOAD) --seed $(or $(SEED),42) --max-turns $(or $(TURNS),5) --dry-run
+
+# Charts + report from ~/.toolrecall/benchmark.db
+.PHONY: bench-analyze
+bench-analyze:
+	$(BENCH_PY) bench/analyze.py
+
+# ─── Docker ─────────────────────────────────────────────────────
+.PHONY: docker-build
+docker-build:
+	docker compose build
+
+.PHONY: docker-up
+docker-up: docker-build
+	docker compose up -d
+	docker compose ps
+
+.PHONY: docker-down
+docker-down:
+	docker compose down
+
+# Build + run the self-contained test image (Dockerfile.test)
+.PHONY: docker-test
+docker-test:
+	docker build -f Dockerfile.test -t toolrecall-test .
+	docker run --rm toolrecall-test
 
 # ─── Clean ────────────────────────────────────────────────────
 

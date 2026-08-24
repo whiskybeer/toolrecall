@@ -19,11 +19,18 @@ os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from toolrecall.cache import (
-    cached_read, cached_terminal, cached_exec, get_stats, reset_stats, _init, _estimate_tokens
+    cached_read,
+    cached_terminal,
+    cached_exec,
+    get_stats,
+    reset_stats,
+    _init,
+    _estimate_tokens,
 )
 
 PASS = 0
 FAIL = 0
+
 
 def check(label, condition, detail=""):
     global PASS, FAIL
@@ -34,18 +41,20 @@ def check(label, condition, detail=""):
         print(f"  ❌ {label} — {detail}")
         FAIL += 1
 
+
 def simulate_session(reads, label="session"):
     """Simulate N reads across files, then report stats per layer."""
     for path, content in reads:
         cached_read(path)
     stats = get_stats()
     fc = stats.get("file_cache", {})
-    print(f"  [{label}] hits={fc.get('hits',0)}, tokens={fc.get('tokens_read_from_disk',0)}")
+    print(f"  [{label}] hits={fc.get('hits', 0)}, tokens={fc.get('tokens_read_from_disk', 0)}")
     return stats
+
 
 def real_file(size_chars, content=None):
     """Create a temp file with known content size."""
-    f = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
     if content:
         f.write(content)
     else:
@@ -53,12 +62,14 @@ def real_file(size_chars, content=None):
     f.close()
     return f.name
 
+
 def cleanup(*paths):
     for p in paths:
         try:
             os.unlink(p)
         except OSError:
             pass
+
 
 # ════════════════════════════════════════
 # TEST 1: File Cache — No Double Count
@@ -91,13 +102,13 @@ check("B first read is miss", not r4.get("cached"))
 # Now verify: tokens = A + B, not A*3 + B
 fc = get_stats().get("file_cache", {})
 total_expected = expected_a + expected_b
-check(f"tokens = {total_expected} (A: {expected_a} + B: {expected_b})",
-      fc["tokens_read_from_disk"] == total_expected,
-      f"got {fc['tokens_read_from_disk']}")
-check("hits = 2 (A 2nd + 3rd read, no B hits yet)",
-      fc["hits"] == 2, f"got {fc['hits']}")
-check("misses = 2 (A 1st + B 1st)",
-      fc["misses"] == 2, f"got {fc['misses']}")
+check(
+    f"tokens = {total_expected} (A: {expected_a} + B: {expected_b})",
+    fc["tokens_read_from_disk"] == total_expected,
+    f"got {fc['tokens_read_from_disk']}",
+)
+check("hits = 2 (A 2nd + 3rd read, no B hits yet)", fc["hits"] == 2, f"got {fc['hits']}")
+check("misses = 2 (A 1st + B 1st)", fc["misses"] == 2, f"got {fc['misses']}")
 
 cleanup(fa, fb)
 
@@ -119,20 +130,22 @@ for i in range(100):
     cached_read(big_file)
 
 fc = get_stats().get("file_cache", {})
-check(f"100 reads of same file = {big_tokens} tokens (not 100×)",
-      fc["tokens_read_from_disk"] == big_tokens,
-      f"got {fc['tokens_read_from_disk']} (should be {big_tokens})")
-check("hits = 99 (100 reads - 1 miss)",
-      fc["hits"] == 99, f"got {fc['hits']}")
-check("misses = 1",
-      fc["misses"] == 1, f"got {fc['misses']}")
+check(
+    f"100 reads of same file = {big_tokens} tokens (not 100×)",
+    fc["tokens_read_from_disk"] == big_tokens,
+    f"got {fc['tokens_read_from_disk']} (should be {big_tokens})",
+)
+check("hits = 99 (100 reads - 1 miss)", fc["hits"] == 99, f"got {fc['hits']}")
+check("misses = 1", fc["misses"] == 1, f"got {fc['misses']}")
 
 # Compare: old bug would have counted 99 × big_tokens
 old_bug_value = 99 * big_tokens
 savings_factor = old_bug_value / big_tokens
-check(f"Old bug would have counted {old_bug_value} (×{savings_factor:.0f} inflation) — prevented",
-      fc["tokens_read_from_disk"] < old_bug_value / 10,
-      f"inflation detected: {fc['tokens_read_from_disk']} vs {old_bug_value}")
+check(
+    f"Old bug would have counted {old_bug_value} (×{savings_factor:.0f} inflation) — prevented",
+    fc["tokens_read_from_disk"] < old_bug_value / 10,
+    f"inflation detected: {fc['tokens_read_from_disk']} vs {old_bug_value}",
+)
 
 cleanup(big_file)
 
@@ -150,25 +163,29 @@ hits_1 = get_stats().get("file_cache", {}).get("hits", 0)
 
 # Simulate daemon restart: clear in-memory LRU
 from toolrecall.cache import _file_cache
+
 _file_cache.clear()
 
 # Read again → SQLite hit → should NOT count tokens again
 cached_read(restart_file)
 fc = get_stats().get("file_cache", {})
 expected = _estimate_tokens("X" * 1000)
-check(f"After restart: tokens = {expected} (same file, no re-count)",
-      fc["tokens_read_from_disk"] == expected,
-      f"got {fc['tokens_read_from_disk']}")
-check(f"After restart: hits = {hits_1 + 1})",
-      fc["hits"] == hits_1 + 1, f"got {fc['hits']}")
+check(
+    f"After restart: tokens = {expected} (same file, no re-count)",
+    fc["tokens_read_from_disk"] == expected,
+    f"got {fc['tokens_read_from_disk']}",
+)
+check(f"After restart: hits = {hits_1 + 1})", fc["hits"] == hits_1 + 1, f"got {fc['hits']}")
 
 # Second restart
 _file_cache.clear()
 cached_read(restart_file)
 fc = get_stats().get("file_cache", {})
-check(f"2nd restart: tokens still {expected} (never re-counted)",
-      fc["tokens_read_from_disk"] == expected,
-      f"got {fc['tokens_read_from_disk']}")
+check(
+    f"2nd restart: tokens still {expected} (never re-counted)",
+    fc["tokens_read_from_disk"] == expected,
+    f"got {fc['tokens_read_from_disk']}",
+)
 
 cleanup(restart_file)
 
@@ -183,31 +200,36 @@ _init()
 
 # Use a cheap, cacheable command
 import subprocess
-result = subprocess.run(['hostname'], capture_output=True, text=True)
+
+result = subprocess.run(["hostname"], capture_output=True, text=True)
 expected_term_tokens = _estimate_tokens(result.stdout)
 
-term1 = cached_terminal('hostname', ttl=60)
+term1 = cached_terminal("hostname", ttl=60)
 check("Terminal first call = miss", not term1.get("cached"))
 
-term2 = cached_terminal('hostname', ttl=60)
+term2 = cached_terminal("hostname", ttl=60)
 check("Terminal second call = hit", term2.get("cached"))
 
-term3 = cached_terminal('hostname', ttl=60)
+term3 = cached_terminal("hostname", ttl=60)
 check("Terminal third call = hit", term3.get("cached"))
 
 tc = get_stats().get("terminal_cache", {})
-check(f"Terminal tokens = {expected_term_tokens} (not 3×)",
-      tc["tokens_read_from_disk"] == expected_term_tokens,
-      f"got {tc['tokens_read_from_disk']}")
+check(
+    f"Terminal tokens = {expected_term_tokens} (not 3×)",
+    tc["tokens_read_from_disk"] == expected_term_tokens,
+    f"got {tc['tokens_read_from_disk']}",
+)
 
 # Code cache
 code = "print('hello world')"
 c1 = cached_exec(code, ttl=60)
 c2 = cached_exec(code, ttl=60)
 cc = get_stats().get("code_cache", {})
-check("Code cache tokens counted once",
-      cc["tokens_read_from_disk"] > 0,
-      f"got {cc['tokens_read_from_disk']}")
+check(
+    "Code cache tokens counted once",
+    cc["tokens_read_from_disk"] > 0,
+    f"got {cc['tokens_read_from_disk']}",
+)
 check("Code cache hit works", c2.get("cached"))
 
 # ════════════════════════════════════════
@@ -220,32 +242,31 @@ entries_before = get_stats().get("file_cache_entries", 0)
 new_f = real_file(0, "Z" * 500)
 cached_read(new_f)
 entries_after_new = get_stats().get("file_cache_entries", 0)
-check("Entry count increased after new file",
-      entries_after_new > entries_before)
+check("Entry count increased after new file", entries_after_new > entries_before)
 
 reset_stats()
 stats = get_stats()
-check("No file_cache section after reset",
-      "file_cache" not in stats)
-check("No terminal_cache after reset",
-      "terminal_cache" not in stats)
-check("File entries survive reset",
-      stats.get("file_cache_entries", 0) >= entries_after_new,
-      f"entries lost: had {entries_after_new}, got {stats.get('file_cache_entries', 0)}")
-check("Memory entries intact",
-      stats.get("memory_file_entries", -1) >= 0)
+check("No file_cache section after reset", "file_cache" not in stats)
+check("No terminal_cache after reset", "terminal_cache" not in stats)
+check(
+    "File entries survive reset",
+    stats.get("file_cache_entries", 0) >= entries_after_new,
+    f"entries lost: had {entries_after_new}, got {stats.get('file_cache_entries', 0)}",
+)
+check("Memory entries intact", stats.get("memory_file_entries", -1) >= 0)
 
 cleanup(new_f)
 
 # ════════════════════════════════════════
 # RESULTS
 # ════════════════════════════════════════
-print(f"\n{'═'*50}")
+print(f"\n{'═' * 50}")
 print(f"RESULTS: {PASS} passed, {FAIL} failed")
-print(f"{'═'*50}")
+print(f"{'═' * 50}")
 
 # Cleanup
 import shutil
+
 shutil.rmtree(test_db_dir, ignore_errors=True)
 
 sys.exit(0 if FAIL == 0 else 1)

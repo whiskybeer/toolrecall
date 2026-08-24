@@ -37,15 +37,23 @@ def run_bench():
     env = dict(os.environ)
     env["BENCH_DB_NAME"] = DB_NAME
     env["BENCH_CONTEXT_LIMIT"] = str(CTX)
-    env["PYTHONPATH"] = os.path.expanduser("/home/hermes/toolrecall") + ":" + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        os.path.expanduser("/home/hermes/toolrecall") + ":" + env.get("PYTHONPATH", "")
+    )
     cmd = [
-        PY, os.path.join(APPROOT, "interleave.py"),
+        PY,
+        os.path.join(APPROOT, "interleave.py"),
         "large-review",
-        "--seeds", "1",
-        "--max-turns", str(MAX_TURNS),
-        "--provider", "anthropic",
-        "--model", MODEL,
-        "--delay", "0.3",
+        "--seeds",
+        "1",
+        "--max-turns",
+        str(MAX_TURNS),
+        "--provider",
+        "anthropic",
+        "--model",
+        MODEL,
+        "--delay",
+        "0.3",
     ]
     print("RUN: " + " ".join(cmd), flush=True)
     r = subprocess.run(cmd, env=env, cwd=APPROOT, capture_output=True, text=True)
@@ -75,11 +83,15 @@ def fmt(n):
 
 def cost(rows):
     """row tuple is (t, req, pt, ct_, cr, dropped, status) — indices 2,3,4."""
-    p = sum(r[2] for r in rows)   # prompt_tokens
-    c = sum(r[3] for r in rows)   # completion_tokens
+    p = sum(r[2] for r in rows)  # prompt_tokens
+    c = sum(r[3] for r in rows)  # completion_tokens
     cr = sum(r[4] for r in rows)  # cache_read_tokens
     miss = max(p - cr, 0)
-    return (miss / 1e6 * PRICE["prompt"]) + (cr / 1e6 * PRICE["cached"]) + (c / 1e6 * PRICE["completion"])
+    return (
+        (miss / 1e6 * PRICE["prompt"])
+        + (cr / 1e6 * PRICE["cached"])
+        + (c / 1e6 * PRICE["completion"])
+    )
 
 
 ARMS = {"prefix": "naive", "hermes_compress": "compress-only", "toolrecall": "ct-only"}
@@ -96,7 +108,7 @@ def build_sites(rows):
     # Pull a per-turn view ordered by turn for the naive baseline + ct comparison table
     turns = {}
     for name, lst in data.items():
-        for (t, req, pt, ct_, cr, dropped, status) in lst:
+        for t, req, pt, ct_, cr, dropped, status in lst:
             turns.setdefault(t, {})[name] = (req, pt, ct_, cr, dropped, status)
 
     def results_table(title, label):
@@ -107,26 +119,38 @@ def build_sites(rows):
         last = lst[-1]
         tot = cost(lst)
         html = [f"<h2>{title}</h2>"]
-        html.append(f"<table><tr><th>Turn</th><th>Request tok</th><th>Prompt tok</th>"
-                    f"<th>Completion</th><th>Cache-read</th><th>Dropped (cum)</th><th>Status</th></tr>")
+        html.append(
+            "<table><tr><th>Turn</th><th>Request tok</th><th>Prompt tok</th>"
+            "<th>Completion</th><th>Cache-read</th><th>Dropped (cum)</th><th>Status</th></tr>"
+        )
         for t, req, pt, ct_, cr, dropped, status in lst:
-            html.append(f"<tr><td>{t}</td><td>{fmt(req)}</td><td>{fmt(pt)}</td>"
-                        f"<td>{fmt(ct_)}</td><td>{fmt(cr)}</td><td>{fmt(dropped)}</td><td>{status}</td></tr>")
+            html.append(
+                f"<tr><td>{t}</td><td>{fmt(req)}</td><td>{fmt(pt)}</td>"
+                f"<td>{fmt(ct_)}</td><td>{fmt(cr)}</td><td>{fmt(dropped)}</td><td>{status}</td></tr>"
+            )
         html.append("</table>")
-        html.append(f"<p><strong>{n_turns} turns completed</strong> · last request_tokens={fmt(last[1])} · "
-                    f"est. cost=${tot:.4f}</p>")
+        html.append(
+            f"<p><strong>{n_turns} turns completed</strong> · last request_tokens={fmt(last[1])} · "
+            f"est. cost=${tot:.4f}</p>"
+        )
         return "".join(html)
 
     # Build a comparison table across arms per turn
-    comp = ["<h2>Per-turn comparison (request_tokens)</h2>",
-            "<table><tr><th>Turn</th><th>naive</th><th>compress-only</th><th>ct-only</th></tr>"]
+    comp = [
+        "<h2>Per-turn comparison (request_tokens)</h2>",
+        "<table><tr><th>Turn</th><th>naive</th><th>compress-only</th><th>ct-only</th></tr>",
+    ]
     for t in sorted(turns):
         row = turns[t]
+
         def val(name):
             v = row.get(name)
             return fmt(v[0]) if v else "-"
-        comp.append(f"<tr><td>{t}</td><td>{val('naive')}</td><td>{val('compress-only')}</td>"
-                    f"<td>{val('ct-only')}</td></tr>")
+
+        comp.append(
+            f"<tr><td>{t}</td><td>{val('naive')}</td><td>{val('compress-only')}</td>"
+            f"<td>{val('ct-only')}</td></tr>"
+        )
     comp.append("</table>")
     comp_html = "".join(comp)
 
@@ -143,22 +167,36 @@ def build_sites(rows):
         "completion×$15/M</code> per arm. All figures pulled from the run DB.</p>"
     )
 
-    shell = """<html><head><meta charset="utf-8"><title>""" + "%s" + """</title>
+    shell = (
+        """<html><head><meta charset="utf-8"><title>"""
+        + "%s"
+        + """</title>
 <style>body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:960px;padding:0 1rem}
 table{border-collapse:collapse;margin:1rem 0;font-size:.9rem}th,td{border:1px solid #ccc;padding:4px 8px;text-align:right}
 th{background:#eee}tr td:first-child,tr th:first-child{text-align:left}
 h1{font-size:1.6rem}a{color:#0645ad}</style></head><body>%s</body></html>"""
+    )
 
     pages = {
-        "index": ("ToolRecall Claude Benchmark — Results", methodology + comp_html
-                  + "<h2>Links</h2><p><a href='naive.html'>naive (baseline)</a> · "
-                  "<a href='compress.html'>compress-only</a> · <a href='ct.html'>ct-only (ToolRecall)</a></p>"),
-        "naive": ("ToolRecall Benchmark: Naive baseline",
-                  methodology + results_table("Naive (full history, provider prefix caching)", "naive")),
-        "compress": ("ToolRecall Benchmark: Compress-only",
-                     methodology + results_table("Compress-only", "compress-only")),
-        "ct": ("ToolRecall Benchmark: CT-only (ToolRecall)",
-               methodology + results_table("ToolRecall CT-only", "ct-only")),
+        "index": (
+            "ToolRecall Claude Benchmark — Results",
+            methodology
+            + comp_html
+            + "<h2>Links</h2><p><a href='naive.html'>naive (baseline)</a> · "
+            "<a href='compress.html'>compress-only</a> · <a href='ct.html'>ct-only (ToolRecall)</a></p>",
+        ),
+        "naive": (
+            "ToolRecall Benchmark: Naive baseline",
+            methodology + results_table("Naive (full history, provider prefix caching)", "naive"),
+        ),
+        "compress": (
+            "ToolRecall Benchmark: Compress-only",
+            methodology + results_table("Compress-only", "compress-only"),
+        ),
+        "ct": (
+            "ToolRecall Benchmark: CT-only (ToolRecall)",
+            methodology + results_table("ToolRecall CT-only", "ct-only"),
+        ),
     }
     paths = {}
     for name, (title, body) in pages.items():
@@ -176,10 +214,14 @@ def main():
     if rows:
         ok_arms = {r[0] for r in rows if r[7] == "ok"}
         if len(ok_arms) >= 4:
-            print(f"DB {DB_NAME} already has ok data for {sorted(ok_arms)} — skipping benchmark, rebuilding sites.")
+            print(
+                f"DB {DB_NAME} already has ok data for {sorted(ok_arms)} — skipping benchmark, rebuilding sites."
+            )
             rc = 0
         else:
-            print(f"DB {DB_NAME} partial/empty ok arms ({sorted(ok_arms)}) — running fresh benchmark.")
+            print(
+                f"DB {DB_NAME} partial/empty ok arms ({sorted(ok_arms)}) — running fresh benchmark."
+            )
             rc = run_bench()
     else:
         rc = run_bench()

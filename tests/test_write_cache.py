@@ -3,6 +3,7 @@
 These are stateless idempotency checks (not persisted to SQLite).
 They compare content to disk and skip redundant operations.
 """
+
 import os
 import sys
 import unittest

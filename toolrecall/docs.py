@@ -3,11 +3,13 @@
 Full-text search over indexed documents (skills, projects, etc.).
 No embedding, no GPU, no API call -- pure SQLite FTS5 + BM25.
 """
+
 import os
 import sqlite3
 from pathlib import Path
 from toolrecall.cache import _hash
 from toolrecall.config import load_config
+
 
 # Lazy config — the Config class in config.py always creates a fresh
 # instance from env vars + config files, so this lazy wrapper
@@ -23,7 +25,9 @@ def _get_db_path():
     env_path = os.environ.get("TOOLRECALL_KNOWLEDGE_DB")
     if env_path:
         return os.path.expanduser(env_path)
-    return os.path.expanduser(_get_config().get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db"))
+    return os.path.expanduser(
+        _get_config().get("paths", "knowledge_db", default="~/.toolrecall/knowledge.db")
+    )
 
 
 def _get_db():
@@ -81,7 +85,7 @@ def _ensure_tables(conn):
     conn.commit()
 
 
-def docs_search(query: str, source: str = None, _retried: bool = False) -> str:
+def docs_search(query: str, source: str | None = None, _retried: bool = False) -> str:
     """
     Full-text search across indexed documents.
     Uses FTS5 MATCH + BM25 ranking.
@@ -97,7 +101,7 @@ def docs_search(query: str, source: str = None, _retried: bool = False) -> str:
 
     # Query sanitize
     q = query[:100].strip()
-    q = re.sub(r'["\'\(\)\*\-\?\:]', ' ', q)
+    q = re.sub(r'["\'\(\)\*\-\?\:]', " ", q)
     words = [w for w in q.split() if w]
     sanitized = " OR ".join(words) if words else ""
     if not sanitized:
@@ -106,23 +110,29 @@ def docs_search(query: str, source: str = None, _retried: bool = False) -> str:
     conn = _get_db()
     try:
         if source:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT p.source, p.path, p.title, p.url,
                        snippet(pages_fts, 3, '【', '】', '...', 30) as snippet,
                        bm25(pages_fts, 0.0, 0.0, 10.0, 1.0) as score
                 FROM pages_fts f JOIN pages p ON p.path = f.path AND p.source = f.source
                 WHERE pages_fts MATCH ? AND p.source = ?
                 ORDER BY score ASC LIMIT 10
-            """, (sanitized, source)).fetchall()
+            """,
+                (sanitized, source),
+            ).fetchall()
         else:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT p.source, p.path, p.title, p.url,
                        snippet(pages_fts, 3, '【', '】', '...', 30) as snippet,
                        bm25(pages_fts, 0.0, 0.0, 10.0, 1.0) as score
                 FROM pages_fts f JOIN pages p ON p.path = f.path AND p.source = f.source
                 WHERE pages_fts MATCH ?
                 ORDER BY score ASC LIMIT 10
-            """, (sanitized,)).fetchall()
+            """,
+                (sanitized,),
+            ).fetchall()
 
         if rows:
             res = [f"Found {len(rows)} pages (BM25 weighted):"]
@@ -135,23 +145,31 @@ def docs_search(query: str, source: str = None, _retried: bool = False) -> str:
         # Fallback: LIKE-Suche
         like = f"%{query[:50]}%"
         if source:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT source, path, title, url, SUBSTR(content, 1, 200) as snippet
                 FROM pages WHERE source = ? AND (title LIKE ? OR content LIKE ?)
                 LIMIT 10
-            """, (source, like, like)).fetchall()
+            """,
+                (source, like, like),
+            ).fetchall()
         else:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT source, path, title, url, SUBSTR(content, 1, 200) as snippet
                 FROM pages WHERE title LIKE ? OR content LIKE ?
                 LIMIT 10
-            """, (like, like)).fetchall()
+            """,
+                (like, like),
+            ).fetchall()
         conn.close()
 
         if rows:
             res = [f"Found {len(rows)} pages (substring match):"]
             for r in rows:
-                res.append(f"• **[{r['source']}] {r['title']}** (`{r['path']}`)\n  Preview: {' '.join(r['snippet'].split())}...")
+                res.append(
+                    f"• **[{r['source']}] {r['title']}** (`{r['path']}`)\n  Preview: {' '.join(r['snippet'].split())}..."
+                )
             return "\n\n".join(res)
 
         return f"No results for: '{query}'."
@@ -178,18 +196,18 @@ def docs_get_page(path: str, source: str = "") -> str:
     try:
         row = conn.execute(
             "SELECT title, content, url FROM pages WHERE path = ? AND source = ?",
-            (path.strip(), source.strip())
+            (path.strip(), source.strip()),
         ).fetchone()
 
         if row:
-                    conn.close()
-                    return f"### {row['title']}\nURL: {row['url']}\n\n{row['content']}"
+            conn.close()
+            return f"### {row['title']}\nURL: {row['url']}\n\n{row['content']}"
 
         # Fuzzy
         fuzzy = f"%{path}%"
         row = conn.execute(
             "SELECT path, title, content, url FROM pages WHERE (path LIKE ? OR title LIKE ?) AND source = ? LIMIT 1",
-            (fuzzy, fuzzy, source)
+            (fuzzy, fuzzy, source),
         ).fetchone()
         conn.close()
 
@@ -211,7 +229,7 @@ def docs_get_page(path: str, source: str = "") -> str:
         return f"Error: {e}"
 
 
-def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -> int:
+def index_agent_memory(memories_dir: str | None = None, source: str = "agent-memory") -> int:
     """
     Index agent persistent memory stores (MEMORY.md, USER.md) into the
     knowledge database.
@@ -275,8 +293,7 @@ def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -
 
             cursor.execute(
                 "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
-                (source, path_key, title, entry,
-                 f"file://{fpath}#entry{idx + 1}"),
+                (source, path_key, title, entry, f"file://{fpath}#entry{idx + 1}"),
             )
             total += 1
 
@@ -285,8 +302,13 @@ def index_agent_memory(memories_dir: str = None, source: str = "agent-memory") -
     return total
 
 
-def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
-                    ignore_dirs: set = None, max_bytes: int = 100000) -> int:
+def index_directory(
+    dir_path: str,
+    source: str | None = None,
+    extensions: tuple | None = None,
+    ignore_dirs: set | None = None,
+    max_bytes: int = 100000,
+) -> int:
     """
     Index all files in a directory into the knowledge database.
 
@@ -342,7 +364,8 @@ def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
 
             cursor.execute(
                 "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
-                (source, rel, title, content, f"file://{full}"))
+                (source, rel, title, content, f"file://{full}"),
+            )
             total += 1
 
     conn.commit()
@@ -350,7 +373,12 @@ def index_directory(dir_path: str, source: str = None, extensions: tuple = None,
     return total
 
 
-def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set = None, max_bytes: int = 100000):
+def index_all(
+    scan_dirs: list | None = None,
+    extensions: tuple | None = None,
+    ignore_dirs: set | None = None,
+    max_bytes: int = 100000,
+):
     """
     Index all source files.
     Called on first `toolrecall index` or `docs_search()` when DB is missing.
@@ -362,9 +390,21 @@ def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set
     if scan_dirs is None:
         scan_dirs = _cfg.get("sources", "scan_dirs", default=[str(Path.home())])
     if extensions is None:
-        extensions = tuple(_cfg.get("sources", "scan_extensions", default=[".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"]))
+        extensions = tuple(
+            _cfg.get(
+                "sources",
+                "scan_extensions",
+                default=[".md", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".sh"],
+            )
+        )
     if ignore_dirs is None:
-        ignore_dirs = set(_cfg.get("sources", "scan_ignore", default=[".git", "node_modules", ".venv", "dist", "build", "__pycache__"]))
+        ignore_dirs = set(
+            _cfg.get(
+                "sources",
+                "scan_ignore",
+                default=[".git", "node_modules", ".venv", "dist", "build", "__pycache__"],
+            )
+        )
 
     conn = _get_db()
     _ensure_tables(conn)
@@ -398,8 +438,10 @@ def index_all(scan_dirs: list = None, extensions: tuple = None, ignore_dirs: set
                             title = line[2:].strip()
                             break
 
-                cursor.execute("INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
-                               (source_name, rel, title, content, f"local://{source_name}/{rel}"))
+                cursor.execute(
+                    "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                    (source_name, rel, title, content, f"local://{source_name}/{rel}"),
+                )
                 total += 1
 
     conn.commit()

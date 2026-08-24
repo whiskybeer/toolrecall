@@ -17,13 +17,16 @@ Usage:
     toolrecall shim            # Install/uninstall transparent cache shim (.pth)
     toolrecall init            # Create default config.toml and .env
 """
+
 import os
 import sys
+
 
 def cmd_init():
     """Create boilerplate config and .env for users with interactive setup."""
     import os
     import sys
+
     cfg_dir = os.path.expanduser("~/.config/toolrecall")
     os.makedirs(cfg_dir, exist_ok=True)
 
@@ -72,7 +75,7 @@ def cmd_init():
 
         first = True
         while True:
-            prompt = "Path 1: " if first else f"Path {len(paths)+1}: "
+            prompt = "Path 1: " if first else f"Path {len(paths) + 1}: "
             user_input = input(prompt).strip()
             first = False
             if not user_input:
@@ -100,9 +103,9 @@ def cmd_init():
     print("║  produce the same cache key:                            ║")
     print("║                                                          ║")
     print("║  • Sorts JSON keys — {b:2, a:1} == {a:1, b:2}          ║")
-    print("║  • Strips whitespace — \"  /tmp  \" == \"/tmp\"            ║")
+    print('║  • Strips whitespace — "  /tmp  " == "/tmp"            ║')
     print("║  • Removes noise — timestamps, session IDs, trace IDs   ║")
-    print("║  • Lowercases command names — \"LS -la\" == \"ls -la\"     ║")
+    print('║  • Lowercases command names — "LS -la" == "ls -la"     ║')
     print("║                                                          ║")
     print("║  ⚠️  Changes existing cache keys — existing entries      ║")
     print("║     become orphans until they expire or are overwritten. ║")
@@ -218,9 +221,11 @@ GITHUB_PERSONAL_ACCESS_TOKEN=""
     print("Next steps:")
     print(f"  1. Edit {env_path} to add your API keys (if needed)")
 
+
 def cmd_status():
     """Show cache status via daemon or directly (always includes recent activity table)."""
     from toolrecall.cache import get_stats
+
     stats = get_stats()
     print("=" * 50)
     print("  ToolRecall Cache Status")
@@ -239,8 +244,10 @@ def cmd_status():
             read_str = f", tokens_read_from_disk={read:,}" if read else ""
             context_str = f", context_tokens_saved={context:,}" if context else ""
             content_str = f", cached_content_tokens={content_tokens:,}" if content_tokens else ""
-            print(f"  {k}: {v['hits']} hits, {v['misses']} misses, "
-                  f"hit_rate={v['hit_rate']}{read_str}{saved_str}{adjusted_str}{context_str}{content_str}")
+            print(
+                f"  {k}: {v['hits']} hits, {v['misses']} misses, "
+                f"hit_rate={v['hit_rate']}{read_str}{saved_str}{adjusted_str}{context_str}{content_str}"
+            )
         else:
             print(f"  {k}: {v}")
     # Recent activity
@@ -249,7 +256,7 @@ def cmd_status():
         print()
         print("  ── Last 20 accesses ──")
         print(f"  {'ago':>8} {'type':<12} {'tokens':>8} {'cached_at':<26} {'path'}")
-        print(f"  {'─'*8} {'─'*12} {'─'*8} {'─'*26} {'─'*40}")
+        print(f"  {'─' * 8} {'─' * 12} {'─' * 8} {'─' * 26} {'─' * 40}")
         for r in recent:
             icon = "✅" if r["hit"] else "⬇️"
             p = r.get("path", r["category"])
@@ -277,28 +284,36 @@ def cmd_stats():
     """Detailed statistics as JSON."""
     from toolrecall.cache import get_stats
     import json as _json
+
     stats = get_stats()
     print(_json.dumps(stats, indent=2))
+
 
 def cmd_invalidate():
     """Clear cache via Daemon or direct SQLite fallback."""
     try:
         from toolrecall.client import cache_invalidate
+
         print(cache_invalidate())
     except Exception:
         from toolrecall.cache import invalidate_all
+
         invalidate_all()
         print("ToolRecall cache cleared (direct).")
+
 
 def cmd_reset_stats():
     """Reset cache statistics counters (hits, misses, tokens_read_from_disk) without clearing cache entries."""
     from toolrecall.cache import reset_stats
+
     reset_stats()
     print("Cache statistics reset (hits/misses/tokens). Cache entries preserved.")
+
 
 def cmd_index():
     """Index knowledge base. Use --memory to also index agent memory stores."""
     from toolrecall.docs import index_all, index_agent_memory
+
     print("Indexing knowledge database...")
     total = index_all()
     print(f"Done. {total} pages indexed.")
@@ -308,9 +323,10 @@ def cmd_index():
         mem_total = index_agent_memory()
         print(f"Done. {mem_total} memory entries indexed.")
 
+
 def cmd_index_memory():
     """Index agent persistent memory stores (MEMORY.md, USER.md) into knowledge DB.
-    
+
     Uses AGENT_HOME env var (or HERMES_HOME for backward compat) to locate
     the memories/ directory.
     """
@@ -334,7 +350,7 @@ def cmd_index_memory():
 
 def cmd_index_dir():
     r"""Index a directory into the knowledge database.
-    
+
     Usage:
         toolrecall index-dir ~/Documents/Obsidian\ Vault
         toolrecall index-dir --source my-notes ~/notes
@@ -381,7 +397,7 @@ def cmd_index_dir():
 
 def cmd_config_set():
     """Set a config value in config.toml.
-    
+
     Usage:
         toolrecall config-set proxy.port 9090
         toolrecall config-set mcp.allow_terminal true
@@ -390,7 +406,7 @@ def cmd_config_set():
     from toolrecall.config import load_config, save_config
 
     # save_config uses built-in TOML serializer — no external deps
-    
+
     args = sys.argv[2:]
     if len(args) < 2 or "--help" in args or "-h" in args:
         print("Usage: toolrecall config-set <section.key> <value>")
@@ -398,7 +414,9 @@ def cmd_config_set():
         print("Examples:")
         print("  toolrecall config-set proxy.port 9090")
         print("  toolrecall config-set mcp.allow_terminal true")
-        print("  toolrecall config-set security.tool_access_control true  # MCP keyword access control (not OS sandbox)")
+        print(
+            "  toolrecall config-set security.tool_access_control true  # MCP keyword access control (not OS sandbox)"
+        )
         print("  toolrecall config-set mcp.allowed_paths \"['/data', '/projects']\"")
         return
 
@@ -430,6 +448,7 @@ def cmd_config_set():
                 # Try as list
                 if val.startswith("[") and val.endswith("]"):
                     import ast
+
                     try:
                         parsed_val = ast.literal_eval(val)
                     except Exception:
@@ -446,6 +465,7 @@ def cmd_config_set():
         print("⚠️  Restart the daemon for changes to take effect.")
     else:
         print(f"❌ Failed to write {cfg_path}")
+
 
 def cmd_serve():
     """Start the forward proxy (caches LLM API responses).
@@ -497,11 +517,15 @@ def cmd_serve():
 
     # Check if daemon is already running (it starts the proxy on default port)
     from toolrecall.transport import TransportClient
+
     daemon_check = TransportClient()
     daemon_ping = daemon_check.send({"cmd": "ping"})
     daemon_running = daemon_ping.get("pong", False)
 
-    if daemon_running and (port_override is None or port_override == int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))):
+    if daemon_running and (
+        port_override is None
+        or port_override == int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
+    ):
         print("The daemon already manages the forward proxy on port 8569.")
         print("To run a standalone proxy on a different port, use:")
         print("  toolrecall serve --port <PORT>")
@@ -509,8 +533,14 @@ def cmd_serve():
         return
 
     from toolrecall.proxy import run_forward_proxy
-    port = port_override if port_override is not None else int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
+
+    port = (
+        port_override
+        if port_override is not None
+        else int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
+    )
     run_forward_proxy(port=port)
+
 
 def cmd_mcp():
     """MCP Bridge & Registry commands.
@@ -528,6 +558,7 @@ def cmd_mcp():
 
     # Default: start MCP Bridge
     from toolrecall.mcp_bridge import main as bridge_main
+
     bridge_main()
 
 
@@ -560,9 +591,11 @@ def cmd_mcp_list():
     print("Active via daemon:")
     print("  Run `toolrecall status` or connect MCP Bridge to see live servers.")
 
+
 def cmd_debug():
     """Start minimal debug/demo server on :8570."""
     from toolrecall.proxy import run_debug_server
+
     port_override = None
     for i, arg in enumerate(sys.argv[2:], 2):
         if arg == "--port" and i + 1 < len(sys.argv):
@@ -585,6 +618,7 @@ def cmd_debug():
         return
 
     run_debug_server(port=port_override or 8570)
+
 
 def _ensure_daemon():
     """Auto-start the ToolRecall cache daemon if not running.
@@ -613,10 +647,13 @@ def _ensure_daemon():
 
     # ── 2. systemd user service ──
     import subprocess
+
     try:
         result = subprocess.run(
             ["systemctl", "--user", "start", "toolrecall-daemon"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode == 0:
             for _ in range(10):
@@ -640,21 +677,32 @@ def _ensure_daemon():
     import sys as _sys
     import subprocess as _sp
     import shutil as _shutil
+
     try:
-        print("[ToolRecall] Daemon not running — auto-starting silently in background...", file=_sys.stderr, flush=True)
+        print(
+            "[ToolRecall] Daemon not running — auto-starting silently in background...",
+            file=_sys.stderr,
+            flush=True,
+        )
         _toolrecall_bin = _shutil.which("toolrecall")
         if not _toolrecall_bin:
             # Fallback: locate the installed package's cli module directly
             _toolrecall_bin = _sys.executable
             _sp.Popen(
-                [_toolrecall_bin, "-c", "from toolrecall.cli import cmd_daemon; import sys; sys.argv = ['toolrecall', 'daemon', '--foreground']; cmd_daemon()"],
-                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                [
+                    _toolrecall_bin,
+                    "-c",
+                    "from toolrecall.cli import cmd_daemon; import sys; sys.argv = ['toolrecall', 'daemon', '--foreground']; cmd_daemon()",
+                ],
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
                 start_new_session=True,
             )
         else:
             _sp.Popen(
                 [_toolrecall_bin, "daemon", "--foreground"],
-                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
                 start_new_session=True,
             )
         for _ in range(10):
@@ -671,13 +719,16 @@ def _ensure_daemon():
 
     # ── 4. Windows fallback ──
     import sys as _sys
+
     if _sys.platform == "win32":
         try:
             import subprocess as _sp
+
             _sp.Popen(
                 ["toolrecall", "daemon", "--foreground"],
                 creationflags=_sp.DETACHED_PROCESS,
-                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
             )
             for _ in range(10):
                 time.sleep(0.5)
@@ -705,6 +756,7 @@ def _ensure_shim():
     import os
     import shutil
     import sys
+
     try:
         installed = False
         # Check if shim is already in site-packages
@@ -731,6 +783,7 @@ def _ensure_shim():
         if installed:
             try:
                 import toolrecall.shim
+
                 toolrecall.shim.apply()  # Force apply patches (idempotent)
             except (ImportError, AttributeError):
                 pass
@@ -740,7 +793,7 @@ def _ensure_shim():
 
 def cmd_daemon():
     """Manage the ToolRecall Cache Daemon.
-    
+
     Starts cache daemon + MCP bridge + forward proxy (:8569)."""
     from toolrecall.daemon import run_daemon, stop_daemon, daemon_status
 
@@ -765,6 +818,7 @@ def cmd_daemon():
         run_daemon(foreground=True)
     else:
         run_daemon(foreground=False)
+
 
 def cmd_nginx():
     """Generate nginx config."""
@@ -977,8 +1031,10 @@ def cmd_shim():
                 print(f"⚠️  Shim install FAILED in {v.root} — see diagnosis below")
                 st = venv_mod.shim_status(v)
                 if not st["package_importable"]:
-                    print(f"     `toolrecall` not importable in {v.python}; "
-                          "install it (pip/uv) or check the venv is writable")
+                    print(
+                        f"     `toolrecall` not importable in {v.python}; "
+                        "install it (pip/uv) or check the venv is writable"
+                    )
                 elif not st["pth_present"]:
                     print(f"     could not write {v.site_packages}/tr_shim.pth")
                 else:
@@ -1033,6 +1089,7 @@ WantedBy=default.target
 def cmd_setup():
     """One-shot setup: init config → install systemd service → ensure daemon + shim."""
     import os
+
     print("=" * 56)
     print("  ToolRecall Setup — one-time installation")
     print("=" * 56)
@@ -1052,6 +1109,7 @@ def cmd_setup():
 
     # ─── 2. Systemd user service (optional) ─────────
     import subprocess
+
     try:
         systemd_dir = os.path.expanduser("~/.config/systemd/user")
         service_path = os.path.join(systemd_dir, "toolrecall-daemon.service")
@@ -1060,13 +1118,16 @@ def cmd_setup():
         toolrecall_bin = os.path.expanduser("~/.local/bin/toolrecall")
         if not os.path.exists(toolrecall_bin):
             import shutil
+
             toolrecall_bin = shutil.which("toolrecall") or toolrecall_bin
         service_content = SYSTEMD_SERVICE_CONTENT % (toolrecall_bin + " daemon --foreground")
         with open(service_path, "w") as f:
             f.write(service_content)
 
         subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=10)
-        subprocess.run(["systemctl", "--user", "enable", "toolrecall-daemon"], capture_output=True, timeout=10)
+        subprocess.run(
+            ["systemctl", "--user", "enable", "toolrecall-daemon"], capture_output=True, timeout=10
+        )
         steps_ok.append("systemd service: written + enabled")
     except FileNotFoundError:
         pass  # No systemd — _ensure_daemon will use fork
@@ -1111,7 +1172,9 @@ def cmd_setup():
         print("     Files:  ls(60), cat(30), head(30), tail(30), wc(30)")
         print("     Search: grep(60), rg(60), find(60), fd(60)")
         print("     Git:    status(30), diff(30), log(30), branch(300), stash(300)")
-        print("     Env:    which(3600), python3 --version(3600), pip list(600), node --version(3600)")
+        print(
+            "     Env:    which(3600), python3 --version(3600), pip list(600), node --version(3600)"
+        )
         print("     Disk:   du(120), df(120)")
         print()
         print("  ⚠️  Security: only read-only commands are cached. Dangerous commands")
@@ -1150,6 +1213,7 @@ def _ensure_agent_integration():
     # explicit opt-in. This REPLACES the old behavior that printed an
     # unverified "✅ active" just because the `hermes` binary existed on PATH.
     from toolrecall import venvs as venv_mod
+
     hermes_bin = shutil.which("hermes")
     if hermes_bin:
         # Locate the Hermes venv via generic discovery (by venv containing the
@@ -1168,7 +1232,8 @@ def _ensure_agent_integration():
                     if p.endswith("site-packages") and os.path.isdir(p):
                         target = venv_mod.Venv(
                             root=os.path.dirname(os.path.dirname(p)),
-                            python=sys.executable, site_packages=p,
+                            python=sys.executable,
+                            site_packages=p,
                         )
                         break
 
@@ -1180,12 +1245,16 @@ def _ensure_agent_integration():
                 done = venv_mod.ensure_shim(target)
                 result["hermes"] = done
                 if done:
-                    print(f"  ✅ Hermes transparent cache active in {target.root} "
-                          "(verified: import toolrecall.shim probe passed)")
+                    print(
+                        f"  ✅ Hermes transparent cache active in {target.root} "
+                        "(verified: import toolrecall.shim probe passed)"
+                    )
                 else:
                     print(f"  ⚠️  Hermes shim install FAILED in {target.root}")
-                    print("     `toolrecall` may not be installed in that venv "
-                          "or the venv is read-only.")
+                    print(
+                        "     `toolrecall` may not be installed in that venv "
+                        "or the venv is read-only."
+                    )
             elif interactive:
                 # Interactive without --yes → show opt-in prompt (default N)
                 if not _confirm_install(target):
@@ -1195,12 +1264,16 @@ def _ensure_agent_integration():
                     done = venv_mod.ensure_shim(target)
                     result["hermes"] = done
                     if done:
-                        print(f"  ✅ Hermes shim active in {target.root} "
-                              "(verified: import toolrecall.shim OK)")
+                        print(
+                            f"  ✅ Hermes shim active in {target.root} "
+                            "(verified: import toolrecall.shim OK)"
+                        )
                     else:
                         print(f"  ⚠️  Hermes shim install FAILED in {target.root}")
-                        print("     `toolrecall` may not be installed in that venv "
-                              "or the venv is read-only.")
+                        print(
+                            "     `toolrecall` may not be installed in that venv "
+                            "or the venv is read-only."
+                        )
             else:
                 # Non-interactive without --yes (e.g. `setup` in CI) → leave off
                 result["hermes"] = False
@@ -1250,14 +1323,18 @@ def _ensure_agent_integration():
         try:
             r = subprocess.run(
                 [claude_bin, "mcp", "add", "toolrecall", "-s", "user", "--"] + mcp_args,
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             if r.returncode == 0:
                 label = "multiplexer-only" if claude_multiplexer_only else "full"
                 print(f"  ✅ Claude Code MCP server registered ({label} — via 'claude mcp add')")
                 result["claude"] = True
             else:
-                print(f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config")
+                print(
+                    f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config"
+                )
                 if r.stderr.strip():
                     print(f"     stderr: {r.stderr.strip()[:200]}")
                 _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
@@ -1388,6 +1465,7 @@ def _prepare_opencode_config(config_path):
             with open(config_path) as f:
                 content = f.read()
             import re
+
             content = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
             content = re.sub(r",\s*([}\]])$", r"\1", content)
             config = json.loads(content) if content.strip() else {}
@@ -1442,6 +1520,7 @@ def cmd_restart():
     if os.path.exists(cfg_path):
         found.append(f"config: {cfg_path}")
         from toolrecall.config import load_config
+
         cfg = load_config()
         allowed = cfg.mcp_allowed_paths
         if allowed:
@@ -1464,7 +1543,9 @@ def cmd_restart():
         else:
             found.append("MCP multiplexer: disabled")
     else:
-        errors.append(f"config not found at {cfg_path} — run 'toolrecall setup' or 'toolrecall init'")
+        errors.append(
+            f"config not found at {cfg_path} — run 'toolrecall setup' or 'toolrecall init'"
+        )
 
     for msg in found:
         print(f"  ✅ {msg}")
@@ -1478,7 +1559,9 @@ def cmd_restart():
     print("🔄 Restarting via systemd --user...")
     result = subprocess.run(
         ["systemctl", "--user", "restart", "toolrecall-daemon"],
-        capture_output=True, text=True, timeout=30
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
     if result.returncode != 0:
@@ -1492,6 +1575,7 @@ def cmd_restart():
 
         # Fallback: start daemon directly
         from toolrecall.daemon import stop_daemon
+
         stop_daemon()
         if _ensure_daemon():
             print("  ✅ Daemon started via fallback")
@@ -1513,12 +1597,16 @@ def cmd_restart():
             tc = TransportClient(DEFAULT_PATH)
             resp = tc.send({"cmd": "ping"})
             if resp.get("pong"):
-                print(f"  ✅ Daemon ready (PID {resp.get('pid')}) — connected (attempt {attempt + 1})")
+                print(
+                    f"  ✅ Daemon ready (PID {resp.get('pid')}) — connected (attempt {attempt + 1})"
+                )
                 break
         except Exception:
             continue
     else:
-        print("  ⚠️  Daemon started but not responding after 5s — check 'toolrecall daemon --status'")
+        print(
+            "  ⚠️  Daemon started but not responding after 5s — check 'toolrecall daemon --status'"
+        )
 
     # ─── 4. Summary ─────────────────────────────
     print()
@@ -1610,8 +1698,10 @@ def cmd_context():
             print("")
             for n, e in enumerate(stale, 1):
                 print(f"  {n:>3}. {e['path']}")
-                print(f"       read at op {e['read_seq']}, overwritten at op "
-                      f"{e['write_seq']} \u2014 ~{e['est_tokens']:,} tok")
+                print(
+                    f"       read at op {e['read_seq']}, overwritten at op "
+                    f"{e['write_seq']} \u2014 ~{e['est_tokens']:,} tok"
+                )
             print("")
             print("  These copies in your context are out of date. Evict or re-read.")
 
@@ -1650,6 +1740,7 @@ def main():
 
     if sys.argv[1] in ("--version", "-V", "-v"):
         from toolrecall import __version__
+
         print(f"ToolRecall {__version__}")
         return
 
@@ -1657,9 +1748,18 @@ def main():
 
     # Commands that need the daemon running
     _DAEMON_REQUIRED = {
-        "status", "stats", "invalidate", "reset-stats",
-        "serve", "debug", "mcp", "restart", "index",
-        "index-memory", "index-dir", "context",
+        "status",
+        "stats",
+        "invalidate",
+        "reset-stats",
+        "serve",
+        "debug",
+        "mcp",
+        "restart",
+        "index",
+        "index-memory",
+        "index-dir",
+        "context",
     }
     if cmd in _DAEMON_REQUIRED:
         if not _ensure_daemon():
@@ -1690,9 +1790,11 @@ def main():
         commands[cmd]()
     elif cmd == "replay":
         from toolrecall.replay_cli import cmd_replay
+
         cmd_replay(sys.argv[2:])
     elif cmd == "turso":
         from toolrecall.turso_cli import cmd_turso
+
         cmd_turso(sys.argv[2:])
     else:
         print(f"Unknown command: {cmd}")

@@ -14,6 +14,7 @@ call sites above the singleton never know which backend they got.
 
 try:
     import libsql_experimental as libsql
+
     _HAS_LIBSQL = True
 except ImportError:
     libsql = None
@@ -24,11 +25,7 @@ SUPPORTS_SYNC = True
 
 def sync_configured(cfg) -> bool:
     """Full opt-in policy: explicit enable (default false) AND credentials."""
-    return bool(
-        cfg.libsql_sync_enabled
-        and cfg.libsql_sync_url
-        and cfg.libsql_sync_token
-    )
+    return bool(cfg.libsql_sync_enabled and cfg.libsql_sync_url and cfg.libsql_sync_token)
 
 
 def stats_info(cfg) -> dict:
@@ -121,7 +118,12 @@ class _LibSQLConnection:
             if rc is not None and rc > 0:
                 stmt = sql.lstrip().upper()
                 # Only count actual DML, not reads or pragmas
-                if stmt.startswith("INSERT") or stmt.startswith("UPDATE") or stmt.startswith("DELETE") or stmt.startswith("REPLACE"):
+                if (
+                    stmt.startswith("INSERT")
+                    or stmt.startswith("UPDATE")
+                    or stmt.startswith("DELETE")
+                    or stmt.startswith("REPLACE")
+                ):
                     self._changes += rc
                 elif rc == -1 and stmt.startswith("INSERT"):
                     self._changes += 1

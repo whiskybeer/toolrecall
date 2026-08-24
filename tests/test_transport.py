@@ -25,9 +25,15 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from toolrecall.transport import (
-    _default_socket_path, _is_tcp, _parse_tcp, _safe_bind_host,
-    create_socket, bind_socket, connect_socket,
-    send_message, receive_message,
+    _default_socket_path,
+    _is_tcp,
+    _parse_tcp,
+    _safe_bind_host,
+    create_socket,
+    bind_socket,
+    connect_socket,
+    send_message,
+    receive_message,
     TransportClient,
 )
 
@@ -75,8 +81,11 @@ class TestSocketPath(unittest.TestCase):
             with patch.object(os.path, "isdir", side_effect=lambda p: p == f"/run/user/{uid}"):
                 path = _default_socket_path()
             expected = f"/run/user/{uid}/toolrecall.sock"
-            self.assertEqual(path, expected,
-                             "client should prefer the systemd runtime-dir socket even with empty XDG")
+            self.assertEqual(
+                path,
+                expected,
+                "client should prefer the systemd runtime-dir socket even with empty XDG",
+            )
         finally:
             if old_xdg:
                 os.environ["XDG_RUNTIME_DIR"] = old_xdg
@@ -113,8 +122,7 @@ class TestSocketPath(unittest.TestCase):
             expected = f"/run/user/{uid}/toolrecall.sock"
             # Only checks the mismatch logic when the correct dir exists
             if os.path.exists(f"/run/user/{uid}"):
-                self.assertIn(expected, path,
-                              f"Should prefer real UID {uid} over XDG {wrong_xdg}")
+                self.assertIn(expected, path, f"Should prefer real UID {uid} over XDG {wrong_xdg}")
             else:
                 # If the correct dir doesn't exist (e.g. in CI), fall through
                 self.assertIn(wrong_xdg, path)
@@ -127,6 +135,7 @@ class TestSocketPath(unittest.TestCase):
     def test_windows_default_returns_tcp(self):
         """On Windows, default path is tcp://127.0.0.1:8568."""
         import toolrecall.transport as tp
+
         old_platform = tp.IS_WINDOWS
         tp.IS_WINDOWS = True
         try:
@@ -285,11 +294,13 @@ class TestFramedMessageProtocol(unittest.TestCase):
         server = create_socket(self.sock_path)
         bind_socket(server, self.sock_path)
         server.listen(1)
-        t = threading.Thread(target=lambda: (
-            setattr(self, '_conn', server.accept()[0]),
-            time.sleep(0.05),
-            self._conn.close(),
-        ))
+        t = threading.Thread(
+            target=lambda: (
+                setattr(self, "_conn", server.accept()[0]),
+                time.sleep(0.05),
+                self._conn.close(),
+            )
+        )
         t.start()
         time.sleep(0.1)
 
@@ -323,6 +334,7 @@ class TestFramedMessageProtocol(unittest.TestCase):
     def test_message_too_large_returns_error(self):
         """Messages exceeding _MAX_MSG_SIZE are rejected with an error dict."""
         import toolrecall.transport as tp
+
         old_limit = tp._MAX_MSG_SIZE
         tp._MAX_MSG_SIZE = 100  # Artificially low for testing
         try:

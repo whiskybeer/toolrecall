@@ -8,6 +8,7 @@ tests assert that non-allowlisted hosts are rejected before any connection.
 
 These are pure unit tests — no daemon or outbound connection required.
 """
+
 import os
 import sys
 import unittest
@@ -32,9 +33,9 @@ class TestHostAllowlist(unittest.TestCase):
     def test_cloud_metadata_rejected(self):
         # Classic SSRF targets — must never be reachable through the proxy.
         for host in (
-            "169.254.169.254",            # AWS/GCP metadata
+            "169.254.169.254",  # AWS/GCP metadata
             "metadata.google.internal",
-            "169.254.170.2",              # AWS ECS credentials
+            "169.254.170.2",  # AWS ECS credentials
             "localhost",
             "127.0.0.1",
             "::1",
@@ -55,11 +56,16 @@ class TestForwardRejectsNonAllowlisted(unittest.TestCase):
 
     def test_forward_returns_403_for_metadata_host(self):
         from toolrecall.proxy import ForwardProxyHandler
+
         # Build a bare handler instance — _forward's SSRF guard fires before
         # any use of self.headers/connection, so no HTTP plumbing is needed.
         handler = object.__new__(ForwardProxyHandler)
         status, headers, body = handler._forward(
-            "GET", "169.254.169.254", "/latest/meta-data/", "https", b"",
+            "GET",
+            "169.254.169.254",
+            "/latest/meta-data/",
+            "https",
+            b"",
         )
         self.assertEqual(status, 403)
         self.assertIn(b"Forbidden", body)

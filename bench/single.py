@@ -28,21 +28,31 @@ WORKLOADS = ["bugfix", "feature", "analysis", "review"]
 def main():
     parser = argparse.ArgumentParser(description="Single-arm benchmark runner")
     parser.add_argument("arm", choices=ARMS, help="Arm to run")
-    parser.add_argument("workload", nargs="?", default="analysis",
-                        help=f"Workload: {', '.join(WORKLOADS)}")
-    parser.add_argument("seeds", type=int, nargs="?", default=2,
-                        help="Number of seeds (default 2)")
-    parser.add_argument("max_turns", type=int, nargs="?", default=100,
-                        help="Max turns per run (default 100)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Skip LLM calls — test plumbing only")
-    parser.add_argument("--provider", default="openrouter",
-                        choices=["openrouter", "anthropic"],
-                        help="LLM provider (default: openrouter)")
-    parser.add_argument("--model", default=None,
-                        help="Model name override (uses provider default if unset)")
-    parser.add_argument("--delay", type=float, default=0.0,
-                        help="Seconds between turns to avoid rate limits (default: 0.0)")
+    parser.add_argument(
+        "workload", nargs="?", default="analysis", help=f"Workload: {', '.join(WORKLOADS)}"
+    )
+    parser.add_argument("seeds", type=int, nargs="?", default=2, help="Number of seeds (default 2)")
+    parser.add_argument(
+        "max_turns", type=int, nargs="?", default=100, help="Max turns per run (default 100)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Skip LLM calls — test plumbing only"
+    )
+    parser.add_argument(
+        "--provider",
+        default="openrouter",
+        choices=["openrouter", "anthropic"],
+        help="LLM provider (default: openrouter)",
+    )
+    parser.add_argument(
+        "--model", default=None, help="Model name override (uses provider default if unset)"
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.0,
+        help="Seconds between turns to avoid rate limits (default: 0.0)",
+    )
     args = parser.parse_args()
 
     print(f"Single-arm benchmark: {args.arm}")
@@ -54,7 +64,7 @@ def main():
     print(f"  Delay: {args.delay}s")
     print(f"  Dry run: {args.dry_run}")
     print(f"  Note: Runs {args.seeds} x {args.arm} in THIS session only.")
-    print(f"  Run other arms in separate sessions for clean isolation.")
+    print("  Run other arms in separate sessions for clean isolation.")
     print()
 
     run_ids = []
@@ -83,6 +93,7 @@ def main():
 
     # Summary — query each per-run DB individually
     import sqlite3
+
     bench_dir = os.path.expanduser("~/.toolrecall/bench-runs")
     print()
     print("=" * 60)
@@ -93,15 +104,18 @@ def main():
     for arm, wl, seed, rid, et in run_ids:
         db_path = os.path.join(bench_dir, f"{rid}.db")
         con = sqlite3.connect(db_path) if os.path.exists(db_path) else None
-        turn_count = con.execute(
-            "SELECT COUNT(*) FROM turn_log WHERE run_id = ?", (rid,)
-        ).fetchone()[0] if con else 0
-        if con: con.close()
+        turn_count = (
+            con.execute("SELECT COUNT(*) FROM turn_log WHERE run_id = ?", (rid,)).fetchone()[0]
+            if con
+            else 0
+        )
+        if con:
+            con.close()
         print(f"{arm:12s} {wl:10s} {seed:>5} {turn_count:>5} {et:>6.0f}s  {rid}")
 
     print()
     print("To generate charts:")
-    print(f"  /tmp/bench-env/bin/python3 bench/analyze.py")
+    print("  /tmp/bench-env/bin/python3 bench/analyze.py")
 
 
 if __name__ == "__main__":

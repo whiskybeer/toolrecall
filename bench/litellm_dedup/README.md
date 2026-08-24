@@ -148,6 +148,18 @@ Files:
   byte-identical block; input never mutated; garbage fails open)
 - Hook implementation: `toolrecall/adapters/litellm.py`
 
+### CI regression guard
+
+The property test is wired into the Makefile test gates, so it runs on CI and
+catches any future change that would make `dedup_messages` destructive:
+
+- `make test` and `make test-fast` both run the property test after pytest.
+- `make test-dedup` runs it alone (no pytest, no litellm needed — it imports
+  `dedup_messages` path-directly and runs only stdlib).
+
+It's a plain exit-code test (5/5 asserts, 0 on success): no network, no LLM,
+~0.05s. Runs on every local/CI test pass at essentially zero cost.
+
 ---
 
 ## Customer in-perimeter duplicate-ratio scan (`measure_duplicates.py`)

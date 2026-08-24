@@ -7,12 +7,15 @@ import os
 
 BENCH_DIR = os.path.expanduser("~/.toolrecall/bench-runs")
 os.makedirs(BENCH_DIR, exist_ok=True)
+
+
 # Per-run DB: bench-runs/<run_id>.db. Symlink latest -> bench-runs/latest.db
 # Avoids data loss from WAL corruption when sharing a single file across runs.
 def _bench_db_path(run_id: str = None) -> str:
     if run_id is None:
         run_id = str(uuid.uuid4())
     return os.path.join(BENCH_DIR, f"{run_id}.db")
+
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS turn_log (

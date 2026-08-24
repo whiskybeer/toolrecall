@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -34,6 +35,7 @@ DB = BENCH_DIR  # sentinel — load_data will scan all
 
 # Read provider and model info from agent.py for report headers + pricing
 import importlib.util as _iutil
+
 _AGENT_SPEC = _iutil.spec_from_file_location(
     "_agent_pricing", os.path.join(os.path.dirname(__file__), "agent.py")
 )
@@ -42,6 +44,7 @@ _AGENT_SPEC.loader.exec_module(_AGENT_MOD)
 
 _PROVIDER = "openrouter"  # default, can override via --provider
 _MODEL = _AGENT_MOD.DEFAULT_MODELS.get(_PROVIDER, "unknown")
+
 
 def _resolve_pricing(provider: str = None, model: str = None) -> dict:
     """Look up pricing for the given provider and model. Returns fallback if not found."""
@@ -52,6 +55,7 @@ def _resolve_pricing(provider: str = None, model: str = None) -> dict:
     except KeyError:
         # Fallback pricing
         return {"prompt": 0.50, "prompt_cached": 0.05, "completion": 1.50}
+
 
 # Evidence plan claims — locked before data collection
 CLAIMS = {
@@ -70,15 +74,13 @@ def load_data(db_path: str) -> pd.DataFrame:
     If it's a file, read just that file.
     """
     if os.path.isdir(db_path):
-        files = sorted(glob.glob(os.path.join(db_path, "*.db")),
-                       key=os.path.getmtime)
+        files = sorted(glob.glob(os.path.join(db_path, "*.db")), key=os.path.getmtime)
         if not files:
             return pd.DataFrame()
         frames = []
         for f in files:
             con = sqlite3.connect(f"file:{f}?mode=ro", uri=True, timeout=5)
-            frames.append(pd.read_sql(
-                "SELECT * FROM turn_log ORDER BY run_id, turn_index", con))
+            frames.append(pd.read_sql("SELECT * FROM turn_log ORDER BY run_id, turn_index", con))
             con.close()
         return pd.concat(frames, ignore_index=True)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
@@ -93,8 +95,7 @@ def load_probes(db_path: str) -> pd.DataFrame:
     Same directory-scanning logic as load_data.
     """
     if os.path.isdir(db_path):
-        files = sorted(glob.glob(os.path.join(db_path, "*.db")),
-                       key=os.path.getmtime)
+        files = sorted(glob.glob(os.path.join(db_path, "*.db")), key=os.path.getmtime)
         if not files:
             return pd.DataFrame()
         frames = []
@@ -111,6 +112,7 @@ def load_probes(db_path: str) -> pd.DataFrame:
 
 # ── Figure 1: Context growth per turn ──────────────────────────
 
+
 def fig1_context_growth(curve: pd.DataFrame):
     fig, ax = plt.subplots(figsize=(9, 5))
     for arm, g in curve.groupby("arm"):
@@ -125,6 +127,7 @@ def fig1_context_growth(curve: pd.DataFrame):
 
 
 # ── Figure 2: Ratio with bootstrap CI ──────────────────────────
+
 
 def fig2_ratio(curve: pd.DataFrame):
     p = curve.pivot(index="turn_index", columns="arm", values="request_tokens")
@@ -143,6 +146,7 @@ def fig2_ratio(curve: pd.DataFrame):
 
 
 # ── Figure 3: Cache warm-up curve ──────────────────────────────
+
 
 def fig3_warmup(df: pd.DataFrame):
     df_tr = df[df.arm == "toolrecall"].copy()
@@ -166,6 +170,7 @@ def fig3_warmup(df: pd.DataFrame):
 
 # ── Statistics ─────────────────────────────────────────────────
 
+
 def compute_wilcoxon(df: pd.DataFrame, arm_a: str, arm_b: str) -> dict:
     """Paired Wilcoxon signed-rank test at matched (workload_id, turn_index).
 
@@ -180,21 +185,18 @@ def compute_wilcoxon(df: pd.DataFrame, arm_a: str, arm_b: str) -> dict:
     if len(common) < 3:
         return {"n": len(common), "statistic": None, "pvalue": None}
     from scipy.stats import wilcoxon
+
     w = wilcoxon(a.loc[common], b.loc[common], method="approx")
     return {"n": len(common), "statistic": round(w.statistic, 1), "pvalue": w.pvalue}
 
 
 def compute_logrank(df: pd.DataFrame) -> dict:
     """Log-rank test on turns-to-exhaustion between arms."""
-    term = (
-        df.sort_values("turn_index")
-        .groupby(["run_id", "arm"])
-        .last()
-        .reset_index()
-    )
+    term = df.sort_values("turn_index").groupby(["run_id", "arm"]).last().reset_index()
     results = {}
     arms = term.arm.unique()
     from scipy.stats import logrank
+
     for i in range(len(arms)):
         for j in range(i + 1, len(arms)):
             a_data = term[term.arm == arms[i]]["turn_index"].values
@@ -211,12 +213,7 @@ def compute_stats(df: pd.DataFrame, probe_df: pd.DataFrame) -> str:
     lines = ["=" * 60, "ToolRecall Benchmark Statistics", "=" * 60, ""]
 
     # ── 1. Turns to exhaustion ──
-    term = (
-        df.sort_values("turn_index")
-        .groupby(["run_id", "arm"])
-        .last()
-        .reset_index()
-    )
+    term = df.sort_values("turn_index").groupby(["run_id", "arm"]).last().reset_index()
     lines.append("--- Turns to exhaustion ---")
     for arm, g in term.groupby("arm"):
         median = g.turn_index.median()
@@ -232,23 +229,21 @@ def compute_stats(df: pd.DataFrame, probe_df: pd.DataFrame) -> str:
         for j in range(i + 1, len(arms)):
             w = compute_wilcoxon(df, arms[i], arms[j])
             p_str = f"p={w['pvalue']:.4f}" if w["pvalue"] is not None else "N/A"
-            lines.append(f"  {arms[i]:12s} vs {arms[j]:12s}: n={w['n']:>4}, W={w['statistic']}, {p_str}")
+            lines.append(
+                f"  {arms[i]:12s} vs {arms[j]:12s}: n={w['n']:>4}, W={w['statistic']}, {p_str}"
+            )
     lines.append("")
 
     # ── 3. Log-rank ──
     lines.append("--- Log-rank test (turns to exhaustion) ---")
     lr = compute_logrank(df)
     for pair, res in lr.items():
-        p_str = f"p={res['pvalue']:.4f}" if isinstance(res['pvalue'], float) else str(res['pvalue'])
+        p_str = f"p={res['pvalue']:.4f}" if isinstance(res["pvalue"], float) else str(res["pvalue"])
         lines.append(f"  {pair:30s}: chi2={res['statistic']}, {p_str}")
     lines.append("")
 
     # ── 4. Marginal cost at checkpoints ──
-    curve = (
-        df.groupby(["arm", "turn_index"])["request_tokens"]
-        .median()
-        .reset_index()
-    )
+    curve = df.groupby(["arm", "turn_index"])["request_tokens"].median().reset_index()
     lines.append("--- Marginal cost at checkpoints (median request_tokens) ---")
     for t in (10, 50, 100, 200, 340):
         for arm in ("naive", "prefix", "toolrecall"):
@@ -310,9 +305,11 @@ def compute_stats(df: pd.DataFrame, probe_df: pd.DataFrame) -> str:
         cost_hit = cr / 1e6 * pricing.get("prompt_cached", pricing["prompt"] * 0.1)
         cost_comp = ct / 1e6 * pricing["completion"]
         total = cost_miss + cost_hit + cost_comp
-        lines.append(f"  {arm:12s}: prompt_miss=${cost_miss:.5f}, "
-                     f"prompt_hit=${cost_hit:.5f}, completion=${cost_comp:.5f}, "
-                     f"total=${total:.5f}")
+        lines.append(
+            f"  {arm:12s}: prompt_miss=${cost_miss:.5f}, "
+            f"prompt_hit=${cost_hit:.5f}, completion=${cost_comp:.5f}, "
+            f"total=${total:.5f}"
+        )
     lines.append("")
 
     # ── 8. Provider prefix-cache gap ──
@@ -323,8 +320,10 @@ def compute_stats(df: pd.DataFrame, probe_df: pd.DataFrame) -> str:
         prov = sub.prompt_tokens.sum()
         gap = prov - req
         pct = gap / req * 100 if req else 0
-        lines.append(f"  {arm:12s}: request_tokens={req:>8,}, prompt_tokens={prov:>8,}, "
-                     f"delta={gap:>+7,} ({pct:+.1f}%)")
+        lines.append(
+            f"  {arm:12s}: request_tokens={req:>8,}, prompt_tokens={prov:>8,}, "
+            f"delta={gap:>+7,} ({pct:+.1f}%)"
+        )
     lines.append("")
 
     # ── 9. Per-workload breakdown ──
@@ -365,8 +364,10 @@ def compute_stats(df: pd.DataFrame, probe_df: pd.DataFrame) -> str:
             hr = hits / (hits + misses) * 100 if (hits + misses) > 0 else 0
             turns = len(sub)
             final_req = sub.request_tokens.iloc[-1]
-            lines.append(f"  {arm:12s}: {turns:>3} turns, {req_tot:>8,} req_tok total, "
-                         f"final={final_req:>7,}, dropped={dropped:>8,}, cache_hit_rate={hr:.0f}%")
+            lines.append(
+                f"  {arm:12s}: {turns:>3} turns, {req_tot:>8,} req_tok total, "
+                f"final={final_req:>7,}, dropped={dropped:>8,}, cache_hit_rate={hr:.0f}%"
+            )
 
         # Tokens saved by TR vs naive
         tr = df[(df.arm == "toolrecall") & (df.workload_id == "review")]
@@ -386,6 +387,7 @@ def compute_stats(df: pd.DataFrame, probe_df: pd.DataFrame) -> str:
 
 
 # ── Report generator ───────────────────────────────────────────
+
 
 def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str:
     """Generate a standalone BENCHMARK_REPORT.md."""
@@ -410,26 +412,25 @@ def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str
         cost_per_arm[arm] = cost_miss + cost_hit + cost_comp
 
     # Context at checkpoints
-    curve = (
-        df.groupby(["arm", "turn_index"])["request_tokens"]
-        .median()
-        .reset_index()
-    )
+    curve = df.groupby(["arm", "turn_index"])["request_tokens"].median().reset_index()
 
     # ── Claim evidence ─────────────────────────────────────────
-    term_runs = (
-        df.sort_values("turn_index")
-        .groupby(["run_id", "arm"])
-        .last()
-        .reset_index()
-    )
+    term_runs = df.sort_values("turn_index").groupby(["run_id", "arm"]).last().reset_index()
 
     claim_evidence = {}
 
     # C1: growth rates — compare req_tok at turn 10 vs last common turn
     tr_curve = curve[curve.arm == "toolrecall"].set_index("turn_index")["request_tokens"]
-    nv_curve = curve[curve.arm == "naive"].set_index("turn_index")["request_tokens"] if "naive" in curve.arm.values else pd.Series(dtype=float)
-    pr_curve = curve[curve.arm == "prefix"].set_index("turn_index")["request_tokens"] if "prefix" in curve.arm.values else pd.Series(dtype=float)
+    nv_curve = (
+        curve[curve.arm == "naive"].set_index("turn_index")["request_tokens"]
+        if "naive" in curve.arm.values
+        else pd.Series(dtype=float)
+    )
+    pr_curve = (
+        curve[curve.arm == "prefix"].set_index("turn_index")["request_tokens"]
+        if "prefix" in curve.arm.values
+        else pd.Series(dtype=float)
+    )
 
     def _growth_per_turn(s: pd.Series, t1: int = 10, t2: int = None) -> float:
         """Average tokens added per turn between t1 and t2."""
@@ -447,7 +448,7 @@ def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str
         claim_evidence["C1"] = (
             f"Yes — naive grows at {nv_growth:,.0f} tok/turn, "
             f"ToolRecall at {tr_growth:,.0f} tok/turn "
-            f"({nv_growth/tr_growth:.1f}× slower growth)"
+            f"({nv_growth / tr_growth:.1f}× slower growth)"
         )
     elif pr_growth > 0 and tr_growth > 0:
         claim_evidence["C1"] = (
@@ -460,7 +461,12 @@ def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str
     # C2: gap widening — ratio at early turn vs later turn
     if not nv_curve.empty and not tr_curve.empty:
         t_early, t_late = 10, min(50, nv_curve.index.max(), tr_curve.index.max())
-        if t_early in nv_curve.index and t_late in nv_curve.index and t_early in tr_curve.index and t_late in tr_curve.index:
+        if (
+            t_early in nv_curve.index
+            and t_late in nv_curve.index
+            and t_early in tr_curve.index
+            and t_late in tr_curve.index
+        ):
             r_early = nv_curve[t_early] / tr_curve[t_early]
             r_late = nv_curve[t_late] / tr_curve[t_late]
             claim_evidence["C2"] = (
@@ -470,7 +476,12 @@ def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str
     if "C2" not in claim_evidence:
         if not pr_curve.empty and not tr_curve.empty:
             t_early, t_late = 10, min(50, pr_curve.index.max(), tr_curve.index.max())
-            if t_early in pr_curve.index and t_late in pr_curve.index and t_early in tr_curve.index and t_late in tr_curve.index:
+            if (
+                t_early in pr_curve.index
+                and t_late in pr_curve.index
+                and t_early in tr_curve.index
+                and t_late in tr_curve.index
+            ):
                 r_early = pr_curve[t_early] / tr_curve[t_early]
                 r_late = pr_curve[t_late] / tr_curve[t_late]
                 claim_evidence["C2"] = (
@@ -516,10 +527,10 @@ def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str
 
     report = f"""# ToolRecall Three-Arm Benchmark Report
 
-**Generated:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+**Generated:** {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}
 **Model:** `{_MODEL}` via {_PROVIDER}
-**Arms:** {', '.join(arms)}
-**Workloads:** {', '.join(workloads)}
+**Arms:** {", ".join(arms)}
+**Workloads:** {", ".join(workloads)}
 **Total runs:** {total_runs} ({total_turns} turns)
 
 ---
@@ -534,7 +545,7 @@ def generate_report(df: pd.DataFrame, probe_df: pd.DataFrame, stats: str) -> str
         evidence = claim_evidence.get(cid, "_(filled after analysis)_")
         report += f"| {cid} | {desc} | {evidence} |\n"
 
-    report += f"""
+    report += """
 
 ---
 
@@ -559,7 +570,9 @@ Three arms, interleaved per seed: naive → prefix → toolrecall → naive → 
     # Dynamic column headers — no hardcoded arm names
     header_cols = list(arms)
     col_widths = {a: max(len(a), 8) for a in header_cols}
-    header_line = "| Metric |" + "".join(f" {a:>{col_widths[a]}} |" for a in header_cols) + " Best arm |"
+    header_line = (
+        "| Metric |" + "".join(f" {a:>{col_widths[a]}} |" for a in header_cols) + " Best arm |"
+    )
     sep_line = "|--------|" + "|".join("-" * cw for cw in col_widths.values()) + "|----------|"
 
     report += f"{header_line}\n{sep_line}\n"
@@ -581,7 +594,15 @@ Three arms, interleaved per seed: naive → prefix → toolrecall → naive → 
         report += f"| req_tok @ turn {t:>3} |{cells} {best_arm} |\n"
 
     # Separator before exhaustion/cost rows
-    sep2 = "|" + "-" * 8 + "|" + "|".join("-" * cw for cw in col_widths.values()) + "|" + "-" * 10 + "|"
+    sep2 = (
+        "|"
+        + "-" * 8
+        + "|"
+        + "|".join("-" * cw for cw in col_widths.values())
+        + "|"
+        + "-" * 10
+        + "|"
+    )
     report += f"{sep2}\n"
 
     # Exhaustion row
@@ -608,7 +629,7 @@ Three arms, interleaved per seed: naive → prefix → toolrecall → naive → 
 
 """
 
-    report += f"""
+    report += """
 
 ---
 
@@ -626,7 +647,7 @@ matches the same workload step as turn N of arm B._
                 sig = "significant" if w["pvalue"] < 0.05 else "not significant"
                 report += f"- **{arms_list[i]} vs {arms_list[j]}**: W={w['statistic']}, p={w['pvalue']:.4f} ({sig}, n={w['n']} pairs)\n"
 
-    report += f"""
+    report += """
 
 ---
 
@@ -638,7 +659,7 @@ matches the same workload step as turn N of arm B._
         sig = "significant" if res["pvalue"] < 0.05 else "not significant"
         report += f"- **{pair}**: chi²={res['statistic']}, p={res['pvalue']:.4f} ({sig})\n"
 
-    report += f"""
+    report += """
 
 ---
 
@@ -658,7 +679,7 @@ _How much the provider's prefix caching reduces billed tokens vs what we self-co
         if cr:
             report += f"  - Provider prefix cache hits: {cr:,} tokens\n"
 
-    report += f"""
+    report += """
 
 ---
 
@@ -682,13 +703,17 @@ _Nonce recall rate by arm and lag. If recall drops with lag, context dropping ca
 ## Per-Arm Summary
 
 ```
-{df.groupby("arm").agg(
-    runs=("run_id", "nunique"),
-    total_turns=("turn_index", "count"),
-    median_request_tokens=("request_tokens", "median"),
-    median_completion=("completion_tokens", "median"),
-    total_api_time_s=("api_latency_s", "sum"),
-).to_string()}
+{
+        df.groupby("arm")
+        .agg(
+            runs=("run_id", "nunique"),
+            total_turns=("turn_index", "count"),
+            median_request_tokens=("request_tokens", "median"),
+            median_completion=("completion_tokens", "median"),
+            total_api_time_s=("api_latency_s", "sum"),
+        )
+        .to_string()
+    }
 ```
 
 ---
@@ -733,11 +758,15 @@ Requirements:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=DB)
-    parser.add_argument("--provider", default="openrouter",
-                        choices=["openrouter", "anthropic", "deepseek"],
-                        help="Provider for pricing/report headers (default: openrouter)")
-    parser.add_argument("--model", default=None,
-                        help="Model name for pricing (defaults to provider default)")
+    parser.add_argument(
+        "--provider",
+        default="openrouter",
+        choices=["openrouter", "anthropic", "deepseek"],
+        help="Provider for pricing/report headers (default: openrouter)",
+    )
+    parser.add_argument(
+        "--model", default=None, help="Model name for pricing (defaults to provider default)"
+    )
     args = parser.parse_args()
 
     # Update globals for pricing/report
@@ -760,11 +789,7 @@ def main():
     print(f"Workloads: {list(df.workload_id.unique())}")
 
     # Build median curve
-    curve = (
-        df.groupby(["arm", "turn_index"])["request_tokens"]
-        .median()
-        .reset_index()
-    )
+    curve = df.groupby(["arm", "turn_index"])["request_tokens"].median().reset_index()
 
     print("\nGenerating figures...")
     fig1_context_growth(curve)

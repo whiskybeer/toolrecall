@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 #: Paths under $HOME known to host agent venvs. Scanned in addition to the
 #: generic ``*/bin/python3* + pyvenv.cfg`` walk. Be generous here; each hit is
@@ -37,8 +37,17 @@ _AGENT_ROOT_HINTS = (
 
 #: Directories that are never worth walking for venvs.
 _SKIP_DIRNAMES = {
-    ".cache", ".git", ".npm", "node_modules", "site-packages",
-    ".venv/lib", "lib", "bin", "__pycache__", ".gradle", "target",
+    ".cache",
+    ".git",
+    ".npm",
+    "node_modules",
+    "site-packages",
+    ".venv/lib",
+    "lib",
+    "bin",
+    "__pycache__",
+    ".gradle",
+    "target",
 }
 
 
@@ -47,8 +56,8 @@ class Venv:
     """A discovered/represented Python environment."""
 
     root: str
-    python: str           # absolute path to the venv's interpreter
-    site_packages: str    # resolved site-packages dir (may be '' if unprobeable)
+    python: str  # absolute path to the venv's interpreter
+    site_packages: str  # resolved site-packages dir (may be '' if unprobeable)
 
 
 def _real(path: str) -> str:
@@ -71,8 +80,11 @@ def _site_packages_of(python: str, timeout: float = 10.0) -> Optional[str]:
     try:
         with tempfile.TemporaryDirectory(prefix="tr-sp-") as td:
             r = subprocess.run(
-                [python, "-c", code], capture_output=True, text=True,
-                timeout=timeout, cwd=td,
+                [python, "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=td,
             )
         if r.returncode == 0:
             sp = r.stdout.strip()
@@ -92,6 +104,7 @@ def _is_toolrecall_own(py_path: str) -> bool:
     """
     try:
         import toolrecall
+
         here = _real(os.path.dirname(os.path.dirname(toolrecall.__file__)))
     except Exception:
         return False
@@ -135,7 +148,7 @@ def _candidate_pythons_from_home() -> List[str]:
                 dirs[:] = [d for d in dirs if d not in _SKIP_DIRNAMES]
                 if "pyvenv.cfg" in files:
                     cfg_files.append(os.path.join(root, "pyvenv.cfg"))
-                depth = root[len(start):].count(os.sep)
+                depth = root[len(start) :].count(os.sep)
                 if depth >= max_depth:
                     dirs[:] = []
         except OSError:
@@ -196,8 +209,11 @@ def _importable(python: str, mod: str) -> bool:
     try:
         with tempfile.TemporaryDirectory(prefix="tr-probe-") as td:
             r = subprocess.run(
-                [python, "-c", f"import {mod}"], capture_output=True, text=True,
-                timeout=20, cwd=td,
+                [python, "-c", f"import {mod}"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                cwd=td,
             )
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -215,7 +231,9 @@ def _install_toolrecall(venv: Venv) -> bool:
     if os.access(pip, os.X_OK):
         try:
             r = subprocess.run(
-                [pip, "install", "toolrecall"], capture_output=True, text=True,
+                [pip, "install", "toolrecall"],
+                capture_output=True,
+                text=True,
                 timeout=120,
             )
             return r.returncode == 0
@@ -226,7 +244,9 @@ def _install_toolrecall(venv: Venv) -> bool:
         try:
             r = subprocess.run(
                 [uv, "pip", "install", "--python", venv.python, "toolrecall"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             return r.returncode == 0
         except (OSError, subprocess.TimeoutExpired):

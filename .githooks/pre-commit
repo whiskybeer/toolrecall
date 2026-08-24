@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# ToolRecall pre-commit hook — run the full validation gate before every commit.
+#
+# Enforced in this clone via:  git config core.hooksPath .githooks
+# (Set the same on any fresh clone to enable the hook.)
+#
+# The gate (`make validate`) = ruff lint + format-check + mypy + unit tests.
+# Release stage 6 uses the same unit selection (make test-unit).
+#
+# Escape hatches:
+#   TC_SKIP_VALIDATE=1 git commit ...   # explicit skip for this run
+#   git commit --no-verify ...          # git's native bypass (no message)
+set -euo pipefail
+
+if [[ "${TC_SKIP_VALIDATE:-0}" == "1" ]]; then
+    echo "pre-commit: TC_SKIP_VALIDATE=1 — skipping make validate"
+    exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-commit: running make validate (lint + format + type + unit tests)..."
+exec make validate

@@ -174,8 +174,6 @@ class TestContextTrackerBasics:
         finally:
             os.unlink(path)
 
-
-
     def test_get_dirty_no_arg_is_checkpoint_scoped(self):
         """get_dirty() without args scopes to current checkpoint, not since reset.
 
@@ -192,7 +190,9 @@ class TestContextTrackerBasics:
 
             # get_dirty() with explicit checkpoint 1 should see p1
             result_cp1 = ct.get_dirty(checkpoint=cp1)
-            assert p1 in result_cp1["dirty"],                 f"Expected {p1} in dirty for cp1, got {result_cp1['dirty']}"
+            assert p1 in result_cp1["dirty"], (
+                f"Expected {p1} in dirty for cp1, got {result_cp1['dirty']}"
+            )
             assert result_cp1["total_dirty"] == 1
 
             # Now advance checkpoint without clearing
@@ -202,8 +202,12 @@ class TestContextTrackerBasics:
             # get_dirty() without args — should see NOTHING dirty
             # because no files were written since cp2
             result_none = ct.get_dirty()
-            assert result_none["total_dirty"] == 0,                 f"Expected 0 dirty for current checkpoint, got {result_none['total_dirty']}: {result_none['dirty']}"
-            assert p1 not in result_none["dirty"],                 f"{p1} should NOT appear in dirty when called without args (it was dirtied before current checkpoint)"
+            assert result_none["total_dirty"] == 0, (
+                f"Expected 0 dirty for current checkpoint, got {result_none['total_dirty']}: {result_none['dirty']}"
+            )
+            assert p1 not in result_none["dirty"], (
+                f"{p1} should NOT appear in dirty when called without args (it was dirtied before current checkpoint)"
+            )
 
             # get_dirty(checkpoint=cp1) should STILL see p1
             result_cp1_again = ct.get_dirty(checkpoint=cp1)
@@ -214,7 +218,6 @@ class TestContextTrackerBasics:
     def test_get_dirty_checkpoint_zero(self):
         """get_dirty(checkpoint=0) works after reset (0 is falsy but valid)."""
         ct = ContextTracker()
-        cp1 = ct.set_checkpoint("before")["checkpoint"]
         p1 = make_temp_file("data")
         try:
             ct.mark_dirty(p1)
@@ -226,7 +229,9 @@ class TestContextTrackerBasics:
 
             # get_dirty(checkpoint=0) should see p2 (written since reset at cp0)
             result = ct.get_dirty(checkpoint=0)
-            assert result["total_dirty"] == 1,                 f"Expected 1 dirty for checkpoint=0 after reset, got {result['total_dirty']}"
+            assert result["total_dirty"] == 1, (
+                f"Expected 1 dirty for checkpoint=0 after reset, got {result['total_dirty']}"
+            )
             assert p2 in result["dirty"]
         finally:
             for p in (p1, p2):
@@ -234,6 +239,7 @@ class TestContextTrackerBasics:
                     os.unlink(p)
                 except OSError:
                     pass
+
 
 class TestContextTrackerReset:
     """Reset and edge cases."""
@@ -456,7 +462,7 @@ class TestContextTrackerThreadSafety:
 
 class TestContextTrackerViaDaemonIPC:
     """Integration-style tests — verify IPC works end-to-end.
-    
+
     These require a running daemon. If daemon is not available,
     they test the client functions' fallback behavior.
     """
@@ -469,6 +475,7 @@ class TestContextTrackerViaDaemonIPC:
             context_get_stats,
             context_reset,
         )
+
         assert callable(context_set_checkpoint)
         assert callable(context_get_dirty)
         assert callable(context_get_stats)
@@ -482,6 +489,7 @@ class TestContextTrackerViaDaemonIPC:
         """
         # Stop the daemon if it's running (ignore if not installed / no daemon)
         import subprocess
+
         try:
             subprocess.run(["toolrecall", "daemon", "--stop"], capture_output=True)
         except FileNotFoundError:
@@ -519,6 +527,7 @@ class TestContextTrackerDaemonIntegration:
     def _check_daemon(self):
         """Skip all tests if daemon is not running."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         try:
             tc = TransportClient(DEFAULT_PATH)
             resp = tc.send({"cmd": "ping"}, timeout=1)
@@ -533,6 +542,7 @@ class TestContextTrackerDaemonIntegration:
     def test_daemon_ping_includes_context_tracker(self):
         """Daemon ping response includes context_tracker stats with ctx_dropped_tokens."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
         resp = tc.send({"cmd": "ping"})
         assert "context_tracker" in resp, "ping response missing context_tracker"
@@ -547,26 +557,31 @@ class TestContextTrackerDaemonIntegration:
     def test_daemon_auto_checkpoint_on_start(self):
         """Daemon auto-sets checkpoint=1 on start (not 0)."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
         resp = tc.send({"cmd": "context_get_stats"})
-        assert resp.get("checkpoint", 0) >= 1, \
+        assert resp.get("checkpoint", 0) >= 1, (
             f"Expected checkpoint >= 1 (auto-set on daemon start), got {resp.get('checkpoint')}"
+        )
 
     def test_read_tracked_as_clean(self):
         """Reading a file through daemon adds it to the clean list."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
 
         test_path = "/etc/hostname"
         tc.send({"cmd": "cached_read", "path": test_path, "source": "agent_tool"})
 
         after = tc.send({"cmd": "context_get_stats"})
-        assert any(test_path in p for p in after.get("clean", [])), \
+        assert any(test_path in p for p in after.get("clean", [])), (
             f"'{test_path}' not found in clean list: {after.get('clean', [])[:5]}..."
+        )
 
     def test_write_tracked_as_dirty(self):
         """Writing a file through daemon adds it to the dirty list."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
 
         temp_path = f"/tmp/test_tr_dirty_{int(time.time())}.txt"
@@ -574,14 +589,16 @@ class TestContextTrackerDaemonIntegration:
             tc.send({"cmd": "cached_write", "path": temp_path, "content": "test"})
 
             after = tc.send({"cmd": "context_get_stats"})
-            assert temp_path in after.get("dirty", []), \
+            assert temp_path in after.get("dirty", []), (
                 f"'{temp_path}' not found in dirty list: {after.get('dirty', [])}"
+            )
         finally:
             tc.send({"cmd": "cached_write", "path": temp_path, "content": ""})
 
     def test_context_get_hint_returns_string(self):
         """context_get_hint returns a hint string (may be empty)."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
         resp = tc.send({"cmd": "context_get_hint"})
         if "error" in resp:
@@ -595,6 +612,7 @@ class TestContextTrackerDaemonIntegration:
     def test_context_get_hint_after_read(self):
         """After a read, context_get_hint has_clean=True."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
 
         tc.send({"cmd": "cached_read", "path": "/etc/hostname", "source": "agent_tool"})
@@ -606,12 +624,14 @@ class TestContextTrackerDaemonIntegration:
     def test_daemon_status_output_includes_context(self):
         """Daemon ping response includes context_tracker stats."""
         from toolrecall.transport import TransportClient, DEFAULT_PATH
+
         tc = TransportClient(DEFAULT_PATH)
         resp = tc.send({"cmd": "ping"})
         if "error" in resp:
             pytest.skip(f"Daemon unavailable: {resp['error']}")
-        assert "context_tracker" in resp, \
+        assert "context_tracker" in resp, (
             f"ping response missing context_tracker, keys: {list(resp.keys())}"
+        )
         ctx = resp["context_tracker"]
         assert ctx["checkpoint"] >= 1
         assert isinstance(ctx["dirty"], int)

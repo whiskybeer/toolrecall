@@ -91,9 +91,12 @@ class TestDaemonSingleInstanceLock(unittest.TestCase):
         self.sock_b = os.path.join(self.tmpdir, "b.sock")
 
     def tearDown(self):
-        daemon.PID_FILE = self._orig_pid_file if hasattr(self, "_orig_pid_file") else daemon.PID_FILE
+        daemon.PID_FILE = (
+            self._orig_pid_file if hasattr(self, "_orig_pid_file") else daemon.PID_FILE
+        )
         if os.path.exists(self.tmpdir):
             import shutil
+
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_acquire_then_block_same_socket(self):

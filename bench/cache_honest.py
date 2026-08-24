@@ -25,9 +25,7 @@ def main() -> None:
     con = sqlite3.connect(DB)
 
     # ── file_cache: actual SQLite-persisted entries ──────────
-    rows = con.execute(
-        "SELECT path, hits, size FROM file_cache ORDER BY hits DESC"
-    ).fetchall()
+    rows = con.execute("SELECT path, hits, size FROM file_cache ORDER BY hits DESC").fetchall()
 
     total_entries = len(rows)
     once_only = sum(1 for r in rows if r[1] == 1)
@@ -54,8 +52,8 @@ def main() -> None:
     print("  HONEST CACHE REPORT")
     print("=" * 62)
 
-    print(f"\n  File Cache               SQLite layer only")
-    print(f"  ─────────────────────────────────────────────")
+    print("\n  File Cache               SQLite layer only")
+    print("  ─────────────────────────────────────────────")
     print(f"  Unique files cached:       {total_entries:>8,}")
     print(f"  Read from disk (once):     {once_only:>8,}")
     print(f"  Re-read from SQLite:       {re_read:>8,}")
@@ -66,16 +64,16 @@ def main() -> None:
 
     if stats:
         hr = stats[0] / (stats[0] + stats[1]) * 100 if (stats[0] + stats[1]) else 0
-        print(f"\n  Daemon counter (in-memory + SQLite combined)")
-        print(f"  ─────────────────────────────────────────────")
+        print("\n  Daemon counter (in-memory + SQLite combined)")
+        print("  ─────────────────────────────────────────────")
         print(f"  Hits:                     {stats[0]:>8,}")
         print(f"  Misses:                   {stats[1]:>8,}")
         print(f"  Hit rate:                 {hr:>6.1f}%")
         if stats[5]:
             print(f"  Last updated:             {_fmt_ts(stats[5])}")
 
-    print(f"\n  Token Accounting          (chars/4 estimate)")
-    print(f"  ─────────────────────────────────────────────")
+    print("\n  Token Accounting          (chars/4 estimate)")
+    print("  ─────────────────────────────────────────────")
     print(f"  Tokens read from disk:     {tok_read_from_disk:>12,}  ← real I/O cost")
     print(f"  Tokens saved (SQLite):     {tok_saved_real:>12,}  ← actual re-reads avoided")
     print(f"  Daemon claims saved:       {tok_claimed_by_daemon:>12,}  ← in-memory hits included")
@@ -90,8 +88,8 @@ def main() -> None:
             "SELECT arm, workload_id, MAX(turn_index), MAX(ts) "
             "FROM turn_log GROUP BY run_id ORDER BY MAX(ts) DESC LIMIT 3"
         ).fetchall()
-        print(f"\n  Recent Benchmark Runs")
-        print(f"  ─────────────────────────────────────────────")
+        print("\n  Recent Benchmark Runs")
+        print("  ─────────────────────────────────────────────")
         print(f"  Turn log entries total:   {turn_count:>8,}")
         for r in last_run:
             print(f"  {r[0]:12s}  {r[1]:12s}  {r[2]:>4d} turns  last @ {_fmt_ts(r[3])}")

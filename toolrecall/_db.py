@@ -71,53 +71,56 @@ _SENSITIVE_PATTERNS = None
 # Pattern definitions (raw strings — compiled on first use)
 SENSITIVE_FILE_PATTERNS = [
     # Shell configs / credentials
-    r"(^|/)\.bashrc($|/)",                        # .bashrc
+    r"(^|/)\.bashrc($|/)",  # .bashrc
     r"(^|/)\.zshrc($|/)",
-    r"(^|/)\.profile($|/)",                       # .profile
-    r"(^|/)\.env(\.[a-zA-Z]+)?$",                 # .env, .env.local, .env.production
-    r"(^|/)\.gitconfig$",                         # git config (may hold tokens)
-    r"(^|/)\.netrc$",                             # machine credentials
-    r"(^|/)\.npmrc$",                             # npm registry tokens
-    r"(^|/)\.dockercfg$",                         # Docker registry auth
-    r"(^|/)\.docker/config\.json$",               # Docker config (may hold creds)
-
+    r"(^|/)\.profile($|/)",  # .profile
+    r"(^|/)\.env(\.[a-zA-Z]+)?$",  # .env, .env.local, .env.production
+    r"(^|/)\.gitconfig$",  # git config (may hold tokens)
+    r"(^|/)\.netrc$",  # machine credentials
+    r"(^|/)\.npmrc$",  # npm registry tokens
+    r"(^|/)\.dockercfg$",  # Docker registry auth
+    r"(^|/)\.docker/config\.json$",  # Docker config (may hold creds)
     # SSH
-    r"(^|/)\.ssh/",                               # SSH keys, config, authorized_keys
-
+    r"(^|/)\.ssh/",  # SSH keys, config, authorized_keys
     # Token / key files
-    r"(^|/)\.token$",                             # Generic token file
-    r"(^|/)\.secret$",                            # Generic secret file
-    r"(^|/)credentials\.json$",                   # GCP / service account keys
-    r"(^|/)credentials\.ini$",                    # AWS / generic
+    r"(^|/)\.token$",  # Generic token file
+    r"(^|/)\.secret$",  # Generic secret file
+    r"(^|/)credentials\.json$",  # GCP / service account keys
+    r"(^|/)credentials\.ini$",  # AWS / generic
     r"(^|/)(id_rsa|id_ecdsa|id_ed25519)($|/|\.)",  # SSH private keys by name
-
     # Common config dirs that hold secrets
-    r"(^|/)\.config/gcloud/",                     # GCP service account keys
-    r"(^|/)\.config/gh/",                         # GitHub CLI tokens
-    r"(^|/)\.aws/",                               # AWS credentials + config
-    r"(^|/)\.azure/",                             # Azure CLI credentials
-
+    r"(^|/)\.config/gcloud/",  # GCP service account keys
+    r"(^|/)\.config/gh/",  # GitHub CLI tokens
+    r"(^|/)\.aws/",  # AWS credentials + config
+    r"(^|/)\.azure/",  # Azure CLI credentials
     # Session/cookies
-    r"(^|/)cookie\.txt$",                         # session cookies
-
+    r"(^|/)cookie\.txt$",  # session cookies
     # ToolRecall's OWN secrets — the config may contain the Turso sync
     # token, and the cache DBs contain everything ever cached. Reading
     # them back through the cache layer would let an agent exfiltrate
     # both. (The daemon accesses the DB directly, not via cached_read,
     # so this does not break normal operation.)
-    r"(^|/)\.config/toolrecall/",                 # toolrecall.toml (sync token), .env
-    r"(^|/)\.toolrecall/.*\.db(-wal|-shm)?$",     # cache.db, cache-libsql.db + sidecars
+    r"(^|/)\.config/toolrecall/",  # toolrecall.toml (sync token), .env
+    r"(^|/)\.toolrecall/.*\.db(-wal|-shm)?$",  # cache.db, cache-libsql.db + sidecars
 ]
 
 # Sensitive file extensions (checked on splitext basename)
 SENSITIVE_FILE_EXTENSIONS = {".pem", ".key", ".cert", ".p12", ".pfx"}
 
 # Sensitive basenames — checked on os.path.basename only
-SENSITIVE_BASENAMES = frozenset({
-    ".env", ".token", ".secret",
-    "credentials.json", "credentials.ini",
-    ".netrc", ".gitconfig", ".npmrc", ".dockercfg",
-})
+SENSITIVE_BASENAMES = frozenset(
+    {
+        ".env",
+        ".token",
+        ".secret",
+        "credentials.json",
+        "credentials.ini",
+        ".netrc",
+        ".gitconfig",
+        ".npmrc",
+        ".dockercfg",
+    }
+)
 
 
 def _compile_sensitive_patterns():
@@ -141,6 +144,7 @@ def _is_sensitive_path(path: str) -> bool:
     allowed_paths allowlisting.
     """
     import os as _os
+
     # Normalize: expand ~, resolve symlinks, collapse /./ and ///
     expanded = _os.path.realpath(_os.path.expanduser(path))
 
@@ -149,24 +153,31 @@ def _is_sensitive_path(path: str) -> bool:
     for pat in patterns:
         if pat.search(expanded):
             import logging
+
             logging.getLogger("toolrecall.db").warning(
-                "Blocked read of sensitive file: %s (matched pattern: %s)", path, pat.pattern)
+                "Blocked read of sensitive file: %s (matched pattern: %s)", path, pat.pattern
+            )
             return True
 
     # Check extension on basename
     import os.path as _osp
+
     base, ext = _osp.splitext(_osp.basename(expanded))
     if ext and ext.lower() in SENSITIVE_FILE_EXTENSIONS:
         import logging
+
         logging.getLogger("toolrecall.db").warning(
-            "Blocked read of sensitive file: %s (matched extension: %s)", path, ext)
+            "Blocked read of sensitive file: %s (matched extension: %s)", path, ext
+        )
         return True
 
     # Check basename
     if _osp.basename(expanded) in SENSITIVE_BASENAMES:
         import logging
+
         logging.getLogger("toolrecall.db").warning(
-            "Blocked read of sensitive file: %s (matched basename)", path)
+            "Blocked read of sensitive file: %s (matched basename)", path
+        )
         return True
 
     return False
@@ -180,11 +191,11 @@ def _is_sensitive_path(path: str) -> bool:
 # The names below are re-exported for backward compatibility — tests
 # and older call sites import them from toolrecall._db.
 
-from toolrecall.storage import (          # noqa: E402, F401  (re-exported)
+from toolrecall.storage import (  # noqa: E402, F401  (re-exported)
     active_db_path as _active_db_path,
     open_backend as _open_db_backend,
 )
-from toolrecall.storage.libsql import (   # noqa: E402, F401  (re-exported — tests import these)
+from toolrecall.storage.libsql import (  # noqa: E402, F401  (re-exported — tests import these)
     _LibSQLConnection,
     _LibSQLCursor,
     _LibSQLRow,
@@ -317,7 +328,9 @@ def _init(schema: str = ""):
             conn.commit()
         # Migration: v0.3.x → v0.4.0 — rename tokens_intercepted to tokens_read_from_disk
         try:
-            conn.execute("ALTER TABLE cache_stats RENAME COLUMN tokens_intercepted TO tokens_read_from_disk")
+            conn.execute(
+                "ALTER TABLE cache_stats RENAME COLUMN tokens_intercepted TO tokens_read_from_disk"
+            )
         except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already renamed (idempotent)
         # Migration: v0.7.5 → v0.8.0 — add tokens_saved column
@@ -332,7 +345,9 @@ def _init(schema: str = ""):
             pass  # column already exists (idempotent)
         # Migration: v0.9.4 → v0.10.0 — add context_tokens_saved column
         try:
-            conn.execute("ALTER TABLE cache_stats ADD COLUMN context_tokens_saved INTEGER DEFAULT 0")
+            conn.execute(
+                "ALTER TABLE cache_stats ADD COLUMN context_tokens_saved INTEGER DEFAULT 0"
+            )
         except (sqlite3.OperationalError, ValueError, Exception):
             pass  # column already exists (idempotent)
         # Migration: v0.x → v0.y — add stderr column to terminal_cache

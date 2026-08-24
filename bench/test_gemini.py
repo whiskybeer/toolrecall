@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """List available models via Gemini OpenAI-compatible endpoint, then test each candidate."""
-import json, os, urllib.request, urllib.error
+
+import json
+import os
+import urllib.request
+import urllib.error
 
 key = None
 with open(os.path.expanduser("~/.hermes/.env")) as f:
@@ -31,15 +35,19 @@ print("\n--- Testing gemini-1.5-flash with various auth methods ---")
 
 # Try with key as query param (v1beta)
 url = f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={key}"
-body = json.dumps({
-    "model": "models/gemini-1.5-flash",
-    "messages": [{"role": "user", "content": "Reply OK"}],
-    "max_tokens": 10,
-}).encode()
+body = json.dumps(
+    {
+        "model": "models/gemini-1.5-flash",
+        "messages": [{"role": "user", "content": "Reply OK"}],
+        "max_tokens": 10,
+    }
+).encode()
 req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
 try:
     resp = json.loads(urllib.request.urlopen(req, timeout=15).read())
-    print(f"✓ models/gemini-1.5-flash with query key: {resp['choices'][0]['message']['content'][:50]}")
+    print(
+        f"✓ models/gemini-1.5-flash with query key: {resp['choices'][0]['message']['content'][:50]}"
+    )
 except urllib.error.HTTPError as e:
     print(f"✗ models/gemini-1.5-flash with query key: {e.code} {e.read().decode()[:150]}")
 except Exception as e:
