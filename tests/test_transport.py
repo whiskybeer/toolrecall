@@ -164,7 +164,7 @@ class TestTCPHelpers(unittest.TestCase):
 
     def test_parse_tcp_custom_port(self):
         host, port = _parse_tcp("tcp://0.0.0.0:9090")
-        self.assertEqual(host, "0.0.0.0")
+        self.assertEqual(host, "127.0.0.1")  # wildcard coerced to loopback
         self.assertEqual(port, 9090)
 
     def test_safe_bind_host_coerces_wildcards(self):

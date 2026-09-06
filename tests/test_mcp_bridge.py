@@ -470,6 +470,161 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         )
         self.assertIn("result", resp)
 
+    # ── Context hint opt-in & per-client policy ──────────
+
+    def _new_daemon_with_hints(self):
+        """Daemon whose context_get_hint returns real hint text.
+
+        Note: the bridge translates read_file → daemon cmd "cached_read",
+        so the mock must be keyed by the daemon command.
+        """
+        daemon = MockDaemonServer(self.sock_path)
+        daemon.start(
+            call_responses={
+                "context_get_hint": {"hint": "🧹 Drop these clean files from context"},
+                "cached_read": {"result": {"content": "sample file content"}},
+            }
+        )
+        return daemon
+
+    def test_context_hints_require_checkpoint_opt_in(self):
+        """Hints are silent until the agent calls context_set_checkpoint once."""
+        self._new_daemon_with_hints()
+        bridge = MCPBridge(self.sock_path)
+        bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": 1,
+                "params": {"clientInfo": {"name": "opencode", "version": "1.0"}},
+            }
+        )
+
+        # Before any checkpoint: read_file returns content, no hint.
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 2,
+                "params": {
+                    "name": "read_file",
+                    "arguments": {"path": "/tmp/sample.txt"},
+                },
+            }
+        )
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn("sample file content", text)
+        self.assertNotIn("🧹", text)
+
+        # Agent demonstrates the checkpoint pattern once.
+        bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 3,
+                "params": {
+                    "name": "context_set_checkpoint",
+                    "arguments": {"name": "start"},
+                },
+            }
+        )
+
+        # After opt-in: hints now ride along on tool results.
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 4,
+                "params": {
+                    "name": "read_file",
+                    "arguments": {"path": "/tmp/sample.txt"},
+                },
+            }
+        )
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn("🧹", text)
+
+    def test_per_client_policy_disables_hints(self):
+        """clients."claude-code" emit_context_hints=false overrides global on."""
+        self._new_daemon_with_hints()
+        bridge = MCPBridge(
+            self.sock_path,
+            client_hint_policy={"claude-code": False},
+        )
+        bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": 1,
+                "params": {"clientInfo": {"name": "claude-code", "version": "1.0"}},
+            }
+        )
+        # Opt-in would otherwise turn hints on; the policy must still silence.
+        bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 2,
+                "params": {
+                    "name": "context_set_checkpoint",
+                    "arguments": {"name": "start"},
+                },
+            }
+        )
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 3,
+                "params": {
+                    "name": "read_file",
+                    "arguments": {"path": "/tmp/sample.txt"},
+                },
+            }
+        )
+        text = resp["result"]["content"][0]["text"]
+        self.assertNotIn("🧹", text)
+
+    def test_per_client_policy_keeps_hints_for_unlisted_clients(self):
+        """A client not in the policy keeps the global emit flag."""
+        self._new_daemon_with_hints()
+        bridge = MCPBridge(
+            self.sock_path,
+            client_hint_policy={"claude-code": False},
+        )
+        bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": 1,
+                "params": {"clientInfo": {"name": "opencode", "version": "1.0"}},
+            }
+        )
+        bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 2,
+                "params": {
+                    "name": "context_set_checkpoint",
+                    "arguments": {"name": "start"},
+                },
+            }
+        )
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 3,
+                "params": {
+                    "name": "read_file",
+                    "arguments": {"path": "/tmp/sample.txt"},
+                },
+            }
+        )
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn("🧹", text)
+
     # ── Tools/Call: source=agent_tool tracking ───────────
 
     def test_tool_call_cached_read_sends_source_agent_tool(self):

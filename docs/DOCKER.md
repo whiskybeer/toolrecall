@@ -6,9 +6,12 @@
 # 1. Build and start the daemon + proxy
 docker compose up -d daemon proxy
 
-# 2. Check health (proxy exposes HTTP on port 8569; daemon itself speaks UDS only)
+# 2. Check health (daemon speaks UDS only — the proxy port is SSRF-guarded)
 docker compose ps
-curl http://localhost:8569/health
+docker compose exec daemon toolrecall healthcheck
+# NOTE: do NOT curl http://localhost:8569/health — 8569 is the forward proxy;
+# unknown paths hit the SSRF allowlist gate and return
+# {"error":"Forbidden: non-allowlisted target host"}
 
 # 3. Mount your Hermes skills/projects as knowledge sources
 # Edit docker-compose.yml or set PROJECTS_DIR:
@@ -207,9 +210,16 @@ s.close()
 "
 # → {"status": "pong"}
 
-# Via HTTP (only works if proxy container is running and port 8569 is exposed)
-curl http://localhost:8569/health
-# → {"status": "ok", ...}
+# Via UDS inside the container (the proxy port is SSRF-guarded — do NOT curl :8569/health)
+docker compose exec daemon python3 -c "
+import socket
+s = socket.socket(socket.AF_UNIX)
+s.connect('/root/.toolrecall/toolrecall.sock')
+s.sendall(b'{\"cmd\": \"ping\"}')
+print(s.recv(4096).decode())
+s.close()
+"
+# → {"status": "pong"}
 ```
 
 ## Building Without Docker Compose

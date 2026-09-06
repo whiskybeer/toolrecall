@@ -1,6 +1,7 @@
 import re
 import sqlite3
 import hashlib
+import warnings
 from threading import RLock
 from contextlib import contextmanager
 from toolrecall.config import load_config, Config
@@ -296,6 +297,32 @@ def _db():
         _db_lock.release()
 
 
+def db_checkpoint(truncate: bool = True) -> bool:
+    """Checkpoint the WAL into the main DB file (durability on shutdown).
+
+    SQLite WAL mode keeps committed transactions in the ``-wal`` sidecar
+    until a checkpoint merges them into the main ``.db`` file. A direct
+    reader (or the next daemon) sees only what has been merged. If the
+    daemon exits without a checkpoint — abnormal shutdown, SIGKILL, or
+    ``-wal``/``-shm`` sidecars unlinked by a competing connection — every
+    entry still in the WAL is lost.
+
+    The daemon calls this on shutdown (lossless normal stop) and the
+    background checkpoint worker calls it periodically, so a crash loses
+    at most the last interval of writes.
+
+    Returns True on success, False on failure (callers should not raise).
+    """
+    try:
+        with _db() as conn:
+            mode = "TRUNCATE" if truncate else "PASSIVE"
+            conn.execute(f"PRAGMA wal_checkpoint({mode});")
+        return True
+    except Exception as e:
+        warnings.warn(f"ToolRecall: WAL checkpoint failed: {e}")
+        return False
+
+
 def db_sync() -> bool:
     """Sync the shared libSQL embedded replica with Turso Cloud.
 
@@ -322,45 +349,48 @@ def db_sync() -> bool:
 
 def _init(schema: str = ""):
     """Initialize DB schema. Pass SCHEMA from cache.py."""
+
+    def _add_column(conn, table: str, ddl: str) -> None:
+        """Idempotent ADD COLUMN — checks PRAGMA table_info instead of
+        catching OperationalError, so no exception is swallowed (the
+        silent-swallow audit freezes the except-pass inventory).
+
+        ``ddl`` is the full column definition, e.g. "updated_at REAL DEFAULT 0".
+        """
+        column = ddl.split()[0]
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
     with _db() as conn:
         if schema:
             conn.executescript(schema)
             conn.commit()
         # Migration: v0.3.x → v0.4.0 — rename tokens_intercepted to tokens_read_from_disk
-        try:
-            conn.execute(
-                "ALTER TABLE cache_stats RENAME COLUMN tokens_intercepted TO tokens_read_from_disk"
-            )
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already renamed (idempotent)
+        existing_cache_stats = {row[1] for row in conn.execute("PRAGMA table_info(cache_stats)")}
+        if "tokens_intercepted" in existing_cache_stats:
+            try:
+                conn.execute(
+                    "ALTER TABLE cache_stats RENAME COLUMN tokens_intercepted TO tokens_read_from_disk"
+                )
+            except sqlite3.OperationalError as e:
+                warnings.warn(f"ToolRecall: cache_stats column rename failed: {e}")
         # Migration: v0.7.5 → v0.8.0 — add tokens_saved column
-        try:
-            conn.execute("ALTER TABLE cache_stats ADD COLUMN tokens_saved INTEGER DEFAULT 0")
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already exists (idempotent)
+        _add_column(conn, "cache_stats", "tokens_saved INTEGER DEFAULT 0")
         # Migration: v0.8.x → v0.9.0 — add updated_at column for cache_stats freshness
-        try:
-            conn.execute("ALTER TABLE cache_stats ADD COLUMN updated_at REAL DEFAULT 0")
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already exists (idempotent)
+        _add_column(conn, "cache_stats", "updated_at REAL DEFAULT 0")
         # Migration: v0.9.4 → v0.10.0 — add context_tokens_saved column
-        try:
-            conn.execute(
-                "ALTER TABLE cache_stats ADD COLUMN context_tokens_saved INTEGER DEFAULT 0"
-            )
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already exists (idempotent)
+        _add_column(conn, "cache_stats", "context_tokens_saved INTEGER DEFAULT 0")
         # Migration: v0.x → v0.y — add stderr column to terminal_cache
-        try:
-            conn.execute("ALTER TABLE terminal_cache ADD COLUMN stderr TEXT NOT NULL DEFAULT ''")
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already exists (idempotent)
+        _add_column(conn, "terminal_cache", "stderr TEXT NOT NULL DEFAULT ''")
+        # Migration: v0.8.x → v0.9.0 — add cwd column to terminal_cache
+        # (cwd-scoped terminal cache keys; see toolrecall.cache.cached_terminal)
+        _add_column(conn, "terminal_cache", "cwd TEXT DEFAULT ''")
         # Migration: v0.10.x → v0.11.0 — add embedding column for vector search (libSQL)
-        try:
-            conn.execute("ALTER TABLE file_cache ADD COLUMN embedding BLOB")
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already exists (idempotent)
-        try:
-            conn.execute("ALTER TABLE terminal_cache ADD COLUMN embedding BLOB")
-        except (sqlite3.OperationalError, ValueError, Exception):
-            pass  # column already exists (idempotent)
+        _add_column(conn, "file_cache", "embedding BLOB")
+        _add_column(conn, "terminal_cache", "embedding BLOB")
+        # Migration: v0.11.x → v0.12.0 — hit_streak columns for adaptive TTL
+        # (hit-streak tracking; see toolrecall.ttl_policy.adaptive_ttl)
+        _add_column(conn, "terminal_cache", "hit_streak INTEGER DEFAULT 0")
+        _add_column(conn, "mcp_cache", "hit_streak INTEGER DEFAULT 0")
+        _add_column(conn, "api_cache", "hit_streak INTEGER DEFAULT 0")

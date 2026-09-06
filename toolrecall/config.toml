@@ -31,6 +31,28 @@ file_ttl = -1          # read_file: until file modification (mtime)
 skill_ttl = -1         # skill_view: until skill update
 terminal_default_ttl = 300  # 5 minutes for unknown commands
 
+# ─── Stale-While-Revalidate + Adaptive TTL (opt-in) ──
+# SWR: serve a cache entry up to N seconds past its expiry, flagged
+# "stale": true, then revalidate in the background (terminal: background
+# thread; MCP: caller's fetch_fn; API: serve-stale only, never replayed).
+# 0 = off (default — byte-identical to the classic hard-TTL behavior).
+# stale_while_revalidate = 0
+#
+# Adaptive TTL: stretch a terminal/MCP/API entry's TTL by its hit streak:
+# ttl_eff = min(base_ttl * adaptive_factor^hit_streak, adaptive_max_ttl).
+# The streak resets whenever fresh content differs from the cached one.
+# false = off (default).
+# adaptive_ttl = false
+# adaptive_factor = 2.0
+# adaptive_max_ttl = 86400
+
+# ─── Fuzzy TTL classification (opt-in) ──
+# A terminal command matching NO exact/prefix pattern inherits the TTL of
+# the most-similar pattern (difflib ratio >= fuzzy_threshold). Classifi-
+# cation only — serving always stays under the command's own hash key.
+# fuzzy_ttl_match = false
+# fuzzy_threshold = 0.85
+
 # Optional: use SHA256 instead of MD5 for cache key hashing.
 # MD5 is fine for non-cryptographic cache keying (default).
 # SHA256 is stricter — enables in environments that audit hash strength.
@@ -268,13 +290,72 @@ enabled = true
 # See: pip install toolrecall[shim] or toolrecall shim --install
 #
 # Path prefixes to skip when the shim intercepts open() calls.
-# Files matching these prefixes are read directly (bypassing cache).
-# Useful for internal infrastructure files that are rewritten constantly
-# and never benefit from caching (e.g. Hermes' /tmp/hermes-cwd-* files).
-# Empty list = bypass NOTHING (all open() calls go through the shim).
-# Override via TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated).
-[shim]
-exclude_prefixes = [
-    "/tmp/hermes-cwd-",   # Hermes terminal cwd tracker
-    "/tmp/hermes-snap-",  # Hermes terminal env snapshot
-]
+# Default: kernel virtual filesystems (/proc/, /sys/, /dev/) — generated
+# live, so they can never produce a cache hit; intercepting them just
+# burns a daemon RPC that ends in a path-denial warning. The defaults live
+# in Config.shim_exclude_prefixes (config.py) — extend via this key or the
+# TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated), e.g.:
+# exclude_prefixes = ["/tmp/hermes-cwd-", "/tmp/hermes-snap-"]
+# ─── Per-Path File TTLs (trust windows) ──────────────
+# Override the global file_ttl for specific files, folders, or file types.
+# Pattern semantics (fnmatch globs, matched against the absolute path):
+#   "/abs/path/file.py"   exact file
+#   "~/notes/**"          folder subtree (all files under ~/notes/)
+#   "**/*.py"             file type, anywhere
+# Value semantics:
+#   -1  (default) always re-validate mtime before serving — correct, and
+#       ALREADY OPTIMAL for immutable files (rotated logs, archives): the
+#       mtime check passes, content comes from cache, zero staleness risk.
+#    0  never cache this path — every read goes to disk (serve-through);
+#       nothing enters memory LRU or SQLite. For files that churn faster
+#       than they are read (actively-appended logs): cache = pure overhead.
+#   >0  TRUST WINDOW: for N seconds after caching, serve the cached copy
+#       WITHOUT checking disk. Only pays off when mtime changes WITHOUT the
+#       content changing (build systems rewriting lockfiles, vendored deps,
+#       generated files) — it skips the pointless re-read of identical
+#       content. New content inside the window serves stale until expiry.
+# Precedence per read: exact path → first glob match → [cache].file_ttl.
+# Changes require a daemon restart to take effect.
+[cache.file_ttls]
+"logs/app.log" = 0          # actively appended: churns, don't cache
+"**/*.log.[0-9]*" = 86400   # rotated logs: immutable — window only skips stat()
+"~/vendor/**" = 3600        # build-touched vendored deps: skip identical re-reads
+"package-lock.json" = 86400
+
+# ─── Resilience (coalescing / retry / circuit breaker) ─
+# All opt-in; every default preserves the pre-resilience behavior.
+# [resilience]
+# Coalescing: concurrent identical cache misses share ONE execution
+# (terminal subprocess, MCP fetch, proxy forward). Waiters receive the
+# winner's outcome; a waiter that waits longer than coalescing_window
+# seconds executes on its own.
+# coalescing = false
+# coalescing_window = 30
+#
+# Retry (proxy forward only): connection errors and HTTP 429/502/503/504
+# retried with exponential backoff + full jitter. A response body is
+# NEVER retried after it has been consumed (billing guard); streaming
+# requests are never retried.
+# retry = false
+# retry_max_attempts = 3
+# retry_backoff_base = 0.25
+#
+# Circuit breaker (proxy forward): after cb_failure_threshold 429/5xx
+# responses within cb_window seconds, the breaker OPENs — further requests
+# fast-fail 503 + Retry-After without touching upstream. After
+# cb_open_seconds one probe request is admitted; success closes, failure
+# reopens.
+# circuit_breaker = false
+# cb_failure_threshold = 5
+# cb_window = 60
+# cb_open_seconds = 30
+
+# ─── Auto-Update ─────────────────────────────────────
+# Checked at CLI entry (never in the daemon request path), at most once per
+# check_interval_hours. Upgrades run via the same interpreter's pip when a
+# newer PyPI release exists; editable/dev installs are never auto-upgraded.
+# Disable: set enabled = false here, or export TOOLRECALL_UPDATE_CHECK=0
+# (env wins — use it for CI / air-gapped hosts).
+[update]
+enabled = true
+check_interval_hours = 24

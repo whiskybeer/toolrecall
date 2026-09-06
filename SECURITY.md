@@ -199,7 +199,7 @@ External agents (Claude Code, Cursor, Cline, Hermes[^notall]) do **not** connect
 ```
 Agent ──stdio──► toolrecall mcp (bridge) ──TransportClient──► Daemon
                                                                     │
-                                                          SecurityGate prüft:
+                                                          SecurityGate checks:
                                                            • allowed_paths
                                                            • _is_sensitive_path()
                                                            • tool_access_control
@@ -236,6 +236,88 @@ For deployments at scale (100+ agents on one machine, or agents across machines)
 | MCP bridge bypasses SecurityGate | All commands pass through daemon validation. Bridge is a thin proxy. | ✅ Validated per call |
 
 **Summary:** ToolRecall exposes no network ports for IPC, no SHM, and no cross-user sockets. The primary transport is a user-scoped UDS file (POSIX) or localhost TCP (Windows). Every command passes through SecurityGate validation — no bypass path exists from any agent interface. The forward proxy (a separate HTTP API cache) opens TCP `:8569` by design for SDK compatibility.
+
+---
+
+## 8. Warp Edge & Public-Endpoint Trust Model
+
+The `warp` adapter (`toolrecall/adapters/warp.py`) exposes a small HTTP edge that
+fronts the forward proxy so Warp's custom-inference-endpoint can reach it. Because
+this is the only ToolRecall component designed to be reachable from the public
+internet, its trust model is documented explicitly.
+
+### 8.1 Layer map — who trusts whom
+
+| Layer | Component | Exposure | Trust role |
+|---|---|---|---|
+| 5 | Agent (Hermes / Warp / any client) | local | Consumer of responses; already trusts the provider in the baseline |
+| 4 | Shim / MCP bridge | local | Not in the API-response path |
+| 3 | Daemon `api_cache` (SQLite, TTL 300s) | local | **Persistence**: caches upstream responses; a poisoned response replays to every local agent until TTL |
+| 2 | Forward proxy (`:8569`) | loopback | **Ingestion point**: caches any 2xx upstream response by body hash; performs no semantic validation (none is possible for LLM output) |
+| 1 | Warp edge (`warp.py`) | **public (if tunneled)** | Auth + relay only; stores nothing |
+| 0 | LLM provider API host | internet | **Assumed honest.** This is an inherited assumption, not one ToolRecall creates |
+
+### 8.2 Inherited provider trust (layers 2–3)
+
+ToolRecall does not expand the trust you already grant your LLM provider — it
+extends how long a provider's response survives locally:
+
+- **Single-agent delta: zero.** A compromised provider serving a malicious
+  response reaches your agent identically with or without ToolRecall.
+- **Multi-agent delta: persistence.** One poisoned 2xx response is cached and
+  replayed byte-identically to every local agent making the same request, until
+  TTL expiry (`api_cache`: 300s default) or `toolrecall invalidate`.
+- **Classification:** this is a documented trust assumption ("you trust your
+  provider as much with cache replay as with direct responses"), not a
+  code-level vulnerability. The equivalent exposure exists in every LLM response
+  cache (provider prefix caches, LiteLLM response cache, etc.).
+- **Bound:** TTL. `api_cache` entries expire after 300s by default; poison is
+  never durable across TTL windows unless a provider repeatedly re-serves it.
+
+### 8.3 Edge authentication requirement (layer 1)
+
+**CWE-306 history (fixed pre-release):** the edge originally relayed requests
+without authentication. Published via a quick tunnel (`*.trycloudflare.com`) or
+any public URL, anyone who learned the URL could relay LLM API calls through it —
+an open relay, though never a compromise vector (no inbound path to the daemon,
+`FORWARD_HOSTS` SSRF allowlist, no stored keys). Found during an authorized live
+public-URL test and fixed before any release; no CVE was issued because no
+affected version was ever published.
+
+**Requirement:** whenever the edge is reachable beyond loopback (tunnel, LAN),
+`--auth-token` or `TOOLRECALL_EDGE_TOKEN` **must** be set. Requests without
+`Authorization: Bearer <token>` are rejected 401 before any relay
+(`hmac.compare_digest`, no timing side-channel). Loopback-only use may omit auth.
+The edge prints its auth state at startup; treat `auth disabled` on a
+non-loopback bind as a misconfiguration.
+
+### 8.4 Why no OS / Python / cloudflared CVE applies
+
+The platform layers were audited during the same investigation and all held
+their guarantees:
+
+- **OS / kernel:** the tunnel uses an outbound QUIC connection the OS policy
+  already permits; Cloudflare multiplexes inbound traffic down that established
+  socket. No unsolicited inbound ever reaches the host. Default-permit outbound
+  is policy, not a vulnerability.
+- **Python stdlib:** `http.server`, `socketserver`, `http.client`, `hmac` all
+  behaved as specified. The unauthenticated relay was application logic (one
+  missing `_authorized()` check), not a stdlib defect. The stdlib's "not
+  hardened for production" notice on `http.server` is a supported limitation,
+  not a CVE.
+- **cloudflared:** quick tunnels being unauthenticated-by-design is documented
+  Cloudflare behavior; the auth gap was in the edge behind it, not the tunnel.
+
+### 8.5 Blast radius of a public edge, honestly stated
+
+| Attacker capability via a public edge | Possible? |
+|---|---|
+| Relay LLM API calls through your machine (credit/egress abuse) | ✅ Without auth token; ❌ with token |
+| Read any data back through the edge | ❌ Relay only — responses go to the requester, not stored or exposed |
+| Reach the daemon UDS / file cache / filesystem | ❌ No inbound path exists; TCP is client-initiated, nothing listens *for* the provider |
+| Pivot via redirects to internal services | ❌ Raw `http.client`, 30x never followed; allowlist enforced at the connection sink (`test_proxy_ssrf.py`) |
+| Client-controlled target host | ❌ Edge overwrites `X-Target-Host` from its own `--provider` config |
+| Steal your provider API key | ❌ Not stored anywhere; passes in-flight only (identical to the no-ToolRecall baseline) |
 
 ---
 

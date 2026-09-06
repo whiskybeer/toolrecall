@@ -31,12 +31,14 @@ Architektur:
 
 import json
 import logging
+import itertools
 import os
 import socket
 import subprocess
 import sys
 import signal
 import threading
+import warnings
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -63,6 +65,7 @@ from toolrecall.transport import (
     create_socket,
     bind_socket,
     send_message,
+    PROTOCOL_VERSION,
     receive_message,
     IS_WINDOWS,
 )
@@ -99,20 +102,41 @@ def _acquire_instance_lock(socket_path: str):
     Returns an open file object held for the daemon's lifetime, or None
     if another process already holds the lock for this socket.
 
-    Uses fcntl.flock — the OS releases the lock automatically when the
-    holding process exits/crashes, so a stale lock file can never
-    permanently block a restart (the classic pid-file trap).
+    Uses fcntl.flock on POSIX / msvcrt.locking on Windows — the OS releases
+    the lock automatically when the holding process exits/crashes, so a
+    stale lock file can never permanently block a restart (the classic
+    pid-file trap).
 
     NOTE: The returned file object MUST be kept referenced for the
-    lifetime of the daemon (assigned to a module global) — flock is
-    tied to the open file description; if the object is garbage
-    collected, the lock is silently released.
+    lifetime of the daemon — the lock is tied to the open file
+    description/handle; if the object is garbage collected, the lock is
+    silently released (true on both POSIX and Windows).
     """
     if IS_WINDOWS:
-        # On Windows use the pid-file wait approach instead of flock.
-        import msvcrt  # noqa: F401  (present on Windows)
+        # Windows: byte-range lock via msvcrt.locking instead of fcntl.flock.
+        # Previously this branch returned None unconditionally, so every
+        # start attempt looked like "already running" and the daemon could
+        # never start on Windows (fixed 2026-09-04, handover report 0.8.19).
+        import msvcrt
 
-        return None
+        lock_path = _instance_lock_path(socket_path)
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        # Append mode so we never truncate the file (and thus erase another
+        # holder's PID) before we've actually won the lock. msvcrt.locking
+        # with LK_NBLCK is non-blocking and raises OSError when held.
+        fh = open(lock_path, "a+")
+        try:
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]  # Windows-only module; no stubs on POSIX
+        except OSError:
+            fh.close()
+            return None
+        # Record the owning PID so humans/debuggers can see who holds it.
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(os.getpid()))
+        fh.flush()
+        return fh
     import fcntl
 
     lock_path = _instance_lock_path(socket_path)
@@ -184,7 +208,109 @@ class SecurityGate:
         ]
         self.cognitive_check = cfg.mcp_cognitive_check_enabled
         self.ast_check = cfg.mcp_ast_check_enabled
+        # Per-agent policy table from [mcp.clients."<name>"], keyed by the MCP
+        # clientInfo.name the bridge reports on each request. Unlisted agents
+        # (or direct non-MCP callers with no client field) get the global
+        # [mcp] settings — default-deny semantics are unchanged.
+        self.client_policy = cfg.mcp_client_policy()
         self.logger = logging.getLogger(__name__)
+
+    def effective_policy(self, client: str | None) -> dict:
+        """Resolve the effective [mcp] policy for one agent request.
+
+        Per-client overrides from [mcp.clients."<name>"] win; everything the
+        client doesn't override falls back to the global [mcp] values.
+        """
+        eff = {
+            "allowed_paths": self.allowed_paths,
+            "allow_terminal": self.allow_terminal,
+            "allowed_terminal_commands": self.allowed_terminal_commands,
+        }
+        entry = self.client_policy.get(client or "", {})
+        for key in eff:
+            if key in entry:
+                eff[key] = entry[key]
+        return eff
+
+    def check_read_path_for(self, path: str, client: str | None = None) -> str | None:
+        """check_read_path with per-agent allowed_paths (A4).
+
+        Thread-safe: resolves the effective allowlist without mutating any
+        shared state. All layers still apply — Layer 1 uses the agent's
+        allowlist, Layer 2 (sensitive-file blocklist) and the null-byte /
+        length checks always use the global rules.
+        """
+        eff = self.effective_policy(client)
+        if eff["allowed_paths"] == self.allowed_paths:
+            return self.check_read_path(path)
+
+        # Layer 0 (shared): null bytes, length
+        if "\x00" in path:
+            return "Path not allowed: contains null byte"
+        if len(path) > self.MAX_PATH_LENGTH:
+            return "Path not allowed: exceeds maximum length"
+
+        # Layer 1: agent-specific allowlist (default-deny preserved)
+        agent_paths = eff["allowed_paths"]
+        if not agent_paths:
+            return (
+                "Path not allowed: no allowed paths configured for this agent. "
+                f'Add allowed_paths to [mcp.clients."{client}"] in your config.toml.'
+            )
+        from toolrecall.path_utils import check_path_allowed
+
+        if not check_path_allowed(path, agent_paths):
+            self.logger.warning("Blocked path not in allowed_paths for agent %r: %s", client, path)
+            return "Path not allowed: access denied"
+
+        # Layer 2: sensitive-file blocklist (global, always applies)
+        if _is_sensitive_path(path):
+            print(
+                f"[ToolRecall] Blocked read of sensitive file: {path} (Layer 2: sensitive file blocklist)"
+            )
+            return "Path not allowed: path matches a sensitive file pattern"
+
+        return None
+
+    def check_terminal_for(self, cmd: str, client: str | None = None) -> str | None:
+        """check_terminal with per-agent allow_terminal / command allowlist (A4).
+
+        Thread-safe: evaluates the effective policy locally, no shared-state
+        mutation. The global check_terminal is reused when the agent has no
+        overrides so log messages stay identical.
+        """
+        eff = self.effective_policy(client)
+        if (
+            eff["allow_terminal"] == self.allow_terminal
+            and eff["allowed_terminal_commands"] == self.allowed_terminal_commands
+        ):
+            return self.check_terminal(cmd)
+
+        if not eff["allow_terminal"]:
+            print(
+                f"[ToolRecall] Blocked terminal command for agent {client!r}: {cmd[:80]} (terminal disabled for this agent)"
+            )
+            return (
+                f"cached_terminal is disabled for agent '{client}'. "
+                f'Set allow_terminal = true in [mcp.clients."{client}"] in config.toml.'
+            )
+
+        agent_cmds = eff["allowed_terminal_commands"]
+        if not agent_cmds:
+            return None  # Binary WAF fallback, same as global
+
+        import re
+
+        for pattern in agent_cmds:
+            try:
+                if re.search(pattern, cmd):
+                    return None
+            except re.error as e:
+                self.logger.info(
+                    f"Warning: Invalid regex in [mcp.clients.\"{client}\"].allowed_terminal_commands: '{pattern}' ({e})"
+                )
+
+        return f"Terminal command not allowed by regex allowlist for agent '{client}': {cmd}"
 
     MAX_PATH_LENGTH = (
         4096  # POSIX PATH_MAX (260 on Windows without long-path support; 4096 is safe on both)
@@ -898,6 +1024,12 @@ class DaemonServer:
     """
 
     def __init__(self, socket_path: str | None = None):
+        # Central logging rail (payload-free, redacting, daily rotation).
+        # setup_logging() is idempotent and fails soft — safe at every entry.
+        from toolrecall.logging_setup import setup_logging
+
+        setup_logging()
+        self.logger = logging.getLogger("toolrecall.daemon")
         self.socket_path = socket_path or _default_socket_path()
         self.cfg = load_config()
         self.security = SecurityGate(self.cfg)
@@ -910,6 +1042,8 @@ class DaemonServer:
         # fork() to avoid corrupted locks in the child process.
         # See _init_post_fork() which is called from start().
         self._executor = None
+        # Monotonic request counter for the per-request trace log (req=N).
+        self._req_counter = itertools.count(1)
 
     def _run_periodic_gc(self):
         """Runs garbage collection every 4 hours in a background thread."""
@@ -923,6 +1057,28 @@ class DaemonServer:
                 time.sleep(1)
             try:
                 garbage_collect()
+            except Exception:
+                pass
+
+    def _run_periodic_checkpoint(self):
+        """Checkpoint the SQLite WAL into the main DB every 60 seconds.
+
+        WAL mode keeps committed frames in ``-wal`` until merged into the
+        main ``.db`` file. If the daemon dies without a checkpoint — or
+        ``-wal``/``-shm`` sidecars were unlinked by a competing process —
+        every entry still in the WAL is lost. A 60s checkpoint bounds that
+        loss to the last minute; the shutdown checkpoint in ``stop()``
+        makes normal stops lossless.
+        """
+        from toolrecall._db import db_checkpoint
+
+        while self._running:
+            for _ in range(60):  # 60 seconds
+                if not self._running:
+                    return
+                time.sleep(1)
+            try:
+                db_checkpoint(truncate=True)
             except Exception:
                 pass
 
@@ -1020,6 +1176,13 @@ class DaemonServer:
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
             self._gc_thread.start()
 
+            # Durability: periodically merge the WAL into the main DB so a
+            # crash loses at most the last minute of cache writes.
+            self._checkpoint_thread = threading.Thread(
+                target=self._run_periodic_checkpoint, daemon=True
+            )
+            self._checkpoint_thread.start()
+
             # Start storage sync background worker (backend decides; opt-in)
             self._start_sync_worker()
 
@@ -1051,11 +1214,21 @@ class DaemonServer:
         self._running = False
         if self._executor:
             self._executor.shutdown(wait=False)
+        # Durability: merge WAL frames into the main DB before we unlink
+        # anything or exit, so every committed cache entry survives the
+        # daemon's shutdown — even if the -wal/-shm sidecars were unlinked
+        # by a competing process that opened the same DB.
+        try:
+            from toolrecall._db import db_checkpoint
+
+            db_checkpoint(truncate=True)
+        except Exception as e:  # noqa: BLE001 — shutdown must never abort on checkpoint failure
+            warnings.warn(f"ToolRecall: shutdown checkpoint failed: {e}")
         self.multiplexer.shutdown()
         try:
             self._server.close()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — shutdown must never abort mid-teardown
+            warnings.warn(f"ToolRecall: server close failed during shutdown: {e}")
         # Clean up socket file (UDS only — TCP sockets aren't files)
         if not IS_WINDOWS:
             try:
@@ -1072,11 +1245,60 @@ class DaemonServer:
             if request is None:
                 conn.close()
                 return
+            # Protocol version gate (constitution VI): reject requests from a
+            # NEWER major wire version with a clear error instead of
+            # misparsing unknown fields. Same/older versions pass — backward
+            # compatibility is the contract. "ping" bypasses the gate so a
+            # client can always discover the daemon's version.
+            req_v = request.get("v", 1)
+            try:
+                req_v = int(req_v)
+            except (TypeError, ValueError):
+                req_v = 1
+            if req_v > PROTOCOL_VERSION and request.get("cmd") != "ping":
+                send_message(
+                    conn,
+                    {
+                        "error": (
+                            f"protocol_version_mismatch: client wire v{req_v} > "
+                            f"daemon v{PROTOCOL_VERSION}. Upgrade the daemon: "
+                            f"pip install --upgrade toolrecall"
+                        ),
+                        "daemon_protocol_version": PROTOCOL_VERSION,
+                    },
+                )
+                conn.close()
+                return
+            request_id = next(self._req_counter)
+            t0 = time.perf_counter()
             response = self._route(request)
+            _dt_ms = (time.perf_counter() - t0) * 1000
+            # One payload-free INFO line per request: outcome + duration only.
+            # Args/response bodies are never logged (sensitive-data no-go).
+            if "error" in response:
+                self.logger.info(
+                    "req=%d cmd=%s outcome=error dur=%.1fms err=%s",
+                    request_id,
+                    request.get("cmd", "?"),
+                    _dt_ms,
+                    str(response.get("error", ""))[:120],
+                )
+            else:
+                self.logger.info(
+                    "req=%d cmd=%s outcome=ok dur=%.1fms",
+                    request_id,
+                    request.get("cmd", "?"),
+                    _dt_ms,
+                )
             send_message(conn, response)
         except (socket.timeout, json.JSONDecodeError, ConnectionResetError, BrokenPipeError):
             pass
         except Exception as e:
+            # Unexpected handler crash: respond to the client, and record the
+            # traceback in the log (previously silently swallowed).
+            self.logger.exception(
+                "req cmd=%s handler crashed", request.get("cmd", "?") if request else "?"
+            )
             try:
                 send_message(conn, {"error": str(e)})
             except Exception:
@@ -1173,6 +1395,7 @@ class DaemonServer:
             + str(self.security.allow_invalidate)
             + str(self.security.allow_multiplex)
             + str(self.cfg.mcp_emit_context_hints)
+            + str(self.cfg.mcp_client_hint_policy)
         )
         import hashlib
 
@@ -1180,12 +1403,14 @@ class DaemonServer:
         return {
             "pong": True,
             "pid": os.getpid(),
+            "protocol_version": PROTOCOL_VERSION,
             "config_hash": config_hash,
             "allowed_paths": self.security.allowed_paths,
             "allow_terminal": self.security.allow_terminal,
             "allow_invalidate": self.security.allow_invalidate,
             "multiplex_enabled": self.security.allow_multiplex,
             "emit_context_hints": self.cfg.mcp_emit_context_hints,
+            "client_hint_policy": self.cfg.mcp_client_hint_policy,
             "recall_enabled": self.cfg.recall_enabled,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
             "context_tracker": {
@@ -1255,7 +1480,8 @@ class DaemonServer:
         path = req.get("path", "")
         if not path:
             return {"error": "Missing 'path'"}
-        err = self.security.check_read_path(path)
+        # Per-agent policy (A4): agent-specific allowed_paths when set
+        err = self.security.check_read_path_for(path, req.get("client"))
         if err:
             return {"error": err}
         bypass = req.get("bypass_cache", False)
@@ -1284,12 +1510,13 @@ class DaemonServer:
         from toolrecall.cache import _strip_shell_wrapper
 
         inner = _strip_shell_wrapper(command) or command
-        err = self.security.check_terminal(inner)
+        # Per-agent policy (A4): same gate as _handle_terminal
+        err = self.security.check_terminal_for(inner, req.get("client"))
         if err:
             return {"error": err}
         from toolrecall.cache import cached_shell_exec
 
-        result = cached_shell_exec(command)
+        result = cached_shell_exec(command, cwd=req.get("cwd"))
         # Record mcp_cache stats when request originates from MCP bridge
         if req.get("mcp_origin"):
             _cache_record("mcp_cache", hit=result.get("cached", False), path=inner)
@@ -1297,13 +1524,19 @@ class DaemonServer:
 
     def _handle_terminal(self, req: dict) -> dict:
         command = req.get("command", "")
-        err = self.security.check_terminal(command)
+        # Per-agent policy (A4): the MCP bridge stamps "client" (clientInfo.name)
+        # onto every request; direct UDS callers without it get global policy.
+        client = req.get("client")
+        err = self.security.check_terminal_for(command, client)
         if err:
             return {"error": err}
         if not command:
             return {"error": "Missing 'command'"}
         ttl = req.get("ttl")
-        result = _cache_terminal(command, ttl=ttl)
+        # Pass the client-reported cwd through so the terminal cache key is
+        # directory-scoped. The daemon never fabricates its own cwd — it may
+        # run as a service with a different working directory than the caller.
+        result = _cache_terminal(command, ttl=ttl, cwd=req.get("cwd"))
         # Record mcp_cache stats when request originates from MCP bridge
         if req.get("mcp_origin"):
             _cache_record("mcp_cache", hit=result.get("cached", False), path=command)
@@ -1728,11 +1961,106 @@ _server_instance = None
 _instance_lock_fh = None
 
 
+def _release_instance_lock() -> None:
+    """Unlink this daemon's instance-lock file and close the fd.
+
+    flock is released by the OS on any exit (clean or crash), but the lock
+    FILE is left behind — keyed per-socket-path, so e2e test daemons on temp
+    sockets each accumulate one orphaned file in ~/.toolrecall. Graceful
+    shutdown (SIGTERM/SIGINT) unlinks its own file; crash leftovers are
+    harmless (the flock is gone) and cleaned by `rm ~/.toolrecall/daemon-*.lck`.
+    """
+    global _instance_lock_fh
+    if _instance_lock_fh is None:
+        return
+    log = logging.getLogger(__name__)
+    try:
+        os.unlink(_instance_lock_fh.name)
+    except OSError as e:
+        # Already gone / raced with a cleanup — expected during shutdown, not fatal.
+        log.debug("instance-lock unlink skipped: %s", e)
+    try:
+        _instance_lock_fh.close()
+    except OSError as e:
+        log.debug("instance-lock close failed: %s", e)
+    _instance_lock_fh = None
+
+
 def _signal_handler(signum, frame):
     """Handle SIGTERM/SIGINT for graceful shutdown."""
     if _server_instance:
         _server_instance.stop()
+    _release_instance_lock()
     sys.exit(0)
+
+
+def _warn_on_env_path_overrides() -> None:
+    """Print a warning when TOOLRECALL_* path overrides point at missing files.
+
+    Catches the escaped-daemon failure mode: a daemon launched from a test
+    (or any foreign context) inherits env overrides like
+    TOOLRECALL_KNOWLEDGE_DB pointing at a temp file that no longer exists.
+    The daemon then starts "successfully" but every knowledge-tier call
+    reports "No knowledge database found". Visible at startup beats silent.
+    """
+    for var, label in (
+        ("TOOLRECALL_CACHE_DB", "cache DB"),
+        ("TOOLRECALL_KNOWLEDGE_DB", "knowledge DB"),
+        ("TOOLRECALL_CONFIG", "config"),
+    ):
+        val = os.environ.get(var)
+        if val and not os.path.exists(os.path.expanduser(val)):
+            print(
+                f"[toolrecall] WARNING: {var}={val} is set but the file does "
+                f"not exist — the {label} will be unavailable. If this daemon "
+                f"was auto-started from a test or another project's "
+                f"environment, restart it from a clean shell or systemd.",
+                file=sys.stderr,
+                flush=True,
+            )
+
+
+def _sweep_stale_lock_files() -> int:
+    """Unlink orphaned daemon-*.lck files from dead holders (startup sweep).
+
+    ``_acquire_instance_lock`` keys the file on the socket path and the OS
+    releases the flock when the holder dies — but SIGKILL/crash (and e2e
+    kill-path teardown) leaves the FILE behind forever. Healthcheck then
+    warns on exactly those orphans. The holder PID is written inside each
+    file after a successful flock, so at startup we can safely unlink any
+    lock whose recorded PID is no longer alive: a live holder's file is
+    never touched, and a file whose flock we can still take is by
+    definition unheld (belt-and-braces: flock it non-blocking first).
+
+    Returns the number of files removed. Runs BEFORE our own lock is
+    acquired, so a failure here never blocks daemon start.
+    """
+    import glob as _glob
+
+    lock_dir = os.path.dirname(PID_FILE)
+    log = logging.getLogger(__name__)
+    removed = 0
+    for path in _glob.glob(os.path.join(lock_dir, "daemon-*.lck")):
+        try:
+            with open(path) as f:
+                holder = f.read().strip()
+        except OSError:
+            continue  # unreadable — leave it; a live holder rewrites its PID
+        if holder.isdigit() and os.path.exists(f"/proc/{holder}"):
+            continue  # live holder — never touch
+        # Holder dead (or PID never recorded). The OS released the flock on
+        # holder death, so the file is unheld by definition — safe to remove.
+        # (No flock re-check here: a racing starter holding the flock would
+        # not yet have written its PID, but it also re-keys on the socket
+        # path and would simply recreate its own file.)
+        try:
+            os.unlink(path)
+            removed += 1
+        except FileNotFoundError:
+            pass  # raced with another sweeper — that's the success case
+        except OSError as e:
+            log.debug("lock-file sweep skipped %s: %s", path, e)
+    return removed
 
 
 def run_daemon(socket_path: str | None = None, foreground: bool = False):
@@ -1748,8 +2076,23 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
     _pkg_dir = os.path.dirname(os.path.abspath(__file__))
     _sys.path = [p for p in _sys.path if _pkg_dir not in p]
 
+    # Surface inherited-but-dead env overrides early (escaped-daemon guard)
+    _warn_on_env_path_overrides()
+
     if not socket_path:
         socket_path = _default_socket_path()
+
+    # ── Stale lock-file sweep ─────────────────────────────────
+    # SIGKILL/crash orphans daemon-*.lck files keyed on dead sockets; the
+    # flock is gone but the file accumulates. Sweep (best-effort, never
+    # fatal) BEFORE acquiring our own lock.
+    try:
+        _swept = _sweep_stale_lock_files()
+        if _swept:
+            _sweep_log = logging.getLogger(__name__)
+            _sweep_log.info("startup sweep removed %d stale lock file(s)", _swept)
+    except OSError as e:
+        logging.getLogger(__name__).warning("startup lock-file sweep failed (continuing): %s", e)
 
     # ── Single-instance guard (atomic, flock-based) ──────────
     # flock is an atomic OS lock that (a) serializes two racing start
@@ -1791,6 +2134,20 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
 
     faulthandler.enable()
 
+    # Structured startup banner — replaces unstructured print()s; same info
+    # (version, socket, PID, policy) now lands in the rotating log as well.
+    from toolrecall.logging_setup import setup_logging as _setup_logging
+
+    _setup_logging()
+    _banner_log = logging.getLogger("toolrecall.daemon")
+    _banner_log.info(
+        "daemon starting v%s socket=%s pid=%d foreground=%s",
+        __version__,
+        socket_path,
+        os.getpid(),
+        foreground,
+    )
+
     # Register signal handlers (POSIX only)
     if not IS_WINDOWS:
         signal.signal(signal.SIGTERM, _signal_handler)
@@ -1804,7 +2161,18 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
         if pid > 0:
             print(f"ToolRecall Daemon started (PID: {pid})")
             print(f"  Socket: {_server_instance.socket_path}")
-            sys.exit(0)
+            # ⚠ MUST be os._exit(), NOT sys.exit(). The SQLite connection was
+            # opened at import time (toolrecall.cache module init), so parent
+            # and child share the same WAL-mode connection across the fork.
+            # sys.exit(0) runs interpreter teardown in the parent →
+            # sqlite3.close() on the shared connection → the -wal/-shm
+            # sidecars get unlinked while the child is still using them.
+            # Every write then lands in orphaned inodes and is lost on daemon
+            # exit (durability bug). os._exit skips teardown entirely; the OS
+            # releases the parent's fds and flock automatically. Flush stdout
+            # first — os._exit won't flush buffered stdio.
+            sys.stdout.flush()
+            os._exit(0)
 
         # Child process: Redirect standard streams, write PID file
         log_file = os.path.expanduser("~/.toolrecall/daemon.log")
@@ -1846,6 +2214,9 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
 
         traceback.print_exc()
         sys.exit(1)
+    # start() returned normally (server shut down without a signal) — still
+    # unlink the lock file so no orphan is left behind.
+    _release_instance_lock()
 
 
 def stop_daemon():
@@ -1898,28 +2269,28 @@ def daemon_status():
     # running regardless of what systemd or the PID file claims. This avoids
     # the false "DEAD (Stale PID file)" report when systemd is unreachable
     # from this shell (no user bus) but the daemon is actually alive.
-    try:
-        client = TransportClient(_default_socket_path())
-        resp = client.send({"cmd": "ping"})
-        if resp.get("pong"):
-            pid = resp.get("pid", "?")
-            print(f"ToolRecall Daemon: RUNNING (PID {pid})")
-            print(f"  Transport: {_default_socket_path()}")
-            print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
-            print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
-            print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
-            servers = resp.get("multiplex_servers", [])
-            if servers:
-                names = [s["name"] if isinstance(s, dict) else s for s in servers]
-                print(f"  MCP Servers: {', '.join(names)}")
-            ctx = resp.get("context_tracker", {})
-            if ctx:
-                print(
-                    f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}"
-                )
-            return
-    except Exception:
-        pass  # Socket unreachable — fall through to systemd / PID file
+    # NOTE: TransportClient.send() never raises — it returns
+    # {"error": "daemon_unavailable"} (or an error string) on failure, so
+    # no except-handler is needed here; the pong check below covers it.
+    client = TransportClient(_default_socket_path())
+    resp = client.send({"cmd": "ping"})
+    if resp.get("pong"):
+        pid = resp.get("pid", "?")
+        print(f"ToolRecall Daemon: RUNNING (PID {pid})")
+        print(f"  Transport: {_default_socket_path()}")
+        print(f"  Path allowlist: {resp.get('allowed_paths', [])}")
+        print(f"  Terminal enabled: {resp.get('allow_terminal', False)}")
+        print(f"  MCP Multiplex: {'ENABLED' if resp.get('multiplex_enabled') else 'DISABLED'}")
+        servers = resp.get("multiplex_servers", [])
+        if servers:
+            names = [s["name"] if isinstance(s, dict) else s for s in servers]
+            print(f"  MCP Servers: {', '.join(names)}")
+        ctx = resp.get("context_tracker", {})
+        if ctx:
+            print(
+                f"  Context Tracker: checkpoint={ctx.get('checkpoint')}, dirty={ctx.get('dirty')}, clean={ctx.get('clean')}, total_read={ctx.get('total_read')}, ctx_dropped={ctx.get('ctx_dropped_tokens', 0)}"
+            )
+        return
 
     # Try systemd first (Linux)
     if not IS_WINDOWS:

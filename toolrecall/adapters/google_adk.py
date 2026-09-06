@@ -38,8 +38,8 @@ import asyncio
 import functools
 import logging
 
+from toolrecall import client as _tr_client
 from toolrecall.cache import cached_mcp_check, cached_mcp_store
-from toolrecall.client import daemon_running
 
 logger = logging.getLogger("toolrecall.adapters.google_adk")
 
@@ -94,7 +94,7 @@ def _make_cached(func, *, ttl: int | None = None):
 
 def _cached_call(func, tool_name: str, ttl, args, kwargs):
     """Synchronous cache-check-execute cycle."""
-    if not daemon_running():
+    if not _tr_client.daemon_running():
         logger.debug("Daemon not running — bypassing cache for %s", tool_name)
         return func(*args, **kwargs)
 
@@ -115,7 +115,7 @@ def _cached_call(func, tool_name: str, ttl, args, kwargs):
 
 async def _cached_call_async(func, tool_name: str, ttl, args, kwargs):
     """Async cache-check-execute cycle."""
-    if not daemon_running():
+    if not _tr_client.daemon_running():
         logger.debug("Daemon not running — bypassing cache for %s", tool_name)
         return await func(*args, **kwargs)
 
@@ -140,7 +140,7 @@ def _store_result(tool_name: str, arguments: dict, data, ttl):
     Serializes the result to JSON for storage. The cache stores
     the string representation — on retrieval it's deserialized back.
     """
-    if not daemon_running():
+    if not _tr_client.daemon_running():
         return
     import json
 

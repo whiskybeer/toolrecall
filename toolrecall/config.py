@@ -53,11 +53,32 @@ ENV_MAP = {
     "TOOLRECALL_HASH_ALGORITHM": ("cache", "hash_algorithm"),
     "TOOLRECALL_LOG_SHELL_FALLBACK": ("cache", "log_shell_fallback"),
     "TOOLRECALL_NORM_ENABLED": ("norm", "enabled"),
+    "TOOLRECALL_UPDATE_CHECK": ("update", "enabled"),
     "TOOLRECALL_NORM_SORT_LISTS": ("norm", "sort_lists"),
     "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
     "TOOLRECALL_RECALL_TTL": ("recall", "ttl"),
+    "TOOLRECALL_DOCS_INDEX_TTL": ("docs", "index_ttl"),
+    # TTL policy: stale-while-revalidate + adaptive TTL (see toolrecall.ttl_policy)
+    "TOOLRECALL_STALE_WHILE_REVALIDATE": ("cache", "stale_while_revalidate"),
+    "TOOLRECALL_ADAPTIVE_TTL": ("cache", "adaptive_ttl"),
+    "TOOLRECALL_ADAPTIVE_FACTOR": ("cache", "adaptive_factor"),
+    "TOOLRECALL_ADAPTIVE_MAX_TTL": ("cache", "adaptive_max_ttl"),
+    # Fuzzy TTL classification + canonical command keys (see normalizer.py)
+    "TOOLRECALL_FUZZY_TTL_MATCH": ("cache", "fuzzy_ttl_match"),
+    "TOOLRECALL_FUZZY_THRESHOLD": ("cache", "fuzzy_threshold"),
+    "TOOLRECALL_CANONICAL_COMMANDS": ("norm", "canonical_commands"),
+    # Resilience: coalescing / retry / circuit breaker (see resilience.py)
+    "TOOLRECALL_RESILIENCE_COALESCING": ("resilience", "coalescing"),
+    "TOOLRECALL_COALESCING_WINDOW": ("resilience", "coalescing_window"),
+    "TOOLRECALL_RETRY": ("resilience", "retry"),
+    "TOOLRECALL_RETRY_MAX_ATTEMPTS": ("resilience", "retry_max_attempts"),
+    "TOOLRECALL_RETRY_BACKOFF_BASE": ("resilience", "retry_backoff_base"),
+    "TOOLRECALL_CIRCUIT_BREAKER": ("resilience", "circuit_breaker"),
+    "TOOLRECALL_CB_FAILURE_THRESHOLD": ("resilience", "cb_failure_threshold"),
+    "TOOLRECALL_CB_WINDOW": ("resilience", "cb_window"),
+    "TOOLRECALL_CB_OPEN_SECONDS": ("resilience", "cb_open_seconds"),
 }
 
 
@@ -75,6 +96,12 @@ def _apply_env_overrides(config: dict) -> dict:
             "sort_lists",
             "strip_strings",
             "sync_enabled",
+            "adaptive_ttl",
+            "fuzzy_ttl_match",
+            "canonical_commands",
+            "coalescing",
+            "circuit_breaker",
+            "enabled",
         }
     )
     for env_key, (section, key) in ENV_MAP.items():
@@ -140,12 +167,156 @@ class Config:
                 try:
                     with open(p, "rb") as f:
                         user = tomllib.load(f)
+                    self._warn_unknown_keys(config, user, str(p))
                     self._deep_merge(config, user)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import warnings
+
+                    warnings.warn(f"ToolRecall: could not load config {p}: {e}")
 
         config = _apply_env_overrides(config)
         return config
+
+    # Valid sections and their keys — union of the package default
+    # config.toml and every config.get()/self.get() key the code reads.
+    # Anything else in a user config is almost always a typo (e.g.
+    # "allowed_path" vs "allowed_paths") that used to be silently ignored —
+    # the daemon then ran with the default-deny default and the user had no
+    # idea why. Dotted sub-tables (cache.terminal_ttls, mcp.clients,
+    # sources.memory) are freeform: their sub-keys are user-defined names.
+    _KNOWN: dict[str, frozenset[str]] = {
+        "paths": frozenset({"cache_db", "knowledge_db", "skill_dirs", "agent_home"}),
+        "cache": frozenset(
+            {
+                "file_ttl",
+                "skill_ttl",
+                "terminal_default_ttl",
+                "terminal_ttls",
+                "log_shell_fallback",
+                "hash_algorithm",
+                "max_memory_mb",
+                "adaptive_ttl",
+                "adaptive_factor",
+                "adaptive_max_ttl",
+                "stale_while_revalidate",
+                "fuzzy_ttl_match",
+                "fuzzy_threshold",
+            }
+        ),
+        "norm": frozenset({"enabled", "sort_lists", "strip_strings", "canonical_commands"}),
+        "resilience": frozenset(
+            {
+                "coalescing",
+                "coalescing_window",
+                "retry",
+                "retry_max_attempts",
+                "retry_backoff_base",
+                "circuit_breaker",
+                "cb_failure_threshold",
+                "cb_window",
+                "cb_open_seconds",
+            }
+        ),
+        "shim": frozenset({"exclude_prefixes"}),
+        "mcp": frozenset(
+            {
+                "allowed_paths",
+                "allow_terminal",
+                "allow_invalidate",
+                "allowed_terminal_commands",
+                "emit_context_hints",
+                "clients",
+                "tool_access_control",
+                "dangerous_tool_keywords",
+            }
+        ),
+        "mcp_multiplex": frozenset(
+            {
+                "enabled",
+                "servers",
+                "servers_config",
+                "transparent_cache",
+                "default_ttl",
+                "idle_minutes",
+            }
+        ),
+        "security": frozenset(
+            {
+                "cognitive_check_enabled",
+                "ast_check_enabled",
+                "dangerous_tool_keywords",
+                "tool_access_control",
+            }
+        ),
+        "storage": frozenset(
+            {
+                "backend",
+                "db_path",
+                "libsql_db",
+                "sync_enabled",
+                "sync_url",
+                "sync_token",
+                "sync_interval",
+                "turso_api_base",
+            }
+        ),
+        "recall": frozenset({"enabled", "ttl"}),
+        "docs": frozenset({"index_ttl"}),
+        "sources": frozenset(
+            {"scan_dirs", "scan_extensions", "scan_ignore", "max_file_kb", "memory"}
+        ),
+        "nginx": frozenset({"domain", "site_name", "ssl", "ssl_cert", "ssl_key", "github"}),
+        # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
+        # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
+        "forward_proxy": frozenset({"port"}),
+        "update": frozenset({"enabled", "check_interval_hours"}),
+    }
+    # Sub-tables whose keys are user-defined names (per-client policies,
+    # per-server configs, per-command TTL patterns) — never validated.
+    _FREEFORM_KEYS: frozenset[str] = frozenset(
+        {"terminal_ttls", "clients", "servers_config", "memory"}
+    )
+
+    def _warn_unknown_keys(self, known: dict, user: dict, source: str) -> None:
+        """Warn when a user config defines sections/keys the schema doesn't know.
+
+        Unknown sections are always reported. Within known sections, unknown
+        keys are reported except in freeform sub-tables (per-client policies,
+        per-server configs, terminal TTL patterns) where sub-keys are
+        user-defined names. Typos then fail loudly instead of silently
+        falling back to restrictive defaults.
+        """
+        import warnings
+
+        for section, sec_val in user.items():
+            valid_keys = self._KNOWN.get(section)
+            if valid_keys is None:
+                warnings.warn(
+                    f"ToolRecall: unknown config section [{section}] in {source} — "
+                    f"typo? Known sections: {sorted(self._KNOWN)}"
+                )
+                continue
+            if not isinstance(sec_val, dict):
+                continue
+            for key, key_val in sec_val.items():
+                if key in valid_keys or key in self._FREEFORM_KEYS:
+                    # Freeform sub-table: recurse one level into its
+                    # user-defined keys so typos INSIDE are not our business,
+                    # but a misnamed sub-table (e.g. [mcp.client]) still is.
+                    if key in self._FREEFORM_KEYS and isinstance(key_val, dict) and key_val:
+                        first = next(iter(key_val))
+                        if isinstance(key_val[first], dict):
+                            for sub in key_val[first]:
+                                if sub not in valid_keys:
+                                    warnings.warn(
+                                        f"ToolRecall: unknown key [{section}.{key}.*] {sub} "
+                                        f"in {source} — typo? (key ignored)"
+                                    )
+                    continue
+                warnings.warn(
+                    f"ToolRecall: unknown config key [{section}] {key} in {source} — "
+                    f"typo? (key ignored, default in effect)"
+                )
 
     def _deep_merge(self, base: dict, override: dict):
         for key, val in override.items():
@@ -305,6 +476,19 @@ class Config:
             return 0.0
 
     @property
+    def docs_index_ttl(self) -> float:
+        """Seconds after which the FTS knowledge index is considered stale.
+
+        Default 86400 (daily). 0 disables stale-triggered auto-refresh.
+        Env override: TOOLRECALL_DOCS_INDEX_TTL
+        """
+        val = self.get("docs", "index_ttl", default=86400)
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 86400.0
+
+    @property
     def turso_api_base(self) -> str:
         """Turso Platform API base URL. Customizable for self-hosted/proxy.
         Default: https://api.turso.tech
@@ -406,6 +590,49 @@ class Config:
         cannot act on the hint.
         """
         return bool(self.get("mcp", "emit_context_hints", default=True))
+
+    @property
+    def mcp_client_hint_policy(self) -> dict:
+        """Per-client hint policy (subset view of mcp_client_policy()).
+
+        Kept for backward compatibility with existing callers/tests: maps
+        client name → emit_context_hints bool, only for clients that set it.
+        """
+        return {
+            name: entry["emit_context_hints"]
+            for name, entry in self.mcp_client_policy().items()
+            if "emit_context_hints" in entry
+        }
+
+    def mcp_client_policy(self) -> dict:
+        """Full per-client policy table, keyed by MCP clientInfo.name.
+
+        Recognized keys per client: emit_context_hints (bool),
+        allowed_paths (list), allow_terminal (bool),
+        allowed_terminal_commands (list). Unlisted keys are ignored with a
+        config warning (unknown-key check in _load). Unlisted clients fall
+        back to the global [mcp] settings.
+        """
+        clients = self.get("mcp", "clients", default={})
+        if not isinstance(clients, dict):
+            return {}
+        policy: dict = {}
+        for name, opts in clients.items():
+            if isinstance(opts, dict):
+                entry: dict = {}
+                if "emit_context_hints" in opts:
+                    entry["emit_context_hints"] = bool(opts["emit_context_hints"])
+                if "allowed_paths" in opts:
+                    entry["allowed_paths"] = list(opts["allowed_paths"] or [])
+                if "allow_terminal" in opts:
+                    entry["allow_terminal"] = bool(opts["allow_terminal"])
+                if "allowed_terminal_commands" in opts:
+                    entry["allowed_terminal_commands"] = list(
+                        opts["allowed_terminal_commands"] or []
+                    )
+                if entry:
+                    policy[name] = entry
+        return policy
 
     @property
     def mcp_cognitive_check_enabled(self) -> bool:
@@ -550,12 +777,52 @@ class Config:
         Configured via [shim].exclude_prefixes in toolrecall.toml,
         or TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated).
 
+        Default: /proc, /sys, /dev — kernel virtual filesystems. Their
+        contents change between reads (procfs/sysfs are generated live), so
+        they can never produce a cache hit; every intercept is pure overhead
+        (an RPC to the daemon that ends in a path-denial warning). The
+        security gate still applies to anything a *tool* reads via the
+        daemon's cached_read — this list only governs the in-process shim.
+
         Empty list = bypass NOTHING (all open() calls go through the shim).
         """
-        raw = self.get("shim", "exclude_prefixes", default=[])
+        raw = self.get(
+            "shim",
+            "exclude_prefixes",
+            default=["/proc/", "/sys/", "/dev/"],
+        )
         if isinstance(raw, list):
             return raw
         return []
+
+    # ─── Update (auto-updater) Properties ───────────────
+
+    @property
+    def update_enabled(self) -> bool:
+        """Auto-update check at CLI entry (default: True — opt OUT to disable).
+
+        Configured via [update].enabled in toolrecall.toml.
+        TOOLRECALL_UPDATE_CHECK env var overrides (0/false/no/off = disabled),
+        matching the global env > TOML priority. Single source of truth:
+        updater._update_enabled() delegates here.
+        """
+        env = os.environ.get("TOOLRECALL_UPDATE_CHECK")
+        if env is not None:
+            return env.strip().lower() not in ("0", "false", "no", "off")
+        return bool(self.get("update", "enabled", default=True))
+
+    @property
+    def update_check_interval_hours(self) -> float:
+        """Minimum hours between PyPI version checks (default: 24).
+
+        A failed check still counts as checked — no hot-loop retries offline.
+        Configured via [update].check_interval_hours in toolrecall.toml.
+        """
+        raw = self.get("update", "check_interval_hours", default=24)
+        try:
+            return max(float(raw), 0.0)
+        except (TypeError, ValueError):
+            return 24.0
 
 
 # ─── save_config / load_config ────────────────────────

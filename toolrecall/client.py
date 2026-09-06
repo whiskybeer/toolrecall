@@ -9,6 +9,7 @@ local execution when the daemon is not running.
 """
 
 import atexit
+import os
 from typing import Any
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
@@ -153,14 +154,14 @@ def cached_shell_exec(command: str) -> dict:
     Falls back to direct cached_terminal when daemon is unavailable.
     """
     client = _get_client()
-    payload = {"cmd": "cached_shell_exec", "command": command}
+    payload = {"cmd": "cached_shell_exec", "command": command, "cwd": os.getcwd()}
     resp = client.send(payload)
     if "error" not in resp or resp["error"] != "daemon_unavailable":
         return resp
     # Fall back to direct wrapper stripping + cached_terminal
     from toolrecall.cache import cached_shell_exec as _direct_shell_exec
 
-    return _direct_shell_exec(command)
+    return _direct_shell_exec(command, cwd=os.getcwd())
 
 
 def cached_terminal(command: str, ttl: int | None = None) -> dict:
@@ -170,7 +171,11 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
     Falls back to local execution with same TTL logic when daemon is down.
     """
     client = _get_client()
-    payload: dict[str, Any] = {"cmd": "cached_terminal", "command": command}
+    payload: dict[str, Any] = {
+        "cmd": "cached_terminal",
+        "command": command,
+        "cwd": os.getcwd(),
+    }
     if ttl is not None:
         payload["ttl"] = ttl
     resp = client.send(payload)

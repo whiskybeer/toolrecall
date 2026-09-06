@@ -97,6 +97,34 @@ enabled = true
 
 ---
 
+## Index Freshness
+
+The FTS index is a projection of your sources and can go stale as files
+change. Since v0.8.20 the index is **self-healing**:
+
+- Every indexing run (`toolrecall index`, `index-dir`, `index-memory`) stamps
+  a `last_index` timestamp into the database (`index_meta` table).
+- When `docs_search()` runs against an index older than `[docs].index_ttl`
+  (default: 86400 s = daily), a background thread re-indexes automatically.
+  The current query is **never blocked** — it answers from the existing
+  index; the refresh improves the next one.
+- Concurrent searches never spawn parallel re-index runs (single-flight lock).
+
+```toml
+[docs]
+index_ttl = 86400   # seconds; 0 disables auto-refresh entirely
+```
+
+Env override: `TOOLRECALL_DOCS_INDEX_TTL`.
+
+**Safety guard:** with no sources configured, the default scan set is a
+**curated, bounded** pair: `~/.hermes/memories` and `~/.hermes/skills` —
+never the entire home directory. (Historically the default *was* `$HOME`,
+which produced a multi-GB junk-filled DB; that default was removed.) An
+explicitly *empty* `scan_dirs = []` disables auto-refresh entirely.
+
+---
+
 ## Architecture
 
 ```mermaid

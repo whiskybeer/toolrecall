@@ -16,6 +16,7 @@ import shutil
 # Isolated test environment setup dynamically per-test inside TestMemoryIndex
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from toolrecall import docs as docs_mod
 from toolrecall.docs import (
     _get_db,
     _ensure_tables,
@@ -26,12 +27,31 @@ from toolrecall.docs import (
 )
 
 
+class _StubConfig:
+    """Config stand-in that yields NO index sources.
+
+    Without this, docs_search()'s stale-triggered auto-refresh consults the
+    REAL user config; with the default scan_dirs=[$HOME] guard satisfied by
+    any configured source, a background index_all() walks the entire home
+    directory and pollutes both the test DB (real MEMORY.md files beat the
+    fixture on fuzzy match) and the production knowledge.db.
+    """
+
+    def get(self, section, key, default=None):
+        return default
+
+
 class TestMemoryIndex(unittest.TestCase):
     """Test that Hermes memory stores are correctly indexed into FTS5."""
 
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
         os.environ["TOOLRECALL_KNOWLEDGE_DB"] = os.path.join(self.test_dir, "test_knowledge.db")
+        # Hermetic config: no sources -> auto-refresh can never fire, and
+        # index_ttl=0 double-gates it.
+        self._orig_get_config = docs_mod._get_config
+        docs_mod._get_config = lambda: _StubConfig()
+        os.environ["TOOLRECALL_DOCS_INDEX_TTL"] = "0"
         # Create a fake Hermes memories directory with test content
         self.memory_dir = os.path.join(self.test_dir, "memories")
         os.makedirs(self.memory_dir, exist_ok=True)
@@ -55,6 +75,8 @@ class TestMemoryIndex(unittest.TestCase):
         if hasattr(self, "test_dir") and os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir, ignore_errors=True)
         os.environ.pop("TOOLRECALL_KNOWLEDGE_DB", None)
+        os.environ.pop("TOOLRECALL_DOCS_INDEX_TTL", None)
+        docs_mod._get_config = self._orig_get_config
 
     def test_index_creates_entries(self):
         """Each §-delimited entry becomes a separate page."""

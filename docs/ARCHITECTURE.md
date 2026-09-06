@@ -797,12 +797,12 @@ When `Host` is localhost (SDK redirect), the proxy determines the real upstream:
 
 | Cache Type | Invalidation | How it works |
 |------------|-------------|--------------|
-| **File cache** | **mtime-based** (automatic) | `os.path.getmtime()` checked on every `cached_read()`. File modified -> next read fetches fresh from disk. |
-| **Terminal cache** | **TTL-based** | Only cached for static commands (hostname, whoami, pwd...). Default TTL 300s. |
-| **MCP cache** | **TTL-based** | External MCP server responses. Configurable per server. Default 60s. |
+| **File cache** | **mtime-based** (automatic) | `os.path.getmtime()` checked on every `cached_read()`. File modified -> next read fetches fresh from disk. Per-path trust windows via `[cache.file_ttls]` (opt-in). |
+| **Terminal cache** | **TTL-based** | Only cached for static commands (hostname, whoami, pwd...). Default TTL 300s. Optional stale-while-revalidate + adaptive TTL (hit-streak stretch) — see [CONFIG_REFERENCE](CONFIG_REFERENCE.md). |
+| **MCP cache** | **TTL-based** | External MCP server responses. Configurable per server. Default 60s. Optional SWR via `cached_mcp()` refetch. |
 | **Browser cache** | **TTL-based** | Browser page snapshots. Default TTL 300s. |
 | **Skill cache** | **Content-based** | Skill files cached by name. Invalidated on disk change. |
-| **API cache** | **Request-body hash** | Forward proxy responses. Same body -> same response. No expiry. |
+| **API cache** | **Request-body hash** | Forward proxy responses. Same body -> same response. Optional serve-stale-only SWR (LLM completions are never auto-replayed). |
 | **Write invalidation** | **Explicit** | Every `cached_write()` / `cached_patch()` deletes stale cache entries. |
 
 ### B. Full Cache Coverage

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.8.19"
-description = "The Deterministic Tool Cache for LLM Agents — no LLM decides what to cache. SQLite FTS5, zero deps, MCP multiplexer, zero-trust WAF."
+version = "0.8.20"
+description = "−36% LLM API cost on 450-turn agent sessions (billed keys, not estimates). One daemon: forward proxy, context tracker, MCP multiplexer, security gate. Works with any model/provider — additive to prefix caching."
 readme = "README.md"
 authors = [{name = "Robin Schultka", email = "robin@toolrecall.dev"}]
 license = "MIT"  # SPDX expression (PEP 639). The OSI license classifier is
@@ -27,6 +27,7 @@ dependencies = []  # Zero runtime deps — pure Python stdlib
 # Enable with: pip install toolrecall[mcp-fastmcp]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "e2e: End-to-end tests that spawn a real daemon subprocess",
     "adk: Google ADK adapter tests (requires google-adk)",
@@ -52,6 +53,7 @@ Documentation = "https://github.com/whiskybeer/toolrecall#readme"
 
 [project.scripts]
 toolrecall = "toolrecall.cli:main"
+tr-warp-edge = "toolrecall.adapters.warp:main"
 
 [tool.setuptools.packages.find]
 include = ["toolrecall*"]

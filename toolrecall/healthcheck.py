@@ -49,6 +49,9 @@ class HealthInfo(TypedDict):
     socket: bool
     shim_state: str
     hit_rate: float | None
+    log_file: str
+    log_errors_recent: int
+    log_warnings_recent: int
 
 
 # Honor the same env override the cron wrapper uses.
@@ -98,6 +101,49 @@ def count_daemon_procs() -> int:
     return len([line for line in r.stdout.strip().split("\n") if line.strip()])
 
 
+def _log_path() -> str:
+    """Resolve the central rotating log (same resolution as logging_setup)."""
+    env = os.environ.get("TOOLRECALL_LOG_FILE")
+    if env:
+        return os.path.expanduser(env)
+    try:
+        cfg_dir = os.path.join(DEFAULT_CACHE_DIR, "logs")
+        return os.path.join(cfg_dir, "toolrecall.log")
+    except Exception:
+        return os.path.join(DEFAULT_CACHE_DIR, "logs", "toolrecall.log")
+
+
+def _scan_recent_log() -> tuple[str, int, int]:
+    """Scan the tail of the rotating log for recent ERROR/WARNING counts.
+
+    Bounded: reads at most the last ``TOOLRECALL_LOG_TAIL_KB`` (default 64) KB,
+    so a multi-MB log can never slow the healthcheck down. Returns
+    (path, error_count, warning_count).
+    """
+    path = _log_path()
+    errors = warnings_n = 0
+    try:
+        tail_kb = int(os.environ.get("TOOLRECALL_LOG_TAIL_KB", "64"))
+    except ValueError:
+        tail_kb = 64
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > tail_kb * 1024:
+                f.seek(-tail_kb * 1024, os.SEEK_END)
+                f.readline()  # drop partial first line
+            for raw_line in f:
+                line = raw_line.decode("utf-8", errors="replace")
+                # Anchor on " LEVEL " to avoid matching words inside messages
+                if " ERROR " in line:
+                    errors += 1
+                elif " WARNING " in line:
+                    warnings_n += 1
+    except OSError:
+        return ("", 0, 0)
+    return (path, errors, warnings_n)
+
+
 def gather() -> HealthInfo:
     """Collect every health signal into one dict. No side effects."""
     pid_file = _pid_file()
@@ -112,6 +158,9 @@ def gather() -> HealthInfo:
         "socket": False,
         "shim_state": "inactive",
         "hit_rate": None,
+        "log_file": "",
+        "log_errors_recent": 0,
+        "log_warnings_recent": 0,
     }
 
     if os.path.isfile(pid_file):
@@ -183,6 +232,9 @@ def gather() -> HealthInfo:
     except Exception:
         info["hit_rate"] = None
 
+    # Bounded log-tail scan: recent ERROR/WARNING volume (log-level watch).
+    info["log_file"], info["log_errors_recent"], info["log_warnings_recent"] = _scan_recent_log()
+
     return info
 
 
@@ -213,6 +265,19 @@ def warnings(info: HealthInfo) -> list[str]:
     if not info["socket"]:
         notes.append("UDS socket not present")
 
+    log_err = info.get("log_errors_recent", 0)
+    log_warn = info.get("log_warnings_recent", 0)
+    if log_err:
+        notes.append(
+            f"log: {log_err} ERRORs in last {os.environ.get('TOOLRECALL_LOG_TAIL_KB', '64')}KB"
+            f" ({os.path.basename(info['log_file']) or 'log missing'})"
+        )
+    if log_warn >= 10:
+        notes.append(
+            f"log: {log_warn} WARNINGs in last {os.environ.get('TOOLRECALL_LOG_TAIL_KB', '64')}KB"
+            " — noisy or degrading"
+        )
+
     return notes
 
 
@@ -220,10 +285,13 @@ def render(info: HealthInfo) -> str:
     """One-line human summary (mirrors the cron healthcheck's format)."""
     pid = info["pid_file"] or "none"
     age = "" if info["hit_rate"] is None else f" hit_rate={info['hit_rate'] * 100:.0f}%"
+    log_seg = ""
+    if info.get("log_file"):
+        log_seg = f" | log={info['log_errors_recent']}e/{info['log_warnings_recent']}w"
     return (
         f"toolrecall healthcheck | procs={info['procs']} | pid={pid} | "
         f"locks={info['lock_files']} | sock={'yes' if info['socket'] else 'no'} "
-        f"| shim={info['shim_state']}{age}"
+        f"| shim={info['shim_state']}{age}{log_seg}"
     )
 
 

@@ -126,9 +126,17 @@ def _load_skip_prefixes():
         from toolrecall.config import load_config
 
         cfg = load_config()
-        _SKIP_PREFIXES = list(cfg.shim_exclude_prefixes)
+        prefixes = list(cfg.shim_exclude_prefixes)
     except Exception:
-        _SKIP_PREFIXES = []
+        # Config load failed — fall back to the same built-in defaults the
+        # Config property carries. /proc//sys//dev/ must NEVER be intercepted
+        # even when config is unreadable: these reads can't be cached and the
+        # resulting daemon RPC just produces a denial warning.
+        prefixes = ["/proc/", "/sys/", "/dev/"]
+    # Normalize: entries without a trailing slash would match /procself etc.
+    # ("/proc" must not prefix-match "/procself/status"). A bare "/" entry
+    # would skip everything — drop it.
+    _SKIP_PREFIXES = [p if p.endswith("/") else p + "/" for p in prefixes if p and p != "/"]
 
 
 def _should_skip(path: str | bytes | os.PathLike) -> bool:

@@ -8,7 +8,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 
 ## Available Adapters
 
-| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` | ✅ `ToolRecallCache` BaseCache | `pip install toolrecall[langchain]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |
+| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` | ✅ `ToolRecallCache` BaseCache | `pip install toolrecall[langchain]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |\n| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
 
 ---
 
@@ -186,6 +186,37 @@ cut **−32.3% prompt tokens / −30% billed cost**, with prefix caching preserv
 > **Layer note:** Gateway dedup is *lossy compression* — it stubs and hopes the model
 > doesn't need the bytes back. For *lossless recall* (serve exact bytes on demand,
 > freshness tracking, cross-session state), use the [ToolRecall daemon](../../README.md).
+
+---
+
+## Warp — Public Edge for Custom Inference Endpoints
+
+Warp routes agent inference through its own backend and requires any custom
+endpoint to be **publicly reachable over HTTPS** (localhost is rejected). The
+Warp adapter runs a small stdlib-only edge that fronts the ToolRecall forward
+proxy: it accepts Warp's requests, annotates them with the real provider host
+(`X-Target-Host`), strips hop-by-hop headers, and relays byte-faithfully —
+so identical requests across agent runs are served from the TR cache.
+
+```bash
+# 1. Edge in front of the TR proxy (127.0.0.1:8569) — with ingress auth
+tr-warp-edge --provider api.openai.com --port 8571 --auth-token "$(openssl rand -hex 32)"
+
+# 2. Publish it — Warp's backend must reach it over the public internet
+cloudflared tunnel --url http://127.0.0.1:8571
+
+# 3. Warp: Settings > inference endpoint > public URL + model ID + provider key
+```
+
+> **⚠ Auth on public edges is not optional.** A quick-tunnel URL is
+> public-by-obscurity, not private. Set `--auth-token` / `TOOLRECALL_EDGE_TOKEN`
+> so unauthenticated requests are 401-rejected before any relay. Full trust
+> model, layer map, and blast-radius table: [SECURITY.md §8](../../SECURITY.md).
+
+**Best for** agent fleets, Factories replay, and cross-model evals (every model
+arm sees identical tool results). **Skip the file cache** — Warp manages its own
+context. Response cache does not survive model switches; cloud agents are excluded
+by Warp. Full compatibility matrix: [AGENT_COMPATIBILITY.md](../../docs/AGENT_COMPATIBILITY.md).
 
 ---
 

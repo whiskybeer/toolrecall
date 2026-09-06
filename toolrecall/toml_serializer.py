@@ -37,7 +37,8 @@ def _escape_basic(s: str) -> str:
             result.append('\\"')
         elif ch == "\\":
             result.append("\\\\")
-        elif ord(ch) < 0x20:
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            # TOML forbids C0 controls AND DEL (0x7F) in basic strings
             result.append(f"\\u{ord(ch):04x}")
         else:
             result.append(ch)
@@ -48,7 +49,10 @@ def _format_value(val, indent: int = 0) -> str:
     """Format a TOML value with proper indentation."""
 
     if val is None:
-        return ""
+        # TOML has no null type. Emit an empty string rather than a bare
+        # ``key =`` line, which tomllib rejects ("Invalid value"). Callers
+        # that need "unset" semantics should omit the key instead.
+        return '""'
     if isinstance(val, bool):
         return "true" if val else "false"
     if isinstance(val, int):
@@ -231,6 +235,10 @@ if __name__ == "__main__":
         },
         "forward_proxy": {
             "port": 8569,
+        },
+        "update": {
+            "enabled": True,
+            "check_interval_hours": 24,
         },
     }
     text = dumps(data, comment="ToolRecall Configuration")

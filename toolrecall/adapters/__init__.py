@@ -30,5 +30,6 @@ from toolrecall.adapters import langchain
 from toolrecall.adapters import herdr
 from toolrecall.adapters import odysseus
 from toolrecall.adapters import litellm
+from toolrecall.adapters import warp
 
-__all__ = ["google_adk", "langchain", "herdr", "odysseus", "litellm"]
+__all__ = ["google_adk", "langchain", "herdr", "odysseus", "litellm", "warp"]

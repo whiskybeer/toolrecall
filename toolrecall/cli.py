@@ -234,15 +234,18 @@ def cmd_status():
         if k == "recent":
             continue
         if isinstance(v, dict):
-            saved = v.get("tokens_not_read_from_disk", 0)
-            adjusted = v.get("tokens_not_read_from_disk_adjusted", 0)
-            read = v.get("tokens_read_from_disk", 0)
-            context = v.get("context_tokens_saved", 0)
+            saved = v.get("tokens_served_from_cache", v.get("tokens_not_read_from_disk", 0))
+            adjusted = v.get(
+                "tokens_served_from_cache_adjusted",
+                v.get("tokens_not_read_from_disk_adjusted", 0),
+            )
+            read = v.get("tokens_served_from_disk", v.get("tokens_read_from_disk", 0))
+            context = v.get("tokens_not_sent_to_llm", v.get("context_tokens_saved", 0))
             content_tokens = v.get("cached_content_tokens", 0)
-            saved_str = f", tokens_not_read_from_disk={saved:,}" if saved else ""
+            saved_str = f", tokens_served_from_cache={saved:,}" if saved else ""
             adjusted_str = f", adjusted={adjusted:,}" if adjusted and adjusted != saved else ""
-            read_str = f", tokens_read_from_disk={read:,}" if read else ""
-            context_str = f", context_tokens_saved={context:,}" if context else ""
+            read_str = f", tokens_served_from_disk={read:,}" if read else ""
+            context_str = f", tokens_not_sent_to_llm={context:,}" if context else ""
             content_str = f", cached_content_tokens={content_tokens:,}" if content_tokens else ""
             print(
                 f"  {k}: {v['hits']} hits, {v['misses']} misses, "
@@ -322,6 +325,22 @@ def cmd_index():
         print("Indexing agent memory stores...")
         mem_total = index_agent_memory()
         print(f"Done. {mem_total} memory entries indexed.")
+
+
+def cmd_index_compact():
+    """Rebuild the FTS index and VACUUM the knowledge DB (reclaim bloat)."""
+    from toolrecall.docs import compact_knowledge_db, get_index_bloat
+
+    fts, content = get_index_bloat()
+    print(
+        f"FTS index: {fts / 1e6:.1f} MB for {content / 1e6:.1f} MB of content"
+        + (" — bloated, compacting" if fts > 5 * content and fts > 50e6 else "")
+    )
+    result = compact_knowledge_db()
+    print(
+        f"Done. {result['before'] / 1e6:.1f} MB → {result['after'] / 1e6:.1f} MB "
+        f"(reclaimed {result['reclaimed'] / 1e6:.1f} MB)."
+    )
 
 
 def cmd_index_memory():
@@ -620,6 +639,31 @@ def cmd_debug():
     run_debug_server(port=port_override or 8570)
 
 
+def _clean_daemon_env() -> dict:
+    """Copy os.environ minus path overrides that must not leak into a daemon.
+
+    Auto-started daemons inherit the caller's environment. When the caller is
+    a pytest process (hermetic fixtures set TOOLRECALL_CACHE_DB /
+    TOOLRECALL_KNOWLEDGE_DB to per-test temp paths), a daemon spawned from
+    that context would silently serve a scratch database — or one that is
+    deleted moments later — while looking like the production daemon on the
+    production socket. Strip the path-overriding variables so the spawned
+    daemon resolves its DB paths from config, exactly as a systemd-started
+    daemon would.
+    """
+    import os
+
+    env = os.environ.copy()
+    for var in (
+        "TOOLRECALL_CACHE_DB",
+        "TOOLRECALL_KNOWLEDGE_DB",
+        "TOOLRECALL_UDS_PATH",
+        "TOOLRECALL_CONFIG",
+    ):
+        env.pop(var, None)
+    return env
+
+
 def _ensure_daemon():
     """Auto-start the ToolRecall cache daemon if not running.
 
@@ -635,6 +679,13 @@ def _ensure_daemon():
     """
     from toolrecall.transport import TransportClient, DEFAULT_PATH
     import time
+
+    # Test/ci gate: hermetic runs set TOOLRECALL_NO_AUTOSTART=1 so a ping
+    # miss can never start the systemd service or spawn a daemon from
+    # inside pytest (the escaped-daemon failure mode pinned in
+    # test_daemon_env_hygiene.py).
+    if os.environ.get("TOOLRECALL_NO_AUTOSTART") == "1":
+        return False
 
     # ── 1. Already running? ──
     try:
@@ -694,6 +745,7 @@ def _ensure_daemon():
                     "-c",
                     "from toolrecall.cli import cmd_daemon; import sys; sys.argv = ['toolrecall', 'daemon', '--foreground']; cmd_daemon()",
                 ],
+                env=_clean_daemon_env(),
                 stdout=_sp.DEVNULL,
                 stderr=_sp.DEVNULL,
                 start_new_session=True,
@@ -701,6 +753,7 @@ def _ensure_daemon():
         else:
             _sp.Popen(
                 [_toolrecall_bin, "daemon", "--foreground"],
+                env=_clean_daemon_env(),
                 stdout=_sp.DEVNULL,
                 stderr=_sp.DEVNULL,
                 start_new_session=True,
@@ -726,6 +779,7 @@ def _ensure_daemon():
 
             _sp.Popen(
                 ["toolrecall", "daemon", "--foreground"],
+                env=_clean_daemon_env(),
                 creationflags=_sp.DETACHED_PROCESS,
                 stdout=_sp.DEVNULL,
                 stderr=_sp.DEVNULL,
@@ -1190,6 +1244,49 @@ def _install_macos_launch_agent() -> tuple[bool, str]:
         return False, "macOS autostart could not be installed"
 
 
+def _install_windows_scheduled_task() -> tuple[bool, str]:
+    """Install a per-user Windows Scheduled Task that starts the daemon at logon.
+
+    Windows equivalent of the macOS LaunchAgent / Linux systemd user unit:
+    `schtasks /SC ONLOGSTART` runs at every login, needs no admin rights,
+    and is idempotent (/F overwrites an existing task).
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+
+    task_name = "ToolRecall Daemon"
+    toolrecall_bin = _shutil.which("toolrecall")
+    if not toolrecall_bin:
+        return False, "Windows autostart skipped: toolrecall binary not found"
+    tr = f'"{toolrecall_bin}" daemon'
+    try:
+        r = _sp.run(
+            [
+                "schtasks",
+                "/Create",
+                "/TN",
+                task_name,
+                "/TR",
+                tr,
+                "/SC",
+                "ONLOGSTART",
+                "/RL",
+                "LIMITED",
+                "/F",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0:
+            return True, f"Windows autostart: scheduled task '{task_name}' created (ONLOGSTART)"
+        return False, f"Windows autostart failed: {(r.stderr or r.stdout).strip()[:200]}"
+    except FileNotFoundError:
+        return False, "Windows autostart skipped: schtasks not found"
+    except Exception as e:
+        return False, f"Windows autostart could not be installed: {e}"
+
+
 def cmd_setup():
     """One-shot setup: init config → install autostart service → ensure daemon + shim."""
     import os
@@ -1254,9 +1351,8 @@ def cmd_setup():
                 "systemd service: written (systemctl not found — daemon runs via direct launch)"
             )
     else:  # windows
-        steps_ok.append(
-            "autostart: not installed (Windows — start `toolrecall daemon` per session)"
-        )
+        ok, msg = _install_windows_scheduled_task()
+        (steps_ok if ok else errors).append(msg)
 
     # ─── 3. Daemon (auto-start) ────────────
     if _ensure_daemon():
@@ -1420,11 +1516,14 @@ def _ensure_agent_integration():
 
     # ─── Claude Code ────────────────────────────────
     claude_bin = shutil.which("claude")
+    # Initialize unconditionally: when the `claude` binary is absent but a
+    # ~/.claude.json fallback fires, this variable must still exist below.
+    # (Regression: UnboundLocalError crashed `setup` on Windows, 2026-09-04.)
+    claude_multiplexer_only = False
 
     if claude_bin:
         # Prompt user: file caching via MCP was tested and costs 2.4× more
         # for Claude Code. Offer multiplexer-only mode.
-        claude_multiplexer_only = False
         if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
             print()
             print("  ⚠️  Claude Code detected — IMPORTANT:")
@@ -1758,21 +1857,34 @@ def cmd_restart():
         print()
 
     # ─── 2. systemd restart ─────────────────────────
-    print("🔄 Restarting via systemd --user...")
-    result = subprocess.run(
-        ["systemctl", "--user", "restart", "toolrecall-daemon"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    # Windows (and systems without systemd) skip straight to the direct
+    # fallback below. Previously the unguarded subprocess.run crashed with
+    # FileNotFoundError on Windows before the fallback was reachable
+    # (handover report 0.8.19, bug 3).
+    import shutil
 
-    if result.returncode != 0:
-        print(f"  ⚠️  systemctl restart returned exit {result.returncode}")
-        print("     (exit -15 = SIGTERM = daemon was killed; exit 3 = not running)")
-        if result.stderr.strip() and result.returncode not in (-15, 3):
-            for line in result.stderr.strip().split("\n"):
-                print(f"     {line}")
-        print("  → Falling back to direct daemon start...")
+    use_systemd = _host_os() != "windows" and shutil.which("systemctl") is not None
+    result = None
+    if use_systemd:
+        print("🔄 Restarting via systemd --user...")
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "restart", "toolrecall-daemon"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            result = None
+
+    if result is None or result.returncode != 0:
+        if result is not None:
+            print(f"  ⚠️  systemctl restart returned exit {result.returncode}")
+            print("     (exit -15 = SIGTERM = daemon was killed; exit 3 = not running)")
+            if result.stderr.strip() and result.returncode not in (-15, 3):
+                for line in result.stderr.strip().split("\n"):
+                    print(f"     {line}")
+        print("  → Falling back to direct daemon restart...")
         print()
 
         # Fallback: start daemon directly
@@ -1822,6 +1934,44 @@ def cmd_restart():
     else:
         print("  ✅ Restart complete — everything looks good")
     print("=" * 56)
+
+
+def cmd_logs():
+    """Tail/filter the rotating ToolRecall log (payload-free, redacted)."""
+    import argparse as _ap
+    from pathlib import Path
+
+    parser = _ap.ArgumentParser(prog="toolrecall logs")
+    parser.add_argument("--tail", "-n", type=int, default=50, help="Lines to show (default 50)")
+    parser.add_argument(
+        "--level",
+        type=str,
+        default=None,
+        help="Minimum level: DEBUG/INFO/WARNING/ERROR (default: show all)",
+    )
+    parser.add_argument("--file", type=str, default=None, help="Log file override (rarely needed)")
+    args = parser.parse_args(sys.argv[2:])
+
+    log_file = args.file or os.path.expanduser("~/.toolrecall/logs/toolrecall.log")
+    log_path = Path(log_file)
+    if not log_path.exists():
+        print(f"No log file at {log_path} — nothing logged yet (or logging disabled).")
+        return
+
+    order = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+    min_rank = order.get((args.level or "").upper(), 0)
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    selected = []
+    for line in lines:
+        rank = 0
+        for name, val in order.items():
+            if f" {name} " in line:
+                rank = val
+                break
+        if rank >= min_rank:
+            selected.append(line)
+    out = selected[-args.tail :] if min_rank else lines[-args.tail :]
+    print("\n".join(out) if out else "(no matching lines)")
 
 
 def cmd_healthcheck():
@@ -2013,7 +2163,73 @@ def cmd_context():
     sys.exit(2)
 
 
+def cmd_update():
+    """`toolrecall update` — check PyPI, apply upgrade; --check = no apply;
+    --status = show updater state without any network activity."""
+    from toolrecall import updater
+
+    args = sys.argv[2:]
+    if "--status" in args or "-s" in args:
+        updater.run_status_cli()
+        return
+    force = "--check" in args or "-c" in args
+    updater.run_update_cli(force_check=force, apply=not force)
+
+
+def _maybe_auto_update():
+    """Opportunistic auto-update at CLI entry (opt-out; see [update] config).
+
+    Never raises, never blocks >1s (PyPI timeout), never runs for the
+    daemon/serve paths. Failures are recorded in the updater state file —
+    surfaced via `toolrecall update --status`, not swallowed silently.
+    """
+    # Never in these paths: they are long-lived processes or latency-critical.
+    if sys.argv[1:2] in (["daemon"], ["serve"], ["mcp"], ["debug"], ["replay"]):
+        return
+    # Explicit update/healthcheck commands handle their own state.
+    if sys.argv[1:2] in (["update"], ["healthcheck"]):
+        return
+    try:
+        from toolrecall import updater
+        from toolrecall.config import load_config
+
+        cfg = load_config()
+        # Explicit gate before any state I/O: disabled = fully inert.
+        if not updater._update_enabled(cfg):
+            return
+        latest = updater.check_for_update(cfg)
+        if latest:
+            print(
+                f"  ⬆️  ToolRecall {latest} available — updating (disable: [update] enabled = false)"
+            )
+            if updater.apply_update(latest):
+                print("  ✅ Updated — run `toolrecall restart` to refresh the daemon.")
+            else:
+                print("  ⚠️  Auto-update failed — run `toolrecall update` for details.")
+    except Exception as e:  # noqa: BLE001 — updater must never break the command
+        # Recorded degradation, not a silent swallow: state file + stderr note.
+        import warnings
+
+        warnings.warn(f"ToolRecall auto-update check skipped: {type(e).__name__}: {e}")
+
+
 def main():
+    if sys.platform == "win32":
+        # Windows consoles default to legacy code pages (cp1252) that cannot
+        # encode the CLI's emoji/box-drawing output — reconfigure to UTF-8
+        # with lossy fallback so status/setup never crash mid-output.
+        for _stream in (sys.stdout, sys.stderr):
+            # hasattr guard (not try/except) keeps the silent-swallow audit
+            # frozen: streams without reconfigure (pytest capture, io.StringIO
+            # redirect) keep their default encoding and still work.
+            if hasattr(_stream, "reconfigure"):
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+
+    # Auto-update check (opt-out, interval-gated, 1s timeout) — before
+    # dispatch so every user-facing command sees it, after the skip-list
+    # guard inside _maybe_auto_update() itself.
+    _maybe_auto_update()
+
     if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h"):
         print("Usage: toolrecall <command>")
         print()
@@ -2028,6 +2244,7 @@ def main():
         print("  reset-stats     Reset statistics counters (preserves cache entries)")
         print("  index           Build/update knowledge database")
         print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
+        print("  index-compact   Rebuild FTS index + VACUUM knowledge DB (reclaim bloat)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
         print("  config-set      Set a config value (section.key = value)")
         print("  serve           Start forward proxy (cache API responses)")
@@ -2035,7 +2252,9 @@ def main():
         print("  nginx           Generate nginx config")
         print("  mcp             Start MCP Bridge (requires daemon)")
         print("  daemon          Start/stop/manage cache daemon")
+        print("  logs            Tail the rotating ToolRecall log (--tail N --level X)")
         print("  shim            Install/uninstall transparent cache shim (.pth)")
+        print("  update          Check PyPI for a newer version / apply upgrade")
         print("  replay          Record/replay tool call scenarios (Replay mode)")
         print("  turso           Turso Cloud sync: init, status")
         return
@@ -2077,6 +2296,7 @@ def main():
         "invalidate": cmd_invalidate,
         "reset-stats": cmd_reset_stats,
         "index": cmd_index,
+        "index-compact": cmd_index_compact,
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,
         "config-set": cmd_config_set,
@@ -2086,7 +2306,9 @@ def main():
         "mcp": cmd_mcp,
         "daemon": cmd_daemon,
         "shim": cmd_shim,
+        "update": cmd_update,
         "healthcheck": cmd_healthcheck,
+        "logs": cmd_logs,
         "context": cmd_context,
     }
 

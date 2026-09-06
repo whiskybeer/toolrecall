@@ -128,7 +128,8 @@ class TestSizeAwareInvalidation(unittest.TestCase):
         (size-aware invalidation), so the caller gets the fresh on-disk bytes."""
         from toolrecall.cache import cached_read
 
-        tmp = tempfile.mktemp(suffix=".txt")
+        fd, tmp = tempfile.mkstemp(suffix=".txt")
+        os.close(fd)
         with builtins.open(tmp, "w") as f:
             f.write("AAAA")  # size 4
         os.utime(tmp, (1e9, 1e9))
@@ -152,7 +153,8 @@ class TestSizeAwareInvalidation(unittest.TestCase):
         """A rewrite at the same mtime but a DIFFERENT size must be a miss."""
         from toolrecall.cache import cached_read
 
-        tmp = tempfile.mktemp(suffix=".txt")
+        fd, tmp = tempfile.mkstemp(suffix=".txt")
+        os.close(fd)
         with builtins.open(tmp, "w") as f:
             f.write("FIRST")
         os.utime(tmp, (1e9, 1e9))

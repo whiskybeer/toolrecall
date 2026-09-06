@@ -30,6 +30,16 @@ class TestEscapeBasic:
     def test_control_char(self):
         assert _escape_basic("a\x00b") == r'"a\u0000b"'
 
+    def test_del_char_escaped(self):
+        """Regression: 0x7F (DEL) must be escaped — TOML forbids it in basic
+        strings; unescaped DEL made dumps() output unparseable (found by
+        hypothesis round-trip against tomllib)."""
+        assert _escape_basic("a\x7fb") == r'"a\u007fb"'
+        import tomllib
+
+        parsed = tomllib.loads(dumps({"k": "a\x7fb"}))
+        assert parsed["k"] == "a\x7fb"
+
     def test_unicode(self):
         s = _escape_basic("café")
         assert s == '"café"'
@@ -39,7 +49,9 @@ class TestFormatValue:
     """_format_value(): value formatting for all TOML types."""
 
     def test_none(self):
-        assert _format_value(None) == ""
+        # None maps to "" (TOML has no null type). Emitting a bare `key =`
+        # line was invalid TOML — tomllib rejects it ("Invalid value").
+        assert _format_value(None) == '""'
 
     def test_bool_true(self):
         assert _format_value(True) == "true"

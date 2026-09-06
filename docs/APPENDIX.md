@@ -30,7 +30,7 @@ Both cache file reads but at fundamentally different layers.
 
 **5. Observability.** Every response includes `{"cached": true}` and `X-ToolRecall-Cache: HIT` header. Honest gap: most observability tools don't surface the flag prominently — best fixed at agent framework level.
 
-**Three real risks:** (1) Don't share cache DB across CI jobs, (2) TTL caches serve stale data by design — use only for static commands, (3) Observability won't surface `cached` flag without instrumentation.
+**Three real risks:** (1) Don't share cache DB across CI jobs, (2) TTL caches serve stale data by design — use only for static commands, (3) Observability won't surface `cached` flag without instrumentation. **Note (resilience layer):** optional stale-while-revalidate deliberately serves stale data for up to N seconds past expiry — opt-in (`[cache].stale_while_revalidate`, default 0 = off); flagged `"stale": true` in the response. The proxy retry primitive never re-sends a request whose response body was consumed (billing guard), and the circuit breaker fast-fails 503 instead of hanging on a dead upstream. See [RESILIENCE](RESILIENCE.md).
 
 ## C. Latency Pitch
 

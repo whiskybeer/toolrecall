@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     pass
 
 from toolrecall.cache import cached_mcp_check, cached_mcp_store, invalidate_mcp_server
-from toolrecall.client import daemon_running
+from toolrecall import client as _tr_client
 
 logger = logging.getLogger("toolrecall.adapters.langchain")
 
@@ -94,7 +94,7 @@ class ToolRecallCache:
         Returns cached generations on hit, None on miss.
         Deserializes the JSON-stored data back into ChatGeneration objects.
         """
-        if not daemon_running():
+        if not _tr_client.daemon_running():
             return None
 
         key = self._make_key(prompt, llm_string)
@@ -129,7 +129,7 @@ class ToolRecallCache:
         Serializes the generation list as JSON and stores it via
         the MCP cache store.
         """
-        if not daemon_running():
+        if not _tr_client.daemon_running():
             return
 
         key = self._make_key(prompt, llm_string)
@@ -203,7 +203,7 @@ class ToolRecallCallbackHandler:
         The result is stored under the tool's name + input string hash.
         This is a best-effort cache - failures are logged but not raised.
         """
-        if not daemon_running():
+        if not _tr_client.daemon_running():
             return
 
         name = kwargs.get("name", "unknown")

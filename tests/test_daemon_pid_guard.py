@@ -27,9 +27,15 @@ class TestDaemonPIDFallback(unittest.TestCase):
         # Patch PID_FILE to our temp path
         self._orig_pid_file = daemon.PID_FILE
         daemon.PID_FILE = self.pid_file
+        # daemon_status()/stop_daemon() probe the live socket as source of
+        # truth. Point the socket path at an empty temp dir so the tests are
+        # hermetic (and don't depend on the production daemon being down).
+        self._orig_sock_fn = daemon._default_socket_path
+        daemon._default_socket_path = lambda: os.path.join(self.tmpdir, "no.sock")
 
     def tearDown(self):
         daemon.PID_FILE = self._orig_pid_file
+        daemon._default_socket_path = self._orig_sock_fn
         # Clean up any leftover PID file
         if os.path.exists(self.pid_file):
             os.remove(self.pid_file)
@@ -140,6 +146,29 @@ class TestDaemonSingleInstanceLock(unittest.TestCase):
         for p in (p1, p2):
             self.assertTrue(os.path.basename(p).startswith("daemon-"))
             self.assertTrue(p.endswith(".lck"))
+
+    def test_release_unlinks_lock_file(self):
+        """Graceful shutdown removes the lock file — no orphan accumulation."""
+        fh1 = daemon._acquire_instance_lock(self.sock_a)
+        self.assertIsNotNone(fh1)
+        lock_path = daemon._instance_lock_path(self.sock_a)
+        self.assertTrue(os.path.exists(lock_path), "lock file exists while held")
+        # Simulate the SIGTERM path: global fh set, then _release_instance_lock()
+        daemon._instance_lock_fh = fh1
+        daemon._release_instance_lock()
+        self.assertIsNone(daemon._instance_lock_fh)
+        self.assertFalse(os.path.exists(lock_path), "lock file must be unlinked on release")
+        # And the socket is immediately re-lockable (no stale-lock trap)
+        fh2 = daemon._acquire_instance_lock(self.sock_a)
+        self.assertIsNotNone(fh2, "re-acquire after unlink must succeed")
+        daemon._instance_lock_fh = fh2
+        daemon._release_instance_lock()
+
+    def test_release_is_noop_without_lock(self):
+        """Releasing when nothing is held must not raise."""
+        daemon._instance_lock_fh = None
+        daemon._release_instance_lock()
+        self.assertIsNone(daemon._instance_lock_fh)
 
 
 if __name__ == "__main__":

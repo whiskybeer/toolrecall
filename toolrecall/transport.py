@@ -101,11 +101,22 @@ def _safe_bind_host(host: str) -> str:
 
 
 def _parse_tcp(path: str) -> tuple:
-    """Parse tcp://host:port into (host, port)."""
+    """Parse tcp://host:port into (host, port).
+
+    The host is normalized at the PARSE boundary (the single point any TCP
+    address passes through): a wildcard/all-interfaces host (``''``,
+    ``0.0.0.0``, ``::``) is coerced to loopback ``127.0.0.1`` here, so no
+    caller can ever forward a listener-exposing host string into ``bind_socket``.
+    This keeps CodeQL ``py/bind-socket-all-network-interfaces`` satisfied at the
+    sink (only safe, concrete host strings reach ``sock.bind``).
+    """
     assert path.startswith("tcp://"), f"Not a TCP path: {path}"
     rest = path[6:]
     host, _, port_str = rest.rpartition(":")
-    return host or "127.0.0.1", int(port_str)
+    host = host or "127.0.0.1"
+    if host.strip().lower() in _WILDCARD_HOSTS:
+        host = "127.0.0.1"
+    return host, int(port_str)
 
 
 # ─── Transport Functions ──────────────────────────────────
@@ -149,14 +160,28 @@ def connect_socket(sock: socket.socket, path: str):
 # ─── Framed Message Protocol ──────────────────────────────
 # 4-byte big-endian length prefix + JSON payload
 # Same format for both UDS and TCP.
+#
+# Protocol versioning (constitution VI): the wire format is implicitly v1.
+# The JSON payload of every request/response carries "v" = PROTOCOL_VERSION
+# (1) so a future breaking wire change can be detected: the daemon rejects
+# requests whose major version is newer than its own with a clear error
+# instead of misparsing. v1 frames without "v" are accepted (older clients).
+# The length-prefix framing itself only changes with a MAJOR version bump.
 
 _MAX_MSG_SIZE = 1024 * 1024  # 1 MB
+PROTOCOL_VERSION = 1
 
 
 def send_message(sock: socket.socket, data: dict):
-    """Send a framed JSON message over a connected socket."""
-    payload = json.dumps(data).encode("utf-8")
-    sock.sendall(struct.pack("!I", len(payload)) + payload)
+    """Send a framed JSON message over a connected socket.
+
+    Stamps PROTOCOL_VERSION into the payload under "v" (unless the caller
+    already set it) so the peer can detect wire-version mismatches.
+    """
+    payload = dict(data)
+    payload.setdefault("v", PROTOCOL_VERSION)
+    raw = json.dumps(payload).encode("utf-8")
+    sock.sendall(struct.pack("!I", len(raw)) + raw)
 
 
 def recv_exact(sock: socket.socket, n: int) -> bytes:

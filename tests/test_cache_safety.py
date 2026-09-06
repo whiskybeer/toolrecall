@@ -144,6 +144,34 @@ class TestCacheSafety(unittest.TestCase):
             "Dynamic command second run should NOT be cached (git status is not in DEFAULT_CACHEABLE)",
         )
 
+    def test_cached_terminal_cwd_scopes_cache_key(self):
+        """Same command in different working dirs must NOT share a cache entry.
+
+        Regression for the cwd-blind key: two agents (or one agent in two dirs)
+        previously got the same cached result for cwd-sensitive commands.
+        Now the key includes realpath(cwd) and the command runs in that cwd.
+        """
+        r1 = cached_terminal("pwd", cwd="/tmp")
+        r2 = cached_terminal("pwd", cwd="/tmp")
+        r3 = cached_terminal("pwd", cwd="/var")
+
+        self.assertFalse(r1.get("cached", False), "First run in /tmp must be a miss")
+        self.assertTrue(r2.get("cached", False), "Same cwd + command must be a hit")
+        self.assertFalse(r3.get("cached", False), "Same command, different cwd must be a miss")
+
+        self.assertIn("/tmp", r1.get("output", ""), "pwd must run in /tmp")
+        self.assertIn("/var", r3.get("output", ""), "pwd must run in /var")
+
+        # Legacy callers (no cwd) keep the old key — no collision with scoped entries.
+        r4 = cached_terminal("pwd", cwd="/tmp")
+        self.assertTrue(r4.get("cached", False), "Repeat call with explicit cwd stays a hit")
+
+    def test_cached_terminal_cwd_none_keeps_legacy_key(self):
+        """cwd=None callers (daemon w/o client cwd, direct lib) keep command-only keys."""
+        cached_terminal("hostname")
+        b = cached_terminal("hostname")
+        self.assertTrue(b.get("cached", False), "Same command, no cwd, must hit")
+
     def test_compound_commands_are_not_cacheable(self):
         """Commands with shell metacharacters must not match an allowlisted prefix.
 

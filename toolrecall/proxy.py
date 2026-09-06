@@ -45,10 +45,173 @@ MAX_BODY_SIZE = 5 * 1024 * 1024
 # and any whitespace variation providers might send.
 _STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 
+# ── Body canonicalization ────────────────────────────────────────────────────
+# Volatile patterns observed in Warp's server-side harness bodies (live
+# capture, 2026-09-03). Each is matched against the DECODED text of message
+# content fields; replacing them must be idempotent and must never touch
+# semantics the model actually needs.
+#
+# _RE_CANON_* patterns are applied to the canonicalized body text:
+#  1. UUIDs (v4-shaped, used as current_run_id) → fixed placeholder
+#  2. ISO-8601 UTC timestamps (current_time fields) → fixed placeholder
+#  3. CR characters in terminal-context lines → stripped (PowerShell echo
+#     variance: the same command line reaches Turn-0 with \r\n or \n
+#     depending on shell/terminal version; live capture 2026-09-04 showed
+#     a single \r changing the canon key across otherwise-identical runs)
+_RE_CANON_UUID = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+_RE_CANON_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\b")
+_RE_CTX_SECTION = re.compile(r"# Conversation context.*?(?=\n# )", re.S)
+_RE_DANGLING_COMMA = re.compile(r",(\s*\})")
+_RE_LEADING_COMMA = re.compile(r"\{\s*,")
+_RE_SPACE_AFTER_COLON = re.compile(r":[ \t]+")
+_RE_INDENT_EMPTY = re.compile(r"\n[ \t]+")
+
+
+def _strip_env_objects(text):
+    for key in ("directory_state", "shell", "operating_system"):
+        text = re.sub(r'"%s"\s*:\s*\{[^{}]*\}\s*,?\s*' % key, "", text)
+    text = _RE_DANGLING_COMMA.sub(r"\1", text)
+    text = _RE_LEADING_COMMA.sub("{", text)
+    text = _RE_SPACE_AFTER_COLON.sub(": ", text)
+    text = _RE_INDENT_EMPTY.sub("\n", text)
+    return text
+
+
+def _collapse_named_arrays(text):
+    """Replace embedded JSON arrays of {name,...} objects (skills lists) with
+    a placeholder. Balance-scan handles quotes/escapes; arrays that fail the
+    {name}-check are kept verbatim."""
+    out, last = [], 0
+    k = 0
+    while True:
+        j = text.find("[", k)
+        if j == -1:
+            break
+        if '"name"' in text[j : j + 600]:
+            depth, p, end, in_str = 0, j, None, False
+            while p < len(text):
+                ch = text[p]
+                if in_str:
+                    if ch == "\\":
+                        p += 2
+                        continue
+                    if ch == '"':
+                        in_str = False
+                else:
+                    if ch == '"':
+                        in_str = True
+                    elif ch == "[":
+                        depth += 1
+                    elif ch == "]":
+                        depth -= 1
+                        if depth == 0:
+                            end = p
+                            break
+                p += 1
+            if end is not None:
+                block = text[j : end + 1]
+                try:
+                    arr = json.loads(block)
+                    ok = (
+                        isinstance(arr, list)
+                        and arr
+                        and all(isinstance(x, dict) and "name" in x for x in arr)
+                    )
+                except Exception:
+                    ok = False
+                out.append(text[last:j])
+                if ok:
+                    out.append("[[toolrecall-skills-placeholder]]")
+                    last = end + 1
+                else:
+                    out.append(text[j : end + 1])
+                    last = end + 1
+                k = end + 1
+                continue
+        k = j + 1
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _canon_text(text):
+    # CR normalization FIRST (idempotent): PowerShell/terminal echo reaches
+    # Turn-0 bodies with \r\n or \n depending on shell version; a lone \r
+    # must not fork the canon key (live bugfix-exp capture 2026-09-04).
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Collapse blank-line runs (2+ newlines) to one: blank-line composition
+    # inside pasted prompts is a clipboard/terminal artifact, never semantics
+    # (live capture seq 54 vs 61: "\n\n\n" vs "\n\n\n\n" forked the key).
+    text = re.sub(r"\n{2,}", "\n", text)
+    text = _RE_CANON_UUID.sub("00000000-0000-4000-8000-canonuuidplaceholder", text)
+    text = _RE_CANON_TIMESTAMP.sub("1970-01-01T00:00:00Z", text)
+    text = _RE_CTX_SECTION.sub("", text)
+    text = _strip_env_objects(text)
+    text = _collapse_named_arrays(text)
+    return text
+
+
+def _canon_walk(node):
+    if isinstance(node, dict):
+        return {k: _canon_walk(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_canon_walk(x) for x in node]
+    if isinstance(node, str):
+        return _canon_text(node)
+    return node
+
+
+def _canonicalize_body(profile: str, body: bytes):
+    """Canonicalized body for cache-key hashing under `profile`, or None.
+
+    Profile `warp`: strips volatile fields observed in Warp's server-side
+    harness (run UUIDs, timestamps, session context section, ephemeral env
+    objects, skill-list arrays — live capture 2026-09-03). Envelope is parsed
+    once and re-serialized with sorted keys; only the cache key uses the
+    canonical form — the provider always receives the original body."""
+    if profile != "warp":
+        return None
+    try:
+        envelope = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    envelope = _canon_walk(envelope)
+    return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
 # Upstream HTTPS connection timeout. Configurable via TOOLRECALL_FORWARD_TIMEOUT
 # env var (seconds). Default: 30s for normal API calls, 300s for streaming SSE.
 _FORWARD_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_TIMEOUT", "30"))
 _FORWARD_STREAM_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_STREAM_TIMEOUT", "300"))
+
+# ─── Resilience (retry + circuit breaker) — opt-in, lazy singletons ─────────
+
+_forward_breaker = None  # per-process CircuitBreaker (all allowlisted hosts)
+
+
+def _resilience_flag(key: str) -> bool:
+    """Read a boolean [resilience] config key (default off)."""
+    try:
+        from toolrecall.config import load_config
+
+        val = load_config().get("resilience", key, default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+    except Exception:
+        return False
+
+
+def _resilience_num(key: str, default: float) -> float:
+    """Read a numeric [resilience] config key."""
+    try:
+        from toolrecall.config import load_config
+
+        return float(load_config().get("resilience", key, default=default))
+    except Exception:
+        return default
+
 
 # ─── Usage Measurement Log ──────────────────────────────────────────────────
 # Records actual token usage (from API response "usage" field) on every proxy
@@ -347,20 +510,112 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # body has no usage field — e.g. cached HIT or malformed response).
         self._usage_prompt_tokens_fallback = max(1, len(body_bytes) // 4)
 
+        # ── Canonicalization (X-ToolRecall-Canonicalize: <profile>) ─────────
+        # Agent harnesses inject per-request volatile fields (run UUIDs,
+        # timestamps, ephemeral env state) into message content. Byte-hashing
+        # then yields a different key for semantically identical requests —
+        # measured live against Warp's server-side harness (2026-09-03):
+        # two identical tasks differed in 4 places, hit rate 0%.
+        # Canonicalization strips/replaces those fields BEFORE hashing so
+        # replay fires for identical semantics. The upstream provider still
+        # receives the ORIGINAL body — only the cache key is canonicalized.
+        # Note: canonical replays serve the cached response for a body that
+        # differs at the stripped positions only; correctness rests on those
+        # positions being genuinely non-semantic.
+        canonical_profile = (self.headers.get("X-ToolRecall-Canonicalize") or "").strip().lower()
+        hash_body = body_bytes
+        if canonical_profile and body_bytes:
+            canonical = _canonicalize_body(canonical_profile, body_bytes)
+            if canonical is not None:
+                hash_body = canonical
+
         # Build cache key: hash(method + host + path + body)
-        body_hash = hashlib.sha256(body_bytes).hexdigest()
+        body_hash = hashlib.sha256(hash_body).hexdigest()
         request_str = f"{method}:{target_host}:{target_path}:{body_hash}"
         request_hash = hashlib.sha256(request_str.encode()).hexdigest()
 
         # Streaming requests: bypass cache entirely, use chunked passthrough
+        # Opt-out header: X-ToolRecall-No-Cache skips BOTH the HIT lookup and
+        # the store. Baseline arms in benchmarks use this to bill every pass.
+        no_cache = (self.headers.get("X-ToolRecall-No-Cache") or "").strip() in (
+            "1",
+            "true",
+            "yes",
+        )
         if is_streaming:
+            # Stream cache (canonical profiles): streaming requests normally
+            # bypass the cache, but Warp's harness ALWAYS streams — so without
+            # this the api_cache is dead behind Warp (measured 2026-09-03:
+            # 0% hits despite canonical keys matching). For canonical-profile
+            # requests we (a) serve cache HITs as synthesized SSE and
+            # (b) tee MISS streams into a non-stream cache entry.
+            if canonical_profile:
+                cached = self._client.send(
+                    {"cmd": "cached_api_check", "request_hash": request_hash}
+                )
+                if cached.get("cached") and 200 <= cached.get("status", 200) < 300:
+                    n = self._replay_stream_from_cache(
+                        cached, target_host, target_path, request_hash
+                    )
+                    if n is not None:
+                        _log_proxy_usage(
+                            "HIT", target_host, target_path, request_hash, prompt_tokens_override=n
+                        )
+                        return  # replay written
+                # MISS (or replay failed) → fall through to live streaming,
+                # which will tee the response into the cache.
+
             log.info(
-                "STREAM: %s %s%s — bypassing cache, chunked relay",
+                "STREAM: %s %s%s — %s",
+                method,
+                target_host,
+                target_path,
+                "cache miss, tee-to-cache" if canonical_profile else "bypassing cache",
+            )
+            self._forward_streaming(
+                method,
+                target_host,
+                target_path,
+                target_scheme,
+                body_bytes,
+                canonical_profile=canonical_profile,
+                request_hash=request_hash,
+                body_for_tee=body_bytes,
+            )
+            return
+
+        if no_cache:
+            log.info(
+                "NO-CACHE: %s %s%s — opt-out header, forwarding directly",
                 method,
                 target_host,
                 target_path,
             )
-            self._forward_streaming(method, target_host, target_path, target_scheme, body_bytes)
+            resp_status, resp_headers, resp_body = self._forward(
+                method,
+                target_host,
+                target_path,
+                target_scheme,
+                body_bytes,
+            )
+            _log_proxy_usage(
+                "STREAM",  # counted as cache-ineligible, like streaming
+                target_host,
+                target_path,
+                request_hash,
+                resp_body.decode("utf-8", "replace"),
+            )
+            resp_body_bytes = (
+                resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8")
+            )
+            self.send_response(resp_status)
+            self.send_header("Content-Length", str(len(resp_body_bytes)))
+            for k, v in resp_headers:
+                if k.lower() not in ("transfer-encoding", "content-encoding"):
+                    self.send_header(k, v)
+            self.send_header("X-ToolRecall-Cache", "NOCACHE")
+            self.end_headers()
+            self.wfile.write(resp_body_bytes)
             return
 
         # Check cache — only serve cached 2xx responses
@@ -392,26 +647,53 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
                 self.send_response(status)
                 for hdr_key, hdr_val in cached.get("headers", {}).items():
-                    if hdr_key.lower() not in ("transfer-encoding", "content-encoding"):
+                    # connection is OUR framing decision — a stored upstream
+                    # "Connection: keep-alive" makes HTTP/1.0 clients mis-frame
+                    # the replayed body (truncation/hang on socket reuse).
+                    if hdr_key.lower() not in (
+                        "transfer-encoding",
+                        "content-encoding",
+                        "connection",
+                    ):
                         self.send_header(hdr_key, hdr_val)
                 self.send_header("X-ToolRecall-Cache", "HIT")
-                self.end_headers()
                 cached_body = cached["body"]
-                self.wfile.write(
+                cached_body_bytes = (
                     cached_body.encode("utf-8") if isinstance(cached_body, str) else cached_body
                 )
+                # Content-Length MUST be set explicitly on HIT replays: the
+                # cached header dict may lack it (or carry a stale value), and
+                # a close-delimited/keep-alive response with no length makes
+                # HTTP/1.1 clients (e.g. the Warp edge relay) block waiting for
+                # the declared body until their read timeout fires.
+                # MUST count BYTES, not str chars — multibyte UTF-8 in model
+                # output makes len(str) < len(utf-8 bytes), which truncates
+                # the client-side read and corrupts the replayed JSON.
+                self.send_header("Content-Length", str(len(cached_body_bytes)))
+                self.end_headers()
+                self.wfile.write(cached_body_bytes)
                 # Log usage — the cached body still contains the original usage field
                 _log_proxy_usage("HIT", target_host, target_path, request_hash, cached_body)
                 return
 
         # Cache MISS — forward to real API
         log.info("API CACHE MISS: %s %s%s — forwarding...", method, target_host, target_path)
+        _t_fwd = time.perf_counter()
         resp_status, resp_headers, resp_body = self._forward(
             method,
             target_host,
             target_path,
             target_scheme,
             body_bytes,
+        )
+        log.info(
+            "API FORWARD DONE: %s %s%s status=%d dur=%.0fms bytes=%d",
+            method,
+            target_host,
+            target_path,
+            resp_status,
+            (time.perf_counter() - _t_fwd) * 1000,
+            len(resp_body) if resp_body else 0,
         )
 
         # Store in cache — only cache 2xx responses
@@ -425,6 +707,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # outgoing request, so the upstream response is uncompressed.
             headers_dict.pop("Content-Encoding", None)
             headers_dict.pop("content-encoding", None)
+            headers_dict.pop("Connection", None)
+            headers_dict.pop("connection", None)
             # Body must be str for JSON transport (api_cache schema stores TEXT)
             body_str = (
                 resp_body.decode("utf-8", errors="replace")
@@ -442,7 +726,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     "response_status": resp_status,
                     "response_headers": headers_dict,
                     "response_body": body_str,
-                    "ttl": 300,
+                    "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
                 }
             )
 
@@ -488,6 +772,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         """Forward request to the real API server.
 
         Returns (status_code, list_of_headers, body_bytes).
+
+        Resilience (opt-in via [resilience]): retry with jittered backoff on
+        connection errors and 429/502/503/504 — ONLY while no response body
+        has been consumed (billing/idempotency guard) — and a per-host
+        circuit breaker that fast-fails 503 when the upstream is down.
         """
         # Defense-in-depth SSRF guard at the connection sink (py/full-ssrf):
         # never open a connection to a non-allowlisted host even if this
@@ -504,6 +793,124 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 ).encode(),
             )
 
+        from toolrecall.resilience import CircuitBreaker, CircuitBreakerOpen
+
+        global _forward_breaker
+        breaker = None
+        if _resilience_flag("circuit_breaker"):
+            if _forward_breaker is None:
+                _forward_breaker = CircuitBreaker(
+                    failure_threshold=int(_resilience_num("cb_failure_threshold", 5)),
+                    window=float(_resilience_num("cb_window", 60)),
+                    open_seconds=float(_resilience_num("cb_open_seconds", 30)),
+                )
+            breaker = _forward_breaker
+            log.debug("CB active for %s: state=%s", host, breaker.state)
+
+        do_retry = _resilience_flag("retry")
+        max_attempts = int(_resilience_num("retry_max_attempts", 3))
+        backoff_base = _resilience_num("retry_backoff_base", 0.25)
+
+        def _attempt() -> tuple:
+            return self._forward_once(method, host, path, scheme, body)
+
+        class _UpstreamFailure(Exception):
+            """Signal for breaker.call(): the attempt ended in a 429/5xx."""
+
+            def __init__(self, status: int, headers: list, resp_body: bytes):
+                super().__init__(f"upstream status {status}")
+                self.status = status
+                self.headers = headers
+                self.resp_body = resp_body
+
+        def _guarded() -> tuple:
+            try:
+                status, headers, resp_body = self._forward_with_retry(
+                    _attempt, do_retry, max_attempts, backoff_base
+                )
+            except _UpstreamFailure:
+                raise
+            # Outcome-based breaker accounting: 429/5xx responses are
+            # failures even though they return normally. Raising inside
+            # call() routes them through the breaker's except-path (the
+            # success path would clear the failure history).
+            if breaker is not None and status in (429, 500, 502, 503, 504):
+                raise _UpstreamFailure(status, headers, resp_body)
+            return status, headers, resp_body
+
+        try:
+            if breaker is not None:
+                try:
+                    return breaker.call(_guarded)
+                except _UpstreamFailure as e:
+                    return e.status, e.headers, e.resp_body
+            return self._forward_with_retry(_attempt, do_retry, max_attempts, backoff_base)
+        except CircuitBreakerOpen as e:
+            log.warning(
+                "Circuit breaker OPEN for %s — fast-fail (retry after %.0fs)", host, e.retry_after
+            )
+            return (
+                503,
+                [("Content-Type", "application/json"), ("Retry-After", str(int(e.retry_after)))],
+                json.dumps(
+                    {
+                        "error": {
+                            "code": "circuit_open",
+                            "host": host,
+                            "retry_after": int(e.retry_after),
+                        }
+                    }
+                ).encode(),
+            )
+
+    def _forward_with_retry(
+        self, attempt, do_retry: bool, max_attempts: int, backoff_base: float
+    ) -> tuple:
+        """Run ``attempt`` with optional retry on connection errors / retryable 5xx.
+
+        NEVER retries once a response body has been successfully read
+        (the request may have been billed); only transport-level failures
+        and pre-body status codes qualify.
+        """
+
+        last: tuple | None = None
+        for n in range(1, max_attempts + 1 if do_retry else 2):
+            try:
+                status, headers, resp_body = attempt()
+            except Exception:
+                if n < (max_attempts if do_retry else 1):
+                    if backoff_base > 0:
+                        import random
+                        import time
+
+                        time.sleep(backoff_base * (2 ** (n - 1)) + random.uniform(0, backoff_base))
+                    continue
+                raise
+            if status in (429, 502, 503, 504) and n < (max_attempts if do_retry else 1):
+                # Retry-After honored (bounded by max_attempts anyway)
+                last = (status, headers, resp_body)
+                if backoff_base > 0:
+                    import random
+                    import time
+
+                    ra = 0.0
+                    for k, v in headers:
+                        if k.lower() == "retry-after":
+                            try:
+                                ra = float(v)
+                            except ValueError:
+                                ra = 0.0
+                    time.sleep(
+                        min(ra, 5.0)
+                        if ra
+                        else backoff_base * (2 ** (n - 1)) + random.uniform(0, backoff_base)
+                    )
+                continue
+            return status, headers, resp_body
+        return last  # type: ignore[return-value]
+
+    def _forward_once(self, method: str, host: str, path: str, scheme: str, body: bytes) -> tuple:
+        """Single forward attempt: connect, send, read. No retry logic."""
         # SECURITY: Never fall back to plaintext HTTP for known API hosts.
         # Loopback targets (localhost, 127.0.0.1, ::1) always use HTTP since
         # the daemon proxy speaks HTTP on its local port.
@@ -558,13 +965,26 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 ),
             )
 
-    def _forward_streaming(self, method: str, host: str, path: str, scheme: str, body: bytes):
+    def _forward_streaming(
+        self,
+        method: str,
+        host: str,
+        path: str,
+        scheme: str,
+        body: bytes,
+        canonical_profile: str | None = None,
+        request_hash: str | None = None,
+        body_for_tee: bytes | None = None,
+    ):
         """Forward request and relay response as chunked/streaming.
 
-        Streamed responses are not cacheable. A usage log entry is written
-        with cache_status=STREAM and prompt_tokens estimated from the request
-        body (the response usage field is spread across SSE chunks and not
-        available as a single value).
+        With canonical_profile set (opt-in via X-ToolRecall-Canonicalize),
+        the SSE response is additionally TEE'd into a non-stream cache entry
+        under request_hash, so future identical requests replay as cache
+        HITs (stream-cache, Warp live-test 2026-09-03).
+
+        Without canonicalization, behavior is unchanged: pure chunked relay,
+        usage log entry with cache_status=STREAM.
         """
         # SSRF guard — never open a streaming connection to a non-allowlisted host.
         if not _host_allowed(host):
@@ -628,15 +1048,29 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("X-ToolRecall-Stream", "passthrough")
             self.end_headers()
 
-            # Relay body chunk by chunk — SSE lines or raw bytes
+            # Relay body chunk by chunk — SSE lines or raw bytes.
+            # With canonical_profile: tee chunks for later cache store.
+            tee_buf: list[bytes] = []
             while True:
                 chunk = resp.read(4096)
                 if not chunk:
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
+                if canonical_profile:
+                    tee_buf.append(chunk)
 
             conn.close()
+
+            # Tee → reconstruct non-stream response → store under canonical hash
+            if canonical_profile and tee_buf and request_hash:
+                self._store_stream_tee(
+                    tee_buf,
+                    request_hash,
+                    body_for_tee or b"",
+                    host,
+                    path,
+                )
         except Exception as e:
             log.error("Streaming forward failed for %s %s%s: %s", method, host, path, e)
             try:
@@ -662,6 +1096,157 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             "STREAM", host, path, request_hash=stream_body_hash, prompt_tokens_override=pt_est
         )
 
+    def _replay_stream_from_cache(
+        self, cached: dict, host: str, path: str, request_hash: str | None = None
+    ) -> int | None:
+        """Serve a cache HIT for a streaming request as RAW SSE passthrough.
+
+        The tee stored the live provider's SSE stream verbatim; replaying it
+        byte-for-byte is shape-exact by construction — the client sees
+        exactly what a live call delivered (chunk fragmentation, content:null
+        deltas, tool_call fragments, provider comments, native_finish_reason).
+
+        Returns prompt tokens saved (from the stored SSE's usage block), or
+        None if the cached body isn't replayable (caller falls back to live).
+        Never raises.
+        """
+        try:
+            raw = cached.get("body", "")
+            if not isinstance(raw, str) or "data:" not in raw:
+                return None
+            if "[DONE]" not in raw:
+                log.warning("STREAM REPLAY: refusing truncated cached stream (no [DONE])")
+                return None
+            # usage extraction for the usage log
+            prompt_tokens = 0
+            for line in raw.splitlines():
+                line = line.strip()
+                if line.startswith("data: ") and line != "data: [DONE]":
+                    try:
+                        obj = json.loads(line[6:])
+                        u = obj.get("usage")
+                        if u and u.get("prompt_tokens"):
+                            prompt_tokens = u["prompt_tokens"]
+                    except json.JSONDecodeError:
+                        continue
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-ToolRecall-Cache", "HIT")
+            self.send_header("X-ToolRecall-Stream", "replay")
+            self.end_headers()
+            self.wfile.write(raw.encode("utf-8") if isinstance(raw, str) else raw)
+            self.wfile.flush()
+            return prompt_tokens
+        except Exception:
+            return None
+
+    def _store_stream_tee(
+        self,
+        tee_buf: list,
+        request_hash: str,
+        request_body: bytes,
+        host: str,
+        path: str,
+    ) -> None:
+        """Reconstruct a non-stream response from SSE chunks and store it.
+
+        Best-effort: any parse/store failure is logged and swallowed — the
+        client already has its streamed response.
+        """
+        try:
+            raw = b"".join(tee_buf).decode("utf-8", "replace")
+            content_parts: list = []
+            tool_calls_acc: list = []
+            usage = {}
+            finish_reason = None
+            resp_id = None
+            model = None
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                resp_id = obj.get("id") or resp_id
+                model = obj.get("model") or model
+                u = obj.get("usage")
+                if u:
+                    usage = u  # noqa: F841  (kept for parity with non-stream path)
+                for ch in obj.get("choices") or []:
+                    delta = ch.get("delta") or {}
+                    if delta.get("content"):
+                        content_parts.append(delta["content"])
+                    if delta.get("tool_calls"):
+                        # Streaming tool_calls arrive as index-keyed fragments
+                        # (id/function.name in the first, function.arguments
+                        # concatenated across deltas). Accumulate them — a
+                        # tool-call turn is the norm for agent harnesses.
+                        for tc in delta["tool_calls"]:
+                            idx = tc.get("index", 0)
+                            while len(tool_calls_acc) <= idx:
+                                tool_calls_acc.append(
+                                    {
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                )
+                            acc = tool_calls_acc[idx]
+                            if tc.get("id"):
+                                acc["id"] = tc["id"]
+                            if tc.get("type"):
+                                acc["type"] = tc["type"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                acc["function"]["name"] = fn["name"]
+                            if fn.get("arguments"):
+                                acc["function"]["arguments"] += fn["arguments"]
+                    if ch.get("finish_reason"):
+                        finish_reason = ch["finish_reason"]  # noqa: F841 (stream summary)
+
+            # Store the RAW SSE stream verbatim. Replaying the captured live
+            # stream byte-for-byte is shape-exact by construction — a
+            # synthesized chunk structure (measured live, Warp sessions
+            # 2026-09-03/04) risks dropping fields the harness client's
+            # assembler expects (role-anchoring, content:null deltas,
+            # tool_call fragments). The stored body IS the stream.
+            if "[DONE]" not in raw:
+                log.warning(
+                    "STREAM TEE: discarding truncated stream (%d bytes, no [DONE])",
+                    len(raw),
+                )
+                return
+            body = raw
+            self._client.send(
+                {
+                    "cmd": "cached_api_store",
+                    "request_hash": request_hash,
+                    "method": "POST",
+                    "host": host,
+                    "path": path,
+                    "request_body_hash": hashlib.sha256(request_body).hexdigest()
+                    if request_body
+                    else "",
+                    "response_status": 200,
+                    "response_headers": {"Content-Type": "application/json"},
+                    "response_body": body,
+                    "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
+                }
+            )
+            log.info(
+                "STREAM TEE: stored %d chars under canonical hash %s…",
+                len("".join(content_parts)),
+                request_hash[:12],
+            )
+        except Exception as e:
+            log.warning("Stream tee/store failed (non-fatal): %s", e)
+
     def log_message(self, format, *args):
         log.debug("ForwardProxy: " + format, *args)
 
@@ -686,6 +1271,9 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int | None = None):
     Binds to localhost only (safe default). No network exposure.
     On cache hit, returns the cached response directly — no API call, no token cost.
     """
+    from toolrecall.logging_setup import setup_logging
+
+    setup_logging()  # payload-free rotating file log for the log.* calls below
     if port is None:
         port = int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
     try:
@@ -756,7 +1344,9 @@ class DebugHandler(http.server.BaseHTTPRequestHandler):
                 if not c:
                     result = {"error": "Missing 'cmd' param"}
                 else:
-                    result = self._client.send({"cmd": "cached_terminal", "command": c})
+                    result = self._client.send(
+                        {"cmd": "cached_terminal", "command": c, "cwd": os.getcwd()}
+                    )
 
             elif path == "/stats":
                 result = self._client.send({"cmd": "cache_status"})

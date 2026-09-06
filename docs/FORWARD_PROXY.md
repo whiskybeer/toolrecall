@@ -2,6 +2,18 @@
 
 The forward proxy intercepts HTTP requests to LLM providers, caching responses so repeat requests cost zero tokens. On cache hit the provider never receives the request.
 
+**What it saves (billed API keys, not estimates):**
+
+| Workload | Without TR | With TR | Savings |
+|----------|-----------|---------|---------|
+| Bugfix (450 turns, both completed) | $8.83 | $5.62 | **−36%** |
+| Review (200 turns, naive died at 112) | $2.53 | $1.26 | **−50%** |
+| Aggregate (3 workloads) | $11.36 | $7.87 | **−31%** |
+
+Separate OpenRouter keys per arm. Full methodology: [Benchmark](BENCHMARK.md) · [Cost Savings](COST_SAVINGS.md).
+
+The proxy's savings are **additive to any provider's prefix caching** — it caches at the request level (identical request body → $0) while prefix caching discounts at the billing level (tokens already seen → lower rate). They work at different layers. No model lock-in.
+
 ## How It Works
 
 1. **Point any SDK** to `http://localhost:8569` (set `base_url` or env var)

@@ -82,6 +82,38 @@ Or during `toolrecall init` — the interactive setup prompts you with a detaile
 - **No false positives** — because it's deterministic, two different arguments never collide. The same input always produces the same key, and different inputs always produce different keys.
 - **No data modification** — normalization only affects the cache key. The actual cached response is stored and returned as-is.
 
+## Canonical Commands (`[norm].canonical_commands`)
+
+`canonical_command()` extends `normalize_command()` with deeper syntactic
+canonicalization for terminal cache keys:
+
+| Transformation | Example |
+|----------------|---------|
+| Flag-cluster sorting with combined-short-flag decomposition | `ls -al` ≡ `ls -la` ≡ `ls -a -l` |
+| `~` expansion | `cat ~/notes/x.md` ≡ `cat /home/user/notes/x.md` |
+| Duplicate-slash and trailing-slash collapse | `ls /tmp//` ≡ `ls /tmp` |
+| Redundant quote removal | `echo "hi"` ≡ `echo hi` |
+
+Conservative by design: only contiguous flag clusters sort (assumed
+order-independent); long flags (`--oneline`) and valued flags (`-n 5`) stay
+whole; shell metacharacters abort canonicalization (compound commands are
+never cacheable anyway); `shlex` failures fall back to the base
+normalization — never raise.
+
+**Serving stays exact-hash-key.** Canonicalization only widens which
+invocations produce the *same* key; entries are never served across
+different keys, so cross-key poisoning is impossible. Note: enabling this
+after running with it off invalidates existing terminal entries once
+(cache keys change — one re-warm).
+
+## Fuzzy TTL Classification (`[cache].fuzzy_ttl_match`)
+
+Complementary, also deterministic (difflib): when a terminal command
+matches **no** exact/prefix pattern, the most-similar known pattern at or
+above `fuzzy_threshold` (default 0.85) lends its TTL/cacheability. This is
+**classification only** — it decides *whether* and *how long* to cache; it
+never serves one command's entry under another command's key.
+
 ## Future: Semantic Fallback
 
 The current normalization is **syntactic** — it handles reordering, whitespace, and noise. A future version may add **semantic matching** using a local embedding model to catch paraphrases ("Fetch stats for July" → "Retrieve data for 07/2026"). This would be a separate optional feature with its own config toggle.

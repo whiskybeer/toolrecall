@@ -318,11 +318,16 @@ class TestLiteLLMAdapter:
     """Test the LiteLLM dedup hook adapter."""
 
     def test_import(self):
-        """Module imports without litellm installed."""
+        """Module imports without litellm installed; _HAVE_LITELLM reflects reality."""
+        import importlib.util
+
         import toolrecall.adapters.litellm
 
         assert toolrecall.adapters.litellm is not None
-        assert toolrecall.adapters.litellm._HAVE_LITELLM is False
+        litellm_importable = importlib.util.find_spec("litellm") is not None
+        assert toolrecall.adapters.litellm._HAVE_LITELLM is litellm_importable
+        # Fallback shim must exist either way (litellm's CustomLogger or the local one)
+        assert hasattr(toolrecall.adapters.litellm, "CustomLogger")
 
     def test_handler_instantiation(self):
         """ToolRecallDedupHandler instantiates and exposes env defaults."""

@@ -45,7 +45,7 @@ Usage
 Graceful degradation
 =============================================================================
 
-Both caches check daemon_running() before every operation. If the ToolRecall
+Both caches check _tr_client.daemon_running() before every operation. If the ToolRecall
 daemon is not running, all calls pass through to the real function with no
 overhead and no crash — the adapter is a no-op when ToolRecall isn't present.
 
@@ -82,7 +82,7 @@ Key patterns (consistent with adapters/google_adk.py)
 =============================================================================
 
 - cached_mcp_check + cached_mcp_store for cache read/write
-- daemon_running() guard for graceful bypass
+- _tr_client.daemon_running() guard for graceful bypass
 - ADAPTER_SERVER = "odysseus" for namespace isolation
 - JSON serialization with default=str for non-serializable types
 - Async-safe: matching async/sync wrappers like google_adk
@@ -96,7 +96,7 @@ import logging
 from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from toolrecall.cache import cached_mcp_check, cached_mcp_store
-from toolrecall.client import daemon_running
+from toolrecall import client as _tr_client
 
 logger = logging.getLogger("toolrecall.adapters.odysseus")
 
@@ -135,7 +135,7 @@ def _store_in_cache(
     Uses the same pattern as google_adk._store_result. Failures are logged
     but never raised — caching is best-effort.
     """
-    if not daemon_running():
+    if not _tr_client.daemon_running():
         return
     try:
         serialized = json.dumps(data, default=str, ensure_ascii=False)
@@ -159,7 +159,7 @@ def _check_cache(tool_name: str, cache_key: str, ttl: Optional[int] | None = Non
     Returns deserialized data on hit, None on miss. Same pattern as
     google_adk._cached_call.
     """
-    if not daemon_running():
+    if not _tr_client.daemon_running():
         return None
     result = cached_mcp_check(ADAPTER_SERVER, tool_name, {"key": cache_key}, ttl=ttl)
     if result.get("cached"):

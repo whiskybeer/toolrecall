@@ -301,6 +301,7 @@ class MCPBridge:
         socket_path: str | None = None,
         emit_context_hints: bool = True,
         multiplexer_only: bool = False,
+        client_hint_policy: dict | None = None,
     ):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
         self._start_time = time.time()
@@ -325,6 +326,19 @@ class MCPBridge:
         # own their message array (Hermes, ADK).  Append-only harnesses
         # (Claude Code, Cursor) cannot act on them — disable by default.
         self._emit_context_hints = emit_context_hints
+        # Per-MCP-client override table from the daemon config, keyed by
+        # clientInfo.name (e.g. "claude-code", "opencode", "warp"). Applied
+        # at initialize; unlisted clients keep the global flag above.
+        self._client_hint_policy = client_hint_policy or {}
+        # Identity captured from the MCP initialize handshake.
+        self._client_name = ""
+        # Hints only after the agent has demonstrated the checkpoint pattern:
+        # the daemon can't force a drop — the agent must act. Passive until
+        # the client calls context_set_checkpoint once. Stateless agents
+        # (Hermes, OpenCode, Cline) do this on turn 1; context-managing
+        # agents (Claude Code, Cursor) never do, so they stay silent without
+        # any config.
+        self._hints_opted_in = False
         # Multiplexer-only mode: expose only mcp_call/mcp_list_servers,
         # no file/terminal/cache tools. For agents with built-in context
         # management (Claude Code, Cursor) where file caching costs 2.4× more.
@@ -429,7 +443,7 @@ class MCPBridge:
         params = req.get("params", {})
 
         if method == "initialize":
-            return self._handle_initialize(req_id)
+            return self._handle_initialize(req_id, params)
         elif method == "tools/list":
             return self._handle_tools_list(req_id)
         elif method == "tools/call":
@@ -441,7 +455,7 @@ class MCPBridge:
         else:
             return self._error(req_id, -32601, f"Method not found: {method}")
 
-    def _handle_initialize(self, req_id):
+    def _handle_initialize(self, req_id, params: dict | None = None):
         # Ping daemon to get security info
         info = self._uds_request("ping")
         security = {
@@ -449,6 +463,16 @@ class MCPBridge:
             "allow_terminal": info.get("allow_terminal", False),
             "allow_invalidate": info.get("allow_invalidate", False),
         }
+
+        # Identify the client from the MCP handshake and apply any per-client
+        # hint policy. clientInfo.name is what Warp, Claude Code, Hermes etc.
+        # actually send; unknown/empty falls back to the global flag.
+        params = params or {}
+        client_info = params.get("clientInfo") or {}
+        self._client_name = client_info.get("name", "")
+        if self._client_name in self._client_hint_policy:
+            self._emit_context_hints = bool(self._client_hint_policy[self._client_name])
+
         return {
             "jsonrpc": "2.0",
             "id": req_id,
@@ -513,6 +537,13 @@ class MCPBridge:
     def _handle_tool_call(self, req_id, params):
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
+
+        # cwd-scoped terminal cache: the bridge runs as the agent's stdio
+        # subprocess, so os.getcwd() here is the agent's working directory.
+        # Include it so the daemon scopes the terminal cache key per
+        # directory (same command in different dirs ≠ same entry).
+        if tool_name in ("terminal", "cached_terminal"):
+            arguments = {**arguments, "cwd": os.getcwd()}
 
         uds_cmd = CMD_TO_MCP.get(tool_name)
         if not uds_cmd:
@@ -583,6 +614,14 @@ class MCPBridge:
             if "error" in resp:
                 return self._error(req_id, -32603, resp["error"])
 
+            # Opt-in contract: the agent demonstrates the checkpoint pattern
+            # once, and only then do we start appending drop-clean hints. This
+            # keeps the bridge passive for context-managing agents (Claude
+            # Code, Cursor, Warp Agent) without any config beyond the global
+            # flag — they never call the checkpoint tools.
+            if tool_name == "context_set_checkpoint" and not self._hints_opted_in:
+                self._hints_opted_in = True
+
             # Session-scoped dedup: identical content → stub (saves tokens in
             # append-only harnesses like Claude Code where content can't be
             # dropped from the transcript after it enters)
@@ -599,14 +638,20 @@ class MCPBridge:
             content = resp.get("result", resp)
             result_text = self._format_result(content)
 
-            # Auto-trigger context hint after every non-context tool call
-            # Only emit if the harness owns its message array (config flag).
-            if self._emit_context_hints and tool_name not in (
-                "context_set_checkpoint",
-                "context_get_dirty",
-                "context_get_stale",
-                "context_get_stats",
-                "context_reset",
+            # Auto-trigger context hint after every non-context tool call.
+            # Only if the client opted in by checkpointing (and, on the daemon
+            # side, if the flag + per-client policy allow it).
+            if (
+                self._emit_context_hints
+                and self._hints_opted_in
+                and tool_name
+                not in (
+                    "context_set_checkpoint",
+                    "context_get_dirty",
+                    "context_get_stale",
+                    "context_get_stats",
+                    "context_reset",
+                )
             ):
                 try:
                     hint_resp = self.client.send({"cmd": "context_get_hint"})
@@ -661,7 +706,12 @@ def main():
         sys.exit(1)
 
     emit_hints = ping.get("emit_context_hints", True)
-    bridge = MCPBridge(emit_context_hints=emit_hints, multiplexer_only=multiplexer_only)
+    client_policy = ping.get("client_hint_policy", {})
+    bridge = MCPBridge(
+        emit_context_hints=emit_hints,
+        client_hint_policy=client_policy,
+        multiplexer_only=multiplexer_only,
+    )
 
     print("ToolRecall MCP Bridge v0.2.0", file=sys.stderr)
     print("  Connected to daemon", file=sys.stderr)

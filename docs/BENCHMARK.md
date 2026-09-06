@@ -15,6 +15,10 @@
 **ToolRecall costs less per turn and survives more turns — the two are connected.**  \
 At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.00167 vs $0.00284 — 41% cheaper at matched turns). But the **primary value is endurance**: TR runs 140 turns vs naive's 17 (7.4× longer). Below the context wall, prefix caching also reduces cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
 
+> **⚠️ For the cleanest matched comparison — both arms completed — see Bugfix Workload (below): TR cost 36% less ($5.62 vs $8.83) on the same 450-turn session. Billed API keys, not estimates.**
+>
+> **Key insight:** ToolRecall and prefix caching are **additive**, not competing. TR sends fewer tokens (volume wins), prefix caches discounts the tokens you do send (rate wins). Both contribute to the final bill. TR saves money with **any** provider, with or without prefix caching. See [Cost Savings](COST_SAVINGS.md).
+
 > **⚠️ Scope of the 7.4× endurance figure:** This benchmark runs on **Hermes Agent**, which owns its message loop and drops clean files from context after each turn via the Context Tracker. **Append-only harnesses (Claude Code, Cursor) cannot do this** — the context tracker is inert in those environments, and this endurance figure does not transfer. See [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code) for details.
 
 | Metric | naive | prefix | toolrecall | Advantage |
@@ -137,6 +141,16 @@ Three arms, interleaved per seed: naive → prefix → toolrecall → naive → 
 - `fig1_context_growth.png` — per-turn request_tokens for all three arms
 - `fig2_ratio.png` — prefix vs toolrecall side-by-side + ratio (dual panel)
 - `fig3_warmup.png` — tool cache hit rate over time
+
+---
+
+## What NOT to Claim from This Benchmark
+
+- **"ToolRecall saves 36% on any task."** These are scripted benchmarks on one model (DeepSeek V4 Flash). Real agent tasks vary in file sizes, write patterns, and reuse ratios.
+- **"ToolRecall is cheaper than provider prefix caching."** This is naive vs TR, not "TR vs prefix caching." Prefix caching is available to both — the advantage comes from sending fewer total tokens, not from more efficient caching.
+- **"Bounded context growth."** Context still grows linearly — just slower (~100-120 tok/turn vs ~200-300 for naive). It is not bounded in the mathematical sense.
+- **"These completion tokens mean better/worse quality."** Completion counts varied erratically (−4% to +150%). This benchmark measures token consumption, not task quality — "completed" means the harness didn't hit the context cap, not that the task was solved correctly.
+- **"Benchmark predicts production savings."** The scripted workloads rotate through a fixed file pool. Real-world workloads have longer file lists and inconsistent reuse patterns.
 
 ### Reproduction
 

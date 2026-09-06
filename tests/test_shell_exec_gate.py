@@ -35,6 +35,7 @@ class MockConfig:
         self.mcp_dangerous_tool_keywords = []
         self.mcp_cognitive_check_enabled = False
         self.mcp_ast_check_enabled = False
+        self.mcp_client_policy = lambda: {}  # per-agent table (A4): empty = global defaults
 
 
 def make_server(allow_terminal, allowlist=None):

@@ -32,6 +32,7 @@ from typing import Any, Callable
 import warnings
 from datetime import datetime
 from threading import Lock
+import threading
 from collections import OrderedDict
 from toolrecall.config import load_config
 from toolrecall._db import _db
@@ -174,7 +175,7 @@ config = load_config()
 # We re-import _is_sensitive_path explicitly below for use within this module.
 from toolrecall._db import _is_sensitive_path as _is_sensitive_path  # noqa: E402
 from toolrecall._db import _compile_sensitive_patterns as _compile_sensitive_patterns  # noqa: E402
-from toolrecall.normalizer import normalize_command  # noqa: E402
+from toolrecall.normalizer import canonical_command, normalize_command  # noqa: E402
 
 # ─── In-memory file cache with LRU ──────────────────────────
 
@@ -262,9 +263,11 @@ CREATE TABLE IF NOT EXISTS terminal_cache (
     output TEXT NOT NULL,
     stderr TEXT NOT NULL DEFAULT '',
     exit_code INTEGER NOT NULL,
+    cwd TEXT DEFAULT '',
     cached_at REAL NOT NULL,
     expires_at REAL NOT NULL,
-    hits INTEGER DEFAULT 1
+    hits INTEGER DEFAULT 1,
+    hit_streak INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS script_cache (
     script_hash TEXT PRIMARY KEY,
@@ -312,7 +315,8 @@ CREATE TABLE IF NOT EXISTS mcp_cache (
     data TEXT NOT NULL,
     cached_at REAL NOT NULL,
     expires_at REAL NOT NULL,
-    hits INTEGER DEFAULT 1
+    hits INTEGER DEFAULT 1,
+    hit_streak INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_expires ON mcp_cache(expires_at);
 CREATE TABLE IF NOT EXISTS browser_cache (
@@ -337,7 +341,8 @@ response_headers TEXT,
 response_body TEXT NOT NULL,
 cached_at REAL NOT NULL,
 expires_at REAL NOT NULL,
-hits INTEGER DEFAULT 1
+hits INTEGER DEFAULT 1,
+hit_streak INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_api_expires ON api_cache(expires_at);
 CREATE TABLE IF NOT EXISTS recall_cache (
@@ -553,9 +558,28 @@ def cached_read(path: str, source: str = "") -> dict:
 
     stat = os.stat(path)
 
+    # ── 0. Trust-window TTL resolution ([cache].file_ttls) ──
+    # resolve_file_ttl() precedence: exact path → glob (folders/filetypes)
+    # → [cache].file_ttl global → -1. Semantics:
+    #   -1  always mtime-validate (default; unchanged behavior)
+    #    0  never cache this file (serve-through, no persistence)
+    #   >0  within N seconds of caching, serve WITHOUT mtime validation
+    #       (trust window — skips os.stat comparison; trades freshness
+    #       guarantees for latency. Opt-in only.)
+    from toolrecall.ttl_policy import resolve_file_ttl
+
+    file_ttl = resolve_file_ttl(path, config.get("cache", default={}))
+    trust_window = file_ttl > 0
+    never_cache = file_ttl == 0
+    now_ts = time.time()
+
     # ── 1. In-memory cache (fast path) ──
     entry = _file_cache.get(path)
-    if entry and entry["mtime"] == stat.st_mtime and entry["size"] == stat.st_size:
+    if entry and (
+        trust_window
+        and now_ts - entry["cached_at"] <= file_ttl
+        or (not trust_window and entry["mtime"] == stat.st_mtime and entry["size"] == stat.st_size)
+    ):
         tokens = _estimate_tokens(entry["content"])
         context_tokens = tokens if source == "agent_tool" else 0
         _record(
@@ -563,21 +587,34 @@ def cached_read(path: str, source: str = "") -> dict:
         )
         return {"cached": True, "content": entry["content"], "path": path}
 
+    # ttl=0 for this path: serve-through — skip BOTH cache layers entirely.
+    # (The disk-read section below honors never_cache by not persisting.)
+
     # ── 2. SQLite cache (warm from previous session) ──
     path_hash = _hash(path)
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT content, mtime, size FROM file_cache WHERE path_hash = ?",
+                "SELECT content, mtime, size, cached_at FROM file_cache WHERE path_hash = ?",
                 (path_hash,),
             ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None
 
-    if row and row["mtime"] == stat.st_mtime and row["size"] == stat.st_size:
+    if row and (
+        trust_window
+        and now_ts - row["cached_at"] <= file_ttl
+        or (not trust_window and row["mtime"] == stat.st_mtime and row["size"] == stat.st_size)
+    ):
         _file_cache.put(
-            path, {"content": row["content"], "mtime": row["mtime"], "size": stat.st_size}
+            path,
+            {
+                "content": row["content"],
+                "mtime": row["mtime"],
+                "size": stat.st_size,
+                "cached_at": row["cached_at"],
+            },
         )
         tokens = _estimate_tokens(row["content"])
         context_tokens = tokens if source == "agent_tool" else 0
@@ -589,10 +626,13 @@ def cached_read(path: str, source: str = "") -> dict:
     # Count tokens_read_from_disk only for truly new content:
     # - brand new file (never in SQLite) → row is None
     # - file was modified (mtime changed) → row exists but stale
+    # - trust-window hit already returned above; reaching here under a
+    #   trust window means the window EXPIRED → re-read is authoritative
     # If row exists with SAME mtime → SQLite hit should have caught it above
     _row_exists = row is not None
     _mtime_changed = _row_exists and row["mtime"] != stat.st_mtime
-    _is_new_file = row is None or _mtime_changed
+    _window_expired = _row_exists and trust_window and now_ts - row["cached_at"] > file_ttl
+    _is_new_file = row is None or _mtime_changed or _window_expired
 
     # ── 3. Cache miss — read from disk ──
 
@@ -618,12 +658,22 @@ def cached_read(path: str, source: str = "") -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-    _file_cache.put(path, {"content": content, "mtime": stat.st_mtime, "size": stat.st_size})
+    if never_cache:
+        # ttl=0: serve-through — no memory LRU entry, no SQLite persistence.
+        # content was just read fresh from disk above (authoritative).
+        _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=True)
+        return {"cached": False, "content": content, "path": path}
+
+    _file_cache.put(
+        path,
+        {"content": content, "mtime": stat.st_mtime, "size": stat.st_size, "cached_at": now_ts},
+    )
     _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=_is_new_file)
 
     # Large files (>10 MB) go to SQLite only if they're "static data"
     # Small files always persist for cross-session reuse
-    if stat.st_size < 10 * 1024 * 1024:
+    # ttl=0 paths: serve-through only — nothing enters memory or SQLite.
+    if not never_cache and stat.st_size < 10 * 1024 * 1024:
         _persist_file_to_sqlite(path, content, stat)
 
     return {"cached": False, "content": content, "path": path}
@@ -797,13 +847,167 @@ def _log_shell_fallback(cmd: str, fallback_type: str = "shell"):
     )
 
 
-def cached_terminal(command: str, ttl: int | None = None) -> dict:
+def _run_terminal_subprocess(cmd: str, exec_cwd: str | None) -> dict:
+    """Execute a cacheable terminal command via shlex-split subprocess.
+
+    Returns ``{"output", "stderr", "exit_code"}`` on success or
+    ``{"error", "exit_code": -1}`` when the command can't be parsed
+    (never falls back to shell=True — command-injection guard).
+    """
+    import shlex
+    import subprocess
+
+    try:
+        cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
+        result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30, cwd=exec_cwd)
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        # SECURITY: shlex.split failed — do NOT fall back to shell=True.
+        if _LOG_SHELL_FALLBACK:
+            _log_shell_fallback(cmd, "shlex split failed (terminal)")
+        return {
+            "error": "Command contains unparseable shell syntax. Use a script file instead.",
+            "exit_code": -1,
+        }
+    return {
+        "output": result.stdout,
+        "stderr": result.stderr,
+        "exit_code": result.returncode,
+    }
+
+
+# ─── STALE-WHILE-REVALIDATE + ADAPTIVE TTL SHARED HELPERS ─────────────
+
+# Lazily-created Coalescer for the terminal miss path (opt-in via
+# [resilience] coalescing). Created on first use so the config window
+# value is read when the feature is actually enabled.
+_terminal_coalescer = None
+
+# Single-flight registry for background revalidations (in-process; the
+# daemon is the single cache owner). Key: "layer\x00hash".
+_revalidate_inflight: set[str] = set()
+_revalidate_lock = Lock()
+
+
+def _swr_window() -> int:
+    """Stale-while-revalidate window in seconds (0 = off, the default)."""
+    try:
+        return int(config.get("cache", "stale_while_revalidate", default=0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _adaptive_cfg() -> tuple[bool, float, float]:
+    """Return (adaptive_ttl, adaptive_factor, adaptive_max_ttl) from config."""
+    enabled = bool(config.get("cache", "adaptive_ttl", default=False))
+
+    def _num(key: str, default: float) -> float:
+        try:
+            return float(config.get("cache", key, default=default))
+        except (TypeError, ValueError):
+            return default
+
+    return enabled, _num("adaptive_factor", 2.0), _num("adaptive_max_ttl", 86400)
+
+
+def _next_ttl(base_ttl: int, row) -> int:
+    """Effective TTL for a re-store: adaptive stretch by hit streak, else base."""
+    adaptive, factor, cap = _adaptive_cfg()
+    if not adaptive or row is None:
+        return base_ttl
+    from toolrecall.ttl_policy import adaptive_ttl
+
+    streak = row["hit_streak"] if "hit_streak" in row.keys() else 0
+    return int(adaptive_ttl(base_ttl, streak, factor, cap))
+
+
+def _maybe_revalidate_terminal(
+    cmd_hash: str, cmd: str, exec_cwd: str | None, cacheable_ttl: int
+) -> None:
+    """Kick off a single-flight background revalidation of a stale terminal entry."""
+    key = f"terminal\x00{cmd_hash}"
+    with _revalidate_lock:
+        if key in _revalidate_inflight:
+            return
+        _revalidate_inflight.add(key)
+
+    def _run():
+        try:
+            import shlex
+            import subprocess
+
+            try:
+                cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
+                result = subprocess.run(
+                    cmd_parts, capture_output=True, text=True, timeout=30, cwd=exec_cwd
+                )
+            except (ValueError, OSError, subprocess.TimeoutExpired):
+                return  # stale row stays; next caller retries
+            now = time.time()
+            try:
+                with _db() as conn:
+                    old = conn.execute(
+                        "SELECT output FROM terminal_cache WHERE command_hash = ?",
+                        (cmd_hash,),
+                    ).fetchone()
+                    changed = old is None or old["output"] != result.stdout
+                    streak = (
+                        0
+                        if changed
+                        else max(
+                            int(old["hit_streak"] or 0) if "hit_streak" in old.keys() else 0, 0
+                        )
+                    )
+                    adaptive, factor, cap = _adaptive_cfg()
+                    from toolrecall.ttl_policy import adaptive_ttl
+
+                    eff_ttl = (
+                        adaptive_ttl(cacheable_ttl, streak + 1, factor, cap)
+                        if adaptive
+                        else cacheable_ttl
+                    )
+                    conn.execute(
+                        """
+                        UPDATE terminal_cache
+                        SET output = ?, stderr = ?, exit_code = ?, cached_at = ?, expires_at = ?, hit_streak = ?
+                        WHERE command_hash = ?
+                    """,
+                        (
+                            result.stdout,
+                            result.stderr,
+                            result.returncode,
+                            now,
+                            now + eff_ttl,
+                            streak,
+                            cmd_hash,
+                        ),
+                    )
+            except Exception as e:
+                warnings.warn(f"ToolRecall: SWR revalidate (terminal) failed: {e}")
+        finally:
+            with _revalidate_lock:
+                _revalidate_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True, name="tr-swr-terminal").start()
+
+
+def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None) -> dict:
     """Run command OR return cached result (TTL-based, SQLite-backed).
 
     Only commands that match a known-cacheable pattern exactly are cached.
     All other commands execute every time (no cache, no delay).
 
     Set ttl=0 to bypass the cache entirely (execute every time, no storage).
+
+    Args:
+        command: Shell command to run (e.g. 'ls -la').
+        ttl: Cache TTL in seconds; None = use per-command/config default,
+            0 = bypass the cache entirely.
+        cwd: Working directory the command runs in. When supplied, it is
+            part of the cache key, so the same command in different
+            directories gets a distinct entry. When None, the key stays
+            command-only (legacy behavior — used only by callers that
+            cannot resolve the true cwd, e.g. the daemon when the client
+            did not send one).
     """
     import subprocess
     import shlex
@@ -811,11 +1015,20 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
     cmd = " ".join(command.strip().split())
     cacheable_ttl = ttl
 
+    # Resolve the working directory once — it scopes BOTH the cache key and
+    # where the command actually runs. When cwd is None, commands run in the
+    # current process's directory (legacy) and the key stays command-only.
+    exec_cwd = None
+    if cwd:
+        exec_cwd = os.path.realpath(cwd)
+
     # ttl=0 means bypass cache entirely — execute fresh, don't store
     if ttl is not None and ttl <= 0:
         try:
             cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
-            result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd_parts, capture_output=True, text=True, timeout=30, cwd=exec_cwd
+            )
         except (ValueError, OSError, subprocess.TimeoutExpired) as e:
             return {"error": f"Cannot parse command: {e}", "exit_code": -1, "cached": False}
         return {
@@ -838,6 +1051,26 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
                 cacheable_ttl = t
             break
 
+    # Fuzzy TTL classification (difflib): when no exact/prefix pattern
+    # matched, the most-similar known pattern (>= fuzzy_threshold) lends
+    # its TTL/cacheability. Classification ONLY — serving always stays
+    # under the command's own exact hash key.
+    if not is_cacheable and config.get("cache", "fuzzy_ttl_match", default=False):
+        from toolrecall.ttl_policy import fuzzy_ttl_for
+
+        try:
+            threshold: float = float(config.get("cache", "fuzzy_threshold", default=0.85))
+        except (TypeError, ValueError):
+            threshold = 0.85
+        patterns: dict[str, float] = {k: float(v) for k, v in all_ttls.items()}
+        ttl_f: float | None
+        matched: bool
+        ttl_f, matched = fuzzy_ttl_for(cmd, patterns, threshold)
+        if matched and ttl_f:
+            is_cacheable = True
+            if cacheable_ttl is None:
+                cacheable_ttl = int(ttl_f)
+
     if not is_cacheable:
         # SECURITY: Never use shell=True — command injection risk.
         # Use shlex.split to pass args as a list to subprocess.
@@ -845,7 +1078,9 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
         # a shell script file via cached_run() instead.
         try:
             cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
-            result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd_parts, capture_output=True, text=True, timeout=30, cwd=exec_cwd
+            )
         except (ValueError, OSError, subprocess.TimeoutExpired) as e:
             return {"error": f"Cannot parse command: {e}", "exit_code": -1, "cached": False}
         return {
@@ -855,67 +1090,131 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
             "cached": False,
         }
 
-    # Normalize command for cache key when enabled
-    cmd_key = normalize_command(cmd) if config.get("norm", "enabled", default=False) else cmd
-    cmd_hash = _hash(cmd_key)
+    # Normalize command for cache key when enabled. canonical_command()
+    # (flag-cluster sorting, path/quote canonicalization) is a strict
+    # superset of normalize_command() — enabling it makes 'ls -al' and
+    # 'ls -la' share a key. Serving stays exact-key, so no cross-key
+    # poisoning is possible.
+    if config.get("norm", "canonical_commands", default=False):
+        cmd_key = canonical_command(cmd)
+    else:
+        cmd_key = normalize_command(cmd) if config.get("norm", "enabled", default=False) else cmd
+    # cwd-scoped key: include the working directory (canonicalized) so the
+    # same command in different directories gets a distinct entry instead of
+    # sharing a stale/wrong result. When cwd is None the key stays
+    # command-only (legacy) — that is the daemon's behavior for clients
+    # that did not report their cwd.
+    cwd_key = exec_cwd or ""
+    key_material = cmd_key
+    if cwd_key:
+        key_material = f"{cwd_key}\x00{cmd_key}"
+    cmd_hash = _hash(key_material)
     now = time.time()
 
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT output, stderr, exit_code, expires_at FROM terminal_cache WHERE command_hash = ?",
+                "SELECT output, stderr, exit_code, expires_at, hit_streak FROM terminal_cache WHERE command_hash = ?",
                 (cmd_hash,),
             ).fetchone()
-            if row and row["expires_at"] > now:
-                conn.execute(
-                    "UPDATE terminal_cache SET hits = hits + 1 WHERE command_hash = ?", (cmd_hash,)
-                )
-                _record("terminal_cache", hit=True)
-                return {
-                    "output": row["output"],
-                    "stderr": row["stderr"],
-                    "exit_code": row["exit_code"],
-                    "cached": True,
-                }
+            now = time.time()
+            if row is not None:
+                from toolrecall import ttl_policy
+
+                tier = ttl_policy.classify_expiry(row["expires_at"], now, _swr_window())
+                if tier == ttl_policy.SWR_FRESH:
+                    conn.execute(
+                        "UPDATE terminal_cache SET hits = hits + 1, hit_streak = hit_streak + 1 WHERE command_hash = ?",
+                        (cmd_hash,),
+                    )
+                    _record("terminal_cache", hit=True)
+                    return {
+                        "output": row["output"],
+                        "stderr": row["stderr"],
+                        "exit_code": row["exit_code"],
+                        "cached": True,
+                    }
+                if tier == ttl_policy.SWR_SERVE_STALE:
+                    # SWR: serve stale immediately, revalidate in background
+                    _record("terminal_cache", hit=True)
+                    _maybe_revalidate_terminal(cmd_hash, cmd, exec_cwd, cacheable_ttl or 300)
+                    return {
+                        "output": row["output"],
+                        "stderr": row["stderr"],
+                        "exit_code": row["exit_code"],
+                        "cached": True,
+                        "stale": True,
+                    }
+                # tier == "expired" → fall through to normal miss
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal read failed: {e}")
 
     _record("terminal_cache", hit=False)
-    # Use shlex.split for cacheable commands — avoids shell injection
-    # e.g. cached_terminal("git status; rm -rf /") → ["git", "status; rm -rf /"] → fails safely
-    try:
-        cmd_parts = shlex.split(cmd, posix=_POSIX_MODE)
-        result = subprocess.run(cmd_parts, capture_output=True, text=True, timeout=30)
-    except (ValueError, OSError, subprocess.TimeoutExpired):
-        # SECURITY: shlex.split failed — do NOT fall back to shell=True.
-        # Return an error instead of risking command injection.
-        if _LOG_SHELL_FALLBACK:
-            _log_shell_fallback(cmd, "shlex split failed (terminal)")
+
+    # Request coalescing (opt-in): concurrent identical misses share ONE
+    # execution. Waiters get the winner's process result directly — no
+    # cache-row dependency needed since the producer returns it.
+    if config.get("resilience", "coalescing", default=False):
+        from toolrecall.resilience import Coalescer
+
+        global _terminal_coalescer
+        if _terminal_coalescer is None:
+            _terminal_coalescer = Coalescer(
+                window=float(config.get("resilience", "coalescing_window", default=30) or 30)
+            )
+        coalescer = _terminal_coalescer
+
+        def _execute():
+            return _run_terminal_subprocess(cmd, exec_cwd)
+
+        proc = coalescer.run(f"terminal\x00{cmd_hash}", _execute)
+    else:
+        proc = _run_terminal_subprocess(cmd, exec_cwd)
+
+    if proc.get("error"):
         return {
-            "error": "Command contains unparseable shell syntax. Use a script file instead.",
+            "error": proc["error"],
             "exit_code": -1,
             "cached": False,
         }
 
-    expires = now + (cacheable_ttl or 300)
+    base_ttl = cacheable_ttl or 300
+    # Adaptive TTL: stretch by the existing row's hit streak when enabled.
+    # Content changed vs. the old row → streak resets (handled by reading
+    # the old row first; a fresh execution is authoritative).
+    eff_ttl = base_ttl
     try:
         with _db() as conn:
+            old = conn.execute(
+                "SELECT output, hit_streak FROM terminal_cache WHERE command_hash = ?", (cmd_hash,)
+            ).fetchone()
+            eff_ttl = _next_ttl(base_ttl, old if old and old["output"] == proc["output"] else None)
             conn.execute(
                 """
-                INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, stderr, cached_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO terminal_cache (command_hash, command, output, exit_code, stderr, cwd, cached_at, expires_at, hit_streak)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (cmd_hash, cmd, result.stdout, result.returncode, result.stderr, now, expires),
+                (
+                    cmd_hash,
+                    cmd,
+                    proc["output"],
+                    proc["exit_code"],
+                    proc["stderr"],
+                    cwd_key or "",
+                    now,
+                    now + eff_ttl,
+                    0,  # fresh execution resets streak; continuity via SWR revalidate path
+                ),
             )
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal persist failed: {e}")
 
-    _record_tokens_read_from_disk("terminal_cache", _estimate_tokens(result.stdout))
+    _record_tokens_read_from_disk("terminal_cache", _estimate_tokens(proc["output"]))
 
     return {
-        "output": result.stdout,
-        "stderr": result.stderr,
-        "exit_code": result.returncode,
+        "output": proc["output"],
+        "stderr": proc["stderr"],
+        "exit_code": proc["exit_code"],
         "cached": False,
     }
 
@@ -1000,7 +1299,7 @@ def _strip_shell_wrapper(cmd: str) -> str:
     return joined
 
 
-def cached_shell_exec(wrapped_cmd: str) -> dict:
+def cached_shell_exec(wrapped_cmd: str, cwd: str | None = None) -> dict:
     """Execute a wrapped shell command, stripping infrastructure, caching the real command.
 
     Agent-agnostic: strips known wrapper patterns (Hermes, Codex, Claude Code, etc.)
@@ -1008,13 +1307,16 @@ def cached_shell_exec(wrapped_cmd: str) -> dict:
 
     The security gate is still the `allowed_terminal_commands` regex allowlist —
     even after stripping, only read-only commands are cached/executed.
+
+    cwd is threaded through to cached_terminal so the cache key is
+    directory-scoped (see cached_terminal).
     """
     inner = _strip_shell_wrapper(wrapped_cmd)
     if inner and inner != wrapped_cmd:
         # Wrapper detected — route the inner command through cached_terminal
-        return cached_terminal(inner)
+        return cached_terminal(inner, cwd=cwd)
     # No wrapper detected — pass through as-is (existing behavior)
-    return cached_terminal(wrapped_cmd)
+    return cached_terminal(wrapped_cmd, cwd=cwd)
 
 
 # ─── SCRIPT CACHE (SQLite + mtime) ─────────────────────────
@@ -1376,14 +1678,34 @@ def cached_mcp_check(
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT data, expires_at FROM mcp_cache WHERE request_hash = ?", (request_hash,)
+                "SELECT data, expires_at, hit_streak FROM mcp_cache WHERE request_hash = ?",
+                (request_hash,),
             ).fetchone()
-            if row and row["expires_at"] > now:
-                conn.execute(
-                    "UPDATE mcp_cache SET hits = hits + 1 WHERE request_hash = ?", (request_hash,)
-                )
-                _record("mcp_cache", hit=True)
-                return {"cached": True, "data": row["data"], "server": server, "tool": tool}
+            if row is not None:
+                from toolrecall import ttl_policy
+
+                tier = ttl_policy.classify_expiry(row["expires_at"], now, _swr_window())
+                if tier == ttl_policy.SWR_FRESH:
+                    conn.execute(
+                        "UPDATE mcp_cache SET hits = hits + 1, hit_streak = hit_streak + 1 WHERE request_hash = ?",
+                        (request_hash,),
+                    )
+                    _record("mcp_cache", hit=True)
+                    return {"cached": True, "data": row["data"], "server": server, "tool": tool}
+                if tier == ttl_policy.SWR_SERVE_STALE:
+                    # SWR: serve stale; revalidation is the CALLER's job
+                    # (check has no fetch capability — cached_mcp() handles
+                    # it via fetch_fn; daemon-routed callers re-invoke).
+                    _record("mcp_cache", hit=True)
+                    return {
+                        "cached": True,
+                        "data": row["data"],
+                        "server": server,
+                        "tool": tool,
+                        "stale": True,
+                        "key": request_hash,
+                    }
+                # tier == "expired" → fall through to miss
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP cache read failed: {e}")
 
@@ -1399,17 +1721,23 @@ def cached_mcp_store(
 
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
     now = time.time()
-    expires = now + ttl
     args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
+    # Adaptive TTL: stretch by the existing row's hit streak (unchanged data
+    # keeps the streak; a re-store resets it to 0).
+    eff_ttl = ttl
     try:
         with _db() as conn:
+            old = conn.execute(
+                "SELECT data, hit_streak FROM mcp_cache WHERE request_hash = ?", (request_hash,)
+            ).fetchone()
+            eff_ttl = _next_ttl(ttl, old if old and old["data"] == data else None)
             conn.execute(
                 """
-                INSERT OR REPLACE INTO mcp_cache 
-                (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO mcp_cache
+                (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at, hit_streak)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (request_hash, server, tool, args_json, data, now, expires),
+                (request_hash, server, tool, args_json, data, now, now + eff_ttl, 0),
             )
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP cache store failed: {e}")
@@ -1443,6 +1771,19 @@ def cached_mcp(
 
     result = cached_mcp_check(server, tool, arguments, ttl)
     if result.get("cached"):
+        if result.get("stale") and fetch_fn is not None:
+            # SWR: serve the stale data but refresh synchronously via the
+            # caller's fetch_fn (bounded by the fetch itself — a background
+            # thread cannot outlive this one-shot call). On fetch failure the
+            # stale data stands (it is already in the caller's hands).
+            try:
+                data = fetch_fn()
+                cached_mcp_store(
+                    result["key"], server, tool, arguments or {}, _json.dumps(data), ttl
+                )
+            except Exception as e:
+                warnings.warn(f"ToolRecall: SWR revalidate (mcp) failed: {e}")
+            return _json.loads(result["data"])
         return _json.loads(result["data"])
     if fetch_fn is not None:
         data = fetch_fn()
@@ -1457,20 +1798,27 @@ def cached_mcp(
 def get_stats() -> dict:
     """Get cache statistics with honest token accounting.
 
-    ``tokens_saved`` is the real cumulative accumulator — each cache hit
-    records the estimated token count of the content served, so this is
-    the actual number of tokens NOT re-read from disk due to cache hits.
+    ``tokens_served_from_cache`` (née ``tokens_saved``) is the real
+    cumulative accumulator — each cache hit records the estimated token
+    count of the content served, so this is the actual number of tokens
+    served from cache instead of being re-read from disk.
 
     ``cached_content_tokens`` shows the estimated token size of ALL unique
     content in the file_cache (byte sum / 4 chars-per-token heuristic) —
     a measure of cache capacity, NOT savings.
 
-    ``tokens_saved_cumulative`` preserves the raw DB accumulator for
-    debugging. ``tokens_saved_adjusted`` (file_cache only) re-counts
-    based on SQLite re-reads only, excluding the first unavoidable disk
-    read per file — mirrors bench/cache_honest.py logic.
-    ``context_tokens_saved`` tracks only agent-tool-initiated
-    reads (tagged with source="agent_tool").
+    ``tokens_served_from_cache_cumulative`` preserves the raw DB
+    accumulator for debugging. ``tokens_served_from_cache_adjusted``
+    (file_cache only) re-counts based on SQLite re-reads only, excluding
+    the first unavoidable disk read per file — mirrors
+    bench/cache_honest.py logic.
+    ``tokens_not_sent_to_llm`` (née ``context_tokens_saved``) tracks only
+    agent-tool-initiated reads (tagged with source="agent_tool") — tokens
+    that never entered the LLM context.
+    Old key names (``tokens_served_from_disk`` was ``tokens_read_from_disk``;
+    ``tokens_served_from_cache`` was ``tokens_not_read_from_disk``;
+    ``tokens_not_sent_to_llm`` was ``context_tokens_saved``) remain as
+    back-compat aliases.
     """
     stats: dict[str, Any] = {}
     try:
@@ -1480,11 +1828,23 @@ def get_stats() -> dict:
                 stats[row["category"]] = {
                     "hits": row["hits"],
                     "misses": row["misses"],
+                    "tokens_served_from_disk": row["tokens_read_from_disk"],
+                    # Names describe WHAT HAPPENED TO THE TOKENS, not what
+                    # the cache did internally:
+                    #   tokens_served_from_cache — tokens served from the
+                    #     cache instead of from disk (latency/IO metric).
+                    #   tokens_served_from_disk  — tokens actually read
+                    #     from disk (misses).
+                    #   tokens_not_sent_to_llm   — tokens that never entered
+                    #     the LLM context (actual cost/savings metric; only
+                    #     agent-tool reads can drop content from context).
+                    "tokens_served_from_cache": row["tokens_saved"],
+                    "tokens_served_from_cache_cumulative": row["tokens_saved"],
+                    "tokens_not_sent_to_llm": row["context_tokens_saved"],
+                    # Back-compat aliases (v0.10.x → v0.11+).
                     "tokens_read_from_disk": row["tokens_read_from_disk"],
+                    "tokens_not_read_from_disk": row["tokens_saved"],
                     "tokens_not_read_from_disk_cumulative": row["tokens_saved"],
-                    "tokens_not_read_from_disk": row[
-                        "tokens_saved"
-                    ],  # disk I/O avoided (latency metric)
                     "context_tokens_saved": row["context_tokens_saved"],
                     "updated_at": row["updated_at"],
                     "hit_rate": f"{row['hits'] / total * 100:.0f}%" if total > 0 else "0%",
@@ -1497,15 +1857,19 @@ def get_stats() -> dict:
                     stats[row["category"]]["unique_files"] = conn.execute(
                         "SELECT COUNT(*) FROM file_cache"
                     ).fetchone()[0]
-                    # Adjusted tokens_not_read_from_disk: net savings after subtracting unavoidable
+                    # Adjusted tokens_served_from_cache: net savings after subtracting unavoidable
                     # first-read disk I/O. This is the honest signal — how many tokens
-                    # the cache actually saved beyond the one mandatory read per file.
+                    # the cache actually served beyond the one mandatory read per file.
                     # Mirrors bench/cache_honest.py philosophy.
-                    raw_saved = stats[row["category"]].get("tokens_not_read_from_disk", 0)
-                    disk_read = stats[row["category"]].get("tokens_read_from_disk", 0)
-                    stats[row["category"]]["tokens_not_read_from_disk_adjusted"] = max(
+                    raw_saved = stats[row["category"]].get("tokens_served_from_cache", 0)
+                    disk_read = stats[row["category"]].get("tokens_served_from_disk", 0)
+                    stats[row["category"]]["tokens_served_from_cache_adjusted"] = max(
                         0, raw_saved - disk_read
                     )
+                    # Back-compat alias
+                    stats[row["category"]]["tokens_not_read_from_disk_adjusted"] = stats[
+                        row["category"]
+                    ]["tokens_served_from_cache_adjusted"]
             for t in [
                 "file_cache",
                 "skill_cache",
@@ -1533,8 +1897,10 @@ def get_stats() -> dict:
         _hints_on = True  # safe default — don't zero if config broken
     if not _hints_on:
         for _cat in stats:
-            if isinstance(stats[_cat], dict) and "context_tokens_saved" in stats[_cat]:
-                stats[_cat]["context_tokens_saved"] = 0
+            if isinstance(stats[_cat], dict):
+                for _key in ("tokens_not_sent_to_llm", "context_tokens_saved"):
+                    if _key in stats[_cat]:
+                        stats[_cat][_key] = 0
 
     stats["memory_file_entries"] = len(_file_cache)
     stats["memory_used_mb"] = round(_file_cache.memory_bytes() / (1024 * 1024), 2)
@@ -1796,27 +2162,50 @@ def cached_api_check(request_hash: str) -> dict:
         with _db() as conn:
             now = time.time()
             row = conn.execute(
-                "SELECT response_status, response_headers, response_body, expires_at "
+                "SELECT response_status, response_headers, response_body, expires_at, hit_streak "
                 "FROM api_cache WHERE request_hash = ?",
                 (request_hash,),
             ).fetchone()
-            if row and row["expires_at"] > now:
-                conn.execute(
-                    "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
-                    (request_hash,),
-                )
-                _record("api_cache", True)
+            if row is not None:
+                from toolrecall import ttl_policy
+
+                tier = ttl_policy.classify_expiry(row["expires_at"], now, _swr_window())
                 import json as _json
 
                 headers = _json.loads(row["response_headers"]) if row["response_headers"] else {}
                 tokens_saved = _estimate_tokens(row["response_body"])
-                return {
-                    "cached": True,
-                    "status": row["response_status"],
-                    "headers": headers,
-                    "body": row["response_body"],
-                    "tokens_not_read_from_disk": tokens_saved,
-                }
+                if tier == ttl_policy.SWR_FRESH:
+                    conn.execute(
+                        "UPDATE api_cache SET hits = hits + 1, hit_streak = hit_streak + 1 "
+                        "WHERE request_hash = ?",
+                        (request_hash,),
+                    )
+                    _record("api_cache", True)
+                    return {
+                        "cached": True,
+                        "status": row["response_status"],
+                        "headers": headers,
+                        "body": row["response_body"],
+                        "tokens_not_read_from_disk": tokens_saved,
+                    }
+                if tier == ttl_policy.SWR_SERVE_STALE:
+                    # SWR serve-stale ONLY. An LLM completion is never
+                    # auto-replayed in the background (cost + non-idempotent
+                    # billing); the next non-stale pass refreshes the row.
+                    conn.execute(
+                        "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
+                        (request_hash,),
+                    )
+                    _record("api_cache", True)
+                    return {
+                        "cached": True,
+                        "status": row["response_status"],
+                        "headers": headers,
+                        "body": row["response_body"],
+                        "tokens_not_read_from_disk": tokens_saved,
+                        "stale": True,
+                    }
+                # tier == "expired" → fall through to miss
     except Exception as e:
         msg = str(e)
         if "malformed" in msg:
@@ -1861,16 +2250,22 @@ def cached_api_store(
 
     ttl = ttl if ttl is not None else API_CACHE_TTL
     now = time.time()
-    expires = now + ttl
 
     try:
         with _db() as conn:
+            # Adaptive TTL: stretch by the existing row's hit streak when the
+            # fresh response is unchanged from the cached one.
+            old = conn.execute(
+                "SELECT response_body, hit_streak FROM api_cache WHERE request_hash = ?",
+                (request_hash,),
+            ).fetchone()
+            eff_ttl = _next_ttl(ttl, old if old and old["response_body"] == response_body else None)
             conn.execute(
                 """INSERT OR REPLACE INTO api_cache
                    (request_hash, method, host, path, request_body_hash,
                     request_body_preview, response_status, response_headers,
-                    response_body, cached_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    response_body, cached_at, expires_at, hit_streak)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     request_hash,
                     method,
@@ -1882,7 +2277,8 @@ def cached_api_store(
                     _json.dumps(response_headers),
                     response_body,
                     now,
-                    expires,
+                    now + eff_ttl,
+                    0,
                 ),
             )
         _record_tokens_read_from_disk("api_cache", _estimate_tokens(response_body))

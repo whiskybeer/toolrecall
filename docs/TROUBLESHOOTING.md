@@ -201,3 +201,71 @@ hits. It looks like the MCP layer is broken.
 **Rule of thumb:** with file reads happening, *nonzero `file_cache`* is the
 proof caching works. `mcp_cache=0` alongside `shim=active` means the bridge is
 intentionally idle, not broken. See `docs/HERMES_TRANSPARENT_CACHE.md`.
+
+## 17. Knowledge DB (`knowledge.db`) is huge / full of junk sources
+
+**Symptom:** `~/.toolrecall/knowledge.db` is multi-GB, or `docs_search`
+returns pages from irrelevant sources (dotfiles, unrelated projects) that
+came from a home-directory scan.
+
+**Cause:** before the curated default existed, an unconfigured install
+indexed the **entire home directory** (`scan_dirs = ["~"]`). Years of
+re-indexing also bloats the FTS shadow tables (see next section).
+
+**Check what's in it:**
+```bash
+sqlite3 ~/.toolrecall/knowledge.db \
+  "SELECT source, COUNT(*) FROM pages GROUP BY source ORDER BY 2 DESC LIMIT 10;"
+```
+
+**Fix — delete and rebuild from the curated default sources**
+(`~/.hermes/memories` + `~/.hermes/skills`; your explicit `scan_dirs`
+config, if any, also applies):
+
+```bash
+# 1. Stop the daemon so it releases the DB file
+toolrecall stop
+
+# 2. Remove the DB (WAL/SHM sidecars included, if present)
+rm ~/.toolrecall/knowledge.db ~/.toolrecall/knowledge.db-wal \
+   ~/.toolrecall/knowledge.db-shm
+
+# 3. Rebuild
+toolrecall index
+
+# 4. Restart the daemon
+toolrecall restart   # or: toolrecall daemon --foreground
+```
+
+**Verify:** the DB should now be small (tens of KB to a few MB) and
+`docs_search('<term>')` should return only memory/skills pages:
+
+```bash
+sqlite3 ~/.toolrecall/knowledge.db \
+  "SELECT source, COUNT(*) FROM pages GROUP BY source;"
+```
+
+**Prevention:** don't set `scan_dirs` to `$HOME` (or leave an old config
+that does). The v0.8.20 default is the curated memory/skills pair; see
+`docs/KNOWLEDGE_DB.md#index-freshness`.
+
+## 18. Knowledge DB searches slowly / file grows over time (FTS bloat)
+
+**Symptom:** `knowledge.db` is far larger than its page content — e.g.
+gigabytes of `pages_fts_data` for a few MB of text.
+
+**Cause:** the FTS table is external-content (`content='pages'`). Every
+re-index does `INSERT OR REPLACE`, and FTS5 keeps the deleted term data in
+its shadow tables until an explicit rebuild. Long-lived installs accumulate
+orphaned index generations (observed: 3.24 GB of `pages_fts_data` for 7 MB
+of content).
+
+**Fix:**
+```bash
+toolrecall index-compact    # FTS rebuild + VACUUM; lossless
+```
+
+Since v0.8.20 this also runs automatically after a background re-index when
+the FTS shadow exceeds 50 MB **and** 5× the indexed content size. The one-off
+rebuild of a multi-GB DB can take several minutes; queries briefly block
+during the rebuild phase.

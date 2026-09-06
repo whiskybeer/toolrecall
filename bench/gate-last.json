@@ -1,0 +1,17 @@
+{
+  "cold_reads": 3,
+  "cold_misses": 3,
+  "warm_reads": 30,
+  "warm_hits": 30,
+  "invalidation_miss_after_write": true,
+  "invalidation_hit_after_miss": true,
+  "warm_hit_rate": 1.0,
+  "cold_miss_rate": 1.0,
+  "invalidation_ok": true,
+  "fixture_manifest": {
+    "large-file-1.txt": "909e2a2da9eb6fae",
+    "large-file-2.txt": "8f12546c74d01228",
+    "large-file-3.txt": "940be8f3606a8b9d"
+  },
+  "turns": 10
+}

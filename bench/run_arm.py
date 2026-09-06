@@ -30,7 +30,7 @@ from agent import make_agent_turn, AgentResult, _call_llm
 from workloads import load_workload
 
 # Tunable constants
-CONTEXT_LIMIT = 1_048_576  # exhaustion threshold
+CONTEXT_LIMIT = int(os.environ.get("BENCH_CONTEXT_LIMIT", "1048576"))  # exhaustion threshold
 PROBE_INTERVAL = 25  # plant a probe every N turns
 
 

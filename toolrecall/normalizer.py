@@ -15,6 +15,7 @@ Usage:
 """
 
 import json
+import os
 from typing import Any
 
 
@@ -160,3 +161,108 @@ def normalize_command(cmd: str) -> str:
     if parts:
         parts[0] = parts[0].lower()
     return " ".join(parts)
+
+
+def canonical_command(cmd: str) -> str:
+    """Semantic normalization for cache keys: flag-cluster sorting, path and
+    quote canonicalization on top of :func:`normalize_command`.
+
+    Semantically identical commands produce the SAME key, so ``ls -al`` and
+    ``ls -la`` share one cache entry. Serving stays exact-key — identical
+    keys are the only way entries are shared (no cross-key poisoning).
+
+    Conservative by design:
+    - Only contiguous flag clusters (tokens starting with ``-``) sort; a
+      cluster's flags are assumed order-independent. Anything else keeps
+      positional order (``head -n 5`` ≠ ``head -5``).
+    - ``~`` expands, duplicate slashes and trailing slashes on path-like
+      tokens collapse.
+    - Shell metacharacters abort canonicalization (compound commands are
+      never cacheable anyway) — returns the base normalization.
+    - shlex failures fall back to the base normalization, never raise.
+    """
+    base = normalize_command(cmd)
+    if not base:
+        return base
+
+    # Compound / redirected commands: never cacheable, don't pretend.
+    if any(ch in base for ch in (";", "&", "|", "`", "$(", ">", "<", "\n")):
+        return base
+
+    try:
+        import shlex
+
+        parts = shlex.split(base)
+    except ValueError:
+        return base
+    if not parts:
+        return base
+
+    home = os.path.expanduser("~")
+
+    def _canon_token(tok: str, is_first: bool) -> str:
+        if is_first:
+            return tok.lower()
+        if tok.startswith("-"):
+            return tok
+        # Path-like canonicalization (skip bare "-" style tokens)
+        if "/" in tok:
+            tok = tok.replace("~", home) if tok.startswith("~") else tok
+            while "//" in tok:
+                tok = tok.replace("//", "/")
+            if len(tok) > 1:
+                tok = tok.rstrip("/")
+            return tok or "/"
+        return tok
+
+    parts = [_canon_token(p, i == 0) for i, p in enumerate(parts)]
+
+    # Sort each contiguous run of flag tokens (order-independent within a
+    # run). Combined short flags split into chars first: '-al' ≡ '-la' ≡
+    # '-a -l'. Long flags ('--oneline') and valued flags ('-n', '-5') stay
+    # whole — only pure short-flag bundles decompose.
+    def _flag_sort_key(tok: str):
+        if (
+            tok.startswith("--")
+            or not tok.startswith("-")
+            or len(tok) <= 2
+            or not tok[1:].isalnum()
+        ):
+            return (1, tok)  # long flags / valued: sort as whole tokens
+        return (0, "".join(sorted(tok[1:])))  # '-al' → 'al' sorted
+
+    def _flag_norm(tok: str) -> str:
+        if tok.startswith("--") or len(tok) <= 2 or not tok[1:].isalnum():
+            return tok
+        return "-" + "".join(sorted(tok[1:]))
+
+    out: list[str] = []
+    cluster: list[str] = []
+    for p in parts:
+        if p.startswith("-") and p != "-":
+            cluster.append(p)
+        else:
+            if cluster:
+                out.extend(sorted((_flag_norm(c) for c in cluster)))
+                cluster = []
+            out.append(p)
+    if cluster:
+        merged: list[str] = []
+        for c in sorted(_flag_norm(c) for c in cluster):
+            # Merge pure short flags into one bundle: '-a','-l' → '-al'
+            if (
+                len(c) == 2
+                and c.startswith("-")
+                and c[1].isalnum()
+                and merged
+                and len(merged[-1]) >= 2
+                and merged[-1].startswith("-")
+                and not merged[-1].startswith("--")
+                and merged[-1][1:].isalnum()
+            ):
+                merged[-1] = "-" + "".join(sorted(merged[-1][1:] + c[1]))
+            else:
+                merged.append(c)
+        out.extend(merged)
+
+    return " ".join(out)

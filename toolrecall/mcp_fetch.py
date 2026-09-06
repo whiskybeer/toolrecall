@@ -92,17 +92,13 @@ TOOLS = [
 
 
 def _setup():
-    """Init logging once."""
+    """Init logging once — central rotating rail instead of a raw FileHandler."""
     global _LOG
     if _LOG is not None:
         return
-    _LOG = logging.getLogger("toolrecall.fetch")
-    _LOG.setLevel(logging.DEBUG)
-    _fh = logging.FileHandler(
-        os.path.expanduser(os.environ.get("TOOLRECALL_FETCH_LOG", "~/.toolrecall/fetch_api.log"))
-    )
-    _fh.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    _LOG.addHandler(_fh)
+    from toolrecall.logging_setup import get_logger
+
+    _LOG = get_logger("fetch")
 
 
 def _validate_url(url: str) -> str | None:

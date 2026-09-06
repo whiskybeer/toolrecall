@@ -10,14 +10,15 @@ Pick your agent and integration layer. The table tells you what value to expect 
 
 | Agent | MCP Bridge | Forward Proxy | Shim | Value | Notes |
 |-------|-----------|---------------|------|-------|-------|
-| **Hermes** | ✅ | ✅ | ✅ | **High** | Optimized for Hermes — stateless, small context = biggest win. Context Tracker auto-hint after every tool call. |
+| **Hermes** | ✅ | ✅ | ✅ | **High** | Optimized for Hermes — stateless, small context = biggest win. Context Tracker emits drop-clean hints once the agent checkpoints (Hermes does so on turn 1). |
 | **OpenCode** | ✅ | ✅ | ❌ N/A (Node.js) | **High** | MCP multiplex is the killer feature. |
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
-| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ✅ | ❌ | **Selective** | Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Distinct from provider prefix caching, which complements TR on stateless agents. |
+| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ✅ | ❌ | **Selective** | Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Context hints now silent by default: emitted only after a client calls `context_set_checkpoint`, which Claude Code never does → zero hint overhead, no config needed. Distinct from provider prefix caching, which complements TR on stateless agents. |
 | **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
 | **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
+| **Warp** | ❌ N/A | ✅ via [warp adapter](#warp-⚠️-selective--strong-for-platform-workloads) | ❌ N/A (Rust) | **Selective** | Strong for platform workloads (agent fleets, Factories replay, cross-model evals); skip the file cache — Warp manages its own context. Requires a public HTTPS endpoint (Warp's backend calls your endpoint; localhost is rejected). |
 
 ---
 
@@ -134,7 +135,7 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 | **Forward Proxy** | ✅ Verified — saves real cost | Orthogonal to tool loop |
 | **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
 | **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | See §3 of the [full A/B test report](https://gist.github.com/whiskybeer/...) |
-| **Context tracker** | ❌ Inert — append-only harness can't drop context | Same report |
+| **Context tracker** | ❌ No benefit — but now silent by default (see below) | Same report; opt-in mechanism in `c66b16c` |
 
 ### The Numbers
 
@@ -164,6 +165,26 @@ This means:
 - **The 7.4× endurance figure does NOT transfer.** Context grows unboundedly — same as baseline.
 - Adding ToolRecall's MCP file-caching tools means **your sessions cost 2.4× more and run 3.1× slower.**
 
+### Context hints are now silent by default
+
+Since `c66b16c` (per-client context-hint policy + checkpoint opt-in), the
+bridge only appends 🧹 drop-clean hints **after the client has called
+`context_set_checkpoint` once**. Claude Code never calls the checkpoint
+tools, so:
+
+- **No hint text is ever appended** to Claude Code tool results — the old
+  default emitted ~60 B + a stale-file block after every non-context call,
+  which append-only transcripts re-billed at full token cost. That overhead
+  is gone with zero configuration.
+- The per-client table (`[mcp.clients."claude-code"] emit_context_hints = false`)
+  makes the silence explicit in mixed-agent daemons (e.g. Warp hosting
+  Claude Code alongside Hermes), but it is **not required** — the default
+  behavior is already silent for any client that never checkpoints.
+
+The tracker still provides **no benefit** to Claude Code: an append-only
+harness cannot act on drop-clean instructions, so hints would be inert even
+if emitted. The gain here is removal of overhead, not a new capability.
+
 ### What to Use Instead
 
 - **Forward proxy** — cache API responses via `:8569`. This is orthogonal to the tool loop and saves real money on repeat API calls in dev loops.
@@ -185,7 +206,7 @@ This means:
 
 Then set `OPENAI_BASE_URL=http://localhost:8569/v1` for API response caching.
 
-> **Bottom line:** Add TR **only** for the forward proxy and MCP multiplex. File caching through MCP has been empirically tested and makes Claude Code sessions **2.4× more expensive**. Do not route file tools through ToolRecall with Claude Code.
+> **Bottom line:** Add TR **only** for the forward proxy and MCP multiplex. File caching through MCP has been empirically tested and makes Claude Code sessions **2.4× more expensive**. Do not route file tools through ToolRecall with Claude Code. Context hints need no action: they're silent by default (checkpoint opt-in), so a stock TR install no longer appends any hint text to Claude Code sessions.
 
 ---
 
@@ -204,6 +225,45 @@ Codex CLI is Node.js (shim N/A). The MCP bridge is useful for multiplexing stati
 Cursor has its own tool-execution plumbing. The shim is safe (Python process) but largely redundant — Cursor manages its own state aggressively.
 
 **Recommended:** Skip ToolRecall for Cursor sessions. The forward proxy is the only feature that adds value (API cost savings).
+
+---
+
+## Warp — ⚠️ Selective — strong for platform workloads
+
+[Warp](https://www.warp.dev/) routes agent inference through its own backend, so ToolRecall integrates via the **custom inference endpoint** surface — not env vars, not the shim (Warp is Rust). The `warp` adapter exposes a small public HTTPS edge that fronts the ToolRecall forward proxy.
+
+**Where it wins (platform layer):**
+
+| Warp capability | Why ToolRecall helps |
+|---|---|
+| Agent fleets / orchestration | Identical calls across fleet runs are served from cache — $0 repeats, additive to provider prefix caching |
+| Factories (self-improvement loops) | Recorded-and-replayed tool/API results make runs deterministic instead of re-crawling a changed web |
+| Cross-model evals & routing | Every model arm sees identical tool results — score models, not tool noise. The dedup hook is model-agnostic, so savings survive routing |
+| **File cache** | ❌ Skip it — Warp manages its own context (same category as Claude Code/Cursor) |
+
+**Honest limits:** the response cache does not survive model switches (a different model is a different request by definition). Custom inference endpoints don't apply to Warp Cloud Agents. Requests carry your provider API key in-flight through Warp's backend and your edge — the adapter suppresses all access logging.
+
+**Setup:**
+
+```bash
+# 1. Start the edge (proxies to the TR forward proxy on 127.0.0.1:8569)
+tr-warp-edge --provider api.openai.com --port 8571 --auth-token "$(openssl rand -hex 32)"
+
+# 2. Publish the edge at a public HTTPS URL — Warp's backend must be able to
+#    reach it; localhost/private addresses are rejected by Warp.
+cloudflared tunnel --url http://127.0.0.1:8571
+
+# 3. Register the public URL in Warp: Settings > inference endpoint,
+#    model identifier(s), and your provider API key (stored on-device).
+```
+
+> **⚠ Always set `--auth-token` (or `TOOLRECALL_EDGE_TOKEN`) when the edge is
+> reachable beyond loopback.** A quick-tunnel URL (`*.trycloudflare.com`) is
+> public-by-obscurity, not private: anyone who learns the URL can POST through
+> the edge. The token makes the edge reject unauthenticated requests with 401
+> before any relay. On loopback only, auth is optional.
+
+Verified locally: identical request twice through edge → proxy → daemon = one upstream call, second response served with `X-ToolRecall-Cache: HIT` (see `tests/test_warp_fullchain.py`).
 
 ---
 

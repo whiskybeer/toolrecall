@@ -1,0 +1,11 @@
+{
+  "warm_hit_rate": 1.0,
+  "cold_miss_rate": 1.0,
+  "invalidation_ok": true,
+  "turns": 5,
+  "fixture_manifest": {
+    "large-file-1.txt": "909e2a2da9eb6fae",
+    "large-file-2.txt": "8f12546c74d01228",
+    "large-file-3.txt": "940be8f3606a8b9d"
+  }
+}

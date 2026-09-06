@@ -68,6 +68,7 @@ class TestSymlinkPathCheck(unittest.TestCase):
             mcp_dangerous_tool_keywords = []
             mcp_cognitive_check_enabled = True
             mcp_ast_check_enabled = True
+            mcp_client_policy = lambda self: {}  # noqa: E731 — per-agent table (A4): empty = global defaults
 
         from toolrecall.daemon import SecurityGate
 

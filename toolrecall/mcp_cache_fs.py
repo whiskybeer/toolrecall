@@ -43,6 +43,13 @@ def _ensure_daemon() -> bool:
     from toolrecall.transport import TransportClient, DEFAULT_PATH
     import time
 
+    # Test/ci gate: hermetic runs set TOOLRECALL_NO_AUTOSTART=1 so a ping
+    # miss can never spawn a daemon subprocess from inside pytest (the
+    # spawned process would inherit the test env and bind the test socket —
+    # the escaped-daemon failure mode pinned in test_daemon_env_hygiene.py).
+    if os.environ.get("TOOLRECALL_NO_AUTOSTART") == "1":
+        return False
+
     try:
         tc = TransportClient(DEFAULT_PATH)
         resp = tc.send({"cmd": "ping"})
@@ -66,11 +73,21 @@ def _ensure_daemon() -> bool:
         toolrecall_bin = shutil.which("toolrecall")
         if not toolrecall_bin:
             return False
+        # Strip path-overriding env vars (TOOLRECALL_CACHE_DB etc.) so the
+        # spawned daemon resolves DB paths from config, not from a possibly
+        # poisoned caller environment (same rationale as cli._ensure_daemon).
+        try:
+            from toolrecall.cli import _clean_daemon_env
+
+            spawn_env = _clean_daemon_env()
+        except Exception:
+            spawn_env = None
         subprocess.Popen(
             [toolrecall_bin, "daemon", "--foreground"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=spawn_env,
         )
         for _ in range(10):
             time.sleep(0.5)
@@ -146,6 +163,7 @@ def _cached_terminal(command: str, timeout: int = 30) -> str:
         {
             "cmd": "cached_terminal",
             "command": command,
+            "cwd": os.getcwd(),
             "timeout": timeout,
         }
     )

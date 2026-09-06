@@ -370,6 +370,9 @@ class AgentResult:
         ctx_dropped_total: int = 0,
         context_tracker_ok: bool = True,
         response_text: str = "",
+        compression_count: int = 0,
+        compression_prompt_tokens: int = 0,
+        compression_completion_tokens: int = 0,
     ):
         self.usage = usage or {}
         self.conversation = conversation or []
@@ -382,6 +385,9 @@ class AgentResult:
         self._ctx_dropped_total = ctx_dropped_total
         self.context_tracker_ok = context_tracker_ok
         self.response_text = response_text
+        self.compression_count = compression_count
+        self.compression_prompt_tokens = compression_prompt_tokens
+        self.compression_completion_tokens = compression_completion_tokens
 
     def ctx_dropped_total(self) -> int:
         return self._ctx_dropped_total

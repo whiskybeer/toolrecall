@@ -6,7 +6,7 @@ You run agents. Every session spawns its own MCP servers, every test run hits li
 
 ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
 
-**One warm daemon instead of five cold Node processes.** Under 200 KB install. Python 3.11+ stdlib only.
+**−36% on a 450-turn session — verified with separate billed API keys, not estimates.** Additive to any model's prefix caching. Under 200 KB install. Python 3.11+ stdlib only.
 
 > **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
@@ -30,12 +30,37 @@ Two capabilities are the reason to run it. Both are measured, both target the sa
 
 ---
 
-## Quickstart — MCP Bridge (30 seconds)
+## Quickstart — Forward Proxy (10 seconds, any agent)
 
-Connect any MCP agent by registering one server:
+Set one environment variable and all your agent's API calls route through the proxy. Cache hit = zero tokens billed.
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8569/v1
+# or for Anthropic-compatible agents:
+export ANTHROPIC_BASE_URL=http://localhost:8569
+```
+
+That's it. Every identical API call across sessions costs $0. Works with any OpenAI/Anthropic-compatible agent — no per-agent config.
+
+**What that saves (billed API keys, not estimates):**
+
+| Workload | Without TR | With TR | Savings |
+|----------|-----------|---------|---------|
+| Bugfix (450 turns, both completed) | $8.83 | $5.62 | **−36%** |
+| Review (200 turns, naive died at 112) | $2.53 | $1.26 | **−50%** |
+| Analysis (400 turns, naive died at 145) | — | Completed | **full run** |
+
+Separate OpenRouter keys per arm. Full methodology: [Benchmark](docs/BENCHMARK.md). No token estimates — only billed dollars from the provider dashboard.
+
+See [Forward Proxy](docs/FORWARD_PROXY.md) for configuration and provider routing.
+
+---
+
+### Option B — MCP Bridge (for agents that support MCP)
+
+If your agent uses MCP, register one server:
 
 ```json
-// ~/.claude/settings.json  or  ~/.cursor/mcp.json  or  ~/.config/cline/mcp_settings.json
 {
   "mcpServers": {
     "toolrecall": {
@@ -52,20 +77,9 @@ Connect any MCP agent by registering one server:
 servers = ["time", "github", "fetch"]
 ```
 
-That's it. Your agent now has access to all multiplexed MCP servers, caching, and security — with zero per-agent configuration.
+Now every MCP-capable agent shares one warm pool of servers. No more N×M cold Node processes.
 
-```
-Before: 5 agents x 3 MCP servers = 15 cold Node processes, ~25 MB RAM per server
-After:  5 agents x 1 toolrecall mcp = 3 warm subprocesses, shared across all agents
-```
-
-Features:
-- **Lazy loading**: servers boot on first call, not at daemon start
-- **Idle timeout**: inactive subprocesses killed after 15 min (configurable)
-- **Failure isolation**: one server crash doesn't affect others (auto-reconnect)
-- **Auto-resolution**: server names resolve from built-in registry
-
-See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
+Features: lazy loading, idle timeout, failure isolation, auto-resolution. See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md).
 
 ---
 
@@ -73,14 +87,14 @@ See [MCP Multiplexer](docs/MCP_MULTIPLEXER.md) for full configuration.
 
 | Feature | What it solves |
 |---------|---------------|
-| **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session |
-| **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. Below the context wall, prefix caching competes; above it TR wins on cost by not exhausting. |
+| **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
+| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions. |
+| **Input Dedup Hook** | LiteLLM hook removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
+| **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session |
 | **File / Terminal Cache** | Reduce redundant reads within a turn; bounded context growth for stateless agents without built-in context management |
-| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context |
 | **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
-| **LiteLLM Gateway Hook** | Dedup repeated content in proxy requests — **32.3% fewer prompt tokens / 30% lower billed cost, measured on 10 real SWE-bench Lite instances (billing-verified, OpenRouter)** — [benchmark & methodology](bench/litellm_dedup/README.md) |
 
 Full detail in [Architecture](docs/ARCHITECTURE.md).
 
@@ -215,11 +229,12 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 
 | You want this... | Use this... | Works for |
 |-----------------|-------------|-----------|
-| Warm MCP servers across sessions | MCP Multiplexer | Any agent |
 | $0 dev loops — repeated API calls cost nothing | Forward Proxy | Any agent |
+| Lower per-turn cost on long agent sessions | Context Tracker | Stateless agents (Hermes, Cline, ADK) |
+| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents — bounded context growth. **Not** for agents with built-in context management (Claude Code, Cursor, Codex CLI) |
 | Deterministic CI tests for agent behavior | Replay Mode | Any agent |
 | Guardrails between agents and your machine | Security Gate | Any agent |
-| Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents (Hermes, Cline, ADK) — bounded context growth. **Not** for agents with built-in context management (Claude Code, Cursor, Codex CLI) |
+| Warm MCP servers across sessions | MCP Multiplexer | Any agent |
 | All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
 
 ---

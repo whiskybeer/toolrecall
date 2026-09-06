@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.8.20] — 2026-09-06
+
+### Added
+- **Central logging rail (`toolrecall logging_setup`, default ON)** — daily-rotating file log (`~/.toolrecall/logs/toolrecall.log`, 7-day retention, `TOOLRECALL_LOG_MAX_DAYS`/`[log] max_days` to change; level `TOOLRECALL_LOG_LEVEL`/`[log] level`, default INFO). Payload-free by design: only paths, hashes, sizes, durations, outcomes — sensitive keys/payloads are redacted structurally (`redact()`) and secret-shaped free text is scrubbed by a last-line filter. Stdlib only (`dependencies=[]` preserved), fail-soft (unwritable path → no logging), hermetic-test safe, `propagate=False` so the host agent's logging is untouched. Wired into: daemon startup banner + per-request trace (`req=N cmd=… outcome=… dur=…ms`, previously invisible; unexpected handler crashes now log tracebacks instead of being silently swallowed), forward proxy (MISS→forward timing: status/dur/bytes), and the `mcp_github`/`mcp_fetch` MCP servers (replacing their non-rotating raw FileHandlers). New CLI verb `toolrecall logs [--tail N] [--level X]` to inspect the log. Tests: `tests/test_logging_setup.py` (10).
+
+### Changed
+- **`[sources].scan_dirs` default no longer `$HOME`** — the unconfigured default indexed the entire home directory (multi-GB junk DB; the 3.4 GB `knowledge.db` bloat incident). Default is now the curated, bounded pair `~/.hermes/memories` + `~/.hermes/skills`. Explicit config always wins; `scan_dirs = []` disables home-scan indexing and auto-refresh entirely. Auto-refresh now also runs against the safe default (previously gated off for unconfigured installs).
+
+### Added
+- **Self-healing knowledge index** — the FTS knowledge DB stamps `last_index` on every indexing run; `docs_search()` against an index older than `[docs].index_ttl` (default 86400 s, env `TOOLRECALL_DOCS_INDEX_TTL`, `0` = off) triggers a background re-index that never blocks the query. Single-flight lock prevents parallel refreshes. Auto-refresh is disabled when sources are unconfigured (default `scan_dirs = [$HOME]`) to avoid background home-directory walks. Documented in `KNOWLEDGE_DB.md` / `CONFIG_REFERENCE`; tests in `tests/test_docs_refresh.py` (15).
+- **Warp adapter + edge relay** — custom-inference-endpoint adapter for the Warp agent harness: full-chain tests, live public-URL rig (cloudflared quick tunnel + mock upstream), whitespace-tolerant edge auth, true SSE streaming relay (no full-body buffering), SSE keepalive during upstream silence, and `TOOLRECALL_EDGE_CANONICALIZE=auto` for edge-side warp profile application. Documented in `toolrecall/adapters/README.md`; ingress auth + trust model in `SECURITY.md` §8.
+- **Stream cache for the forward proxy** — canonical-profile requests tee raw SSE into the `api_cache` and replay HITs as synthesized SSE: byte-exact passthrough framing (`Content-Length`, `[DONE]` terminal), tool-call delta reassembly, provider-shape-mirroring replay (content:null on tool-call deltas, created/model fields), truncated-stream rejection (no `[DONE]` → never cached or replayed). Canonicalization (CR normalization, blank-line collapse, whitespace-tolerant keys) applies to both streaming and non-streaming bodies, stabilizing keys across non-deterministic agent harnesses.
+- **Proxy resilience** — retry with jittered backoff + circuit breaker on `_forward()`; request coalescing on the terminal miss path; stale-while-revalidate + adaptive TTL across terminal/MCP/API layers; per-path file TTLs (folder/filetype globs, trust windows, never-cache). Config keys and behavior documented in `docs/RESILIENCE.md` / `CONFIG_REFERENCE`.
+- **Canonical command keys + fuzzy TTL classification** in the normalizer — equivalent commands collapse to one cache key regardless of flag order/spacing.
+- **A7 cache regression gate** — cold/warm/invalidation bench harness on an isolated daemon (`make bench-gate`, CI workflow `ci(bench)`); warp bench rig v2 (shared-context, retry-probe, 10 instances, billing-verified costs) with energy + CO2e metrics and a claims-verdict table mapping every pitch claim to a measured row.
+- **Opt-out auto-updater** — default ON, zero dependencies, the daemon never checks; `pipx`-aware upgrade path (`pipx upgrade toolrecall` instead of naked pip). Windows handover fixes for 0.8.19: setup crash, daemon lock, restart crash, cp1252.
+- **Stats clarity** — token metrics renamed for attribution: `served_from_disk`/`served_from_cache` vs `not_sent_to_llm`; `tr-warp-stats` reports the identical-request fraction (and billed-token share) of any proxy usage log.
+
+### Fixed
+- **cwd-scoped terminal cache keys** — terminal output cache keys now include the working directory (constitution gap A1), preventing wrong-cwd cache hits.
+- **Per-agent security policies** — `mcp_client_policy` gain for the A4 SecurityGate; constitution gaps A2/A3/A5/A8 closed.
+- **Wildcard TCP host normalization** at the parse boundary (CodeQL bind-socket finding).
+- **Daemon lifecycle** — instance-lock file unlinked on graceful shutdown; stale daemon locks swept; virtual-FS paths excluded from the shim; env-leak auto-starts stopped with dead-env-path override warnings.
+- **DB migrations idempotent** via `PRAGMA table_info` — no new silent swallows; 3 pre-existing `except-pass` handlers narrowed.
+- **Knowledge-index durability** — FTS self-heal no longer silently swallows rebuild failures; index compaction reclaims FTS bloat from re-index churn; curated default `scan_dirs` never index `$HOME`.
+- **Warp canon** — CR normalization + blank-line collapse for edge canonicalization; edge upstream timeout raised 120s → 300s; HIT replay framing fixed (byte-exact `Content-Length`, `X-ToolRecall-No-Cache` escape hatch).
+
 ## [0.8.19] — 2026-08-24
 
 ### Added
@@ -18,11 +45,6 @@
 ### Changed
 - **CodeReview/security** — security scan (shell=True/eval/exec, `/etc`/`/dev` allowlist), doc/architecture audit, pre-commit hygiene: all clean.
 - **MCP multiplexer docs** — removed orphaned `end` in mermaid diagram, defined `dedup` correctly; ARCHITECTURE table row fixed; LiteLLM standalone hook added to adapter docs.
-
-## [Unreleased] — shim Option B
-
-### Fixed
-- **Shim no longer intercepts `subprocess.run` / `subprocess.Popen` (Option B).** The `.pth` shim previously routed terminal commands through the daemon, which stripped the agent's `cd`/`source`/`export`/`printf` wrapper lines and executed the inner command in the daemon's own working directory and environment — not the calling agent's. Every plain command (`pwd`, `git status`, `ls`, `cat`) produced output from the wrong directory, which then got cached and replayed, surfacing as garbled shell output and offline-looking sessions. The shim now patches **only** `builtins.open` for read-only `r`/`rt` access (safe: keyed on path + mtime + size). Terminal command output runs natively in the agent's process with correct cwd/env/shell state and is never transparently cached at the shim layer. `cached_shell_exec` / `cached_terminal` remain available as explicit daemon-side calls (gated by `SecurityGate.check_terminal`). Regression tests: `tests/test_shim.py::TestOptionBNoSubprocess`.
 
 ## [0.8.18] — 2026-08-13
 

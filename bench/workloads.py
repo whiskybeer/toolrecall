@@ -556,11 +556,55 @@ def workload_review(seed: int = 42) -> Workload:
 
 # ── Registry ────────────────────────────────────────────────
 
+def workload_large_review(seed: int = 42) -> Workload:
+    """Large-file read-only review workload — 3 × ~5.5K-token fixture files,
+    re-read (full content embedded) every turn.
+
+    Faithful reproduction of the July-2026 nocache-gemma-large run: the files
+    are 800 lines of random programming keywords and the agent is asked each
+    turn to review/summarize them. Turn-1 prompt lands at ~18.5K tokens and
+    naive grows ~18.5K/turn without dropping content.
+    """
+    fixture_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "large-review")
+    files = [
+        os.path.join(fixture_dir, "large-file-1.txt"),
+        os.path.join(fixture_dir, "large-file-2.txt"),
+        os.path.join(fixture_dir, "large-file-3.txt"),
+    ]
+
+    def step(msg, reads, writes, clean=None):
+        return WorkloadStep(
+            message={"role": "user", "content": msg},
+            reads=reads,
+            writes=writes,
+            clean_files=clean or [],
+        )
+
+    turns = 50
+    steps = []
+    for turn in range(1, turns + 1):
+        steps.append(
+            step(
+                (
+                    f"Iteration {turn} Review\n\n"
+                    "Review the three documentation files (large-file-1.txt, "
+                    "large-file-2.txt, large-file-3.txt) and produce a summary "
+                    "of their contents, noting any API patterns or architecture "
+                    "decisions you can identify."
+                ),
+                reads=list(files),
+                writes=[],
+            )
+        )
+    return Workload(workload_id="large-review", steps=steps)
+
+
 WORKLOADS = {
     "bugfix": workload_bugfix,
     "feature": workload_feature,
     "analysis": workload_analysis,
     "review": workload_review,
+    "large-review": workload_large_review,
 }
 
 # ── Runner convenience ─────────────────────────────────────

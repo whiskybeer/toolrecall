@@ -1,0 +1,113 @@
+{
+  "meta": {
+    "date": "2026-09-02T07:15:15.176224+00:00",
+    "edge": "http://127.0.0.1:8573/v1/chat/completions",
+    "dataset": "princeton-nlp/swe-bench-lite (test split)",
+    "instances": [
+      "astropy__astropy-12907"
+    ],
+    "passes_per_instance": 3,
+    "smoke": true,
+    "price_per_m_input_usd": 0.15,
+    "note_auth": "edge on loopback, auth disabled; arms isolated by per-arm keys",
+    "note_cost": "total_cost is OpenRouter-billed per request; est_cost is tokens*price fallback. cached_tokens = provider prefix cache (separate)."
+  },
+  "summary": [
+    {
+      "arm": "A_cache_on",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "tokens_p1": 0,
+      "tokens_p2": 0,
+      "tokens_p3": 0,
+      "tokens_total": 0,
+      "completion_tokens_total": 0,
+      "completion_tokens_per_slot_stable": null,
+      "hit_ratio_p2": 0.0,
+      "hit_ratio_p3": 0.0,
+      "latency_ms_mean_p1": null,
+      "latency_ms_mean_p2": null,
+      "correctness": {
+        "request_slots_tracked": 0,
+        "slots_with_content_drift": 0,
+        "verdict": "PASS \u2014 every HIT replayed the original content"
+      },
+      "est_cost_total_usd": 0.0
+    }
+  ],
+  "endurance": [
+    {
+      "arm": "A_cache_on",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "sessions": [
+        {
+          "session": 0,
+          "hits": 0,
+          "misses": 0,
+          "errors": 6,
+          "hit_ratio": 0.0,
+          "billed_cost_usd": 0
+        },
+        {
+          "session": 1,
+          "hits": 0,
+          "misses": 0,
+          "errors": 6,
+          "hit_ratio": 0.0,
+          "billed_cost_usd": 0
+        }
+      ]
+    }
+  ],
+  "raw": [
+    {
+      "arm": "A_cache_on",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "passes": [
+            {
+              "pass": 1,
+              "billed_prompt_tokens": 0,
+              "billed_cost_usd": 0.0,
+              "provider_cached_tokens": 0,
+              "hits": 0,
+              "misses": 0,
+              "errors": 2,
+              "latency_ms_median": null,
+              "latency_ms_mean": null,
+              "content_shas": {},
+              "completion_tokens": {}
+            },
+            {
+              "pass": 2,
+              "billed_prompt_tokens": 0,
+              "billed_cost_usd": 0.0,
+              "provider_cached_tokens": 0,
+              "hits": 0,
+              "misses": 0,
+              "errors": 2,
+              "latency_ms_median": null,
+              "latency_ms_mean": null,
+              "content_shas": {},
+              "completion_tokens": {}
+            },
+            {
+              "pass": 3,
+              "billed_prompt_tokens": 0,
+              "billed_cost_usd": 0.0,
+              "provider_cached_tokens": 0,
+              "hits": 0,
+              "misses": 0,
+              "errors": 2,
+              "latency_ms_median": null,
+              "latency_ms_mean": null,
+              "content_shas": {},
+              "completion_tokens": {}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

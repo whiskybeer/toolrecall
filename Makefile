@@ -161,12 +161,21 @@ type:
 		@echo "⚠️  mypy not installed. Run: $(PIP_INST) mypy"
 	fi
 
+# ─── Zero-deps identity gate ──────────────────────────────────
+# ToolRecall's hard identity is dependencies = [] (pure stdlib). Assert it
+# here so a stray `pip install x` in pyproject.toml fails the gate, not the
+# users who discover dependency conflicts after installing.
+.PHONY: check-zero-deps
+check-zero-deps:
+	@python3 -c "import tomllib, sys; deps = tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; sys.exit(f'dependencies must be [], got {deps}' if deps else 0)" \
+		&& echo "✓ zero-deps identity intact (dependencies = [])"
+
 # ─── Pre-push gate ─────────────────────────────────────────────
 # One command combining lint + format-check + type-check + the release test
 # selection. This is what CI / a pre-push hook should run.
 .PHONY: validate
-validate: check type test-unit
-	@echo "✓ validate passed (lint + format + type + unit tests)"
+validate: check type check-zero-deps test-unit
+	@echo "✓ validate passed (lint + format + type + zero-deps + unit tests)"
 
 # ─── Benchmarks ─────────────────────────────────────────────────
 # Three-arm benchmark (naive / prefix / toolrecall), see bench/README.md.
@@ -208,6 +217,14 @@ bench-dry: bench-env
 .PHONY: bench-analyze
 bench-analyze:
 	$(BENCH_PY) bench/analyze.py
+
+# ─── A7 cache regression gate ──────────────────────────────────
+# Deterministic: isolated daemon, local fixtures, no API keys, ~10 s.
+# Same command CI runs (.github/workflows/bench-gate.yml).
+.PHONY: bench-gate
+bench-gate:
+	@PYTHONPATH=$(CURDIR) python3 bench/gate.py --turns 10
+
 
 # ─── Docker ─────────────────────────────────────────────────────
 .PHONY: docker-build

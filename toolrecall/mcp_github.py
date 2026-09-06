@@ -37,13 +37,13 @@ def _setup():
         "User-Agent": "toolrecall-github-mcp",
     }
 
-    _LOG = logging.getLogger("toolrecall.github")
-    _LOG.setLevel(logging.DEBUG)
-    _fh = logging.FileHandler(
-        os.path.expanduser(os.environ.get("TOOLRECALL_GITHUB_LOG", "~/.toolrecall/github_api.log"))
-    )
-    _fh.setFormatter(logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    _LOG.addHandler(_fh)
+    # Central logging rail: rotating (7-day), redacting, payload-free.
+    # Replaces the old non-rotating FileHandler (github_api.log grew unbounded).
+    # Keep DEBUG detail here — the rail's central level knob (TOOLRECALL_LOG_LEVEL)
+    # governs what actually gets written.
+    from toolrecall.logging_setup import get_logger
+
+    _LOG = get_logger("github")
 
     if not _TOKEN:
         sys.stderr.write("ERROR: No GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN in environment.\n")

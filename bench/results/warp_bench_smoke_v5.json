@@ -1,0 +1,455 @@
+{
+  "meta": {
+    "date": "2026-09-02T15:53:27.438896+00:00",
+    "edge": "http://127.0.0.1:8573/v1/chat/completions",
+    "dataset": "princeton-nlp/swe-bench-lite (test split)",
+    "instances": [
+      "astropy__astropy-12907"
+    ],
+    "passes_per_instance": 3,
+    "smoke": true,
+    "price_per_m_input_usd": 0.15,
+    "note_auth": "edge on loopback, auth disabled; arms isolated by per-arm keys",
+    "note_cost": "total_cost is OpenRouter-billed per request; est_cost is tokens*price fallback. cached_tokens = provider prefix cache (separate)."
+  },
+  "summary": [
+    {
+      "arm": "A_cache_on",
+      "model": "deepseek/deepseek-v4-flash",
+      "tokens_p1": 2711,
+      "tokens_p2": 2711,
+      "tokens_p3": 2711,
+      "tokens_total": 8133,
+      "completion_tokens_total": 30,
+      "completion_tokens_per_slot_stable": true,
+      "hit_ratio_p2": 1.0,
+      "hit_ratio_p3": 1.0,
+      "latency_ms_mean_p1": 5,
+      "latency_ms_mean_p2": 4,
+      "correctness": {
+        "request_slots_tracked": 2,
+        "slots_with_content_drift": 0,
+        "verdict": "PASS \u2014 every HIT replayed the original content"
+      },
+      "est_cost_total_usd": 0.0012,
+      "energy": {
+        "tokens_not_recomputed": 5422,
+        "assumptions": "flash-MoE 5.0-25.0 Wh/1K tok, PUE 1.2, 0.4 kg CO2/kWh \u2014 estimate, not billing-verified",
+        "kwh_avoided": [
+          0.0271,
+          0.1356
+        ],
+        "kg_co2e_avoided": [
+          0.0108,
+          0.0542
+        ]
+      }
+    },
+    {
+      "arm": "B_cache_off",
+      "model": "deepseek/deepseek-v4-flash",
+      "tokens_p1": 2790,
+      "tokens_p2": 2786,
+      "tokens_p3": 2790,
+      "tokens_total": 8366,
+      "completion_tokens_total": 30,
+      "completion_tokens_per_slot_stable": true,
+      "hit_ratio_p2": 0.0,
+      "hit_ratio_p3": 0.0,
+      "latency_ms_mean_p1": 1368,
+      "latency_ms_mean_p2": 994,
+      "correctness": {
+        "request_slots_tracked": 2,
+        "slots_with_content_drift": 0,
+        "verdict": "PASS \u2014 every HIT replayed the original content"
+      },
+      "est_cost_total_usd": 0.0013,
+      "energy": {
+        "tokens_not_recomputed": 0,
+        "kwh_avoided": [
+          0.0,
+          0.0
+        ],
+        "kg_co2e_avoided": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "arm": "C_cache_on_glm",
+      "model": "z-ai/glm-5.3-flash",
+      "tokens_p1": 2395,
+      "tokens_p2": 2395,
+      "tokens_p3": 2395,
+      "tokens_total": 7185,
+      "completion_tokens_total": 30,
+      "completion_tokens_per_slot_stable": true,
+      "hit_ratio_p2": 1.0,
+      "hit_ratio_p3": 1.0,
+      "latency_ms_mean_p1": 4,
+      "latency_ms_mean_p2": 4,
+      "correctness": {
+        "request_slots_tracked": 2,
+        "slots_with_content_drift": 0,
+        "verdict": "PASS \u2014 every HIT replayed the original content"
+      },
+      "est_cost_total_usd": 0.0011,
+      "energy": {
+        "tokens_not_recomputed": 4790,
+        "assumptions": "flash-MoE 5.0-25.0 Wh/1K tok, PUE 1.2, 0.4 kg CO2/kWh \u2014 estimate, not billing-verified",
+        "kwh_avoided": [
+          0.0239,
+          0.1197
+        ],
+        "kg_co2e_avoided": [
+          0.0096,
+          0.0479
+        ]
+      }
+    },
+    {
+      "arm": "D_cache_off_glm",
+      "model": "z-ai/glm-5.3-flash",
+      "tokens_p1": 2395,
+      "tokens_p2": 2395,
+      "tokens_p3": 2395,
+      "tokens_total": 7185,
+      "completion_tokens_total": 30,
+      "completion_tokens_per_slot_stable": true,
+      "hit_ratio_p2": 0.0,
+      "hit_ratio_p3": 0.0,
+      "latency_ms_mean_p1": 1532,
+      "latency_ms_mean_p2": 1838,
+      "correctness": {
+        "request_slots_tracked": 2,
+        "slots_with_content_drift": 0,
+        "verdict": "PASS \u2014 every HIT replayed the original content"
+      },
+      "est_cost_total_usd": 0.0011,
+      "energy": {
+        "tokens_not_recomputed": 0,
+        "kwh_avoided": [
+          0.0,
+          0.0
+        ],
+        "kg_co2e_avoided": [
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "endurance": null,
+  "retry_probe": {
+    "claim": "C14 identical-success retry replays byte-exact",
+    "model": "deepseek/deepseek-v4-flash",
+    "arm": "A_cache_on",
+    "attempts": [
+      {
+        "attempt": 1,
+        "cache": "HIT",
+        "content_sha": "dc937b59892604f5",
+        "latency_ms": 4,
+        "total_cost": 0.00029884,
+        "error": null
+      },
+      {
+        "attempt": 2,
+        "cache": "HIT",
+        "content_sha": "dc937b59892604f5",
+        "latency_ms": 4,
+        "total_cost": 0.00029884,
+        "error": null
+      }
+    ],
+    "verdict": "PASS"
+  },
+  "shared_context": false,
+  "raw": [
+    {
+      "arm": "A_cache_on",
+      "model": "deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "passes": [
+            {
+              "pass": 1,
+              "billed_prompt_tokens": 2711,
+              "billed_cost_usd": 0.0,
+              "cost_avoided_usd": 0.000328,
+              "provider_cached_tokens": 0,
+              "hits": 2,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 5.0,
+              "latency_ms_mean": 5,
+              "content_shas": {
+                "0": "3863b40ca1558b13",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 2,
+              "billed_prompt_tokens": 2711,
+              "billed_cost_usd": 0.0,
+              "cost_avoided_usd": 0.000328,
+              "provider_cached_tokens": 0,
+              "hits": 2,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 4.0,
+              "latency_ms_mean": 4,
+              "content_shas": {
+                "0": "3863b40ca1558b13",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 3,
+              "billed_prompt_tokens": 2711,
+              "billed_cost_usd": 0.0,
+              "cost_avoided_usd": 0.000328,
+              "provider_cached_tokens": 0,
+              "hits": 2,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 4.0,
+              "latency_ms_mean": 4,
+              "content_shas": {
+                "0": "3863b40ca1558b13",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "B_cache_off",
+      "model": "deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "passes": [
+            {
+              "pass": 1,
+              "billed_prompt_tokens": 2790,
+              "billed_cost_usd": 0.000157,
+              "cost_avoided_usd": 0.0,
+              "provider_cached_tokens": 2048,
+              "hits": 0,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 1367.5,
+              "latency_ms_mean": 1368,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 2,
+              "billed_prompt_tokens": 2786,
+              "billed_cost_usd": 0.000365,
+              "cost_avoided_usd": 0.0,
+              "provider_cached_tokens": 0,
+              "hits": 0,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 994.5,
+              "latency_ms_mean": 994,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 3,
+              "billed_prompt_tokens": 2790,
+              "billed_cost_usd": 0.000157,
+              "cost_avoided_usd": 0.0,
+              "provider_cached_tokens": 2048,
+              "hits": 0,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 1527.5,
+              "latency_ms_mean": 1528,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "C_cache_on_glm",
+      "model": "z-ai/glm-5.3-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "passes": [
+            {
+              "pass": 1,
+              "billed_prompt_tokens": 2395,
+              "billed_cost_usd": 0.0,
+              "cost_avoided_usd": 0.000163,
+              "provider_cached_tokens": 320,
+              "hits": 2,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 4.0,
+              "latency_ms_mean": 4,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 2,
+              "billed_prompt_tokens": 2395,
+              "billed_cost_usd": 0.0,
+              "cost_avoided_usd": 0.000163,
+              "provider_cached_tokens": 320,
+              "hits": 2,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 4.0,
+              "latency_ms_mean": 4,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 3,
+              "billed_prompt_tokens": 2395,
+              "billed_cost_usd": 0.0,
+              "cost_avoided_usd": 0.000163,
+              "provider_cached_tokens": 320,
+              "hits": 2,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 4.0,
+              "latency_ms_mean": 4,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "D_cache_off_glm",
+      "model": "z-ai/glm-5.3-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "passes": [
+            {
+              "pass": 1,
+              "billed_prompt_tokens": 2395,
+              "billed_cost_usd": 4.4e-05,
+              "cost_avoided_usd": 0.0,
+              "provider_cached_tokens": 2304,
+              "hits": 0,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 1531.5,
+              "latency_ms_mean": 1532,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 2,
+              "billed_prompt_tokens": 2395,
+              "billed_cost_usd": 4.4e-05,
+              "cost_avoided_usd": 0.0,
+              "provider_cached_tokens": 2304,
+              "hits": 0,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 1838.0,
+              "latency_ms_mean": 1838,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            },
+            {
+              "pass": 3,
+              "billed_prompt_tokens": 2395,
+              "billed_cost_usd": 4.4e-05,
+              "cost_avoided_usd": 0.0,
+              "provider_cached_tokens": 2304,
+              "hits": 0,
+              "misses": 0,
+              "errors": 0,
+              "latency_ms_median": 1473.5,
+              "latency_ms_mean": 1474,
+              "content_shas": {
+                "0": "dc937b59892604f5",
+                "1": "dc937b59892604f5"
+              },
+              "completion_tokens": {
+                "0": 5,
+                "1": 5
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

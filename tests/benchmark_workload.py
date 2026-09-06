@@ -267,7 +267,8 @@ print(f"     Real (1x counted): {total_tokens:>10,} tokens = ${total_cost:.4f}")
 # Old bug simulation
 import sqlite3 as _s3
 
-_conn = _s3.connect(os.path.expanduser("~/.toolrecall/cache.db"))
+_bench_db = os.environ.get("BENCH_DB_PATH") or os.path.expanduser("~/.toolrecall/cache.db")
+_conn = _s3.connect(_bench_db)
 _conn.row_factory = _s3.Row
 old_bug_file = sum(
     max(1, r["b"] // 3) * r["hits"]
