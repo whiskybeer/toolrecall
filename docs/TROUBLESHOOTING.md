@@ -219,8 +219,8 @@ sqlite3 ~/.toolrecall/knowledge.db \
 ```
 
 **Fix — delete and rebuild from the curated default sources**
-(`~/.hermes/memories` + `~/.hermes/skills`; your explicit `scan_dirs`
-config, if any, also applies):
+(`<agent_home>/memories` + `<agent_home>/skills` — from `AGENT_HOME` or
+`[paths].agent_home`; your explicit `scan_dirs` config, if any, also applies):
 
 ```bash
 # 1. Stop the daemon so it releases the DB file

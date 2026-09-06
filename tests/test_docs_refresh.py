@@ -48,6 +48,14 @@ class FakeConfig:
             return default
         return val
 
+    @property
+    def agent_home(self) -> str:
+        """Mirror real Config.agent_home: AGENT_HOME env → deterministic test default."""
+        env = os.environ.get("AGENT_HOME") or os.environ.get("TOOLRECALL_AGENT_HOME")
+        if env:
+            return os.path.expanduser(env)
+        return "/nonexistent-agent-home"  # not $HOME, not ~/.hermes — deterministic
+
 
 @pytest.fixture()
 def fresh_db(tmp_path, monkeypatch):
@@ -165,9 +173,25 @@ def test_default_scan_dirs_are_curated_not_home():
     junk-filled DB. The default is now the curated memory/skills set.
     """
     home = str(docs.Path.home()) if hasattr(docs, "Path") else None
-    for d in docs._DEFAULT_SCAN_DIRS:
+    for d in docs._default_scan_dirs():
         expanded = os.path.expanduser(d)
         assert expanded != home, f"default scan dir must not be $HOME: {d}"
+
+
+def test_default_scan_dirs_follow_agent_home(fresh_db, monkeypatch):
+    """AGENT_HOME drives the curated default — agent-agnostic, not Hermes-only.
+
+    Any agent that sets AGENT_HOME gets its own memories/skills indexed by
+    default; ~/.hermes is only the unconfigured fallback, never a hardcode.
+    """
+    docs, db, fake = fresh_db
+    agent_home = str(db.parent / "other-agent")
+    monkeypatch.setenv("AGENT_HOME", agent_home)
+    dirs = docs._default_scan_dirs()
+    assert dirs == [
+        os.path.join(agent_home, "memories"),
+        os.path.join(agent_home, "skills"),
+    ]
 
 
 def test_sources_unconfigured_means_default_sources(fresh_db):

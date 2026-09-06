@@ -32,6 +32,10 @@ class _StubConfig:
     def get(self, section, key, default=None):
         return default
 
+    @property
+    def agent_home(self) -> str:
+        return "/nonexistent-agent-home"  # not $HOME, not ~/.hermes — deterministic
+
 
 @pytest.fixture()
 def fresh_db(tmp_path, monkeypatch):

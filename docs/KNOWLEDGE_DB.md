@@ -118,10 +118,12 @@ index_ttl = 86400   # seconds; 0 disables auto-refresh entirely
 Env override: `TOOLRECALL_DOCS_INDEX_TTL`.
 
 **Safety guard:** with no sources configured, the default scan set is a
-**curated, bounded** pair: `~/.hermes/memories` and `~/.hermes/skills` —
-never the entire home directory. (Historically the default *was* `$HOME`,
-which produced a multi-GB junk-filled DB; that default was removed.) An
-explicitly *empty* `scan_dirs = []` disables auto-refresh entirely.
+**curated, bounded** pair: `<agent_home>/memories` and `<agent_home>/skills`
+(resolved from the agent home: `AGENT_HOME` env → `[paths].agent_home` →
+`~/.hermes` fallback) — never the entire home directory. (Historically the
+default *was* `$HOME`, which produced a multi-GB junk-filled DB; that default
+was removed.) An explicitly *empty* `scan_dirs = []` disables auto-refresh
+entirely.
 
 ---
 

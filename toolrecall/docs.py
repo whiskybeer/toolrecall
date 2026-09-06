@@ -35,12 +35,16 @@ def _get_db_path():
 # ── Default index sources ────────────────────────────────────────────────────
 # Curated, small, bounded — deliberately NOT $HOME. Indexing the entire home
 # directory was the original default: it produced a multi-GB DB full of junk
-# sources (3.4 GB for 7 MB of useful content, before compaction). These dirs
-# hold the content an agent actually searches: its own memory and skills.
-_DEFAULT_SCAN_DIRS = [
-    "~/.hermes/memories",  # agent memory (MEMORY.md, USER.md)
-    "~/.hermes/skills",  # installed skill docs
-]
+# sources (3.4 GB for 7 MB of useful content, before compaction). The dirs
+# hold the content an agent actually searches: its own memory and skills,
+# resolved from the agent home (AGENT_HOME env → [paths].agent_home →
+# ~/.hermes fallback) so any agent — not just Hermes — gets a sane default.
+
+
+def _default_scan_dirs() -> list:
+    """Agent-agnostic curated default scan dirs: <agent_home>/memories + /skills."""
+    agent_home = _get_config().agent_home
+    return [os.path.join(agent_home, "memories"), os.path.join(agent_home, "skills")]
 
 
 def _get_db():
@@ -107,15 +111,15 @@ def get_index_ttl() -> float:
 def _auto_refresh_sources_configured() -> bool:
     """True when there is anything to index, including the safe default.
 
-    The default scan_dirs is the curated _DEFAULT_SCAN_DIRS (agent memory +
+    The default scan_dirs is the curated _default_scan_dirs() (agent memory +
     skills — small, bounded), never $HOME. Auto-refresh therefore runs with
     the default too; it is skipped only when sources resolve to an empty
     set (nothing to index).
     """
     cfg = _get_config()
-    scan_dirs = cfg.get("sources", "scan_dirs", default=_DEFAULT_SCAN_DIRS)
+    scan_dirs = cfg.get("sources", "scan_dirs", default=None)
     if scan_dirs is None:
-        scan_dirs = _DEFAULT_SCAN_DIRS  # explicit None behaves as unconfigured
+        scan_dirs = _default_scan_dirs()  # explicit None behaves as unconfigured
     if isinstance(scan_dirs, list) and scan_dirs:
         return True
     knowledge = cfg.get("sources", "knowledge", default=[])
@@ -665,7 +669,9 @@ def index_all(
     _cfg = _get_config()
 
     if scan_dirs is None:
-        scan_dirs = _cfg.get("sources", "scan_dirs", default=_DEFAULT_SCAN_DIRS)
+        scan_dirs = _cfg.get("sources", "scan_dirs", default=None)
+    if scan_dirs is None:
+        scan_dirs = _default_scan_dirs()
     if extensions is None:
         extensions = tuple(
             _cfg.get(

@@ -40,6 +40,10 @@ class _StubConfig:
     def get(self, section, key, default=None):
         return default
 
+    @property
+    def agent_home(self) -> str:
+        return "/nonexistent-agent-home"  # not $HOME, not ~/.hermes — deterministic
+
 
 class TestMemoryIndex(unittest.TestCase):
     """Test that Hermes memory stores are correctly indexed into FTS5."""

@@ -23,7 +23,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[mcp]` | MCP file/terminal access | `allowed_paths`, `allow_terminal`, `allow_invalidate`, `emit_context_hints`, `allowed_terminal_commands` |
 | `[mcp_multiplex]` | MCP Multiplexer settings | `enabled`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache` |
 | `[mcp_multiplex.servers_config]` | Custom server overrides | Any server name with `command`, `args`, `env`, `ttl` |
-| `[sources]` | Knowledge DB scanning | `scan_dirs` (default: `~/.hermes/memories` + `~/.hermes/skills`), `scan_extensions`, `scan_ignore`, `max_file_kb` |
+| `[sources]` | Knowledge DB scanning | `scan_dirs` (default: `<agent_home>/memories` + `<agent_home>/skills` via `AGENT_HOME`/`[paths].agent_home`), `scan_extensions`, `scan_ignore`, `max_file_kb` |
 | `[sources.memory]` | Agent memory indexing | `enabled` |
 | `[docs]` | Knowledge DB (FTS) index freshness | `index_ttl` (seconds, default `86400`, `0` = never auto-refresh; env `TOOLRECALL_DOCS_INDEX_TTL`) |
 | `[recall]` | Recall Tier (lossless-recoverable eviction) | `enabled` (opt-in, default `false`), `summarizer` (Phase 2) |
