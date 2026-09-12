@@ -603,7 +603,11 @@ def main(argv: list | None = None) -> int:
         print(render_plain(snap))
         return 0
 
-    return curses.wrapper(run_curses, snapshot, log_fn, args.interval)
+    try:
+        return curses.wrapper(run_curses, snapshot, log_fn, args.interval)
+    except KeyboardInterrupt:
+        # Ctrl+C: terminal already restored by curses.wrapper's finally.
+        return 0
 
 
 if __name__ == "__main__":
