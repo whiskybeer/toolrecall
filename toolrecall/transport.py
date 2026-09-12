@@ -285,10 +285,41 @@ class TransportClient:
         ):
             from toolrecall import network_tls as nt
 
+            # A6-2 (review 2026-09-08): TLS without server verification is
+            # an active-MITM opening (any cert terminates the channel and
+            # can poison the cache view). Verified TLS is the default;
+            # insecure mode is an explicit, loud escape hatch for loopback
+            # testing only.
+            insecure = os.environ.get("TOOLRECALL_NETWORK_TLS_INSECURE", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
             ca = os.environ.get("TOOLRECALL_NETWORK_TLS_CA") or None
-            ctx = nt.client_context(verify=True, ca_path=ca)
-            host, _port = _parse_tcp(self._path)
-            sock = nt.wrap_client(sock, ctx, server_hostname=host if ca else None)
+            if insecure:
+                ctx = nt.client_context(verify=False)
+                host, _port = _parse_tcp(self._path)
+                sock = nt.wrap_client(sock, ctx, server_hostname=None)
+                print(
+                    "[ToolRecall] ⚠️  TLS verification DISABLED "
+                    "(TOOLRECALL_NETWORK_TLS_INSECURE) — channel is encrypted "
+                    "but the server is NOT authenticated; MITM can read and "
+                    "inject. Loopback testing only.",
+                    file=sys.stderr,
+                )
+            else:
+                if not ca:
+                    raise ConnectionError(
+                        "TOOLRECALL_NETWORK_TLS=true requires "
+                        "TOOLRECALL_NETWORK_TLS_CA (pin the daemon's cert). "
+                        "Refusing unverified TLS — set "
+                        "TOOLRECALL_NETWORK_TLS_INSECURE=1 to override "
+                        "(loopback testing only)."
+                    )
+                ctx = nt.client_context(verify=True, ca_path=ca)
+                host, _port = _parse_tcp(self._path)
+                sock = nt.wrap_client(sock, ctx, server_hostname=host)
         token = os.environ.get("TOOLRECALL_NETWORK_TOKEN", "")
         na.client_handshake(sock, token.encode())
         return sock

@@ -1050,6 +1050,35 @@ class MCPMultiplexer:
 # ─── A6 bind guard: local-networks-only (default), public = explicit opt-in ──
 
 
+# ─── A6 remote command allow-list (A6-3, review 2026-09-08) ────
+# The ONLY commands a network (TCP) client may invoke, enforced in
+# _handle_tcp BEFORE routing. Cache-relevant operations that the
+# per-token [network.clients] policy then path-gates individually.
+# Deliberately EXCLUDED (local-only): docs_* (knowledge-DB disclosure,
+# no allowlist), recall_* (cross-member blob store), mcp_call/mcp_*
+# (runs the OPERATOR's multiplexed servers with operator credentials —
+# privilege escalation), cache_invalidate/cache_status (cache
+# management/info), context_* (per-agent tracker), shutdown/restart
+# (daemon lifecycle), cached_browser_*/cached_api_* (store primitives
+# — a remote caller can poison shared entries unbound by any path
+# policy; local-only until a policy surface exists for them).
+REMOTE_ALLOWED_COMMANDS = frozenset(
+    {
+        "ping",
+        "cached_read",
+        "cached_shell_exec",
+        "cached_terminal",
+        "cached_skill",
+        "cached_write",  # A6-1 fix: routed through the remote-aware gate
+        "cached_patch",  # A6-1 fix: routed through the remote-aware gate
+        "cache_refresh_file",
+    }
+)
+
+# Backwards-compat alias for the import in _handle_tcp.
+_REMOTE_ALLOWED_COMMANDS = REMOTE_ALLOWED_COMMANDS
+
+
 def _is_local_network_bind(host: str) -> bool:
     """True when `host` is a LOCAL network address (A6 hardening).
 
@@ -1096,7 +1125,7 @@ def _is_local_network_bind(host: str) -> bool:
     except ValueError:
         # Hostname: resolve it. Split-DNS safe — EVERY address must be local.
         try:
-            candidates = [ai[4][0] for ai in _s.getaddrinfo(hostname, None)]
+            candidates = [str(ai[4][0]) for ai in _s.getaddrinfo(hostname, None)]
         except OSError:
             return False
         if not candidates:
@@ -1287,6 +1316,23 @@ class DaemonServer:
             f"  Network daemon: tcp://{host}:{actual_port} ({tls_desc}, "
             f"token auth — remote requests run under the daemon's policy)"
         )
+        # A6-2 fail-closed (review 2026-09-08): a non-loopback bind without
+        # TLS serves cache CONTENTS in cleartext over the LAN. HMAC protects
+        # the token, not the data. Refuse rather than warn.
+        if not self.cfg.network_tls and host not in ("127.0.0.1", "::1", "localhost"):
+            print(
+                f"  ⚠️  Network daemon SHUTTING DOWN: tls=false on a non-loopback "
+                f"bind ({host}). HMAC authenticates but does NOT encrypt — "
+                f"cache contents would cross the LAN in cleartext. Set "
+                f"[network] tls = true (+ tls_cert/tls_key), or bind 127.0.0.1."
+            )
+            self.logger.warning("network listener refused: non-loopback bind %s without TLS", host)
+            try:
+                srv.close()
+            except OSError:
+                pass
+            self._tcp_srv = None  # type: ignore[assignment]  # shutdown reads it via getattr(..., None)
+            return
         self._tcp_port = actual_port
 
         tokens = self._network_tokens()
@@ -1353,6 +1399,29 @@ class DaemonServer:
                 # Mark as remote: policy resolves from [network.clients]
                 # only (per-request flag — the UDS path is unaffected)
                 request["_remote"] = True
+                # ── Remote command allow-list (A6-3, review 2026-09-08) ──
+                # One choke point BEFORE routing: a remote caller may only
+                # invoke the cache-relevant commands. Everything else —
+                # docs_*, recall_*, mcp_* (operator credentials!), cache
+                # management, context tracker, shutdown/restart — is
+                # local-only. Default-deny: a NEW handler added to _route
+                # is NOT remote-reachable until listed here deliberately.
+                if request.get("cmd") not in _REMOTE_ALLOWED_COMMANDS:
+                    self.logger.info(
+                        "net cmd=%s outcome=remote_denied (not in remote allow-list)",
+                        request.get("cmd", "?"),
+                    )
+                    send_message(
+                        conn,
+                        {
+                            "error": (
+                                f"remote_denied: '{request.get('cmd')}' is not "
+                                "available to network clients (local-only command). "
+                                "See SECURITY.md §9.2."
+                            )
+                        },
+                    )
+                    continue
                 # Protocol version gate — identical to the UDS path.
                 req_v = request.get("v", 1)
                 try:
@@ -1868,7 +1937,12 @@ class DaemonServer:
             return {"error": "Missing 'path'"}
         if content is None:
             return {"error": "Missing 'content'"}
-        err = self.security.check_read_path(path)
+        # A6-1 fix: remote callers resolve write access from [network.clients]
+        # ONLY (same gate as reads) — the global [mcp] allowlist never applies
+        # remotely, so a default-deny remote token cannot write anywhere.
+        err = self.security.check_read_path_for(
+            path, req.get("client"), remote=bool(req.get("_remote"))
+        )
         if err:
             return {"error": err}
         result = _cache_write(path, content)
@@ -1888,7 +1962,10 @@ class DaemonServer:
             return {"error": "Missing 'path'"}
         if not old_string:
             return {"error": "Missing 'old_string'"}
-        err = self.security.check_read_path(path)
+        # A6-1 fix: same remote-aware gate as write (see above).
+        err = self.security.check_read_path_for(
+            path, req.get("client"), remote=bool(req.get("_remote"))
+        )
         if err:
             return {"error": err}
         result = _cache_patch(path, old_string, new_string)
