@@ -32,6 +32,7 @@ ENV_MAP = {
     "TOOLRECALL_KNOWLEDGE_DB": ("paths", "knowledge_db"),
     "TOOLRECALL_SKILL_DIRS": ("paths", "skill_dirs"),
     "TOOLRECALL_FILE_TTL": ("cache", "file_ttl"),
+    "TOOLRECALL_MAX_FILE_MB": ("cache", "max_file_mb"),
     "TOOLRECALL_TERMINAL_TTL": ("cache", "terminal_default_ttl"),
     "TOOLRECALL_SCAN_DIRS": ("sources", "scan_dirs"),
     "TOOLRECALL_NGINX_DOMAIN": ("nginx", "domain"),
@@ -210,6 +211,7 @@ class Config:
                 "stale_while_revalidate",
                 "fuzzy_ttl_match",
                 "fuzzy_threshold",
+                "max_file_mb",
             }
         ),
         "norm": frozenset({"enabled", "sort_lists", "strip_strings", "canonical_commands"}),
@@ -623,6 +625,34 @@ class Config:
     @property
     def file_ttl(self) -> int:
         return self.get("cache", "file_ttl", default=-1)
+
+    @property
+    def max_file_mb(self) -> float:
+        """Maximum file size the cache layer will read/cache, in MB.
+
+        Default: 5 MB (~1.2M tokens). Rationale:
+          - A 5MB text file already exceeds every mainstream context window,
+            so content beyond it can never be *consumed* by the model — a
+            cache "hit" on it would book savings that were never real context
+            avoided, inflating reported metrics.
+          - Giant rows re-inserted per turn were a diagnosed driver of
+            cache-db slowdowns; the cap keeps transcripts/log-sized files
+            out of SQLite while honest large-file caching happens below it.
+
+        Configured via [cache].max_file_mb in toolrecall.toml or the
+        TOOLRECALL_MAX_FILE_MB env var. Raise deliberately (e.g. for
+        large-file benchmark arms), never as a blanket default change.
+        """
+        raw = self.get("cache", "max_file_mb", default=5)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return 5.0
+        # Reject nonsense (0/negative disables caching entirely; absurd
+        # values would OOM) — fall back to the documented default.
+        if val <= 0 or val > 2048:
+            return 5.0
+        return val
 
     @property
     def terminal_default_ttl(self) -> int:

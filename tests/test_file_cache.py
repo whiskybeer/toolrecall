@@ -81,7 +81,7 @@ class TestFileCache(unittest.TestCase):
         self.assertNotEqual(res1.get("content"), res2.get("content"))
 
     def test_file_size_limit(self):
-        """Prove that the 5MB file size limit blocks large files (OOM protection)"""
+        """Prove that the default 5MB file size limit blocks large files (OOM protection)"""
         # We'll just write a 6MB file directly instead of mocking, as mocking os.stat breaks os.makedirs inside cache.py
         large_file = os.path.join(test_db_dir, "large_test.txt")
         try:
@@ -95,6 +95,59 @@ class TestFileCache(unittest.TestCase):
         finally:
             if os.path.exists(large_file):
                 os.remove(large_file)
+
+    def test_file_size_limit_configurable(self):
+        """Prove [cache].max_file_mb raises/lowers the cap deliberately.
+
+        With max_file_mb=10 a 6MB file is readable (and no longer refused);
+        with max_file_mb=1 a 2MB file is refused. Default stays 5MB.
+        """
+        from toolrecall.cache import config as cache_config
+        from unittest.mock import patch as _patch
+
+        real_get = cache_config.get
+
+        def _scoped_get(value):
+            # Override ONLY the max_file_mb key; pass everything else
+            # through so ttl_policy and friends see the real config.
+            def fake_get(*keys, **kwargs):
+                if keys[:2] == ("cache", "max_file_mb"):
+                    return value
+                return real_get(*keys, **kwargs)
+
+            return fake_get
+
+        six_mb = os.path.join(test_db_dir, "six_mb.txt")
+        two_mb = os.path.join(test_db_dir, "two_mb.txt")
+        try:
+            with open(six_mb, "wb") as f:
+                f.seek((6 * 1024 * 1024) - 1)
+                f.write(b"\0")
+            with open(two_mb, "wb") as f:
+                f.seek((2 * 1024 * 1024) - 1)
+                f.write(b"\0")
+
+            # Raise to 10MB: 6MB file now reads fine.
+            with _patch.object(cache_config, "get", side_effect=_scoped_get(10)):
+                res = cached_read(six_mb)
+                self.assertNotIn("error", res)
+                self.assertEqual(len(res.get("content", "")), 6 * 1024 * 1024)
+
+            # Lower to 1MB: 2MB file now refused with the knob's value named.
+            with _patch.object(cache_config, "get", side_effect=_scoped_get(1)):
+                res = cached_read(two_mb)
+                self.assertIn("error", res)
+                self.assertIn("exceeds 1MB limit", res["error"])
+
+            # Nonsense values (0, negative, absurd) fall back to 5MB.
+            for bad in (0, -3, 99999):
+                with _patch.object(cache_config, "get", side_effect=_scoped_get(bad)):
+                    res = cached_read(two_mb)
+                    self.assertNotIn("error", res)
+        finally:
+            for p in (six_mb, two_mb):
+                if os.path.exists(p):
+                    os.remove(p)
 
     def test_single_counting_file_cache(self):
         """Prove tokens_read_from_disk is counted exactly once per unique file (disk-read), not on cache hits."""

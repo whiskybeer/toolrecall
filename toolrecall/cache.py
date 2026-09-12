@@ -636,11 +636,12 @@ def cached_read(path: str, source: str = "") -> dict:
 
     # ── 3. Cache miss — read from disk ──
 
-    # Security: Hard limit to prevent OOM on huge files (e.g. logs/binaries)
-    # 5MB max ~ 1.2M tokens (exceeds most context windows anyway)
-    if stat.st_size > 5 * 1024 * 1024:
+    # Security: Hard limit to prevent OOM on huge files (e.g. logs/binaries).
+    # Default 5MB ~ 1.2M tokens (exceeds most context windows anyway) —
+    # configurable via [cache].max_file_mb for deliberate large-file use.
+    if stat.st_size > _max_file_bytes():
         return {
-            "error": f"File exceeds 5MB limit ({stat.st_size / 1024 / 1024:.1f} MB). Refusing to cache or read."
+            "error": f"File exceeds {config.get('cache', 'max_file_mb', default=5)}MB limit ({stat.st_size / 1024 / 1024:.1f} MB). Refusing to cache or read."
         }
 
     try:
@@ -670,10 +671,10 @@ def cached_read(path: str, source: str = "") -> dict:
     )
     _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=_is_new_file)
 
-    # Large files (>10 MB) go to SQLite only if they're "static data"
+    # Large files go to SQLite only if they're "static data"
     # Small files always persist for cross-session reuse
     # ttl=0 paths: serve-through only — nothing enters memory or SQLite.
-    if not never_cache and stat.st_size < 10 * 1024 * 1024:
+    if not never_cache and stat.st_size <= _max_file_bytes():
         _persist_file_to_sqlite(path, content, stat)
 
     return {"cached": False, "content": content, "path": path}
@@ -886,6 +887,24 @@ _terminal_coalescer = None
 # daemon is the single cache owner). Key: "layer\x00hash".
 _revalidate_inflight: set[str] = set()
 _revalidate_lock = Lock()
+
+
+def _max_file_bytes() -> int:
+    """File-cache size cap in bytes, from [cache].max_file_mb (default 5).
+
+    Re-read per call so config/env changes and test overrides apply without
+    a process restart. Rationale for the 5MB default lives on the config
+    property (Config.max_file_mb): a 5MB text file already exceeds every
+    mainstream context window, so caching beyond it would book savings that
+    were never real context avoided.
+    """
+    try:
+        mb = float(config.get("cache", "max_file_mb", default=5))
+    except (TypeError, ValueError):
+        mb = 5.0
+    if mb <= 0 or mb > 2048:
+        mb = 5.0
+    return int(mb * 1024 * 1024)
 
 
 def _swr_window() -> int:
