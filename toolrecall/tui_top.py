@@ -345,6 +345,7 @@ def render_plain(snapshot: dict) -> str:
     ctx = context_via_daemon()
     if ctx:
         lines.append("")
+        dropped = ctx.get("ctx_dropped_tokens_total", 0)
         lines.append(
             "context: checkpoint %s  dirty %d  clean %d  stale %d (~%s tok reclaimable)"
             % (
@@ -353,6 +354,15 @@ def render_plain(snapshot: dict) -> str:
                 ctx.get("total_clean", 0),
                 ctx.get("total_stale", len(ctx.get("stale", []))),
                 human_tokens(ctx.get("est_reclaimable_tokens", 0)),
+            )
+        )
+        lines.append(
+            "  ctx dropped %s tok (%s)"
+            % (
+                human_tokens(dropped),
+                "potential; real if agent drops the files"
+                if dropped
+                else "INACTIVE — no agent called context_set_checkpoint",
             )
         )
         for e in ctx.get("stale", [])[:10]:
@@ -638,10 +648,16 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                         ctx.get("total_read", 0),
                     ),
                 )
+                dropped = ctx.get("ctx_dropped_tokens_total", 0)
                 y = put(
                     y,
-                    "  ctx tokens dropped (clean-file re-reads avoided): %s"
-                    % human_tokens(ctx.get("ctx_dropped_tokens_total", 0)),
+                    "  ctx dropped: %s tok  (%s)"
+                    % (
+                        human_tokens(dropped),
+                        "potential — real only if the agent drops these files"
+                        if dropped
+                        else "INACTIVE — agent must call context_set_checkpoint",
+                    ),
                 )
                 stale = ctx.get("stale", [])
                 y = put(
