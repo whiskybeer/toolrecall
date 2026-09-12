@@ -1191,8 +1191,12 @@ class DaemonServer:
         self.cfg = load_config()
         self.security = SecurityGate(self.cfg)
         self.multiplexer = MCPMultiplexer(self.cfg)
-        self._context = ContextTracker()
-        self._context.set_checkpoint(name="daemon_start")
+        self._context = ContextTracker(ignore_prefixes=self.cfg.tracker_ignore_read_prefixes)
+        # Startup checkpoint: banks nothing (read set is empty) and does
+        # NOT arm the flow — armed only becomes true on an agent-driven
+        # checkpoint, so the TUI can distinguish "daemon restarted" from
+        # "flow actively driven".
+        self._context.set_checkpoint(name="daemon_start", armed=False)
         self._server = None
         self._running = False
         # ⚠ ThreadPoolExecutor is NOT created here — it must be created AFTER
@@ -1834,6 +1838,7 @@ class DaemonServer:
                 "clean": ctx.get("total_clean", 0),
                 "total_read": ctx.get("total_read", 0),
                 "ctx_dropped_tokens": ctx.get("ctx_dropped_tokens_total", 0),
+                "agent_armed": ctx.get("agent_armed", False),
             },
         }
 

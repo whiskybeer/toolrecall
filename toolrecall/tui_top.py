@@ -421,15 +421,14 @@ def render_plain(snapshot: dict) -> str:
                 human_tokens(ctx.get("est_reclaimable_tokens", 0)),
             )
         )
-        lines.append(
-            "  ctx dropped %s tok (%s)"
-            % (
-                human_tokens(dropped),
-                "potential; real if agent drops the files"
-                if dropped
-                else "INACTIVE — no agent called context_set_checkpoint",
-            )
-        )
+        _armed = ctx.get("agent_armed", False)
+        if dropped:
+            _drop_state = "potential; real if agent drops the files"
+        elif _armed:
+            _drop_state = "armed — flow driven, nothing banked yet"
+        else:
+            _drop_state = "INACTIVE — agent must call context_set_checkpoint"
+        lines.append("  ctx dropped %s tok (%s)" % (human_tokens(dropped), _drop_state))
         for e in ctx.get("stale", [])[:10]:
             lines.append("  stale: %s (~%s tok)" % (e["path"], human_tokens(e["est_tokens"])))
     money = money_today()
@@ -778,15 +777,16 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     ),
                 )
                 dropped = ctx.get("ctx_dropped_tokens_total", 0)
+                _armed = ctx.get("agent_armed", False)
+                if dropped:
+                    _drop_state = "potential — real only if the agent drops these files"
+                elif _armed:
+                    _drop_state = "armed — flow driven, nothing banked yet"
+                else:
+                    _drop_state = "INACTIVE — agent must call context_set_checkpoint"
                 y = put(
                     y,
-                    "  ctx dropped: %s tok  (%s)"
-                    % (
-                        human_tokens(dropped),
-                        "potential — real only if the agent drops these files"
-                        if dropped
-                        else "INACTIVE — agent must call context_set_checkpoint",
-                    ),
+                    "  ctx dropped: %s tok  (%s)" % (human_tokens(dropped), _drop_state),
                 )
                 stale = ctx.get("stale", [])
                 y = put(

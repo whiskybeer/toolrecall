@@ -17,6 +17,7 @@ import sys
 import time
 import tempfile
 import threading
+import shutil
 
 import pytest
 
@@ -53,6 +54,36 @@ class TestContextTrackerBasics:
         assert stats["total_read"] == 0
         assert stats["checkpoint"] == 0
         assert stats["ctx_dropped_tokens_total"] == 0
+        assert stats["agent_armed"] is False
+
+    def test_set_checkpoint_arms_flow(self):
+        """set_checkpoint marks the flow agent-driven (agent_armed=True)."""
+        ct = ContextTracker()
+        assert ct.get_stats()["agent_armed"] is False
+        ct.set_checkpoint("agent checkpoint")
+        assert ct.get_stats()["agent_armed"] is True
+
+    def test_daemon_start_checkpoint_does_not_arm(self):
+        """The daemon-start auto-checkpoint must NOT arm the flow.
+
+        This is the TUI INACTIVE fix: a fresh daemon auto-checkpoints with
+        an empty read set, which previously looked identical to a real
+        agent checkpoint.
+        """
+        ct = ContextTracker()
+        ct.set_checkpoint(name="daemon_start", armed=False)
+        assert ct.get_stats()["agent_armed"] is False
+        # A later real agent checkpoint arms it.
+        ct.set_checkpoint(name="agent")
+        assert ct.get_stats()["agent_armed"] is True
+
+    def test_reset_clears_armed(self):
+        """reset() disarms the flow along with everything else."""
+        ct = ContextTracker()
+        ct.set_checkpoint("start")
+        assert ct.get_stats()["agent_armed"] is True
+        ct.reset()
+        assert ct.get_stats()["agent_armed"] is False
 
     def test_checkpoint_creates_new_id(self):
         """Each set_checkpoint increments the checkpoint ID."""
@@ -361,7 +392,13 @@ class TestContextTrackerReset:
             os.unlink(path)
 
     def test_ctx_dropped_tokens_accumulates(self):
-        """ctx_dropped_tokens_total accumulates across multiple get_dirty calls."""
+        """ctx_dropped_tokens_total banks each clean file exactly once.
+
+        Regression guard for the 2026-09-10 double-count bug: repeated
+        get_dirty() polls used to re-add the ENTIRE current clean set to
+        the cumulative counter (N polls = N × the same set). Now only
+        newly-clean files are banked.
+        """
         ct = ContextTracker()
         ct.set_checkpoint("start")
 
@@ -376,11 +413,17 @@ class TestContextTrackerReset:
             ct.mark_read(p2)
             r2 = ct.get_dirty()
             t2 = r2["ctx_dropped_tokens"]
-            # Both p1 and p2 are clean (p1 still in read_set, not dirty)
+            # Per-call view: the CURRENT clean set (both files clean)
             assert t2 == 500  # 250 from p1 + 250 from p2
 
-            # get_stats() returns only confirmed cumulative total
-            assert ct.get_stats()["ctx_dropped_tokens_total"] == t1 + t2
+            # BANKED-ONCE: cumulative counts each file once (500), not
+            # the sum of per-call views (which would be 750).
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 500
+
+            # Polling again does NOT grow the total (was the bug).
+            r3 = ct.get_dirty()
+            assert r3["ctx_dropped_tokens"] == 500  # clean set unchanged
+            assert ct.get_stats()["ctx_dropped_tokens_total"] == 500
         finally:
             os.unlink(p1)
             os.unlink(p2)
@@ -396,6 +439,84 @@ class TestContextTrackerReset:
             assert ct.get_stats()["ctx_dropped_tokens_total"] == 100
             ct.reset()
             assert ct.get_stats()["ctx_dropped_tokens_total"] == 0
+        finally:
+            os.unlink(path)
+
+
+class TestContextTrackerIgnorePrefixes:
+    """mark_read must ignore agent-internal paths (session transcripts etc.).
+
+    Regression guard for the 2026-09-10 clean-set poisoning: daemon-side
+    serve-through reads of ~/.hermes/webui/sessions/*.json (~380MB) were
+    tracked as agent reads and inflated every potential-savings figure.
+    """
+
+    def test_ignored_prefix_not_tracked(self):
+        ct = ContextTracker(ignore_prefixes=["/tmp/sessions/"])
+        tracked = make_temp_file("tracked")
+        ignored_dir = tempfile.mkdtemp(prefix="sessions_")
+        ignored = os.path.join(ignored_dir, "chat.json")
+        with open(ignored, "w") as f:
+            f.write("X" * 400)
+        try:
+            ct.mark_read(tracked)
+            ct.mark_read(ignored)
+            stats = ct.get_stats()
+            assert tracked in stats["clean"]
+            assert ignored not in stats["clean"]
+            assert stats["total_read"] == 1
+        finally:
+            os.unlink(tracked)
+            shutil.rmtree(ignored_dir, ignore_errors=True)
+
+    def test_ignored_glob_pattern(self):
+        ct = ContextTracker(ignore_prefixes=["*/webui/sessions/*"])
+        # Shape the temp dir like the real thing: <base>/webui/sessions/<file>
+        base = tempfile.mkdtemp(prefix="hermes_glob_test_")
+        ignored_dir = os.path.join(base, "webui", "sessions")
+        os.makedirs(ignored_dir, exist_ok=True)
+        ignored = os.path.join(ignored_dir, "db528.json")
+        with open(ignored, "w") as f:
+            f.write("X" * 400)
+        try:
+            ct.mark_read(ignored)
+            assert ignored not in ct.get_stats()["clean"]
+            # Non-matching paths are still tracked by the same tracker.
+            tracked = make_temp_file("tracked_by_glob_tracker")
+            try:
+                ct.mark_read(tracked)
+                assert tracked in ct.get_stats()["clean"]
+            finally:
+                os.unlink(tracked)
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
+
+    def test_ignore_prefixes_can_be_empty(self):
+        """Empty ignore list = track everything (old behavior)."""
+        ct = ContextTracker(ignore_prefixes=[])
+        path = make_temp_file("X" * 100)
+        try:
+            ct.mark_read(path)
+            assert path in ct.get_stats()["clean"]
+        finally:
+            os.unlink(path)
+
+    def test_ignored_config_paths_not_tracked(self):
+        """Default-style config paths (~/.hermes/...) expand correctly."""
+        ct = ContextTracker(ignore_prefixes=["~/.hermes/webui/sessions/"])
+        # /home/... style absolute path under an expanduser'd prefix —
+        # simulate by pointing the prefix at our temp dir instead.
+        ct2 = ContextTracker(ignore_prefixes=[tempfile.gettempdir() + "/"])
+        # tempfile.gettempdir() is absolute; everything under it is ignored,
+        # so this read must NOT be tracked. (Real config paths go through
+        # os.path.expanduser, exercised by the glob test above.)
+        path = make_temp_file("X" * 100)
+        try:
+            ct2.mark_read(path)
+            assert path not in ct2.get_stats()["clean"]
+            # The ~/.hermes tracker still tracks it (different prefix).
+            ct.mark_read(path)
+            assert path in ct.get_stats()["clean"]
         finally:
             os.unlink(path)
 

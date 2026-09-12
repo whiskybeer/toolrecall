@@ -58,6 +58,7 @@ ENV_MAP = {
     "TOOLRECALL_NORM_SORT_LISTS": ("norm", "sort_lists"),
     "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
+    "TOOLRECALL_TRACKER_IGNORE_PREFIXES": ("tracker", "ignore_read_prefixes"),
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
     "TOOLRECALL_RECALL_TTL": ("recall", "ttl"),
     "TOOLRECALL_DOCS_INDEX_TTL": ("docs", "index_ttl"),
@@ -972,6 +973,42 @@ class Config:
         if isinstance(raw, list):
             return raw
         return []
+
+    # ─── Context Tracker Properties ─────────────────────
+
+    @property
+    def tracker_ignore_read_prefixes(self) -> list:
+        """Path prefixes NEVER tracked as agent reads by the context tracker.
+
+        Files matching these prefixes are counted by the file cache but are
+        NOT added to the tracker's clean set. Daemon-side serve-through reads
+        (agent session transcripts like ~/.hermes/webui/sessions/*.json, agent
+        config/cache files) are never present in any agent context — tracking
+        them poisoned the clean set and inflated potential-savings figures
+        (~380MB of session JSONs observed on 2026-09-10).
+
+        Configured via [tracker].ignore_read_prefixes in toolrecall.toml,
+        or TOOLRECALL_TRACKER_IGNORE_PREFIXES env var (comma-separated).
+
+        Default: agent session transcript dirs + the agent home data dirs
+        (~/.hermes/webui, ~/.hermes/sessions, ~/.hermes/cache, plus any
+        */webui/sessions path). Empty list = track everything (old behavior).
+        """
+        default = [
+            "~/.hermes/webui/sessions/",
+            "~/.hermes/webui/sessions.json",
+            "~/.hermes/sessions/",
+            "~/.hermes/cache/",
+            "*/webui/sessions/",
+        ]
+        raw = self.get(
+            "tracker",
+            "ignore_read_prefixes",
+            default=default,
+        )
+        if isinstance(raw, list):
+            return [str(p) for p in raw]
+        return default
 
     # ─── Update (auto-updater) Properties ───────────────
 

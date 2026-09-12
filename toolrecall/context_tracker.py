@@ -26,6 +26,7 @@ Thread safety:
   is essential.
 """
 
+import fnmatch
 import os  # noqa: E402 (needed by mark_dirty/mark_read below — see note at file end)
 import time
 from threading import RLock
@@ -117,16 +118,50 @@ class ContextTracker:
         — monotonically increasing checkpoint ID
 
       self._ctx_dropped_tokens: int
-        — cumulative estimate of tokens dropped from context
-        Incremented each time get_dirty()/get_hint() returns clean files.
-        Estimated as sum(len(content)/4) for each clean file.
+        — BANKED-ONCE estimate of tokens dropped from context.
+        Each clean file is added exactly ONCE per checkpoint epoch: a file
+        already counted is NOT re-counted on later get_dirty() calls, so
+        the total never inflates with polling. Per-call contribution of
+        the CURRENT clean set is returned by get_dirty() as
+        ctx_dropped_tokens (per-call view, never double-added).
+
+      self._banked: set[str]
+        — clean files already added to the cumulative counter; guards
+        against re-counting the same file on every poll.
+
+      self._ignore_prefixes: tuple[str, ...]
+        — absolute path prefixes NEVER tracked as reads. Daemon-side
+        serve-through reads (agent session transcripts, agent config /
+        cache files) were never present in any agent context and can
+        never be dropped from one — counting them poisoned the clean
+        set and inflated every potential-savings figure (verified
+        2026-09-10: 303 of 334 tracked files were session JSONs,
+        ~380MB — orders of magnitude overstatement).
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        ignore_prefixes: list[str] | tuple[str, ...] | None = None,
+    ):
         self._dirty: dict[str, dict] = {}
         self._read_set: dict[str, float] = {}
         self._checkpoint_counter: int = 0
         self._ctx_dropped_tokens: int = 0
+        self._agent_armed: bool = False
+        self._banked: set[str] = set()
+        self._ignore_prefixes: tuple[str, ...] = tuple(
+            os.path.expanduser(p) for p in (ignore_prefixes or ())
+        )
+        self._ignore_globs: tuple[str, ...] = tuple(
+            p for p in self._ignore_prefixes if any(c in p for c in "*?[")
+        )
+        # Literal prefixes are anchored to an absolute base; glob patterns
+        # stay raw and are fnmatch-tested against the absolute path.
+        self._ignore_prefixes = tuple(
+            os.path.abspath(p) + ("" if p.endswith(os.sep) else os.sep)
+            for p in self._ignore_prefixes
+            if not any(c in p for c in "*?[")
+        )
         # ── Staleness ordering (v0.8.15) ──────────────────
         # Monotonic operation counter. Incremented on every read and
         # every write. Lets us answer a question the checkpoint model
@@ -140,16 +175,21 @@ class ContextTracker:
         self._write_seq: dict[str, int] = {}
         self._lock = RLock()
 
-    def set_checkpoint(self, name: str = "") -> dict:
+    def set_checkpoint(self, name: str = "", armed: bool = True) -> dict:
         """Set a checkpoint — everything clean after this point.
 
         Auto-accumulates ctx_dropped_tokens: files that were read since the
         last checkpoint but never dirtied are estimated as tokens the agent
-        "dropped" from context. This happens automatically — no explicit
-        get_dirty() call needed from either the agent or the daemon.
+        "dropped" from context. BANKED-ONCE (2026-09-10): each clean file is
+        counted exactly once; repeated calls do not re-count already-banked
+        files.
 
         Args:
             name: Optional human-readable label for the checkpoint.
+            armed: Mark the flow as agent-driven. The daemon's startup
+                auto-checkpoint passes armed=False so the TUI can
+                distinguish "daemon restarted, agent never drove the flow"
+                from a real agent checkpoint.
 
         Returns:
             {"checkpoint": int, "name": str, "dirty_before": int}
@@ -162,13 +202,27 @@ class ContextTracker:
             # dirtied since the last checkpoint have been "dropped" from
             # the agent's context. Estimate their token cost so the
             # healthcheck metric is always live.
-            clean_read = [p for p in self._read_set if p not in self._dirty]
-            for p in clean_read:
+            #
+            # BANKED-ONCE GUARD (fix 2026-09-10): each clean file is added
+            # exactly once. Previously every checkpoint/get_dirty call
+            # re-added the ENTIRE current clean set to the cumulative
+            # counter — N polls inflated the total N× the same set
+            # (proven live: 82.87M → 165.73M after ONE get_dirty call).
+            for p in self._read_set:
+                if p in self._dirty or p in self._banked:
+                    continue
                 try:
                     size = os.path.getsize(p)
                 except OSError:
                     size = 0
                 self._ctx_dropped_tokens += size // 4
+                self._banked.add(p)
+
+            # An agent checkpoint (not the daemon-start one) arms the
+            # flow — the TUI distinguishes "armed, nothing dropped yet"
+            # from "never checkpointed".
+            if armed:
+                self._agent_armed = True
 
             result = {
                 "checkpoint": self._checkpoint_counter,
@@ -205,17 +259,30 @@ class ContextTracker:
         A file that is in read_set but NOT in dirty is "clean" —
         safe to drop from context.
 
+        Reads under _ignore_prefixes are NOT tracked (fix 2026-09-10):
+        agent session transcripts and agent config/cache files are read
+        daemon-side on serve-through but are never present in any agent
+        context — counting them poisoned the clean set (~380MB of
+        session JSONs) and inflated potential-savings figures.
+
         Args:
             path: Absolute path to the file that was read.
         """
         if not path:
             return
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        if self._ignore_prefixes or self._ignore_globs:
+            for pref in self._ignore_prefixes:
+                if abs_path.startswith(pref):
+                    return
+            for pat in self._ignore_globs:
+                if fnmatch.fnmatch(abs_path, pat):
+                    return
         with self._lock:
             try:
-                mtime = os.path.getmtime(path)
+                mtime = os.path.getmtime(abs_path)
             except OSError:
                 mtime = time.time()
-            abs_path = os.path.abspath(path)
             self._read_set[abs_path] = mtime
             self._seq += 1
             self._read_seq[abs_path] = self._seq
@@ -262,7 +329,20 @@ class ContextTracker:
                     size = 0
                 clean_tokens += size // 4
 
-            self._ctx_dropped_tokens += clean_tokens
+            # BANKED-ONCE GUARD (fix 2026-09-10): previously every
+            # get_dirty() call re-added the ENTIRE current clean set to
+            # the cumulative counter — N polls inflated the total N× the
+            # same set (proven live: 82.87M → 165.73M after ONE call).
+            # Now each clean file is banked exactly once.
+            for p in clean_list:
+                if p in self._banked:
+                    continue
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    size = 0
+                self._ctx_dropped_tokens += size // 4
+                self._banked.add(p)
 
             return {
                 "dirty": sorted(dirty_list),
@@ -271,6 +351,7 @@ class ContextTracker:
                 "total_dirty": len(dirty_list),
                 "total_clean": len(clean_list),
                 "ctx_dropped_tokens": clean_tokens,
+                "agent_armed": self._agent_armed,
             }
 
     def get_stale(self) -> dict:
@@ -356,9 +437,13 @@ class ContextTracker:
     def get_stats(self) -> dict:
         """Full status of the tracker.
 
-        Returns confirmed cumulative state only — ctx_dropped_tokens_total
-        counts files that were actually returned as clean by get_dirty().
-        For the current pending estimate, use get_dirty().
+        ctx_dropped_tokens_total is BANKED-ONCE: each clean file's size is
+        added exactly once (per checkpoint epoch) when first returned by
+        set_checkpoint() or get_dirty(). Polling get_dirty() no longer
+        inflates the total (N polls used to add the same clean set N×).
+
+        Per-call state (current clean set, its token estimate) comes from
+        get_dirty(), not from this method.
         """
         with self._lock:
             dirty_list = list(self._dirty.keys())
@@ -373,6 +458,7 @@ class ContextTracker:
                 "total_clean": len(clean_list),
                 "total_read": len(self._read_set),
                 "ctx_dropped_tokens_total": self._ctx_dropped_tokens,
+                "agent_armed": self._agent_armed,
             }
 
     def reset(self) -> dict:
@@ -392,6 +478,8 @@ class ContextTracker:
             self._seq = 0
             self._checkpoint_counter = 0
             self._ctx_dropped_tokens = 0
+            self._banked.clear()
+            self._agent_armed = False
             return {"reset": True, "checkpoint": 0}
 
     @property
