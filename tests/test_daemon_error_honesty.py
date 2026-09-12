@@ -19,7 +19,6 @@ import socket
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -150,7 +149,6 @@ class GcResilienceTest(unittest.TestCase):
     def test_gc_with_legacy_recall_cache(self):
         """Legacy DB (no recall_cache.expires_at) → GC still purges + vacuums."""
         import sqlite3
-        import time
 
         db = os.path.join(self.tmpdir, "legacy.db")
         conn = sqlite3.connect(db)

@@ -203,6 +203,8 @@ github_release() {
 }
 
 build_pypi() {
+    echo "  generating PyPI readme (relative links -> GitHub URLs)"
+    python3 scripts/readme_pypi.py
     echo "  building wheel + sdist, uploading to PyPI"
     rm -rf dist build
     python3 -m build
