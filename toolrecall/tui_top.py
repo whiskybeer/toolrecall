@@ -489,7 +489,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 y = put(y, " " + line)
         elif view == "stats":
             y = put(
-                y + 1,
+                y,
                 " %-14s %9s %9s %7s %12s %10s"
                 % ("cache", "hits", "misses", "rate", "tokens-srvd", "last-act"),
                 A_BOLD,
@@ -557,7 +557,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             rows = state["log"]
             body_h = max(1, max_y - y - 2)
             state["scroll"] = max(0, min(state["scroll"], max(0, len(rows) - body_h)))
-            y = put(y + 1, " recent access log (%d rows, scroll up/down):" % len(rows), A_BOLD)
+            y = put(y, " recent access log (%d rows, scroll up/down):" % len(rows), A_BOLD)
             for row in rows[state["scroll"] : state["scroll"] + body_h]:
                 cat, path, hit, tokens, ts = row
                 y = put(
@@ -574,7 +574,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 )
         elif view == "trend":
             t = state.get("trend")
-            y = put(y + 1, " daily hit-rate trend (file_cache, from access_log):", A_BOLD)
+            y = put(y, " daily hit-rate trend (file_cache, from access_log):", A_BOLD)
             if not t:
                 y = put(y + 1, "  trend data unavailable (db unreadable?)", A_DIM)
             else:
@@ -611,7 +611,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         elif view == "context":
             ctx = state["ctx"]
             y = put(
-                y + 1,
+                y,
                 " context tracker (requires the daemon — state lives in daemon memory):",
                 A_BOLD,
             )
