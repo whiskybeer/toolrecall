@@ -30,6 +30,7 @@ import threading
 import time
 from socketserver import ThreadingMixIn
 
+from toolrecall import tee_settle
 from toolrecall.transport import TransportClient
 from toolrecall.keys import api_request_hash, content_digest
 
@@ -853,8 +854,29 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                             "HIT", target_host, target_path, request_hash, prompt_tokens_override=n
                         )
                         return  # replay written
-                # MISS (or replay failed) → fall through to live streaming,
-                # which will tee the response into the cache.
+                # MISS (or replay failed). Two sub-cases:
+                #  - another thread is tee-storing THIS hash right now →
+                #    wait for its commit and re-check (closes the store
+                #    race: r2 fired right after r1's stream end);
+                #  - genuinely absent → go live.
+                if tee_settle.wait_settled(request_hash):
+                    cached = self._client.send(
+                        {"cmd": "cached_api_check", "request_hash": request_hash}
+                    )
+                    if cached.get("cached") and 200 <= cached.get("status", 200) < 300:
+                        n = self._replay_stream_from_cache(
+                            cached, target_host, target_path, request_hash
+                        )
+                        if n is not None:
+                            _log_proxy_usage(
+                                "HIT",
+                                target_host,
+                                target_path,
+                                request_hash,
+                                prompt_tokens_override=n,
+                            )
+                            return  # replay written
+                # still a MISS → live streaming, which will tee the response.
 
             log.info(
                 "STREAM: %s %s%s — %s",
@@ -1286,6 +1308,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b'{"error":"Forbidden: non-allowlisted target host"}')
             return
 
+        # Register the tee-store BEFORE streaming: a racing duplicate that
+        # misses the cache waits for this registration to settle (see
+        # tee_settle docstring — the store commits after the relay loop,
+        # and r2 can arrive inside that window). Only when a tee will
+        # actually happen (canonical profile + hash).
+        tee_registered = bool(canonical_profile and request_hash)
+        if tee_registered:
+            tee_settle.register(request_hash)
+
         import http.client
 
         is_loopback = host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
@@ -1379,6 +1410,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"\n\n[ToolRecall streaming error]\n")
             except Exception:
                 pass
+        finally:
+            # Settle on EVERY exit path (stored, discarded-truncated, relay
+            # error) — a leaked registration would stall racing duplicates
+            # until the 10s stale sweep.
+            if tee_registered:
+                tee_settle.settle(request_hash)
 
         # Log STREAM usage. Billed truth when the provider emitted a final
         # usage chunk (OpenAI-compatible include_usage); otherwise fall back
@@ -1552,8 +1589,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 }
             )
             log.info(
-                "STREAM TEE: stored %d chars under canonical hash %s…",
-                len("".join(content_parts)),
+                "STREAM TEE: stored %d bytes under canonical hash %s…",
+                len(body),
                 request_hash[:12],
             )
         except Exception as e:
