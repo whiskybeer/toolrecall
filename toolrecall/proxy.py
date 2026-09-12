@@ -19,7 +19,6 @@ Usage:
     # Then use your agent/scripts normally — API responses are cached automatically.
 """
 
-import hashlib
 import http.client
 import http.server
 import json
@@ -32,6 +31,7 @@ import time
 from socketserver import ThreadingMixIn
 
 from toolrecall.transport import TransportClient
+from toolrecall.keys import api_request_hash, content_digest
 
 log = logging.getLogger("toolrecall.proxy")
 
@@ -655,9 +655,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 hash_body = canonical
 
         # Build cache key: hash(method + host + path + body)
-        body_hash = hashlib.sha256(hash_body).hexdigest()
-        request_str = f"{method}:{target_host}:{target_path}:{body_hash}"
-        request_hash = hashlib.sha256(request_str.encode()).hexdigest()
+        body_hash = content_digest(hash_body)
+        request_hash = api_request_hash(method, target_host, target_path, hash_body)
 
         # Streaming requests: bypass cache entirely, use chunked passthrough
         # Opt-out header: X-ToolRecall-No-Cache skips BOTH the HIT lookup and
@@ -1217,9 +1216,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Log STREAM usage. Billed truth when the provider emitted a final
         # usage chunk (OpenAI-compatible include_usage); otherwise fall back
         # to the len(body)//4 request-size estimate (completion stays 0).
-        import hashlib
-
-        stream_body_hash = hashlib.sha256(body).hexdigest() if body else ""
+        stream_body_hash = content_digest(body) if body else ""
         pt_est = max(1, len(body) // 4) if body else 0
         usage = _parse_sse_usage_tail(usage_tail)
         log.info(
@@ -1380,9 +1377,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     "method": "POST",
                     "host": host,
                     "path": path,
-                    "request_body_hash": hashlib.sha256(request_body).hexdigest()
-                    if request_body
-                    else "",
+                    "request_body_hash": content_digest(request_body) if request_body else "",
                     "response_status": 200,
                     "response_headers": {"Content-Type": "application/json"},
                     "response_body": body,

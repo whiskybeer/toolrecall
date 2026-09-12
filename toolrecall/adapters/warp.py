@@ -119,6 +119,12 @@ def make_request_hash(method: str, host: str, path: str, body: bytes) -> str:
 
     Provided so Warp-side tooling (eval harness, billing attribution) can
     predict which requests will cache-hit without making a network call.
+
+    This module is deliberately stdlib-only (the edge is deployed and run
+    without a toolrecall install), so the derivation cannot be imported
+    from ``toolrecall.keys`` here. Parity with the canonical
+    ``keys.api_request_hash`` is enforced by ``tests/test_warp_adapter.py``
+    (golden vectors + randomized parity); drift fails the suite loudly.
     """
     body_hash = hashlib.sha256(body).hexdigest()
     request_str = f"{method}:{host}:{path}:{body_hash}"

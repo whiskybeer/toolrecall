@@ -43,6 +43,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from toolrecall import __version__
+from toolrecall.keys import content_digest
 from toolrecall.cache import (
     cached_read as _cache_read,
     cached_terminal as _cache_terminal,
@@ -1816,9 +1817,7 @@ class DaemonServer:
             + str(self.cfg.mcp_emit_context_hints)
             + str(self.cfg.mcp_client_hint_policy)
         )
-        import hashlib
-
-        config_hash = hashlib.sha256(config_hash.encode()).hexdigest()[:16]
+        config_hash = content_digest(config_hash, truncate=16)
         return {
             "pong": True,
             "pid": os.getpid(),

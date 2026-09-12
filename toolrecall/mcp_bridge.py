@@ -18,7 +18,6 @@ Requires a running ToolRecall Daemon:
     toolrecall mcp              # Run bridge
 """
 
-import hashlib
 import json
 import os
 import sys
@@ -762,7 +761,7 @@ def main():
     _config_hash_store = os.path.join(
         _cache_dir,
         "toolrecall",
-        f"config_hash_{hashlib.sha256(_sock_key.encode()).hexdigest()[:16]}",
+        f"config_hash_{content_digest(_sock_key, truncate=16)}",
     )
     _prev_hash = ""
     try:

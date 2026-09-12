@@ -32,12 +32,12 @@ Usage:
 """
 
 import json
-import hashlib
 import time
 from typing import Any, Optional
 
 from toolrecall._db import _db
 from toolrecall.normalizer import normalize_tool_args
+from toolrecall.keys import content_digest
 
 
 # ─── Constants ─────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ def _make_hash(tool_name: str, args: dict) -> str:
     """Deterministic hash of tool name + normalized arguments."""
     args_json = normalize_tool_args(args)
     raw = f"{tool_name}:{args_json}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return content_digest(raw, truncate=16)
 
 
 # ─── ReplayManager ────────────────────────────────────────────────────────────────

@@ -49,6 +49,15 @@ Known policy deltas, documented honestly:
   process and per equal-structure object, but NOT canonical across
   differently-ordered equivalent dicts. The canonical-nesting fix changes
   key bytes and ships in a later stage behind a key-version bump, not here.
+
+Phase 2 (2026-09) — routed ad-hoc sha256 sites through here: proxy
+api-cache/stream/log hashes (now via ``api_request_hash`` /
+``content_digest``), daemon ping config_hash, mcp_bridge config-hash
+filename, replay._make_hash. Refused, with reasons: ``_db._hash`` and the
+daemon PID lock (md5 domains with persisted keys), ``cache.py`` MCP
+preimages (legacy ``server://tool?args`` format ≠ tool_key), and
+``adapters/warp.make_request_hash`` (stdlib-only edge that deploys without
+a toolrecall install — parity enforced by tests instead of import).
 """
 
 from __future__ import annotations
@@ -57,7 +66,7 @@ import hashlib
 import json
 from typing import Any, Optional, Tuple, Union
 
-__all__ = ["content_digest", "tool_key", "digest16"]
+__all__ = ["content_digest", "tool_key", "digest16", "api_request_hash"]
 
 BytesLike = Union[str, bytes, bytearray]
 _MIN_TRUNCATE = 8  # below 8 hex chars, stub references collide too easily
@@ -93,6 +102,21 @@ def content_digest(data: BytesLike, *, truncate: Optional[int] = None) -> str:
 def digest16(data: BytesLike) -> str:
     """Bounded 16-hex content digest — legacy stub-reference width."""
     return content_digest(data, truncate=16)
+
+
+def api_request_hash(method: str, host: str, path: str, body: bytes) -> str:
+    """Full sha256 of a proxied API request — the api_cache request key.
+
+    Single source of truth for the proxy↔edge request-hash derivation
+    (``f"{method}:{host}:{path}:{body_hash}"`` over the body's sha256).
+    Extracted from twin copies in ``proxy.py`` and ``adapters/warp.py``;
+    the twins' drift already caused a live 0%-hit-rate incident
+    (2026-09-03). Warp-side tooling calls this to predict cache hits
+    without a network call. Preimage and width are byte-frozen by
+    ``tests/test_keys.py`` and ``tests/test_warp_adapter.py``.
+    """
+    body_hash = content_digest(body)
+    return content_digest(f"{method}:{host}:{path}:{body_hash}")
 
 
 def _normalize_args(args: Tuple[Any, ...], kwargs: dict) -> str:
