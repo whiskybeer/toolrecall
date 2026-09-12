@@ -328,6 +328,9 @@ class TestClientFallbackDirect(unittest.TestCase):
         self._orig_scan_dirs = os.environ.get("TOOLRECALL_SCAN_DIRS")
 
         # Isolate DB + point client to non-existent socket
+        # Save-restore (never bare pop): popping re-exposes the PRODUCTION
+        # default path (wipe-storm window — 2026-09-10).
+        self._orig_cache_db = os.environ.get("TOOLRECALL_CACHE_DB")
         os.environ["TOOLRECALL_CACHE_DB"] = self.db_path
         os.environ.pop("TOOLRECALL_SCAN_DIRS", None)
         _patch_transport(self.sock_path)
@@ -337,7 +340,12 @@ class TestClientFallbackDirect(unittest.TestCase):
         _init()
 
     def tearDown(self):
-        os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        # Restore (never bare pop): popping re-exposes the PRODUCTION
+        # default path (wipe-storm window — 2026-09-10).
+        if self._orig_cache_db is None:
+            os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        else:
+            os.environ["TOOLRECALL_CACHE_DB"] = self._orig_cache_db
         # Restore env vars this class may have mutated, so later tests
         # (esp. E2EDaemon-spawning ones) don't inherit a stale allowlist.
         if self._orig_allowed_paths is None:

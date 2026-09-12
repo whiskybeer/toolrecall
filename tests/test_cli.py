@@ -68,6 +68,11 @@ class TestCLIResetStats(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.tmpdir, "test.db")
+        # Save-restore (never bare pop): popping re-exposes the PRODUCTION
+        # default path for the rest of the process — any later config
+        # resolution before the autouse fixture re-pins hits ~/.toolrecall
+        # (the 2026-09-10 wipe-storm window).
+        self._orig_cache_db = os.environ.get("TOOLRECALL_CACHE_DB")
         os.environ["TOOLRECALL_CACHE_DB"] = self.db_path
         from toolrecall.cache import _init
 
@@ -78,7 +83,10 @@ class TestCLIResetStats(unittest.TestCase):
 
     def tearDown(self):
         sys.stdout = self.old_stdout
-        os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        if self._orig_cache_db is None:
+            os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        else:
+            os.environ["TOOLRECALL_CACHE_DB"] = self._orig_cache_db
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_reset_stats_prints_confirmation(self):

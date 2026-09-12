@@ -36,6 +36,44 @@ os.environ["TOOLRECALL_TRANSPORT"] = os.path.join(
 # a daemon that would bind the hermetic (or worse, the live) socket.
 os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
 
+
+def _points_at_prod_state(val: str) -> bool:
+    """True if *val* resolves inside the live ToolRecall state home.
+
+    Any path under ~/.toolrecall is live state (cache.db, -wal/-shm,
+    knowledge.db, daemon.pid, logs) — a test session pinned there is
+    #1-way-to-corrupt-production territory. Callers pass an already-set
+    env value; an UNSET var never refuses (the autouse fixture pins a
+    temp path per-test instead).
+    """
+    expanded = os.path.expanduser(os.path.expandvars(val))
+    prod_home = os.path.realpath(os.path.expanduser("~/.toolrecall"))
+    candidate = os.path.realpath(expanded)
+    return candidate == prod_home or candidate.startswith(prod_home + os.sep)
+
+
+# Layer 0 — session-wide refusal (module scope, runs BEFORE any test module
+# imports toolrecall): if the operator/environment pinned a production-looking
+# cache/knowledge DB explicitly, the session is misconfigured — abort the
+# ENTIRE run before any DB is opened. Mirrors benchmark_workload.py's REFUSING
+# guard for the pytest path. Why session-level: the runtime prod-path guard
+# below only reports at TEARDOWN (violations are collected, fail() fires at
+# the end) — by then a misconfigured wipe already happened (the 2026-09-10
+# wipe storm: 17 production reset_stats() calls from test/bench processes).
+# `os.environ.setdefault("TOOLRECALL_CACHE_DB", ...)` in test modules loses
+# exactly this race when a prior import already resolved config — this guard
+# makes the loser abort loudly instead of silently hitting live state.
+for _var in ("TOOLRECALL_CACHE_DB", "TOOLRECALL_KNOWLEDGE_DB", "BENCH_DB_PATH"):
+    _val = os.environ.get(_var)
+    if _val and _points_at_prod_state(_val):
+        pytest.exit(
+            f"REFUSING to run: {_var}={_val} points at production ToolRecall "
+            f"state (~/.toolrecall). Pin it to a temp/scratch path — the "
+            f"autouse fixtures do that automatically when the var is unset. "
+            f"(benchmark_workload.py enforces the same rule outside pytest.)",
+            returncode=3,
+        )
+
 # Production identifiers — a test touching these without the exempt marker
 # is testing against live state (the #1 way to silently corrupt it).
 _PROD_PATTERNS = [
