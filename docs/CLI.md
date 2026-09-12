@@ -23,6 +23,7 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall invalidate` | `cmd_invalidate()` | `toolrecall/cli.py` |
 | `toolrecall reset-stats` | `cmd_reset_stats()` | `toolrecall/cli.py` |
 | `toolrecall index` | `cmd_index()` | `toolrecall/cli.py` |
+| `toolrecall index-compact` | `cmd_index_compact()` | `toolrecall/cli.py` |
 | `toolrecall index-memory` | `cmd_index_memory()` | `toolrecall/cli.py` |
 | `toolrecall index-dir` | `cmd_index_dir()` | `toolrecall/cli.py` |
 | `toolrecall config-set` | `cmd_config_set()` | `toolrecall/cli.py` |
@@ -33,11 +34,20 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall mcp list` | `cmd_mcp_list()` | `toolrecall/cli.py` |
 | `toolrecall shim` | `cmd_shim()` | `toolrecall/cli.py` |
 | `toolrecall nginx` | `cmd_nginx()` | `toolrecall/cli.py` |
-| `toolrecall replay` | `cmd_replay()` → dispatches subcommands | `toolrecall/cli.py` |
-| `toolrecall turso` | `cmd_turso()` | `toolrecall/cli.py` |
+| `toolrecall replay` | `cmd_replay()` → dispatches subcommands | `toolrecall/replay_cli.py` |
+| `toolrecall turso` | `cmd_turso()` → dispatches subcommands | `toolrecall/turso_cli.py` |
 | `toolrecall context` | `cmd_context()` → dispatches subcommands | `toolrecall/cli.py` |
+| `toolrecall logs` | `cmd_logs()` | `toolrecall/cli.py` |
+| `toolrecall update` | `cmd_update()` | `toolrecall/cli.py` |
+| `toolrecall top` | `cmd_top()` → `toolrecall/tui_top.py` | `toolrecall/cli.py` |
+| `toolrecall proxy` | `cmd_proxy()` → dispatches subcommands | `toolrecall/cli.py` |
+| `toolrecall healthcheck` | `cmd_healthcheck()` | `toolrecall/cli.py` |
 
 Each function imports its dependencies lazily — running `toolrecall status` does not load `daemon.py` or `proxy.py`.
+
+Most commands accept `--help` / `-h` for per-command usage and options
+(`toolrecall trend --help`, `toolrecall mcp --help`, `toolrecall update --help`,
+`toolrecall shim` with unknown flags, ...). `toolrecall --help` lists all commands.
 
 ## Subcommands
 

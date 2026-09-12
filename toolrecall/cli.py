@@ -1,8 +1,12 @@
-"""ToolRecall CLI -- toolrecall status, stats, invalidate, index, serve, debug, nginx, mcp, daemon.
+"""ToolRecall CLI -- setup, daemon lifecycle, cache inspection, indexing, MCP, proxy.
 
 Usage:
+    toolrecall setup           # One-shot setup: config + service + shim + start
+    toolrecall restart         # Health check + clean daemon restart
+    toolrecall stop            # Stop daemon + revert proxy base-URL wiring
     toolrecall status          # Show cache status
     toolrecall stats           # Detailed statistics (JSON)
+    toolrecall trend           # Daily hit-rate trend + worst miss classes
     toolrecall invalidate      # Clear cache
     toolrecall reset-stats     # Reset statistics counters
     toolrecall index           # Index knowledge base
@@ -294,9 +298,23 @@ def cmd_stats():
 
 def cmd_trend():
     """Daily hit-rate trend + worst miss classes (self-serve verification)."""
+    args_rest = sys.argv[2:]
+    if "--help" in args_rest or "-h" in args_rest:
+        print("Usage: toolrecall trend [--days N] [--json]")
+        print()
+        print("Daily hit-rate trend + worst miss-heavy path classes, computed")
+        print("from the access_log rolling window. Self-serve verification of")
+        print("how well the cache serves YOUR workload (see README §Verifying).")
+        print()
+        print("Options:")
+        print("  --days N    Window in days (default 7)")
+        print("  --json      Machine-readable: {trend, miss_classes, coverage}")
+        print()
+        print("Daemon-independent: opens the cache DB read-only (WAL-safe).")
+        return
     days = 7
     as_json = False
-    for arg in sys.argv[2:]:
+    for arg in args_rest:
         if arg == "--json":
             as_json = True
         elif arg == "--days":
@@ -337,6 +355,16 @@ def cmd_invalidate():
 
 def cmd_reset_stats():
     """Reset cache statistics counters (hits, misses, tokens_read_from_disk) without clearing cache entries."""
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Usage: toolrecall reset-stats [--yes]")
+        print()
+        print("Reset hit/miss/token counters + access_log trend window.")
+        print("Cache entries are preserved (use `toolrecall invalidate` to clear those).")
+        print("Useful before benchmark runs so numbers reflect only that run.")
+        print()
+        print("Options:")
+        print("  --yes     Skip the confirmation prompt (also: TOOLRECALL_NONINTERACTIVE)")
+        return
     from toolrecall.cache import reset_stats
 
     # Destructive-ish (wipes counters + trend window): confirm interactively.
@@ -613,8 +641,22 @@ def cmd_mcp():
         sub = sys.argv[2]
         if sub == "list":
             return cmd_mcp_list()
-        elif sub == "--help" or sub == "-h":
-            pass  # fall through to help
+        elif sub in ("--help", "-h", "help"):
+            print("Usage: toolrecall mcp [list]")
+            print()
+            print("Start the MCP Bridge (stdio → daemon) — connect any MCP agent by")
+            print("adding `toolrecall mcp` to its MCP config. The bridge serves")
+            print("cached_read / cached_terminal / docs_search / multiplexed MCP tools.")
+            print()
+            print("Subcommands:")
+            print("  list    List registered MCP servers (builtin/external, command, args)")
+            print()
+            print("Flags:")
+            print("  --multiplexer-only    No file/terminal cache tools; multiplexer + docs only")
+            print("                        (recommended for Claude Code — see docs/CLI.md)")
+            print()
+            print("Requires the daemon: `toolrecall daemon`.")
+            return
 
     # Default: start MCP Bridge
     from toolrecall.mcp_bridge import main as bridge_main
@@ -2033,6 +2075,18 @@ def cmd_stop():
 def cmd_restart():
     """Health check + restart via systemd: config check → systemctl --user restart → verify.
     Auto-installs OS-level shim if not present."""
+    if "--help" in sys.argv[2:] or "-h" in sys.argv[2:]:
+        print("Usage: toolrecall restart")
+        print()
+        print("Health check + clean daemon restart:")
+        print("  1. config check (allowed_paths, terminal, multiplexer)")
+        print("  2. systemctl --user restart toolrecall-daemon")
+        print("     (falls back to a direct daemon restart without systemd)")
+        print("  3. wait for UDS readiness, print summary")
+        print()
+        print("Auto-installs the OS-level shim if missing. Takes no options.")
+        print("Related: `toolrecall daemon --status`, `toolrecall healthcheck`.")
+        return
     import os
     import subprocess
     import time
@@ -2411,6 +2465,17 @@ def cmd_update():
     from toolrecall import updater
 
     args = sys.argv[2:]
+    if "--help" in args or "-h" in args:
+        print("Usage: toolrecall update [--check] [--status]")
+        print()
+        print("Check PyPI for a newer toolrecall and apply the upgrade.")
+        print("A background auto-update check also runs at CLI entry (opt-out:")
+        print("[update] enabled = false in config.toml, or TOOLRECALL_UPDATE_CHECK=0).")
+        print()
+        print("Options:")
+        print("  --check, -c     Check only — report newer version, do not apply")
+        print("  --status, -s    Show updater state (last check/apply, failures) — no network")
+        return
     if "--status" in args or "-s" in args:
         updater.run_status_cli()
         return
@@ -2482,10 +2547,10 @@ def main():
         print("  init            Create default config.toml and .env")
         print("  status          Cache status and stats")
         print("  stats           Detailed stats (JSON)")
-        print("  trend           Daily hit-rate trend + worst miss classes")
+        print("  trend           Daily hit-rate trend + worst miss classes (--days N --json)")
         print("  invalidate      Clear all caches")
         print("  reset-stats     Reset statistics counters (preserves cache entries)")
-        print("  index           Build/update knowledge database")
+        print("  index           Build/update knowledge database (--memory to add memory stores)")
         print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
         print("  index-compact   Rebuild FTS index + VACUUM knowledge DB (reclaim bloat)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
@@ -2493,13 +2558,17 @@ def main():
         print("  serve           Start forward proxy (cache API responses)")
         print("  debug           Start debug/demo server (test cached_read via curl)")
         print("  nginx           Generate nginx config")
-        print("  mcp             Start MCP Bridge (requires daemon)")
-        print("  daemon          Start/stop/manage cache daemon")
+        print("  mcp             Start MCP Bridge (requires daemon); `mcp list` shows servers")
+        print("  daemon          Start/stop/manage cache daemon (--foreground --stop --status)")
         print("  logs            Tail the rotating ToolRecall log (--tail N --level X)")
         print("  shim            Install/uninstall transparent cache shim (.pth)")
-        print("  update          Check PyPI for a newer version / apply upgrade")
+        print("  context         Context tracker: status, stale files, recall store/get")
+        print("  top             Live TUI dashboard (stats/log/trend/context; --once snapshot)")
+        print("  proxy           Attach/detach agent LLM traffic to the API proxy (attach|detach)")
+        print("  update          Check PyPI for a newer version / apply upgrade (--check/--status)")
         print("  replay          Record/replay tool call scenarios (Replay mode)")
         print("  turso           Turso Cloud sync: init, status")
+        print("  healthcheck     One-shot daemon/cache health (exit 0 healthy / 1 warn / 2 error)")
         return
 
     if sys.argv[1] in ("--version", "-V", "-v"):
@@ -2570,4 +2639,12 @@ def main():
         cmd_turso(sys.argv[2:])
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: status, stats, invalidate, index, serve, nginx, mcp, daemon")
+        print()
+        print("Available commands:")
+        for name in commands:
+            print(f"  {name}")
+        print("  replay")
+        print("  turso")
+        print()
+        print("Run `toolrecall --help` for descriptions, or `toolrecall <command> --help`")
+        print("for per-command usage.")
