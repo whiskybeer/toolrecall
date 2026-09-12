@@ -26,3 +26,6 @@ Dockerfile.test
 go-client/tr
 # benchmark isolated venvs
 bench/media-bench/venv-*/
+
+# swe verify venv
+bench/swe-verify-venv/
