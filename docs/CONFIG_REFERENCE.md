@@ -27,7 +27,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[sources.memory]` | Agent memory indexing | `enabled` |
 | `[docs]` | Knowledge DB (FTS) index freshness | `index_ttl` (seconds, default `86400`, `0` = never auto-refresh; env `TOOLRECALL_DOCS_INDEX_TTL`) |
 | `[recall]` | Recall Tier (lossless-recoverable eviction) | `enabled` (opt-in, default `false`), `summarizer` (Phase 2) |
-| `[forward_proxy]` | Forward proxy port | Port via `TOOLRECALL_FORWARD_PORT` env var |
+| `[forward_proxy]` | Forward proxy port + request-body dedup | `port` via `TOOLRECALL_FORWARD_PORT` env; `dedup` (default `false`) = stub duplicate large text blocks in `/v1/chat/completions` POST bodies before billing — env `TOOLRECALL_FORWARD_DEDUP`, per-request opt-out header `X-ToolRecall-No-Dedup`. Tuning: `TOOLRECALL_DEDUP_MIN_CHARS` (800), `TOOLRECALL_DEDUP_PROTECT_LAST` (2). Off by default: the proxy forwards bodies byte-exact unless you opt in. |
 
 ### Config Loading Priority
 

@@ -131,7 +131,32 @@ Compare with file/terminal caching, which only saves input tokens (the output st
 | `TOOLRECALL_FORWARD_PORT` | `8569` | Proxy listen port |
 | `TOOLRECALL_FORWARD_TIMEOUT` | `30` | Upstream request timeout (seconds) |
 | `TOOLRECALL_FORWARD_STREAM_TIMEOUT` | `300` | Streaming request timeout |
+| `TOOLRECALL_FORWARD_DEDUP` (or `[forward_proxy] dedup` in `toolrecall.toml`) | `false` | Request-body dedup — see below |
 | N/A | 5 MB | Maximum POST body size |
+
+## Request-Body Dedup (opt-in)
+
+Agents re-paste the same tool results / file reads into every turn's request. With
+`dedup = true`, the proxy rewrites `/v1/chat/completions` POST bodies before
+forwarding: duplicate large text blocks (≥ `TOOLRECALL_DEDUP_MIN_CHARS`, default
+800) are replaced with a short stub pointing at the first occurrence. The first
+copy is kept byte-exact, so provider-side prompt caching is unaffected; the
+provider just never bills for the copies after the first.
+
+- **Measured:** −32.3% prompt tokens / −30.0% billed cost on SWE-bench Lite × 8
+  turns (billing-verified; see the README's [Input Dedup
+  Hook](../README.md#input-dedup-hook) section).
+- **Off by default.** The proxy forwards bodies byte-exact unless you opt in —
+  request rewriting is a trust decision, not a cache lookup.
+- **Per-request opt-out:** send `X-ToolRecall-No-Dedup: 1` (benchmark baseline
+  arms use this header to measure both arms through the same proxy).
+- **Never stubs the last N messages** (`TOOLRECALL_DEDUP_PROTECT_LAST`, default 2)
+  — the model always sees the freshest context in full.
+- **Fail-open:** any parse/rewrite error forwards the original body untouched.
+- Scope: POST bodies ending in `/chat/completions` (OpenAI format, any host —
+  OpenRouter's `/api/v1/...` included). Bodies that aren't JSON, have no
+  `messages` list, or contain no stubbable duplicate pass through unchanged.
+- Each stub event is logged: `DEDUP: stubbed N duplicate block(s), saved ~X chars`.
 
 ## Starting
 

@@ -45,6 +45,87 @@ MAX_BODY_SIZE = 5 * 1024 * 1024
 # and any whitespace variation providers might send.
 _STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 
+# ─── Request-body dedup (opt-in, [forward_proxy] dedup) ─────────────────────
+# Reuses the transport-neutral core from toolrecall.dedup — the same proven
+# algorithm as the LiteLLM adapter (billing-verified −32.3% prompt tokens /
+# −30.0% cost on SWE-bench Lite × 8 turns). Applied to /v1/chat/completions
+# POST bodies BEFORE the cache key is computed, so identical message sets map
+# to identical keys whether or not dedup stubbed anything new — dedup output
+# is deterministic for identical inputs, and the keep-first design means the
+# stubbed form of turn N is a strict prefix-extension of turn N−1's.
+#
+# The provider receives the REWRITTEN body (that is the point — fewer billed
+# prompt tokens). Failure of any kind rewrites nothing (fail-open, like the
+# adapter). Per-request opt-out: X-ToolRecall-No-Dedup header.
+
+
+def _dedup_enabled() -> bool:
+    """Read the [forward_proxy] dedup flag (default OFF — no silent rewriting)."""
+    try:
+        from toolrecall.config import load_config
+
+        val = load_config().get("forward_proxy", "dedup", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+    except Exception:
+        return False
+
+
+def _dedup_env_num(key: str, default: int) -> int:
+    """TOOLRECALL_DEDUP_MIN_CHARS / TOOLRECALL_DEDUP_PROTECT_LAST, robust to garbage."""
+    try:
+        return int(os.environ.get(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _maybe_dedup_body(body_bytes: bytes) -> tuple[bytes, dict | None]:
+    """Dedup duplicate large text blocks in a chat-completions request body.
+
+    Returns (body_bytes_out, stats_dict). stats is None when the body was
+    left untouched (not JSON, not chat/completions shape, disabled, nothing
+    stubbed, or any internal error — fail-open). The output is always valid
+    JSON with the same envelope keys as the input.
+    """
+    if not _dedup_enabled():
+        return body_bytes, None
+    try:
+        envelope = json.loads(body_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body_bytes, None
+    if not isinstance(envelope, dict):
+        return body_bytes, None
+    messages = envelope.get("messages")
+    if not isinstance(messages, list) or len(messages) < 3:
+        return body_bytes, None
+
+    from toolrecall.dedup import dedup_messages
+
+    try:
+        new_messages, stats = dedup_messages(
+            messages,
+            min_chars=_dedup_env_num("TOOLRECALL_DEDUP_MIN_CHARS", 800),
+            protect_last=_dedup_env_num("TOOLRECALL_DEDUP_PROTECT_LAST", 2),
+            media=os.environ.get("TOOLRECALL_DEDUP_MEDIA", "").lower() in ("1", "true", "yes"),
+        )
+    except Exception:
+        log.warning("dedup: internal error — forwarding original body", exc_info=True)
+        return body_bytes, None
+    if not stats.get("blocks"):
+        return body_bytes, None
+
+    envelope["messages"] = new_messages
+    out = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+    log.info(
+        "DEDUP: stubbed %d duplicate block(s), saved ~%d chars (~%d tokens est.)",
+        stats["blocks"],
+        stats["chars_saved"],
+        stats["est_tokens_saved"],
+    )
+    return out, stats
+
+
 # ── Body canonicalization ────────────────────────────────────────────────────
 # Volatile patterns observed in Warp's server-side harness bodies (live
 # capture, 2026-09-03). Each is matched against the DECODED text of message
@@ -627,6 +708,23 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error":"Request too large"}')
                 return
             body_bytes = self.rfile.read(content_length)
+
+            # ── Request-body dedup ([forward_proxy] dedup, default OFF) ─────
+            # Rewrites duplicate large text blocks in chat-completions bodies
+            # to short stubs (keep-first). Runs BEFORE streaming detection and
+            # the cache key: streaming detection, canonicalization, hashing,
+            # forwarding and the stream tee all see the same body the provider
+            # will receive. Per-request opt-out: X-ToolRecall-No-Dedup
+            # (benchmark baseline arms use this).
+            if (
+                method == "POST"
+                and body_bytes
+                and target_path.endswith("/chat/completions")
+                and (self.headers.get("X-ToolRecall-No-Dedup") or "").strip()
+                not in ("1", "true", "yes")
+            ):
+                body_bytes, _dedup_stats = _maybe_dedup_body(body_bytes)
+
             # Detect streaming requests — bypass cache, use chunked relay
             if body_bytes and _STREAM_RE.search(body_bytes):
                 is_streaming = True

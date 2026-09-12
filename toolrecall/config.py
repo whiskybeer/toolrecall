@@ -91,6 +91,9 @@ ENV_MAP = {
     "TOOLRECALL_NETWORK_ALLOW_PUBLIC": ("network", "allow_public"),
     "TOOLRECALL_NETWORK_TLS_CERT": ("network", "tls_cert"),
     "TOOLRECALL_NETWORK_TLS_KEY": ("network", "tls_key"),
+    # Forward-proxy request-body dedup (opt-in — proxy.py _maybe_dedup_body).
+    # Default OFF: the proxy never rewrites request bodies silently.
+    "TOOLRECALL_FORWARD_DEDUP": ("forward_proxy", "dedup"),
 }
 
 
@@ -113,6 +116,7 @@ def _apply_env_overrides(config: dict) -> dict:
             "canonical_commands",
             "coalescing",
             "circuit_breaker",
+            "dedup",
             "enabled",
         }
     )
@@ -305,7 +309,7 @@ class Config:
         "nginx": frozenset({"domain", "site_name", "ssl", "ssl_cert", "ssl_key", "github"}),
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
         # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
-        "forward_proxy": frozenset({"port", "extra_hosts"}),
+        "forward_proxy": frozenset({"port", "extra_hosts", "dedup"}),
         "update": frozenset({"enabled", "check_interval_hours"}),
     }
     # Sub-tables whose keys are user-defined names (per-client policies,

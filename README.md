@@ -26,7 +26,7 @@ Two capabilities are the reason to run it. Both are measured, both target the sa
 | Capability | What it does | Measured |
 |-----------|--------------|----------|
 | **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (measured on real runs, prefix-caching model) — [Context Tracker](#context-tracker) |
-| **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
+| **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
 
 ---
 
@@ -89,7 +89,7 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. See [M
 |---------|---------------|
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions. |
-| **Input Dedup Hook** | LiteLLM hook removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** |
+| **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
 | **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session |
@@ -237,6 +237,17 @@ Full detail: [Recall Tier](docs/RECALL_TIER.md)
 **Honesty (stated explicitly):** token savings are **billing-verified**; **task-quality is not**. A SWE-bench pass@1 A/B was attempted but inconclusive (the baseline model scored 0 on the chosen tasks even in isolation), so the defensible claim is: *"the hook removes wasted input tokens; its effect on task success is unverified."* Savings are also workload-dependent — an agent that rewrites whole files each turn saves less.
 
 **Zero-trust customer triage:** `bench/litellm_dedup/measure_duplicates.py` measures *your own* duplicate ratio from a JSONL export of your request bodies, entirely inside your perimeter, no network, no API key — so you know what you'd save before any pilot. It reports volume stubbable, deliberately *not* billed-$, because real savings depend on prefix-cache economics.
+
+**Two ways to run it** — same algorithm (`toolrecall.dedup`), same knobs (`TOOLRECALL_DEDUP_MIN_CHARS`/`_PROTECT_LAST`/`_MEDIA`), same `X-ToolRecall-No-Dedup` opt-out semantics:
+
+| | Built-in proxy dedup | LiteLLM gateway hook |
+|---|---|---|
+| Where | ToolRecall's own forward proxy (`:8569`) — the one your `base_url` already points at | A separate [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) in front of the provider |
+| Enable | `[forward_proxy] dedup = true` (or env `TOOLRECALL_FORWARD_DEDUP=1`), restart daemon | `litellm_settings: callbacks: toolrecall.adapters.litellm.handler` in LiteLLM's `proxy_config.yaml` |
+| Streaming requests | ✅ rewritten before the stream relay | ⚠️ LiteLLM bypasses `async_pre_call_hook` on some paths (see adapter docstring) |
+| Extra process | none | LiteLLM Proxy |
+
+The built-in path was verified end-to-end against live OpenRouter billing through `:8569` (2026-09-10): a two-turn conversation re-pasting a ~1,141-token tool result billed 1,245 prompt tokens on turn 2 with dedup vs 2,217+ without — turn 2's *billed cost* stayed ≈ turn 1's because the keep-first prefix remains byte-identical to provider prompt caching.
 
 Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) · ready-to-use config: [litellm-proxy-config.yaml](docs/examples/litellm-proxy-config.yaml)
 

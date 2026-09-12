@@ -210,36 +210,45 @@ def dump(data: dict, file, comment: str | None = None):
     file.write(text)
 
 
+# Starter configuration emitted by `python -m toolrecall.toml_serializer`.
+# Module-level so it is importable and testable (tests assert new keys —
+# e.g. forward_proxy.dedup — are present with safe defaults).
+DEFAULT_CONFIG = {
+    "storage": {"backend": "sqlite"},
+    "cache": {
+        "file_ttl": -1,
+        "terminal_default_ttl": 300,
+        "terminal_ttls": {"whoami": 600, "hostname": 3600},
+    },
+    "mcp": {
+        "allowed_paths": ["~/projects", "~/.hermes/skills"],
+        "allow_terminal": False,
+        "allowed_terminal_commands": [],
+    },
+    "mcp_multiplex": {
+        "enabled": True,
+        "servers": ["time", "github", "sequential-thinking"],
+        "default_ttl": 60,
+        "idle_minutes": 15,
+    },
+    "security": {
+        "tool_access_control": False,
+        "dangerous_tool_keywords": [],
+    },
+    "forward_proxy": {
+        "port": 8569,
+        # Request-body dedup for /v1/chat/completions POSTs. OFF by
+        # default: the proxy forwards bodies byte-exact unless the
+        # operator explicitly opts in (request rewriting = trust decision).
+        # Same algorithm as the LiteLLM dedup hook (toolrecall.dedup).
+        "dedup": False,
+    },
+    "update": {
+        "enabled": True,
+        "check_interval_hours": 24,
+    },
+}
+
 if __name__ == "__main__":
-    data = {
-        "storage": {"backend": "sqlite"},
-        "cache": {
-            "file_ttl": -1,
-            "terminal_default_ttl": 300,
-            "terminal_ttls": {"whoami": 600, "hostname": 3600},
-        },
-        "mcp": {
-            "allowed_paths": ["~/projects", "~/.hermes/skills"],
-            "allow_terminal": False,
-            "allowed_terminal_commands": [],
-        },
-        "mcp_multiplex": {
-            "enabled": True,
-            "servers": ["time", "github", "sequential-thinking"],
-            "default_ttl": 60,
-            "idle_minutes": 15,
-        },
-        "security": {
-            "tool_access_control": False,
-            "dangerous_tool_keywords": [],
-        },
-        "forward_proxy": {
-            "port": 8569,
-        },
-        "update": {
-            "enabled": True,
-            "check_interval_hours": 24,
-        },
-    }
-    text = dumps(data, comment="ToolRecall Configuration")
+    text = dumps(DEFAULT_CONFIG, comment="ToolRecall Configuration")
     print(text)

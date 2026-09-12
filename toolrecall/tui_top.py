@@ -623,6 +623,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         # wrong-user warning: own db missing but another user's exists
         if view in ("stats", "trend") and not daemon and not any(c in st for c in CATEGORIES):
             db_path = snap.get("db", "?")
+            other_db: str | None = None
             for cand in os.listdir("/home") if os.path.isdir("/home") else []:
                 if cand == os.environ.get("USER", ""):
                     continue
