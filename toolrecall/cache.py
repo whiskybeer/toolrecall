@@ -291,6 +291,7 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     hits INTEGER DEFAULT 0,
     misses INTEGER DEFAULT 0,
     tokens_read_from_disk INTEGER DEFAULT 0,
+    tokens_read_uncacheable INTEGER DEFAULT 0,
     tokens_saved INTEGER DEFAULT 0,
     context_tokens_saved INTEGER DEFAULT 0,
     updated_at REAL DEFAULT 0
@@ -455,7 +456,9 @@ def _record(
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
 
 
-def _record_tokens_read_from_disk(category: str, tokens: int, is_new_file: bool = True):
+def _record_tokens_read_from_disk(
+    category: str, tokens: int, is_new_file: bool = True, uncacheable: bool = False
+):
     """Record tokens read from disk.
 
     Args:
@@ -465,26 +468,32 @@ def _record_tokens_read_from_disk(category: str, tokens: int, is_new_file: bool 
                       (counts toward tokens_read_from_disk).
                       False = content was in SQLite but not in-memory
                       (don't double-count — already counted on first read).
+        uncacheable: True = ttl=0/never-cache read. These go to the separate
+                      tokens_read_uncacheable bucket — NO cache could ever
+                      have served them, so counting them in the cacheable
+                      denominator produced bogus savings ratios (the
+                      2026-09 "2%" artifact).
     """
     if tokens <= 0:
         return
+    target_col = "tokens_read_uncacheable" if uncacheable else "tokens_read_from_disk"
     try:
         with _db() as conn:
             if is_new_file:
                 conn.execute(
-                    """
-                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk)
+                    f"""
+                    INSERT INTO cache_stats (category, hits, misses, {target_col})
                     VALUES (?, 0, 0, ?)
                     ON CONFLICT(category) DO UPDATE SET
-                        tokens_read_from_disk = tokens_read_from_disk + ?,
+                        {target_col} = {target_col} + ?,
                         updated_at = ?
                 """,
                     (category, tokens, tokens, time.time()),
                 )
             else:
                 conn.execute(
-                    """
-                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk)
+                    f"""
+                    INSERT INTO cache_stats (category, hits, misses, {target_col})
                     VALUES (?, 0, 0, 0)
                     ON CONFLICT(category) DO UPDATE SET updated_at = ?
                 """,
@@ -680,7 +689,12 @@ def cached_read(path: str, source: str = "") -> dict:
     if never_cache:
         # ttl=0: serve-through — no memory LRU entry, no SQLite persistence.
         # content was just read fresh from disk above (authoritative).
-        _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=True)
+        # Bucket: uncacheable — the cache was never allowed to serve this,
+        # so it must NOT sit in the cacheable miss denominator (the 2026-09
+        # "2% savings" artifact came from exactly this inflation).
+        _record_tokens_read_from_disk(
+            "file_cache", _estimate_tokens(content), is_new_file=True, uncacheable=True
+        )
         return {"cached": False, "content": content, "path": path}
 
     _file_cache.put(
@@ -1871,10 +1885,16 @@ def get_stats() -> dict:
                     #   tokens_served_from_cache — tokens served from the
                     #     cache instead of from disk (latency/IO metric).
                     #   tokens_served_from_disk  — tokens actually read
-                    #     from disk (misses).
+                    #     from disk on cacheable misses (miss denominator).
+                    #   tokens_read_uncacheable  — ttl=0 reads; NO cache
+                    #     could serve them, kept OUT of the miss denominator
+                    #     (the 2026-09 "2% savings" artifact).
                     #   tokens_not_sent_to_llm   — tokens that never entered
                     #     the LLM context (actual cost/savings metric; only
                     #     agent-tool reads can drop content from context).
+                    "tokens_read_uncacheable": row["tokens_read_uncacheable"]
+                    if "tokens_read_uncacheable" in row.keys()
+                    else 0,
                     "tokens_served_from_cache": row["tokens_saved"],
                     "tokens_served_from_cache_cumulative": row["tokens_saved"],
                     "tokens_not_sent_to_llm": row["context_tokens_saved"],

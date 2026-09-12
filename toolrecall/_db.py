@@ -385,6 +385,10 @@ def _init(schema: str = ""):
         _add_column(conn, "recall_cache", "expires_at REAL")
         # Migration: v0.7.5 → v0.8.0 — add tokens_saved column
         _add_column(conn, "cache_stats", "tokens_saved INTEGER DEFAULT 0")
+        # Migration: v0.9.0 — add tokens_read_uncacheable (ttl=0 reads, which
+        # no cache could ever serve; previously they inflated the
+        # tokens_read_from_disk denominator and produced bogus "2% savings")
+        _add_column(conn, "cache_stats", "tokens_read_uncacheable INTEGER DEFAULT 0")
         # Migration: v0.8.x → v0.9.0 — add updated_at column for cache_stats freshness
         _add_column(conn, "cache_stats", "updated_at REAL DEFAULT 0")
         # Migration: v0.9.4 → v0.10.0 — add context_tokens_saved column
