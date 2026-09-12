@@ -163,8 +163,15 @@ def sc_multi_node():
     while step.parent_config is not None:
         parents += 1
         nxt = graph.get_state(step.parent_config)
-        print(f"  hop {parents}: -> {nxt.config['configurable']['checkpoint_id'][:8] if nxt else None}, parent={'yes' if nxt.parent_config else 'no'}", flush=True)
-        if nxt is None or nxt.config["configurable"]["checkpoint_id"] == step.config["configurable"]["checkpoint_id"]:
+        print(
+            f"  hop {parents}: -> {nxt.config['configurable']['checkpoint_id'][:8] if nxt else None}, parent={'yes' if nxt.parent_config else 'no'}",
+            flush=True,
+        )
+        if (
+            nxt is None
+            or nxt.config["configurable"]["checkpoint_id"]
+            == step.config["configurable"]["checkpoint_id"]
+        ):
             break
         step = nxt
     print(f"  walked {parents} hops", flush=True)
@@ -188,7 +195,9 @@ def sc_interrupt_resume():
     contents = [m.content for m in out2["messages"]]
     assert any(c.startswith("R[") for c in contents), contents
     assert contents[-1] == "resumed!"
-    assert len(calls) == 1, f"fetch re-ran after resume: {calls}"  # resume must not re-execute pre-interrupt work
+    assert len(calls) == 1, (
+        f"fetch re-ran after resume: {calls}"
+    )  # resume must not re-execute pre-interrupt work
     print(f"  OK: resumed, tail={contents[-2:]}, tool_calls={calls}", flush=True)
 
 
@@ -213,15 +222,32 @@ def sc_time_travel():
         if tail.startswith("F["):
             post_fetch = h
             break
-    assert post_fetch is not None, f"no post-fetch checkpoint in {[ [m.content for m in h.values['messages']][-1] for h in hist ]}"
+    assert post_fetch is not None, (
+        f"no post-fetch checkpoint in {[[m.content for m in h.values['messages']][-1] for h in hist]}"
+    )
     target_id = post_fetch.config["configurable"]["checkpoint_id"]
     print(f"  rewind to {target_id[:8]}...", flush=True)
-    rewound = graph.get_state({"configurable": {"thread_id": cfg["configurable"]["thread_id"], "checkpoint_id": target_id}})
+    rewound = graph.get_state(
+        {
+            "configurable": {
+                "thread_id": cfg["configurable"]["thread_id"],
+                "checkpoint_id": target_id,
+            }
+        }
+    )
     rw_tail = [m.content for m in rewound.values["messages"]][-1]
     assert rw_tail.startswith("F["), f"rewound tail: {rw_tail}"
 
     print("  replay from rewind...", flush=True)
-    out2 = graph.invoke(None, config={"configurable": {"thread_id": cfg["configurable"]["thread_id"], "checkpoint_id": target_id}})
+    out2 = graph.invoke(
+        None,
+        config={
+            "configurable": {
+                "thread_id": cfg["configurable"]["thread_id"],
+                "checkpoint_id": target_id,
+            }
+        },
+    )
     assert len(calls) == 1, f"tool re-ran on rewind: {calls}"
     out_tail = [m.content for m in out2["messages"]][-1]
     assert out_tail == "done", f"replay tail: {out_tail}"
@@ -281,7 +307,11 @@ def sc_subgraph():
     for snap in parent_compiled.get_state_history(cfg):
         for task in snap.tasks:
             tstate = getattr(task, "state", None)
-            tns = (tstate or {}).get("configurable", {}).get("checkpoint_ns") if isinstance(tstate, dict) else None
+            tns = (
+                (tstate or {}).get("configurable", {}).get("checkpoint_ns")
+                if isinstance(tstate, dict)
+                else None
+            )
             if tns:
                 child_ns = tns
                 break
