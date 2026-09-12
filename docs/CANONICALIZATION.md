@@ -1,10 +1,12 @@
 # Request Canonicalization (warp profile)
 
-> **Status: experiment, not a feature.** The `warp` canonicalization profile ships
-> behind an explicit opt-in header (`X-ToolRecall-Canonicalize: warp`). The ToolRecall
-> edge adds this header automatically (TOOLRECALL_EDGE_CANONICALIZE=auto); nothing else
-> sets it. See [the Warp benchmark page](https://toolrecall.dev/warp-benchmark) for the
-> measured evaluation, including its known gaps.
+> **Status: experiment — controls passed 2026-09-08, still profile-scoped and opt-in.**
+> The `warp` canonicalization profile ships behind an explicit opt-in header
+> (`X-ToolRecall-Canonicalize: warp`). The ToolRecall edge adds this header automatically
+> (TOOLRECALL_EDGE_CANONICALIZE=auto); nothing else sets it. Both gating controls
+> (Pass@1 delta, same-prompt/different-environment) ran on 2026-09-08 and passed —
+> see [Controls run](#controls-run) below. [The Warp benchmark page](https://toolrecall.dev/warp-benchmark)
+> carries the full measured evaluation.
 
 ## What it is
 
@@ -46,9 +48,30 @@ the strip list exists because a live capture showed that exact field forking key
 
 The negative controls in the benchmark (different task, context growth) do **not**
 cover the failure mode canonicalization creates: **same prompt, different environment**.
-That control has not been run yet, and a Pass@1-delta eval (cached agent vs fresh agent,
-same instances, same pass rate) is the gate for promoting this profile from experiment
-to default-on.
+
+## Controls run (2026-09-08) — both passed
+
+Both gating controls ran on 2026-09-08 through the live Warp harness (SWE-bench
+astropy #12907 + django #10914, full data in the
+[gate-run results](https://toolrecall.dev/bench-data/warp/gate-eval-2026-09-08.md)):
+
+**1. Pass@1 delta (astropy, two arms × two passes):**
+
+| Arm | Pass | Replay HITs | Outcome |
+|---|---|---|---|
+| C1 (fresh sessions, std cwd) | populate → replay | 10 HITs in 16 s (435,946 pt, $0) | same root cause, same fix, 11/11 tests |
+| C2 (fresh sessions, env2 cwd) | populate → replay | 4 HITs (153,153 pt, $0) | same root cause, same fix, 11/11 tests |
+
+Pass@1 delta: **0**. Cached-replay sessions reported the identical root cause
+(`_cstack`, nested-right branch) and applied the identical fix as fresh sessions.
+
+**2. Same-prompt/different-environment (django, the named collision risk):**
+
+Populate ran from the standard working directory; the control session launched from
+a second checkout (`django-env2`) with a **byte-identical prompt text**. Result: the
+env2 turn-0 produced a **different canon key** (`c83218a5…` vs `3ab5adcd…`/`5f6232ed…`),
+was served live, never cached, never replayed. **No false sharing** — Warp's
+orchestration-runtime context survives canonicalization and forks the key as designed.
 
 ## The rules (current strip list)
 
