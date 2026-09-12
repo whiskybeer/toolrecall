@@ -191,6 +191,35 @@ flowchart TB
 - **Auth-based routing**: reads Authorization header to determine upstream
 - **Path-based routing** fallback: `/v1/chat/completions` -> api.openai.com
 
+**Network Daemon** (`[network] enabled=true`, A6 — opt-in, default OFF):
+- TCP listener alongside the UDS socket (default `127.0.0.1:8570`); lets a
+  whole team share one warm daemon-owned cache
+- Auth: HMAC-SHA256 challenge-response per connection (token never crosses
+  the wire); optional TLS (stdlib `ssl`); threat model in SECURITY.md §9
+- Authorization: remote requests resolve policy ONLY from
+  `[network.clients."<token-id>"]` — default-deny, global `[mcp]` settings
+  never apply remotely; the server overwrites `request["client"]` with the
+  authenticated token-id (no policy spoofing)
+- **Cache semantics across machines — read this before deploying:**
+  - **File reads (`cached_read`)** are keyed by absolute path. An entry
+    cached on machine A is only a *correct* hit for machine B when both
+    resolve the same file content: shared filesystem (NFS/sshfs mount), or
+    identical repos pinned to the same commit. Otherwise machine B gets
+    machine A's bytes under its own path — the hit rate looks great and the
+    content is wrong. Gate file-cache sharing on a shared FS or identical
+    checkouts; when in doubt, use `cache_invalidate` after pulls.
+  - **Terminal entries (`cached_terminal`)** are cwd-scoped by design (A1):
+    a cross-machine hit requires the same cwd. Different machines rarely
+    share cwd strings, so terminal sharing mostly benefits CI runners with
+    identical layouts (`whoami`, `hostname`-style entries are host-dependent
+    and will MISS — correct, since the answer differs per host).
+  - **API-proxy entries** (forward proxy, `cached_api_*`) are body-hash
+    keyed and host-agnostic — they benefit fully from team sharing.
+  - **MCP entries** are request-hash keyed; benefit fully when the same
+    servers/args are used team-wide.
+  - Savings accounting stays per-request and honest: a hit is only counted
+    when the served content is what the requester would have gotten.
+
 **OS-level Shim** (`toolrecall shim --install`):
 - Installs `tr_shim.pth` into site-packages. Every Python process auto-caches:
   - `builtins.open` (read-only) -> `cached_read` before touching disk
