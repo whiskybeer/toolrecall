@@ -11,7 +11,7 @@ Both cache file reads but at fundamentally different layers.
 | **What is cached** | `read_file` calls only | Files, terminal output, skills, docs, MCP |
 | **Persistence** | Lost when `claude` exits | Survives reboots, daemon restarts, agent switches |
 | **All agents share?** | No — isolated per CLI session | Yes — single daemon serves Hermes + OpenCode + Cline |
-| **Dependencies** | Node.js + 100MB+ | Zero — pure Python stdlib (~132 KB install) |
+| **Dependencies** | Node.js + 100MB+ | Zero — pure Python stdlib (under 1MB install) |
 | **MCP multiplex** | Each server = new subprocess | Single daemon, lazy-load (~0.01s), idle timeout 15min |
 | **Auto-heal** | Manual restart | systemd + watchdog + IPC shutdown/restart |
 | **Security** | OS-level only | WAF: path allowlist, `.env` air-gap, terminal blackhole, cognitive scan |

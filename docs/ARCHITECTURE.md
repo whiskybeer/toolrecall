@@ -32,7 +32,7 @@ ToolRecall is built on 9 principles that guide every design decision:
 | **Local** | Data stays on your machine unless you explicitly opt into sync | No telemetry, no default cloud. Sync requires triple opt-in (backend + sync_enabled + credentials) |
 | **Secure** | Security gate is independent of any identity layer | Path allowlist, terminal allowlist, sensitive-file blocklist work regardless of who's calling |
 | **Agnostic** | Works with any agent framework — no framework-specific code | UDS transport, env-var config, MCP bridge, HTTP bridge, Go binary — any language, any agent |
-| **0-deps** | Pure Python stdlib, no external dependencies | ~132 KB install. SQLite, threading, http.server, json — all stdlib. libSQL is an optional extra |
+| **0-deps** | Pure Python stdlib, no external dependencies | Under 1MB install. SQLite, threading, http.server, json — all stdlib. libSQL is an optional extra |
 | **Deterministic** | Same input always produces the same cache result | Cache keys are pure (path hash, content hash, command hash), derived via the Layer-0 contract (`toolrecall/keys.py`). Agent_id, timestamps, session IDs excluded |
 | **Replayable** | Recorded sessions can be replayed identically | Replay mode reads by cache key. Same keys in replay as recording. No ambient state leaks |
 | **Zero-trust** | Caller-provided metadata is never treated as authenticated | Agent_id, source labels are stats-only. Not security primitives, not cache key components |
