@@ -166,6 +166,86 @@ class TestA63RemoteCommandAllowList:
         )
         assert r.get("error", "").startswith("remote_denied"), r
 
+    def test_multi_token_identity_and_revocation(self, tmp_path, monkeypatch):
+        """A6-4: per-member tokens via [network.clients."id"].token.
+        Each member authenticates to their OWN id (scoped policy);
+        removing a member's entry revokes them."""
+        import threading as _th
+
+        from toolrecall.daemon import DaemonServer
+        from toolrecall.transport import TransportClient
+
+        toml = f"""
+[paths]
+cache_db = "{tmp_path}/c.db"
+[mcp]
+allowed_paths = ["{tmp_path}"]
+[network]
+enabled = true
+bind = "127.0.0.1"
+port = 0
+[network.clients.alice]
+token = "alice-token-1"
+allowed_paths = ["{tmp_path}"]
+[network.clients.bob]
+token = "bob-token-2"
+allowed_paths = ["/nonexistent-bob"]
+"""
+        cfg_file = tmp_path / "toolrecall.toml"
+        cfg_file.write_text(toml)
+        import toolrecall.daemon as daemon_mod
+        from toolrecall.config import Config
+
+        monkeypatch.setattr(daemon_mod, "load_config", lambda: Config(str(cfg_file)))
+        d = DaemonServer(socket_path=str(tmp_path / "t.sock"))
+        d._server = None
+        d._running = True
+        from concurrent.futures import ThreadPoolExecutor
+
+        d._executor = ThreadPoolExecutor(max_workers=4)
+        srv = __import__("socket").socket()
+        srv.setsockopt(__import__("socket").SOL_SOCKET, __import__("socket").SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(8)
+        port = srv.getsockname()[1]
+
+        def _listener():
+            while d._running:
+                try:
+                    srv.settimeout(0.4)
+                    conn, _ = srv.accept()
+                except (__import__("socket").timeout, TimeoutError):
+                    continue
+                except OSError:
+                    break
+                d._executor.submit(d._handle_tcp, conn)
+
+        t = _th.Thread(target=_listener, daemon=True)
+        t.start()
+        try:
+            # Alice authenticates to HER id, her policy applies.
+            monkeypatch.setenv("TOOLRECALL_NETWORK_TOKEN", "alice-token-1")
+            alice = TransportClient(f"tcp://127.0.0.1:{port}")
+            assert alice.send({"cmd": "ping"}).get("pong") is True
+            assert (
+                alice.send({"cmd": "cached_read", "path": str(tmp_path / "x")}).get("error")
+                != "network_auth_rejected"
+            )
+            # Bob authenticates to HIS id; his scope denies the same path.
+            monkeypatch.setenv("TOOLRECALL_NETWORK_TOKEN", "bob-token-2")
+            bob = TransportClient(f"tcp://127.0.0.1:{port}")
+            r = bob.send({"cmd": "cached_read", "path": str(tmp_path / "x")})
+            assert "not allowed" in r.get("error", ""), r
+            # Revocation: an unknown token is rejected at the handshake.
+            monkeypatch.setenv("TOOLRECALL_NETWORK_TOKEN", "revoked-token-3")
+            rev = TransportClient(f"tcp://127.0.0.1:{port}")
+            assert rev.send({"cmd": "ping"}).get("error") == "network_auth_rejected"
+        finally:
+            d._running = False
+            srv.close()
+            d._executor.shutdown(wait=False)
+            t.join(timeout=3)
+
 
 class TestA62FailClosedTLS:
     """A6-2: non-loopback bind without TLS = refused (server side);

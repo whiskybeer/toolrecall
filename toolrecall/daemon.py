@@ -1268,12 +1268,20 @@ class DaemonServer:
     def _network_tokens(self) -> dict:
         """{token-bytes: token-id} for the auth handshake.
 
-        Single-token deployments: the whole table is one entry keyed by
-        the configured token; its id is the token-id every remote request
-        is re-stamped with (policy identity). Multi-token support (one id
-        per team member) rides on the same [network].token string format
-        later — the handshake already handles arbitrary tables.
+        A6-4 (review): per-member tokens. Each [network.clients."<id>"]
+        entry may carry its own `token`; a token in the members table
+        SHADOWS the single shared [network].token (removing a member's
+        entry revokes them). With no member tokens configured, the
+        single shared token maps to the "network-client" id (back-compat).
         """
+        tokens: dict[bytes, str] = {}
+        for member_id, entry in self.cfg.network_clients.items():
+            t = entry.get("token") if isinstance(entry, dict) else None
+            if t:
+                tokens[t.encode() if isinstance(t, str) else t] = str(member_id)
+        if tokens:
+            return tokens
+        # Single-token deployments: one shared token, one id.
         return {self.cfg.network_token: "network-client"}
 
     def _run_tcp_listener(self, host: str, port: int):
