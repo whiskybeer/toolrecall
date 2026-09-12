@@ -2001,11 +2001,25 @@ def get_stats() -> dict:
 
 
 def reset_stats():
-    """Reset cache statistics counters (hits, misses, tokens_read_from_disk, tokens_not_read_from_disk) without clearing cache entries."""
+    """Reset cache statistics counters (hits, misses, tokens_read_from_disk, tokens_not_read_from_disk) without clearing cache entries.
+
+    AUDIT: every wipe is logged to the daemon/CLI log with the calling
+    module — two silent wipes (2026-09-08/09) destroyed lifetime counters
+    and the access_log trend window before anyone noticed. This must
+    never happen silently again.
+    """
+    import logging
+
     try:
         with _db() as conn:
+            wiped = conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0]
             conn.execute("DELETE FROM cache_stats")
             conn.execute("DELETE FROM access_log")
+        logging.getLogger(__name__).warning(
+            "reset_stats: wiped cache_stats + %d access_log rows — "
+            "caller should be an explicit user action",
+            wiped,
+        )
     except Exception as e:
         warnings.warn(f"ToolRecall: reset_stats failed: {e}")
 

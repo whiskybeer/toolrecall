@@ -82,8 +82,8 @@ class TestCLIResetStats(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_reset_stats_prints_confirmation(self):
-        """reset-stats prints 'Cache statistics reset'."""
-        sys.argv = ["toolrecall", "reset-stats"]
+        """reset-stats --yes prints 'Cache statistics reset'."""
+        sys.argv = ["toolrecall", "reset-stats", "--yes"]
         from toolrecall.cli import cmd_reset_stats
 
         cmd_reset_stats()

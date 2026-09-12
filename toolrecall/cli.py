@@ -339,6 +339,17 @@ def cmd_reset_stats():
     """Reset cache statistics counters (hits, misses, tokens_read_from_disk) without clearing cache entries."""
     from toolrecall.cache import reset_stats
 
+    # Destructive-ish (wipes counters + trend window): confirm interactively.
+    # --yes / TOOLRECALL_NONINTERACTIVE bypass for scripts.
+    if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
+        try:
+            resp = input("Wipe hits/misses/token counters + access_log trend window? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            print("\naborted")
+            return
+        if resp.strip().lower() not in ("y", "yes"):
+            print("aborted — counters untouched")
+            return
     reset_stats()
     print("Cache statistics reset (hits/misses/tokens). Cache entries preserved.")
 
