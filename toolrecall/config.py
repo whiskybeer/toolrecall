@@ -170,7 +170,14 @@ class Config:
         if path:
             paths = [Path(path)]
         else:
-            paths = DEFAULT_PATHS
+            # TOOLRECALL_CONFIG: explicit config-file override (same var the
+            # daemon/cli docs reference). Appended LAST so it wins over the
+            # default discovery paths (cwd > ~/.config > /etc > env-cfg);
+            # an explicit `path` arg still wins over everything.
+            paths = list(DEFAULT_PATHS)
+            env_cfg = os.environ.get("TOOLRECALL_CONFIG")
+            if env_cfg:
+                paths.append(Path(env_cfg))
 
         for p in paths:
             if p.exists():

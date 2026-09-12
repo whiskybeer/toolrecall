@@ -37,30 +37,40 @@ class FakeCfg:
 class TestRemoteGateUnit:
     def test_remote_default_deny(self):
         g = SecurityGate(FakeCfg(allowed_paths=["/home"], allow_terminal=True))
-        g._enter_remote_mode()
-        eff = g.effective_policy("unknown-token")
+        eff = g.effective_policy("unknown-token", remote=True)
         assert eff["allowed_paths"] == []
         assert eff["allow_terminal"] is False
 
     def test_remote_scoped_to_policy(self):
         g = SecurityGate(FakeCfg(network_clients={"ci": {"allowed_paths": ["/repo"]}}))
-        g._enter_remote_mode()
-        eff = g.effective_policy("ci")
+        eff = g.effective_policy("ci", remote=True)
         assert eff["allowed_paths"] == ["/repo"]
         assert eff["allow_terminal"] is False  # not overridden -> denied
 
     def test_remote_terminal_needs_explicit(self):
         g = SecurityGate(FakeCfg(network_clients={"ci": {"allow_terminal": True}}))
-        g._enter_remote_mode()
-        assert g.effective_policy("ci")["allow_terminal"] is True
+        assert g.effective_policy("ci", remote=True)["allow_terminal"] is True
         # another token-id still denied
-        assert g.effective_policy("other")["allow_terminal"] is False
+        assert g.effective_policy("other", remote=True)["allow_terminal"] is False
 
     def test_local_mode_unchanged(self):
         g = SecurityGate(FakeCfg(allowed_paths=["/home"], allow_terminal=True))
         eff = g.effective_policy(None)
         assert eff["allowed_paths"] == ["/home"]
         assert eff["allow_terminal"] is True
+
+    def test_remote_flag_does_not_leak_to_local(self):
+        """The remote policy resolves per-request: a local UDS request
+        served while the TCP listener is up still gets GLOBAL policy."""
+        g = SecurityGate(
+            FakeCfg(
+                allowed_paths=["/home"],
+                allow_terminal=True,
+                network_clients={"ci": {"allowed_paths": ["/repo"]}},
+            )
+        )
+        assert g.effective_policy(None, remote=False)["allowed_paths"] == ["/home"]
+        assert g.effective_policy("ci", remote=True)["allowed_paths"] == ["/repo"]
 
     def test_remote_read_path_denied(self):
         g = SecurityGate(
@@ -70,15 +80,13 @@ class TestRemoteGateUnit:
                 network_clients={"ci": {"allowed_paths": ["/repo"]}},
             )
         )
-        g._enter_remote_mode()
-        assert g.check_read_path_for("/home/x/y", "unknown-token") is not None
-        assert g.check_read_path_for("/repo/src/a.py", "ci") is None
+        assert g.check_read_path_for("/home/x/y", "unknown-token", remote=True) is not None
+        assert g.check_read_path_for("/repo/src/a.py", "ci", remote=True) is None
 
     def test_remote_terminal_denied(self):
         g = SecurityGate(FakeCfg(allowed_paths=["/home"], allow_terminal=True))
-        g._enter_remote_mode()
-        assert g.check_terminal_for("ls", "unknown-token") is not None
-        assert g.check_terminal_for("ls", "ci") is not None  # no override -> denied
+        assert g.check_terminal_for("ls", "unknown-token", remote=True) is not None
+        assert g.check_terminal_for("ls", "ci", remote=True) is not None  # no override -> denied
 
 
 def _net_daemon(tmp_path, monkeypatch, toml_body: str):
@@ -100,7 +108,6 @@ def _net_daemon(tmp_path, monkeypatch, toml_body: str):
     srv.bind((d.cfg.network_bind, 0))
     srv.listen(16)
     port = srv.getsockname()[1]
-    d.security._enter_remote_mode()
 
     def _listener():
         while d._running:
@@ -182,7 +189,7 @@ allow_terminal = true
             # remote token-id resolves under the network policy, and the
             # global lock-down (allow_terminal=false, no paths) does NOT apply
             g = d.security
-            eff = g.effective_policy("ci")
+            eff = g.effective_policy("ci", remote=True)
             assert eff["allow_terminal"] is True
             assert eff["allowed_paths"] == ["/tmp"]
         finally:

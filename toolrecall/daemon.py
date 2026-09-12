@@ -218,27 +218,26 @@ class SecurityGate:
         # is empty-deny and ONLY a [network.clients] entry can grant — the
         # global [mcp] settings never leak to remote callers.
         self.remote_policy = cfg.network_clients
-        self.remote_mode = False
         self.logger = logging.getLogger(__name__)
 
-    def _enter_remote_mode(self) -> None:
-        """Route policy lookups through the remote table (called once at
-        TCP-listener startup; the daemon's own UDS path stays global)."""
-        self.remote_mode = True
-
-    def effective_policy(self, client: str | None) -> dict:
+    def effective_policy(self, client: str | None, remote: bool = False) -> dict:
         """Resolve the effective [mcp] policy for one agent request.
 
         Local (UDS) requests: per-client overrides from
         [mcp.clients."<name>"] win; everything the client doesn't override
         falls back to the global [mcp] values.
 
-        Remote (TCP) requests: policy comes ONLY from
+        Remote (TCP) requests (remote=True): policy comes ONLY from
         [network.clients."<token-id>"] — nothing falls back to the global
         [mcp] settings. A token-id with no entry is denied everything
         (compromised token = exactly the scoped policy, nothing more).
+
+        The remote flag travels WITH THE REQUEST (set by the TCP handler),
+        never on shared gate state — the daemon serves UDS and TCP
+        concurrently, and a shared mode flag would let the network
+        listener deny or scramble LOCAL requests.
         """
-        if self.remote_mode:
+        if remote:
             entry = self.remote_policy.get(client or "", {})
             return {
                 "allowed_paths": entry.get("allowed_paths", []),
@@ -256,15 +255,18 @@ class SecurityGate:
                 eff[key] = entry[key]
         return eff
 
-    def check_read_path_for(self, path: str, client: str | None = None) -> str | None:
+    def check_read_path_for(
+        self, path: str, client: str | None = None, remote: bool = False
+    ) -> str | None:
         """check_read_path with per-agent allowed_paths (A4).
 
+        remote=True (A6): policy comes from [network.clients] only.
         Thread-safe: resolves the effective allowlist without mutating any
         shared state. All layers still apply — Layer 1 uses the agent's
         allowlist, Layer 2 (sensitive-file blocklist) and the null-byte /
         length checks always use the global rules.
         """
-        eff = self.effective_policy(client)
+        eff = self.effective_policy(client, remote=remote)
         if eff["allowed_paths"] == self.allowed_paths:
             return self.check_read_path(path)
 
@@ -296,14 +298,17 @@ class SecurityGate:
 
         return None
 
-    def check_terminal_for(self, cmd: str, client: str | None = None) -> str | None:
+    def check_terminal_for(
+        self, cmd: str, client: str | None = None, remote: bool = False
+    ) -> str | None:
         """check_terminal with per-agent allow_terminal / command allowlist (A4).
 
+        remote=True (A6): policy comes from [network.clients] only.
         Thread-safe: evaluates the effective policy locally, no shared-state
         mutation. The global check_terminal is reused when the agent has no
         overrides so log messages stay identical.
         """
-        eff = self.effective_policy(client)
+        eff = self.effective_policy(client, remote=remote)
         if (
             eff["allow_terminal"] == self.allow_terminal
             and eff["allowed_terminal_commands"] == self.allowed_terminal_commands
@@ -1203,9 +1208,6 @@ class DaemonServer:
         self._tcp_port = actual_port
 
         tokens = self._network_tokens()
-        # Remote requests resolve policy via [network.clients] only —
-        # flip the gate into remote mode before the first connection.
-        self.security._enter_remote_mode()
         tls_ctx = None
         if self.cfg.network_tls:
             try:
@@ -1265,6 +1267,9 @@ class DaemonServer:
                     break
                 # ── Identity override (A6 security boundary) ──
                 request["client"] = token_id
+                # Mark as remote: policy resolves from [network.clients]
+                # only (per-request flag — the UDS path is unaffected)
+                request["_remote"] = True
                 # Protocol version gate — identical to the UDS path.
                 req_v = request.get("v", 1)
                 try:
@@ -1697,8 +1702,12 @@ class DaemonServer:
         path = req.get("path", "")
         if not path:
             return {"error": "Missing 'path'"}
-        # Per-agent policy (A4): agent-specific allowed_paths when set
-        err = self.security.check_read_path_for(path, req.get("client"))
+        # Per-agent policy (A4): agent-specific allowed_paths when set.
+        # A6: `_remote=True` marks a TCP-authenticated request — policy
+        # comes from [network.clients] only.
+        err = self.security.check_read_path_for(
+            path, req.get("client"), remote=bool(req.get("_remote"))
+        )
         if err:
             return {"error": err}
         bypass = req.get("bypass_cache", False)
@@ -1727,8 +1736,10 @@ class DaemonServer:
         from toolrecall.cache import _strip_shell_wrapper
 
         inner = _strip_shell_wrapper(command) or command
-        # Per-agent policy (A4): same gate as _handle_terminal
-        err = self.security.check_terminal_for(inner, req.get("client"))
+        # Per-agent policy (A4): same gate as _handle_terminal; A6 remote flag
+        err = self.security.check_terminal_for(
+            inner, req.get("client"), remote=bool(req.get("_remote"))
+        )
         if err:
             return {"error": err}
         from toolrecall.cache import cached_shell_exec
@@ -1743,8 +1754,10 @@ class DaemonServer:
         command = req.get("command", "")
         # Per-agent policy (A4): the MCP bridge stamps "client" (clientInfo.name)
         # onto every request; direct UDS callers without it get global policy.
+        # A6: `_remote=True` marks a TCP-authenticated request — policy comes
+        # from [network.clients] only.
         client = req.get("client")
-        err = self.security.check_terminal_for(command, client)
+        err = self.security.check_terminal_for(command, client, remote=bool(req.get("_remote")))
         if err:
             return {"error": err}
         if not command:
