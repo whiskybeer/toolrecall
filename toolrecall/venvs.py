@@ -220,18 +220,58 @@ def _importable(python: str, mod: str) -> bool:
         return False
 
 
+def _running_version() -> Optional[str]:
+    """Version of the toolrecall package backing THIS code (None if unknown).
+
+    The running install is authoritative for shim targets: when toolrecall
+    itself was upgraded (pipx / repo .venv / uv tool), previously-shimmed
+    agent venvs still hold the old copy, so ``ensure_shim`` compares against
+    this version instead of only checking presence.
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("toolrecall")
+    except Exception:
+        return None
+
+
+def _installed_version(python: str) -> Optional[str]:
+    """Version of ``toolrecall`` inside ``python``'s env (None if absent)."""
+    code = "from importlib.metadata import version; print(version('toolrecall'))"
+    try:
+        with tempfile.TemporaryDirectory(prefix="tr-venvver-") as td:
+            r = subprocess.run(
+                [python, "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                cwd=td,  # neutral cwd: repo/agent dirs on sys.path would lie
+            )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode == 0:
+        v = r.stdout.strip()
+        return v or None
+    return None
+
+
 def _install_toolrecall(venv: Venv) -> bool:
-    """Install the ``toolrecall`` package into the target venv.
+    """Install/upgrade the ``toolrecall`` package into the target venv.
 
     Prefers ``pip`` present in the venv; falls back to ``uv pip install`` with
     ``--python`` if pip is absent but uv is available. Read-only/cached uv
     venvs that can't be written are caught and reported False.
+
+    ``--upgrade`` is passed explicitly: a bare ``pip install`` is a no-op
+    ("Requirement already satisfied") when an older copy is present, which is
+    exactly the drift this module exists to prevent.
     """
     pip = os.path.join(os.path.dirname(venv.python), "pip")
     if os.access(pip, os.X_OK):
         try:
             r = subprocess.run(
-                [pip, "install", "toolrecall"],
+                [pip, "install", "--upgrade", "toolrecall"],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -243,7 +283,7 @@ def _install_toolrecall(venv: Venv) -> bool:
     if uv:
         try:
             r = subprocess.run(
-                [uv, "pip", "install", "--python", venv.python, "toolrecall"],
+                [uv, "pip", "install", "--python", venv.python, "--upgrade", "toolrecall"],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -262,17 +302,28 @@ def ensure_shim(venv: Venv) -> bool:
     """Install the shim into ``venv`` idempotently and verify by probe.
 
     Steps:
-      1. Ensure ``toolrecall`` is importable in the venv (install if missing).
+      1. Ensure ``toolrecall`` is importable in the venv AND at the running
+         version — an older copy is upgraded. Presence-only checks let
+         shimmed agent venvs drift behind the toolrecall install they came
+         from (e.g. after ``pipx upgrade toolrecall``), silently keeping
+         pre-fix shim behavior forever.
       2. Copy ``tr_shim.pth`` into ``venv.site_packages``.
       3. Probe ``import toolrecall.shim`` from a neutral cwd.
 
     Returns True only if the final probe passes.
     """
     os.makedirs(venv.site_packages, exist_ok=True)
-    # Step 1: package present?
-    if not _importable(venv.python, "toolrecall"):
+    # Step 1: package present AND at the running version? An older copy is
+    # upgraded so shimmed venvs track the toolrecall install they came from.
+    running = _running_version()
+    installed = _installed_version(venv.python)
+    if installed is None or (running is not None and installed != running):
         if not _install_toolrecall(venv):
-            return False
+            # Upgrade may legitimately fail on read-only venvs; if the
+            # existing copy is still importable, tolerate the drift rather
+            # than reporting a broken shim.
+            if not _importable(venv.python, "toolrecall"):
+                return False
     # Step 2: drop the .pth (idempotent)
     try:
         shutil.copy2(_pth_source(), os.path.join(venv.site_packages, "tr_shim.pth"))
