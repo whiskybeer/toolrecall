@@ -1,0 +1,80 @@
+{
+  "0": {
+    "before": {
+      "naive": {
+        "usage": 447.32818991,
+        "limit": null
+      },
+      "toolrecall": {
+        "usage": 1.736814833,
+        "limit": 5
+      }
+    },
+    "after": {
+      "naive": {
+        "usage": 447.393149324,
+        "limit": null
+      },
+      "toolrecall": {
+        "usage": 1.744662773,
+        "limit": 5
+      }
+    },
+    "delta_usd": {
+      "naive": 0.064959,
+      "toolrecall": 0.007848
+    }
+  },
+  "1": {
+    "before": {
+      "naive": {
+        "usage": 447.421830244,
+        "limit": null
+      },
+      "toolrecall": {
+        "usage": 1.748718503,
+        "limit": 5
+      }
+    },
+    "after": {
+      "naive": {
+        "usage": 447.464392486,
+        "limit": null
+      },
+      "toolrecall": {
+        "usage": 1.752673403,
+        "limit": 5
+      }
+    },
+    "delta_usd": {
+      "naive": 0.042562,
+      "toolrecall": 0.003955
+    }
+  },
+  "2": {
+    "before": {
+      "naive": {
+        "usage": 447.478271756,
+        "limit": null
+      },
+      "toolrecall": {
+        "usage": 1.757220873,
+        "limit": 5
+      }
+    },
+    "after": {
+      "naive": {
+        "usage": 447.546537167,
+        "limit": null
+      },
+      "toolrecall": {
+        "usage": 1.764580281,
+        "limit": 5
+      }
+    },
+    "delta_usd": {
+      "naive": 0.068265,
+      "toolrecall": 0.007359
+    }
+  }
+}

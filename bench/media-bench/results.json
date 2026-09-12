@@ -1,0 +1,59 @@
+{
+  "model": "z-ai/glm-5.3-flash",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "arms": {
+    "naive": {
+      "requests": 72,
+      "prompt_tokens": 1264596,
+      "prompt_cached_tokens": 831232,
+      "completion_tokens": 1809,
+      "billed_cost_usd": 0.061777,
+      "chars_sent": 5579616,
+      "stubs": 0
+    },
+    "toolrecall": {
+      "requests": 72,
+      "prompt_tokens": 425449,
+      "prompt_cached_tokens": 128448,
+      "completion_tokens": 1825,
+      "billed_cost_usd": 0.030444,
+      "chars_sent": 1815843,
+      "stubs": 633
+    }
+  },
+  "dashboard_cross_check": {
+    "key_fingerprints": {
+      "naive": "671e8913c374",
+      "toolrecall": "d9e20282741d"
+    },
+    "per_seed_delta_usd": {
+      "0": {
+        "naive": 0.064959,
+        "toolrecall": 0.007848
+      },
+      "1": {
+        "naive": 0.042562,
+        "toolrecall": 0.003955
+      },
+      "2": {
+        "naive": 0.068265,
+        "toolrecall": 0.007359
+      }
+    },
+    "billed_delta_usd_total": 0.194948,
+    "matches_response_usage": false
+  },
+  "tripwires_pass": true,
+  "total_cost_usd": 0.194948,
+  "delta": {
+    "prompt_tokens_saved": 839147,
+    "prompt_tokens_saved_pct": 66.4,
+    "billed_cost_saved_usd": 0.031333,
+    "uncached_tokens_saved": 136363
+  },
+  "workload": "3 pages x 8 steps x 3 seeds, 1024x1024 PNGs, full-history requests"
+}

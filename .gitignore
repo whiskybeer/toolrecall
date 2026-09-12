@@ -24,3 +24,5 @@ vscode-extension/package-lock.json
 vscode-extension/benchmark_on2_results.json
 Dockerfile.test
 go-client/tr
+# benchmark isolated venvs
+bench/media-bench/venv-*/
