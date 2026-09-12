@@ -217,7 +217,9 @@ class SecurityGate:
         # [network.clients."<id>"]. Remote = untrusted-ish: the base policy
         # is empty-deny and ONLY a [network.clients] entry can grant — the
         # global [mcp] settings never leak to remote callers.
-        self.remote_policy = cfg.network_clients
+        # getattr: third-party/legacy configs (tests, embedders) may predate
+        # A6 and not carry the attribute — empty table = remote default-deny.
+        self.remote_policy = getattr(cfg, "network_clients", {})
         self.logger = logging.getLogger(__name__)
 
     def effective_policy(self, client: str | None, remote: bool = False) -> dict:
@@ -1224,7 +1226,8 @@ class DaemonServer:
                 continue
             except OSError:
                 break  # listener closed
-            self._executor.submit(self._handle_tcp, conn, tokens, tls_ctx)
+            if self._executor is not None:
+                self._executor.submit(self._handle_tcp, conn, tokens, tls_ctx)
         try:
             srv.close()
         except OSError:
