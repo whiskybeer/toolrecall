@@ -258,6 +258,31 @@ Each function imports its dependencies lazily — running `toolrecall status` do
   - Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error
 - **Full reference:** [Context Stale](CONTEXT_STALE.md), [Context Tracker](CONTEXT_TRACKER.md)
 
+### `toolrecall proxy`
+
+- **File:** `cli.py : cmd_proxy()` → `_attach_hermes_to_proxy()` / `_detach_hermes_from_proxy()`
+- **Purpose:** Point Hermes' LLM traffic at the ToolRecall forward proxy —
+  the billed-savings path (`api_cache` replay + provider usage capture,
+  i.e. the MONEY metric tier).
+- **Subcommands:**
+  - `toolrecall proxy attach` — rewrite `~/.hermes/config.yaml`
+    `llm.base_url` → `http://127.0.0.1:8569/v1` (port via
+    `TOOLRECALL_FORWARD_PORT`). Creates `config.yaml.toolrecall-bak` on
+    first attach. Idempotent (no-op when already proxied).
+  - `toolrecall proxy detach` — restore the backup, removing the proxy
+    override.
+- **Safety gates:**
+  - Health check: refuses to attach unless the proxy answers on its port
+    (any HTTP response — including upstream 401 — proves it's alive;
+    connection errors refuse). Never points an agent at a dead proxy.
+  - Opt-in: `setup` asks interactively (or with `--yes`); non-interactive
+    runs without `--yes` skip it. Attaching changes the agent's LLM
+    failure mode — must never be silent.
+  - Reversible: `detach` restores the pre-attach config byte-exact.
+- **Setup integration:** `toolrecall setup` runs this as step 5 when
+  Hermes is detected (same gates).
+- Note: after attach, restart Hermes to route traffic through the proxy.
+
 ### `toolrecall top`
 
 - **File:** `cli.py : cmd_top()` → `toolrecall/tui_top.py`

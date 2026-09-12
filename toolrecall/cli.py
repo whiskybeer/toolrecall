@@ -894,6 +894,30 @@ def cmd_daemon():
         run_daemon(foreground=False)
 
 
+def cmd_proxy():
+    """Attach/detach Hermes' LLM traffic to the ToolRecall API proxy.
+
+    proxy attach — point llm.base_url at http://127.0.0.1:8569/v1
+                   (health-checked; config backup kept)
+    proxy detach — restore the backed-up config
+    """
+    sub = sys.argv[2:3]
+    if sub == ["attach"]:
+        ok, msg = _attach_hermes_to_proxy()
+        print(("✅ " if ok else "⚠️  ") + msg)
+        if ok and "already" not in msg:
+            print("   restart Hermes to route LLM traffic through the proxy")
+        sys.exit(0 if ok else 1)
+    if sub == ["detach"]:
+        sys.exit(_detach_hermes_from_proxy())
+    print("Usage: toolrecall proxy <attach|detach>")
+    print()
+    print("  attach   point Hermes' llm.base_url at the local forward proxy")
+    print("           (health-gated, backup kept — see toolrecall serve)")
+    print("  detach   restore the pre-attach config from backup")
+    sys.exit(1)
+
+
 def cmd_nginx():
     """Generate nginx config."""
     cfg_dir = os.path.expanduser("~/.toolrecall")
@@ -1164,7 +1188,8 @@ def _confirm_install(v) -> bool:
     """Show the opt-in prompt for shimming a Python venv. Default DISABLED (N)."""
     try:
         print()
-        print(f"Detected Python agent venv: {v.root}")
+        if v is not None:
+            print(f"Detected Python agent venv: {v.root}")
         print("  ToolRecall's .pth shim patches open()/subprocess for EVERY python")
         print("  process in this venv for transparent caching.")
         print()
@@ -1387,6 +1412,36 @@ def cmd_setup():
         steps_ok.append(f"agent integration: {', '.join(found_agents)}")
     else:
         steps_ok.append("agent integration: none detected")
+
+    # ─── 5. API proxy attachment (billed-token savings path) ────
+    # Only automatic on explicit opt-in (--yes) or interactive yes: pointing
+    # an agent's LLM traffic at the proxy changes its failure mode, so this
+    # is gated AND health-checked (never attach to a dead proxy).
+    import shutil as _shutil_step5
+
+    if _shutil_step5.which("hermes"):
+        yes = "--yes" in sys.argv
+        interactive = "TOOLRECALL_NONINTERACTIVE" not in os.environ
+        if yes:
+            ok, msg = _attach_hermes_to_proxy()
+            (steps_ok if ok else errors).append(f"API proxy: {msg}")
+        elif interactive:
+            print()
+            print("  Attach Hermes' LLM traffic to the ToolRecall API proxy?")
+            print("  This is what enables billed-token savings (api_cache replay")
+            print("  + usage capture). Proxy is health-checked; a backup of your")
+            print("  config is kept; detach anytime: toolrecall proxy detach")
+            if _confirm_install(None):
+                ok, msg = _attach_hermes_to_proxy()
+                (steps_ok if ok else errors).append(f"API proxy: {msg}")
+            else:
+                steps_ok.append("API proxy: not attached (opt-in later: toolrecall proxy attach)")
+        else:
+            steps_ok.append(
+                "API proxy: not attached (non-interactive; use --yes or toolrecall proxy attach)"
+            )
+    else:
+        steps_ok.append("API proxy: Hermes not detected — skipped")
 
     # ─── Summary ──────────────────────────────────
     print()
@@ -1629,6 +1684,104 @@ _CLAUDE_INSTRUCTION_SNIPPET = """
 ToolRecall is installed. When reading files, use `cached_read` via MCP instead of `read_file`.
 When running terminal commands, use `cached_terminal` instead of `terminal`.
 """
+
+
+def _proxy_alive(timeout: float = 3.0) -> bool:
+    """True when the forward proxy answers on 127.0.0.1:8569.
+
+    Gate for the provider base_url rewrite: we never point an agent's LLM
+    traffic at a dead proxy. Any response (even 401 from upstream auth)
+    proves the proxy is listening and routing; only connection errors
+    count as down.
+    """
+    import urllib.error
+    import urllib.request
+
+    port = os.environ.get("TOOLRECALL_FORWARD_PORT", "8569")
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=timeout)
+        return True
+    except urllib.error.HTTPError:
+        return True  # proxy answered (upstream auth error) — it's alive
+    except Exception:
+        return False
+
+
+def _attach_hermes_to_proxy() -> tuple[bool, str]:
+    """Point Hermes' LLM provider at the ToolRecall forward proxy.
+
+    Edits ~/.hermes/config.yaml: llm.base_url → http://127.0.0.1:8569/v1
+    (text-level line edit, YAML structure untouched). Writes a backup
+    config.yaml.toolrecall-bak first; `toolrecall proxy detach` restores it.
+
+    Refuses when: no Hermes config, base_url already proxied, or proxy
+    unreachable. Returns (ok, message).
+    """
+    cfg_path = os.path.expanduser("~/.hermes/config.yaml")
+    if not os.path.isfile(cfg_path):
+        return False, "no Hermes config at ~/.hermes/config.yaml — skipping proxy attach"
+
+    port = os.environ.get("TOOLRECALL_FORWARD_PORT", "8569")
+    proxy_base = f"http://127.0.0.1:{port}/v1"
+
+    with open(cfg_path) as f:
+        lines = f.readlines()
+
+    # locate the llm: section's base_url line (first base_url after 'llm:')
+    in_llm = False
+    target_idx = None
+    current_url = ""
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("llm:") and line.startswith("llm:"):
+            in_llm = True
+            continue
+        if in_llm and line and not line[0].isspace():  # next top-level key
+            break
+        if in_llm and stripped.startswith("base_url:"):
+            target_idx = i
+            current_url = stripped.split(":", 1)[1].strip().strip("'\"")
+            break
+
+    if target_idx is None:
+        return False, "no llm.base_url found in Hermes config — skipping"
+    if "127.0.0.1" in current_url or "localhost" in current_url:
+        return True, f"Hermes already points at a local proxy ({current_url})"
+    if not _proxy_alive():
+        return False, (
+            f"forward proxy not reachable on :{port} — refusing to redirect "
+            "LLM traffic to a dead proxy (start the daemon first)"
+        )
+
+    backup = cfg_path + ".toolrecall-bak"
+    if not os.path.exists(backup):
+        import shutil
+
+        shutil.copy2(cfg_path, backup)
+
+    indent = lines[target_idx][: len(lines[target_idx]) - len(lines[target_idx].lstrip())]
+    lines[target_idx] = (
+        f"{indent}base_url: {proxy_base}  # toolrecall proxy (detach: toolrecall proxy detach; was {current_url})\n"
+    )
+    with open(cfg_path, "w") as f:
+        f.writelines(lines)
+    return True, f"Hermes llm.base_url → {proxy_base} (backup: {backup})"
+
+
+def _detach_hermes_from_proxy() -> int:
+    """Restore the pre-proxy Hermes config (reversal of _attach)."""
+    cfg_path = os.path.expanduser("~/.hermes/config.yaml")
+    backup = cfg_path + ".toolrecall-bak"
+    if not os.path.exists(backup):
+        print("no backup found — nothing to detach (or already detached)")
+        return 1
+    import shutil
+
+    shutil.copy2(backup, cfg_path)
+    os.remove(backup)
+    print(f"✅ restored {cfg_path} from backup — Hermes no longer uses the proxy")
+    print("   restart Hermes to pick up the change")
+    return 0
 
 
 _MANUAL_AGENT_GUIDE = """
@@ -2345,6 +2498,7 @@ def main():
         "logs": cmd_logs,
         "context": cmd_context,
         "top": cmd_top,
+        "proxy": cmd_proxy,
     }
 
     if cmd in commands:
