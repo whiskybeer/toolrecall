@@ -329,6 +329,14 @@ enabled = true
 # in Config.shim_exclude_prefixes (config.py) — extend via this key or the
 # TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated), e.g.:
 # exclude_prefixes = ["/tmp/hermes-cwd-", "/tmp/hermes-snap-"]
+#
+# Agent-own config files (e.g. an agent gateway re-reading its own .env every
+# few minutes) are a common extension. SAFE: a shim exclude is client-side
+# only — the owning process still reads its file; the daemon-side
+# sensitive-file guard (_db.py) is what keeps .env/.ssh/*.pem out of the
+# cache DB, and it is unaffected. Setting this list REPLACES the default
+# (/proc/, /sys/, /dev/) — re-list those when overriding.
+# exclude_prefixes = ["/proc/", "/sys/", "/dev/", "/home/you/.agent/.env"]
 # ─── Per-Path File TTLs (trust windows) ──────────────
 # Override the global file_ttl for specific files, folders, or file types.
 # Pattern semantics (fnmatch globs, matched against the absolute path):

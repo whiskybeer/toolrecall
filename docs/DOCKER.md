@@ -28,6 +28,43 @@ PROJECTS_DIR=/home/user/projects docker compose up -d daemon
 | `with-ollama` | `with-ollama` | 8569+11434 | Full stack + local LLM |
 | `full` | `full` | 8569 | Daemon + proxy via supervisor |
 
+### Shared Team Daemon (A6 — network mode)
+
+Expose the daemon's cache to the team over TCP with HMAC auth (see
+SECURITY.md §9). Add to `docker-compose.yml`:
+
+```yaml
+  daemon:
+    image: toolrecall:daemon
+    environment:
+      TOOLRECALL_NETWORK_ENABLED: "true"
+      # Generate once: openssl rand -hex 32 — share with team members
+      TOOLRECALL_NETWORK_TOKEN: "${TOOLRECALL_NETWORK_TOKEN:?set in .env}"
+      # TLS strongly recommended outside a private network:
+      # TOOLRECALL_NETWORK_TLS: "true"
+      # TOOLRECALL_NETWORK_TLS_CERT: /certs/cert.pem
+      # TOOLRECALL_NETWORK_TLS_KEY: /certs/key.pem
+    ports:
+      - "8570:8570"
+    volumes:
+      - toolrecall_data:/data
+```
+
+Team members point their client at it:
+
+```bash
+export TOOLRECALL_TRANSPORT=tcp://daemon-host:8570
+export TOOLRECALL_NETWORK_TOKEN=<team token>
+export TOOLRECALL_NETWORK_TLS=true                      # if enabled server-side
+export TOOLRECALL_NETWORK_TLS_CA=/path/to/daemon-cert.pem   # pin the cert
+```
+
+Remote callers are default-deny — scope each token-id via
+`[network.clients]` (see README §Configuration) or they can read nothing.
+**Cache semantics across machines:** file-read hits are only correct on a
+shared filesystem or identical checkouts (docs/ARCHITECTURE.md §3.3);
+API-proxy/MCP entries share cleanly.
+
 ## Configuration
 
 ### Environment Variables

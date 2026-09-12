@@ -235,6 +235,7 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 | Deterministic CI tests for agent behavior | Replay Mode | Any agent |
 | Guardrails between agents and your machine | Security Gate | Any agent |
 | Warm MCP servers across sessions | MCP Multiplexer | Any agent |
+| One warm cache for a whole team | Network Daemon (A6) | Any agent over TCP+TLS |
 | All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
 
 ---
@@ -349,6 +350,29 @@ servers = ["time", "sequential-thinking"]
 
 [recall]
 enabled = false   # opt-in Recall Tier (lossless-recoverable eviction)
+
+[network]
+# A6: shared team daemon — OFF by default. Daemon host:
+enabled = false          # true starts a TCP listener alongside UDS
+bind = "127.0.0.1"       # non-loopback ONLY behind VPN + tls=true
+port = 8570
+# token: TOOLRECALL_NETWORK_TOKEN env preferred (never commit it)
+# openssl rand -hex 32   # generate with this
+# tls = true             # REQUIRED outside loopback/VPN (HMAC ≠ encryption)
+# tls_cert = "/etc/toolrecall/cert.pem"
+# tls_key = "/etc/toolrecall/key.pem"    # chmod 600
+
+# Team members connect with:
+#   TOOLRECALL_TRANSPORT=tcp://daemon-host:8570
+#   TOOLRECALL_NETWORK_TOKEN=<same token>
+#   TOOLRECALL_NETWORK_TLS=true
+#   TOOLRECALL_NETWORK_TLS_CA=/path/to/daemon-cert.pem   # pin + verify
+#
+# Remote callers are default-deny: scope each token-id, or they get
+# nothing (see SECURITY.md §9):
+# [network.clients.network-client]
+# allowed_paths = ["/srv/projects"]
+# allow_terminal = false
 
 [forward_proxy]
 # Starts on :8569 automatically with the daemon
