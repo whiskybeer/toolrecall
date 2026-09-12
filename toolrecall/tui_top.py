@@ -250,11 +250,13 @@ def money_today(usage_csv: str | None = None) -> dict | None:
     import csv as _csv
     from datetime import datetime, timezone
 
+    requests = prompt = completion = replays = 0
+    sizes = []
+    cost = 0.0
+    cost_rows = 0
     day_start = (
         datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     )
-    requests = prompt = completion = replays = 0
-    sizes = []
     try:
         with open(path, errors="replace") as f:
             for row in _csv.DictReader(f):
@@ -272,6 +274,14 @@ def money_today(usage_csv: str | None = None) -> dict | None:
                     replays += 1
                 if p > 0:
                     sizes.append(p)
+                try:
+                    c = float(row.get("cost_usd") or 0.0)
+                except (TypeError, ValueError):
+                    c = 0.0
+                else:
+                    cost += c
+                if c > 0:
+                    cost_rows += 1
     except OSError:
         return None
     if not requests:
@@ -284,6 +294,10 @@ def money_today(usage_csv: str | None = None) -> dict | None:
         "completion": completion,
         "replays": replays,
         "median": median,
+        # Provider-reported dollars summed over rows that carried a cost.
+        # cost_rows == 0 means the column held no provider cost at all
+        # (pre-v2 rows, estimate fallbacks) — report None, not $0.00.
+        "cost_usd": cost if cost_rows else None,
     }
 
 

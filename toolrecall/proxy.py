@@ -261,6 +261,8 @@ def _resilience_num(key: str, default: float) -> float:
 #   completion_tokens actual completion tokens in the response
 #   cache_read_tokens provider's prefix-cache read tokens (if reported)
 #   cache_write_tokens provider's prefix-cache write tokens (if reported)
+#   cost_usd          provider-billed dollars for this request (usage.cost);
+#                     0 when the provider did not report a cost
 #
 # Security: contains NO request bodies, NO response content, NO
 # API keys, NO model output. Only integers and routing metadata.
@@ -273,9 +275,20 @@ def _resilience_num(key: str, default: float) -> float:
 #     SELECT SUM(prompt_tokens) FROM proxy_usage WHERE cache_status = 'HIT'
 #   Provider prefix-cache effectiveness:
 #     SELECT SUM(cache_read_tokens), SUM(cache_write_tokens) FROM proxy_usage
+#   Real money spent (provider-reported):
+#     SELECT SUM(cost_usd) FROM proxy_usage
 
 _USAGE_LOG_PATH = os.path.expanduser("~/.toolrecall/proxy_usage.csv")
-_USAGE_LOG_HEADER = "timestamp,cache_status,target_host,target_path,request_hash,prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens\n"
+# Header v2 (2026-09-10): +cost_usd (10th column). Rows written before v2 lack
+# the column — csv.DictReader returns None for it, and every in-repo consumer
+# reads via DictReader + `.get(col) or 0`, so old rows are cost=None → $0.
+# cost_usd is the PROVIDER-BILLED dollar amount (OpenRouter `usage.cost`,
+# including prompt+completion+cache discount). 0 = not reported (estimate-
+# fallback rows, or providers without a cost field) — never guess it here.
+_USAGE_LOG_HEADER = (
+    "timestamp,cache_status,target_host,target_path,request_hash,"
+    "prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens,cost_usd\n"
+)
 _USAGE_LOG_LOCK = threading.Lock()
 
 
@@ -371,6 +384,13 @@ def _log_proxy_usage(
     ct = usage.get("completion_tokens", 0) or 0
     crt = usage.get("cache_read_input_tokens", 0) or usage.get("cache_read_tokens", 0) or 0
     cwt = usage.get("cache_creation_input_tokens", 0) or usage.get("cache_write_tokens", 0) or 0
+    # Provider-billed dollars (OpenRouter usage.cost). Empty when the provider
+    # didn't report cost — honesty: absent ≠ 0, but the column is numeric, so
+    # write 0 and let consumers treat 0 as "no provider cost reported".
+    try:
+        cost_usd = float(usage.get("cost") or 0.0)
+    except (TypeError, ValueError):
+        cost_usd = 0.0
     ts = time.time()
     with _USAGE_LOG_LOCK:
         try:
@@ -378,7 +398,7 @@ def _log_proxy_usage(
                 f.write(
                     f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
                     f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
-                    f",{pt},{ct},{crt},{cwt}\n"
+                    f",{pt},{ct},{crt},{cwt},{cost_usd:.6f}\n"
                 )
         except OSError:
             pass  # best-effort — never break the proxy over a log write
@@ -1390,6 +1410,53 @@ class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 
+def _bind_proxy_server(bind: str, port: int, handler_cls):
+    """Bind the proxy socket, retrying briefly while the port is held.
+
+    A daemon restart races the previous process's socket teardown: the old
+    listener can still hold the port for a few seconds. Giving up on that
+    race left the daemon running with NO proxy at all (observed 2026-09-10
+    18:22 — ``Port 8569 already in use`` then ``return``; the port was free
+    moments later but nothing was listening, so every LLM call through the
+    proxy failed with APIConnectionError and nothing surfaced the cause).
+
+    Returns the bound server, or None after the attempts are exhausted
+    (the caller logs the degraded state loudly — no silent give-up).
+    """
+    import errno
+    import time
+
+    attempts = max(1, int(os.environ.get("TOOLRECALL_FORWARD_BIND_ATTEMPTS", "10")))
+    delay = max(0.0, float(os.environ.get("TOOLRECALL_FORWARD_BIND_DELAY", "1.5")))
+    for attempt in range(1, attempts + 1):
+        try:
+            return ThreadedHTTPServer((bind, port), handler_cls)
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                raise
+            if attempt == attempts:
+                log.error(
+                    "Port %d still in use after %d attempts (%.1fs) — forward proxy "
+                    "NOT started; LLM traffic routed through :%d will fail until the "
+                    "next daemon start finds the port free",
+                    port,
+                    attempts,
+                    delay * (attempts - 1),
+                    port,
+                )
+                return None
+            log.warning(
+                "Port %d in use (attempt %d/%d) — retrying in %.1fs "
+                "(a restarting daemon usually releases it)",
+                port,
+                attempt,
+                attempts,
+                delay,
+            )
+            time.sleep(delay)
+    return None
+
+
 def run_forward_proxy(bind: str = "127.0.0.1", port: int | None = None):
     """Start the ToolRecall forward proxy (caching API responses).
 
@@ -1406,16 +1473,10 @@ def run_forward_proxy(bind: str = "127.0.0.1", port: int | None = None):
     setup_logging()  # payload-free rotating file log for the log.* calls below
     if port is None:
         port = int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
-    try:
-        server = ThreadedHTTPServer((bind, port), ForwardProxyHandler)
-        actual_port = server.server_port
-    except OSError as e:
-        import errno
-
-        if e.errno == errno.EADDRINUSE:
-            log.error("Port %d already in use", port)
-            return
-        raise
+    server = _bind_proxy_server(bind, port, ForwardProxyHandler)
+    if server is None:
+        return  # already logged loudly by _bind_proxy_server
+    actual_port = server.server_port
 
     log.info("ToolRecall Forward Proxy running on http://%s:%d", bind, actual_port)
     print(f"Forward proxy: http://{bind}:{actual_port}")

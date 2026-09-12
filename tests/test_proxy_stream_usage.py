@@ -204,12 +204,15 @@ class TestStreamBilledTruth(unittest.TestCase):
         self.assertIn(b"[DONE]", data)
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(len(rows), 1)
-        _ts, status, host, path, _h, pt, ct, crt, _cwt = rows[0]
+        _ts, status, host, path, _h, pt, ct, crt, _cwt, cost = rows[0]
         self.assertEqual(status, "STREAM")
         self.assertEqual(host, "api.testretry.invalid:80")
         self.assertEqual(pt, "66992")  # real, not len(body)//4 (~30)
         self.assertEqual(ct, "454")  # was always 0 before this fix
         self.assertEqual(crt, "0")
+        # Provider-billed dollars land in the row (OpenRouter usage.cost),
+        # written with 6-decimal precision
+        self.assertAlmostEqual(float(cost), 0.0051379, places=6)
 
     def test_no_usage_chunk_falls_back_to_estimate(self):
         _StreamHandler.sse_body = _sse(
@@ -220,10 +223,12 @@ class TestStreamBilledTruth(unittest.TestCase):
         self._forward()
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(len(rows), 1)
-        _ts, status, _h, _p, _h2, pt, ct, _crt, _cwt = rows[0]
+        _ts, status, _h, _p, _h2, pt, ct, _crt, _cwt, cost = rows[0]
         self.assertEqual(status, "STREAM")
         self.assertEqual(ct, "0")
         self.assertGreater(int(pt), 0)  # len(body)//4 estimate still logged
+        # No provider cost reported → 0 in the column (absent ≠ guessed)
+        self.assertEqual(float(cost), 0.0)
 
     def test_cache_read_tokens_recorded_when_present(self):
         usage = {
@@ -247,6 +252,37 @@ class TestStreamBilledTruth(unittest.TestCase):
             rows[0][7], "0"
         )  # prompt_tokens_details.cached_tokens is nested OpenRouter-style
         self.assertEqual(rows[0][8], "0")
+
+    def test_cost_usd_column_v2_header_and_legacy_rows(self):
+        # The writer emits 10 columns with the v2 header; legacy 9-column rows
+        # (pre-2026-09-10) must stay readable via DictReader (cost → None → 0).
+        # Seed the CSV first (writer creates it on first log; this test writes
+        # directly, so seed the v2 header ourselves).
+        with open(self.csv_path, "w") as f:
+            f.write(proxy_mod._USAGE_LOG_HEADER)
+        with open(self.csv_path) as f:
+            header = f.readline().strip()
+        self.assertIn(",cost_usd", header)
+        # Simulate a legacy row: 9 fields, no cost
+        with open(self.csv_path, "a") as f:
+            f.write("1789045342.847,MISS,h,p,hash,10,5,0,0\n")
+        import csv as _csv
+
+        with open(self.csv_path) as f:
+            legacy = [r for r in _csv.DictReader(f) if r["request_hash"] == "hash"]
+        self.assertEqual(len(legacy), 1)
+        self.assertEqual(int(legacy[0].get("cost_usd") or 0), 0)
+
+    def test_bad_cost_value_degrades_to_zero(self):
+        usage = {"prompt_tokens": 10, "completion_tokens": 1, "cost": "not-a-number"}
+        _StreamHandler.sse_body = _sse(
+            {"choices": [], "usage": usage},
+            "[DONE]",
+        ).encode()
+        self._proxy_port()
+        self._forward()
+        rows = _read_csv_rows(self.csv_path)
+        self.assertEqual(float(rows[0][9]), 0.0)
 
     def test_multi_chunk_large_stream_tail_bounded(self):
         # 50KB of delta noise then the usage chunk — parser only needs the

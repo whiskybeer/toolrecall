@@ -47,6 +47,8 @@ class HealthInfo(TypedDict):
     lock_files: int
     socket_path: str
     socket: bool
+    proxy: bool
+    proxy_port: int
     shim_state: str
     hit_rate: float | None
     log_file: str
@@ -81,6 +83,33 @@ def _pid_file() -> str:
 
 def _lock_glob_dir() -> str:
     return os.path.dirname(_pid_file())
+
+
+def _forward_proxy_port() -> int:
+    """Port the forward proxy binds (same resolution as run_forward_proxy)."""
+    try:
+        return int(os.environ.get("TOOLRECALL_FORWARD_PORT", "8569"))
+    except (TypeError, ValueError):
+        return 8569
+
+
+def proxy_listening(port: int | None = None, timeout: float = 1.0) -> bool:
+    """True when the forward proxy accepts TCP connections.
+
+    The proxy is best-effort inside the daemon: if it fails to bind (a restart
+    racing the old socket, 2026-09-10) the daemon still reports healthy while
+    every LLM call routed through :8569 fails with a connection error. This is
+    the signal that was missing — check it explicitly.
+    """
+    import socket as _socket
+
+    if port is None:
+        port = _forward_proxy_port()
+    try:
+        with _socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def count_daemon_procs() -> int:
@@ -156,6 +185,8 @@ def gather() -> HealthInfo:
         "lock_files": 0,
         "socket_path": _default_socket_path(),
         "socket": False,
+        "proxy": False,
+        "proxy_port": _forward_proxy_port(),
         "shim_state": "inactive",
         "hit_rate": None,
         "log_file": "",
@@ -193,6 +224,10 @@ def gather() -> HealthInfo:
             info["socket"] = os.stat(sock).st_mode != 0
         except OSError:
             info["socket"] = False
+
+    # Forward proxy listener (best-effort probe — the gap that let a dead
+    # proxy look like a healthy daemon on 2026-09-10).
+    info["proxy"] = proxy_listening(info.get("proxy_port"))
 
     # Best-effort shim state (probe via the CLI, cheap + bounded).
     try:
@@ -265,6 +300,12 @@ def warnings(info: HealthInfo) -> list[str]:
     if not info["socket"]:
         notes.append("UDS socket not present")
 
+    if not info.get("proxy", True):
+        notes.append(
+            f"forward proxy NOT listening on :{info.get('proxy_port')} — "
+            "LLM traffic routed through it fails with connection errors"
+        )
+
     log_err = info.get("log_errors_recent", 0)
     log_warn = info.get("log_warnings_recent", 0)
     if log_err:
@@ -291,6 +332,7 @@ def render(info: HealthInfo) -> str:
     return (
         f"toolrecall healthcheck | procs={info['procs']} | pid={pid} | "
         f"locks={info['lock_files']} | sock={'yes' if info['socket'] else 'no'} "
+        f"| proxy={'yes' if info.get('proxy') else 'NO'} "
         f"| shim={info['shim_state']}{age}{log_seg}"
     )
 
