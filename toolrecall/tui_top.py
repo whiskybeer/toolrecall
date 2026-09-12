@@ -236,6 +236,57 @@ def access_rows(db: str, limit: int = 200) -> list:
         con.close()
 
 
+def money_today(usage_csv: str | None = None) -> dict | None:
+    """Billed-truth aggregation from the proxy usage CSV (today, UTC).
+
+    Returns None when the CSV is absent or has no rows today — the honest
+    'no proxy traffic' state. Fields:
+      requests, prompt, completion, replays (cache_status=HIT),
+      median (prompt-token median — the re-sent-history diagnostic).
+    """
+    path = usage_csv or os.path.join(os.path.expanduser("~"), ".toolrecall", "proxy_usage.csv")
+    if not os.path.isfile(path):
+        return None
+    import csv as _csv
+    from datetime import datetime, timezone
+
+    day_start = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
+    requests = prompt = completion = replays = 0
+    sizes = []
+    try:
+        with open(path, errors="replace") as f:
+            for row in _csv.DictReader(f):
+                try:
+                    ts = float(row.get("timestamp") or 0)
+                    p = int(row.get("prompt_tokens") or 0)
+                except ValueError:
+                    continue
+                if ts < day_start:
+                    continue
+                requests += 1
+                prompt += p
+                completion += int(row.get("completion_tokens") or 0)
+                if (row.get("cache_status") or "").strip().upper() == "HIT":
+                    replays += 1
+                if p > 0:
+                    sizes.append(p)
+    except OSError:
+        return None
+    if not requests:
+        return None
+    sizes.sort()
+    median = sizes[len(sizes) // 2] if sizes else 0
+    return {
+        "requests": requests,
+        "prompt": prompt,
+        "completion": completion,
+        "replays": replays,
+        "median": median,
+    }
+
+
 def context_via_daemon() -> dict | None:
     """Context tracker snapshot over UDS: stats + stale. None if daemon down.
 
@@ -367,6 +418,26 @@ def render_plain(snapshot: dict) -> str:
         )
         for e in ctx.get("stale", [])[:10]:
             lines.append("  stale: %s (~%s tok)" % (e["path"], human_tokens(e["est_tokens"])))
+    money = money_today()
+    if money:
+        lines.append("")
+        lines.append(
+            "money [billed via proxy, today]: requests %d  billed-prompt %s  completions %s  replays %d"
+            % (
+                money["requests"],
+                human_tokens(money["prompt"]),
+                human_tokens(money["completion"]),
+                money["replays"],
+            )
+        )
+        if money["median"] and money["median"] > 100_000:
+            lines.append(
+                "  median request %s tok — cost dominated by re-sent history"
+                % human_tokens(money["median"])
+            )
+    elif not daemon:
+        lines.append("")
+        lines.append("money [billed]: no proxy traffic captured today")
     log = snapshot.get("log") or []
     if log:
         lines.append("")
@@ -434,6 +505,11 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         state["snap"] = snapshot_fn()
         state["log"] = log_fn()
         state["ctx"] = context_via_daemon()
+        # billed-truth aggregation (usage CSV) — cheap file read, once/interval
+        try:
+            state["money"] = money_today()
+        except Exception:  # noqa: BLE001 — money block must never break the TUI
+            state["money"] = None
         # trend reads the db directly (like log_fn); cheap + daemon-independent
         try:
             from toolrecall.trend import coverage, daily_trend, miss_classes
@@ -572,6 +648,34 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     ),
                     attr,
                 )
+            # ── MONEY reconciliation (usage CSV — billed truth) ──
+            money = state.get("money")
+            if money:
+                y = put(y + 1, " money [billed via proxy, today]:", A_BOLD)
+                y = put(
+                    y,
+                    "  requests %d   billed-prompt %s   completions %s   replays %d"
+                    % (
+                        money["requests"],
+                        human_tokens(money["prompt"]),
+                        human_tokens(money["completion"]),
+                        money["replays"],
+                    ),
+                )
+                if money["median"] and money["median"] > 100_000:
+                    y = put(
+                        y,
+                        "  median request %s tok — cost dominated by re-sent history"
+                        % human_tokens(money["median"]),
+                        A_MISS,
+                    )
+                    y = put(
+                        y,
+                        "  → run the checkpoint flow (view 4: press c) to cut history re-billing",
+                        A_DIM,
+                    )
+            else:
+                y = put(y + 1, " money [billed]: no proxy traffic captured today", A_DIM)
         elif view == "log":
             rows = state["log"]
             body_h = max(1, max_y - y - 2)
