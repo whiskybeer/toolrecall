@@ -374,6 +374,43 @@ FORWARD_HOSTS = {
 }
 
 
+def _load_extra_hosts() -> set[str]:
+    """User-declared trusted LLM endpoints (provider-agnostic support).
+
+    Sources (merged):
+      - `[forward_proxy] extra_hosts = ["llm.corp.example", ...]` in config
+      - TOOLRECALL_FORWARD_EXTRA_HOSTS env (comma-separated)
+
+    Keeps the SSRF allowlist default-deny: only hosts the USER named are
+    forwarded to — a custom OpenAI-compatible gateway (Azure, LiteLLM,
+    vLLM, Ollama) is reachable only after the operator declares it.
+    """
+    extra: set[str] = set()
+    try:
+        from toolrecall.config import load_config
+
+        # NOTE: Config.get(*keys, default=) — passing a dict as a positional
+        # "key" raises TypeError unhashable (found by the config-path test).
+        section = load_config().get("forward_proxy", default={})
+        configured = section.get("extra_hosts", []) if isinstance(section, dict) else []
+        if isinstance(configured, list):
+            for h in configured:
+                if isinstance(h, str) and h.strip():
+                    extra.add(h.strip().lower().rstrip("."))
+    except Exception:
+        pass  # config unavailable (tests/embedding) — hardcoded list still applies
+    env_val = os.environ.get("TOOLRECALL_FORWARD_EXTRA_HOSTS", "")
+    for h in env_val.split(","):
+        h = h.strip().lower().rstrip(".")
+        if h:
+            extra.add(h)
+    # normalize: bare host or host:port — allowlist check strips the port
+    return {h.split(":", 1)[0] for h in extra}
+
+
+FORWARD_HOSTS |= _load_extra_hosts()
+
+
 def _host_allowed(host: str) -> bool:
     """SSRF guard — only known, trusted LLM API hosts may be forwarded to.
 
@@ -523,7 +560,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(403)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"error":"Forbidden: non-allowlisted target host"}')
+            self.wfile.write(
+                b'{"error":"Forbidden: non-allowlisted target host. '
+                b"Custom endpoint? Add it to [forward_proxy] extra_hosts in toolrecall.toml "
+                b'(or TOOLRECALL_FORWARD_EXTRA_HOSTS) and restart the daemon."}'
+            )
             return
 
         body_bytes = b""

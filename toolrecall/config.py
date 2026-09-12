@@ -304,7 +304,7 @@ class Config:
         "nginx": frozenset({"domain", "site_name", "ssl", "ssl_cert", "ssl_key", "github"}),
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
         # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
-        "forward_proxy": frozenset({"port"}),
+        "forward_proxy": frozenset({"port", "extra_hosts"}),
         "update": frozenset({"enabled", "check_interval_hours"}),
     }
     # Sub-tables whose keys are user-defined names (per-client policies,
