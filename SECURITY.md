@@ -375,6 +375,11 @@ its name. **Compromised token = exactly the scoped policy, nothing more.**
 
 ### 9.4 Operational guidance
 
+- **Bind is local-only by default (hardening, 2026-09-08):** the listener
+  refuses non-local binds (public IPs, wildcard `0.0.0.0`) with an explicit
+  startup message. Allowed without extra config: loopback, RFC1918
+  (10/8, 172.16/12, 192.168/16), link-local, IPv6 ULA. A deliberate public
+  deployment requires `[network] allow_public = true` AND `tls = true`.
 - Token: `TOOLRECALL_NETWORK_TOKEN` env (preferred) or `[network].token` with
   `chmod 600` on the config file. Generate with `openssl rand -hex 32`.
 - Bind: keep `127.0.0.1` unless the daemon MUST serve the network; if it must,

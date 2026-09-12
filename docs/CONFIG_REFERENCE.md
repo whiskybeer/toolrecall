@@ -77,6 +77,7 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `mcp_multiplex_servers_config` | Resolved server configs | Registry + overrides |
 | `network_enabled` | Shared network daemon master switch (A6, opt-in) | `False` |
 | `network_bind` | TCP listener bind address | `127.0.0.1` (loopback) |
+| `network_allow_public` | Allow binding a PUBLIC (non-local) address; local-only by default | `False` |
 | `network_port` | TCP listener port | `8570` |
 | `network_token` | Pre-shared HMAC token (empty = listener disabled) | `""` |
 | `network_tls` | TLS on the network listener (stdlib `ssl`) | `False` |
@@ -120,6 +121,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_NETWORK_PORT` | `network.port` | `TOOLRECALL_NETWORK_PORT=8570` |
 | `TOOLRECALL_NETWORK_TOKEN` | `network.token` | `TOOLRECALL_NETWORK_TOKEN=$(openssl rand -hex 32)` |
 | `TOOLRECALL_NETWORK_TLS` | `network.tls` | `TOOLRECALL_NETWORK_TLS=true` |
+| `TOOLRECALL_NETWORK_ALLOW_PUBLIC` | `network.allow_public` | (only with deliberate public deploy) |
 | `TOOLRECALL_NETWORK_TLS_CERT` | `network.tls_cert` | `TOOLRECALL_NETWORK_TLS_CERT=/etc/tr/cert.pem` |
 | `TOOLRECALL_NETWORK_TLS_KEY` | `network.tls_key` | `TOOLRECALL_NETWORK_TLS_KEY=/etc/tr/key.pem` |
 | `TOOLRECALL_FORWARD_PORT` | (not in config.toml) | `TOOLRECALL_FORWARD_PORT=9090` |
