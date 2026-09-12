@@ -1,0 +1,147 @@
+# Copyright (c) 2026 Robin Schultka
+# SPDX-License-Identifier: MIT
+# Source: https://github.com/whiskybeer/toolrecall
+"""Canonical key derivation for ToolRecall — the Layer-0 primitive.
+
+One module for turning tool requests and tool results into stable,
+content-addressed keys. Everything that hashes tool input or tool output
+routes through here, so a given (tool, args) pair or a given result body
+hashes identically in every adapter, in the daemon, and in external code
+that imports this module standalone.
+
+Two primitives, one rule — hash the canonical thing, nothing else:
+
+- ``content_digest(data)``  — content key. sha256 over the exact bytes of a
+  tool RESULT (file body, command output, screenshot bytes). Freshness, TTL,
+  and staleness are policy decided by callers; this function only answers
+  "what are the bytes' identity?"
+
+- ``tool_key(tool, args, kwargs)`` — request key. sha256 over a canonical
+  JSON preimage of a tool REQUEST. Deterministic under dict insertion-order
+  permutation.
+
+Design constraints (deliberate):
+
+- Pure functions. No I/O, no config reads, no clock, no logging inside.
+  Same input bytes → same key, on any machine, forever. This is what makes
+  record/replay and cross-session cache hits possible at all.
+- stdlib only (hashlib, json) — zero-runtime-deps is a hard identity.
+- Backwards compatibility is part of the contract. The Stage-0 consolidation
+  (2026-09) keeps every preimage byte-identical to the pre-consolidation
+  adapters; vectors in ``tests/golden_keys.json`` are pinned by tests.
+
+Known policy deltas, documented honestly:
+
+- Encoding policy: ``content_digest`` encodes str with
+  ``errors="surrogatepass"``. Pre-Stage-0, ``mcp_bridge`` used
+  ``errors="replace"`` and ``litellm._digest`` used ``surrogatepass``. For
+  all valid text the two are byte-identical (proved by golden vectors);
+  the ONLY divergence is text containing lone surrogates, which is invalid
+  UTF-8 either way. ``surrogatepass`` wins because it is lossless (no
+  U+FFFD collision) and round-trips.
+- Truncation policy: ``litellm._digest`` returned 16-hex; the bridge
+  returned 64-hex. Truncation is now an explicit ``truncate=`` argument at
+  call sites — the digest itself is always full-width. Persisted 16-hex
+  keys keep their exact legacy values.
+- Normalization limitation: ``tool_key`` coerces non-JSON-safe values with
+  ``str()`` (legacy behavior, kept for key compat). Nested dicts inside
+  such values therefore keep their runtime repr ordering: deterministic per
+  process and per equal-structure object, but NOT canonical across
+  differently-ordered equivalent dicts. The canonical-nesting fix changes
+  key bytes and ships in a later stage behind a key-version bump, not here.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any, Optional, Tuple, Union
+
+__all__ = ["content_digest", "tool_key", "digest16"]
+
+BytesLike = Union[str, bytes, bytearray]
+_MIN_TRUNCATE = 8  # below 8 hex chars, stub references collide too easily
+_MAX_TRUNCATE = 64  # sha256 hexdigest width
+
+
+def content_digest(data: BytesLike, *, truncate: Optional[int] = None) -> str:
+    """Full sha256 hexdigest of tool-result content — the content key.
+
+    Accepts str (encoded UTF-8 with ``surrogatepass``, lossless for any
+    Python str) or bytes/bytearray (hashed as-is). This is the single
+    encoding policy for every adapter, daemon table, and stub reference;
+    do not hand-roll ``text.encode(...)`` elsewhere.
+
+    ``truncate=N`` returns the first N hex chars for bounded-width callers
+    (e.g. 16 for legacy stub references). The full digest is always the
+    canonical form; truncation is a caller-side presentation choice.
+    """
+    if isinstance(data, str):
+        payload = data.encode("utf-8", "surrogatepass")
+    elif isinstance(data, (bytes, bytearray)):
+        payload = bytes(data)
+    else:
+        raise TypeError(f"content_digest expects str|bytes|bytearray, got {type(data).__name__}")
+    digest = hashlib.sha256(payload).hexdigest()
+    if truncate is None:
+        return digest
+    if not isinstance(truncate, int) or not (_MIN_TRUNCATE <= truncate <= _MAX_TRUNCATE):
+        raise ValueError(f"truncate must be an int in [{_MIN_TRUNCATE}, {_MAX_TRUNCATE}]")
+    return digest[:truncate]
+
+
+def digest16(data: BytesLike) -> str:
+    """Bounded 16-hex content digest — legacy stub-reference width."""
+    return content_digest(data, truncate=16)
+
+
+def _normalize_args(args: Tuple[Any, ...], kwargs: dict) -> str:
+    """Canonical JSON preimage for a tool request.
+
+    Byte-identical to the pre-Stage-0 ``odysseus._build_cache_key``
+    preimage (including json.dumps' default ``", "/": "`` separators):
+    positional args under ``_pos`` (str-coerced), kwargs JSON-safe with
+    ``str()`` fallback, object keys sorted, non-ASCII preserved. Pinned by
+    ``tests/golden_keys.json``.
+    """
+    arg_dict: dict = {}
+    if args:
+        arg_dict["_pos"] = [str(a) for a in args]
+    for k, v in kwargs.items():
+        # Normalize to JSON-safe types (legacy coercion — see module notes
+        # on the nested-ordering limitation this carries).
+        if isinstance(v, (str, int, float, bool, type(None))):
+            arg_dict[k] = v
+        else:
+            arg_dict[k] = str(v)
+    return json.dumps(arg_dict, sort_keys=True, ensure_ascii=False)
+
+
+def tool_key(
+    tool: str,
+    args: Tuple[Any, ...] = (),
+    kwargs: Optional[dict] = None,
+    *,
+    digest: bool = True,
+) -> str:
+    """Deterministic request key for a tool call.
+
+    ``digest=True`` (default): sha256 hexdigest binding the tool name and
+    the canonical argument preimage — the request key for cache tables.
+    ``digest=False``: the canonical preimage itself (legacy cache-table
+    format, where the tool name is a separate namespace column; also handy
+    for debugging — it is human-readable). The preimage intentionally does
+    NOT embed the tool name (legacy byte-compat); the digest path does.
+
+    Deterministic under dict insertion-order permutation of ``kwargs``.
+    Same (tool, args, kwargs) in any process, any session → same key.
+    """
+    preimage = _normalize_args(tuple(args), dict(kwargs or {}))
+    if not digest:
+        return preimage
+    bound = json.dumps(
+        {"args": preimage, "tool": tool},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return content_digest(bound)

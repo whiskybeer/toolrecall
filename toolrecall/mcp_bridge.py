@@ -27,6 +27,7 @@ import time
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 from toolrecall import __version__
 from toolrecall.context_tracker import format_stale_block
+from toolrecall.keys import content_digest
 
 
 # ─── MCP Tool Definitions ────────────────────────────────
@@ -368,7 +369,7 @@ class MCPBridge:
             return resp
 
         key = os.path.realpath(os.path.expanduser(path))
-        digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+        digest = content_digest(content)
 
         if self._session_reads.get(key) == digest:
             # Proactive TTL expiry: if the last full send was more than
@@ -418,7 +419,7 @@ class MCPBridge:
         )
         if not isinstance(content, str):
             return resp
-        digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+        digest = content_digest(content)
         if self._session_terminal.get(command) == digest:
             return {
                 "result": {

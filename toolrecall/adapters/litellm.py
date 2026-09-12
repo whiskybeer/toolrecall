@@ -50,10 +50,11 @@ Self-test:  python3 -m toolrecall.adapters.litellm
 from __future__ import annotations
 
 import copy
-import hashlib
 import logging
 import os
 from typing import Any, Dict, List, Tuple
+
+from toolrecall.keys import digest16
 
 try:  # pragma: no cover — import guard so the module also loads outside litellm
     from litellm.integrations.custom_logger import CustomLogger
@@ -79,7 +80,12 @@ STUB_TEMPLATE = (
 
 
 def _digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    """16-hex content digest — delegates to the canonical Layer-0 primitive.
+
+    Legacy width (16 hex) is preserved for stub references already emitted
+    in live sessions; the canonical form is ``toolrecall.keys.content_digest``.
+    """
+    return digest16(text)
 
 
 def dedup_messages(

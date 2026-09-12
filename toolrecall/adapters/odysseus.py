@@ -97,6 +97,7 @@ from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from toolrecall.cache import cached_mcp_check, cached_mcp_store
 from toolrecall import client as _tr_client
+from toolrecall.keys import tool_key
 
 logger = logging.getLogger("toolrecall.adapters.odysseus")
 
@@ -113,18 +114,12 @@ def _build_cache_key(tool_name: str, args: tuple, kwargs: dict) -> str:
     """Build a deterministic cache key from tool name + args.
 
     Serializes positional and keyword arguments into a JSON dict for use
-    as the cache discriminator. The same pattern as google_adk._build_args.
+    as the cache discriminator. Delegates to the canonical Layer-0
+    primitive (``toolrecall.keys``) and returns the JSON preimage,
+    matching the legacy on-disk key format. The same pattern as
+    google_adk._build_args.
     """
-    arg_dict: dict[str, Any] = {}
-    if args:
-        arg_dict["_pos"] = [str(a) for a in args]
-    for k, v in kwargs.items():
-        # Normalize to JSON-safe types
-        if isinstance(v, (str, int, float, bool, type(None))):
-            arg_dict[k] = v
-        else:
-            arg_dict[k] = str(v)
-    return json.dumps(arg_dict, sort_keys=True, ensure_ascii=False)
+    return tool_key(tool_name, tuple(args), kwargs, digest=False)
 
 
 def _store_in_cache(
