@@ -230,9 +230,7 @@ class TestFileCache(unittest.TestCase):
 
         with self.assertLogs("toolrecall.cache", level="WARNING") as captured:
             reset_stats()
-        audit_lines = [
-            ln for ln in captured.output if "reset_stats: wiped cache_stats" in ln
-        ]
+        audit_lines = [ln for ln in captured.output if "reset_stats: wiped cache_stats" in ln]
         self.assertTrue(audit_lines, f"no audit line in: {captured.output}")
         self.assertIn(
             "caller stack:",

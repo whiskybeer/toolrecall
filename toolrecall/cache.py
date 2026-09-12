@@ -2021,8 +2021,7 @@ def reset_stats():
         # caller. Frame list is path/line/function only (payload-free, no
         # source text): enough to name the offending test/script immediately.
         caller_frames = " <- ".join(
-            f"{fr.filename}:{fr.lineno}:{fr.name}"
-            for fr in traceback.extract_stack()[-7:-1]
+            f"{fr.filename}:{fr.lineno}:{fr.name}" for fr in traceback.extract_stack()[-7:-1]
         )
         logging.getLogger(__name__).warning(
             "reset_stats: wiped cache_stats + %d access_log rows — "
