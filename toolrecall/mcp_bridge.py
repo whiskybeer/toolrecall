@@ -339,6 +339,10 @@ class MCPBridge:
         # agents (Claude Code, Cursor) never do, so they stay silent without
         # any config.
         self._hints_opted_in = False
+        # Discovery nudge: one-time tip after 10 reads (pre-opt-in), so
+        # agents discover the checkpoint flow without being told about it.
+        self._nudge_reads = 0
+        self._nudge_emitted = False
         # Multiplexer-only mode: expose only mcp_call/mcp_list_servers,
         # no file/terminal/cache tools. For agents with built-in context
         # management (Claude Code, Cursor) where file caching costs 2.4× more.
@@ -637,6 +641,26 @@ class MCPBridge:
             # Extract result for presentation
             content = resp.get("result", resp)
             result_text = self._format_result(content)
+
+            # ── Discovery nudge (pre-opt-in) ──
+            # The opt-in contract below is a cold-start deadlock: agents that
+            # never call context_set_checkpoint never learn the flow exists.
+            # One gentle tip after N reads, once per session, before opt-in.
+            if (
+                self._emit_context_hints
+                and not self._hints_opted_in
+                and not self._nudge_emitted
+                and tool_name in ("cached_read", "read_file")
+            ):
+                self._nudge_reads = getattr(self, "_nudge_reads", 0) + 1
+                if self._nudge_reads >= 10:
+                    self._nudge_emitted = True
+                    result_text += (
+                        "\n\n[toolrecall] Tip: this session has read 10+ files. "
+                        "Call context_set_checkpoint once to enable context savings — "
+                        "afterwards context_get_dirty lists files safe to drop from "
+                        "context, cutting input tokens on every later turn."
+                    )
 
             # Auto-trigger context hint after every non-context tool call.
             # Only if the client opted in by checkpointing (and, on the daemon
