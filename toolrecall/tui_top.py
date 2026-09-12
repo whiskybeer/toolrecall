@@ -446,10 +446,10 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         st = snap.get("stats") or {}
         daemon = st.get("_daemon", False)
 
-        # header
+        # header: status line, then key hints on their own line (visibility)
         y = put(
             0,
-            " toolrecall top  [%s]  daemon: %s  pid %s%s  %ds  1 stats 2 log 3 trend 4 ctx 5 help r q"
+            " toolrecall top  [%s]  daemon: %s  pid %s%s  %ds"
             % (
                 view,
                 "live" if daemon else "down(sqlite)",
@@ -459,7 +459,8 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             ),
             A_BOLD,
         )
-        y = put(y, "", 0)  # breathing line between header and view body
+        y = put(y, " 1 stats  2 log  3 trend  4 ctx  5 help  r refresh  q quit", A_DIM)
+        y = put(y, "", 0)  # gap between chrome and view body
 
         # wrong-user warning: own db missing but another user's exists
         if view in ("stats", "trend") and not daemon and not any(c in st for c in CATEGORIES):
