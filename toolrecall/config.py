@@ -206,6 +206,7 @@ class Config:
         "cache": frozenset(
             {
                 "file_ttl",
+                "file_ttls",
                 "skill_ttl",
                 "terminal_default_ttl",
                 "terminal_ttls",

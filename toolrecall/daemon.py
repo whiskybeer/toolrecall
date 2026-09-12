@@ -2267,32 +2267,47 @@ def _sweep_stale_lock_files() -> int:
 
     Returns the number of files removed. Runs BEFORE our own lock is
     acquired, so a failure here never blocks daemon start.
+
+    Safety rule (fixed 2026-09-08): a lock file is only removed when its
+    flock can actually be taken non-blocking. The recorded-PID check alone
+    is insufficient — e.g. the holder's /proc entry can be unreadable in
+    other mount namespaces (containers), or the file can have been
+    recreated after a manual `rm daemon-*.lck` while the true holder still
+    flocks the original (now orphaned) inode. A file we can flock is by
+    definition unheld; a file we cannot flock has a live owner and MUST be
+    left alone, regardless of what its recorded PID says.
     """
+    import fcntl as _fcntl
     import glob as _glob
 
     lock_dir = os.path.dirname(PID_FILE)
     log = logging.getLogger(__name__)
     removed = 0
     for path in _glob.glob(os.path.join(lock_dir, "daemon-*.lck")):
+        # Belt-and-braces: try to flock the file non-blocking first. If the
+        # flock succeeds the file is unheld — safe to remove. If it raises,
+        # a live process holds it: never touch the file, whatever the
+        # recorded PID says (PID reuse and cross-namespace reads lie; the
+        # kernel lock cannot).
         try:
-            with open(path) as f:
-                holder = f.read().strip()
-        except OSError:
-            continue  # unreadable — leave it; a live holder rewrites its PID
-        if holder.isdigit() and os.path.exists(f"/proc/{holder}"):
-            continue  # live holder — never touch
-        # Holder dead (or PID never recorded). The OS released the flock on
-        # holder death, so the file is unheld by definition — safe to remove.
-        # (No flock re-check here: a racing starter holding the flock would
-        # not yet have written its PID, but it also re-keys on the socket
-        # path and would simply recreate its own file.)
-        try:
-            os.unlink(path)
-            removed += 1
-        except FileNotFoundError:
-            pass  # raced with another sweeper — that's the success case
+            fh = open(path, "a+")
         except OSError as e:
             log.debug("lock-file sweep skipped %s: %s", path, e)
+            continue
+        try:
+            try:
+                _fcntl.flock(fh, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            except OSError:
+                continue  # held by a live process — leave it alone
+            try:
+                os.unlink(path)
+                removed += 1
+            except FileNotFoundError:
+                pass  # raced with another sweeper — that's the success case
+            except OSError as e:
+                log.debug("lock-file sweep skipped %s: %s", path, e)
+        finally:
+            fh.close()
     return removed
 
 
@@ -2346,6 +2361,27 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
             f"ToolRecall Daemon already running (lock held by PID {holder}) — refusing duplicate."
         )
         sys.exit(0)
+
+    # ── Live-socket ownership check ──────────────────────────
+    # The flock guard is inode-based: if a previous holder's lock FILE was
+    # deleted while it ran (manual `rm daemon-*.lck`, runbook line), the old
+    # daemon keeps listening on the live socket while we successfully flock a
+    # freshly created lock file. bind_socket() below would then UNLINK the
+    # live socket and steal the path, leaving TWO serving daemons — the exact
+    # 3-proc leak seen 2026-09-08 (pipx copy on orphaned socket inode).
+    # Defense: if the socket path already has a reachable live listener, do
+    # NOT rebind. Exit cleanly so a systemd `Restart=always` unit settles
+    # instead of crash-looping: whichever copy starts first owns the socket,
+    # later copies attach-detect and stand down (self-heal by converging).
+    if not IS_WINDOWS and os.path.exists(socket_path):
+        from toolrecall.client import _probe_socket_alive
+
+        if _probe_socket_alive(socket_path):
+            print(
+                f"ToolRecall Daemon already serving on {socket_path} (live listener detected) "
+                "— standing down instead of stealing the socket."
+            )
+            sys.exit(0)
 
     if os.path.exists(socket_path) and not IS_WINDOWS:
         try:

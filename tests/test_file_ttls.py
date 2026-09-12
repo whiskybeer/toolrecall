@@ -136,6 +136,37 @@ class TestNeverCache(_FileTtlEnv):
             f.write("line2")
         self.assertEqual(cache_mod.cached_read(p)["content"], "line2")
 
+    def test_ttl_zero_reads_are_not_counted_as_misses(self):
+        # Regression (2026-09-08): ttl=0 reads recorded a miss per read even
+        # though the file can never produce a hit. ~28% of production reads
+        # were never-cacheable session transcripts → global hit rate pinned
+        # at ~71% no matter how well the cacheable classes performed.
+        p = self._write("sess.json", "{}")
+        self.cache_cfg = {"file_ttls": {p: 0}}
+        with cache_mod._db() as conn:
+            conn.execute("DELETE FROM cache_stats WHERE category='file_cache'")
+        for _ in range(5):
+            cache_mod.cached_read(p)
+        with cache_mod._db() as conn:
+            row = conn.execute(
+                "SELECT hits, misses FROM cache_stats WHERE category='file_cache'"
+            ).fetchone()
+        self.assertTrue(
+            row is None or (row["hits"] == 0 and row["misses"] == 0),
+            f"ttl=0 reads must not pollute hit/miss counters, got {row}",
+        )
+
+        # Contrast: a cacheable file still counts normally
+        q = self._write("plain.md", "v1")
+        self.cache_cfg = {"file_ttls": {q: -1}}
+        cache_mod.cached_read(q)  # miss (first read)
+        cache_mod.cached_read(q)  # hit
+        with cache_mod._db() as conn:
+            row = conn.execute(
+                "SELECT hits, misses FROM cache_stats WHERE category='file_cache'"
+            ).fetchone()
+        self.assertEqual((row["hits"], row["misses"]), (1, 1))
+
 
 class TestGlobs(_FileTtlEnv):
     def test_folder_glob_matches_subtree(self):

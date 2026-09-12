@@ -80,6 +80,23 @@ def _check_daemon() -> bool:
         return False
 
 
+def _probe_socket_alive(socket_path: str) -> bool:
+    """True if a live daemon answers on ``socket_path`` right now.
+
+    Used by run_daemon() before rebinding: a socket file on disk can be a
+    live listener (another daemon copy) or a stale leftover from a crash.
+    Only an actual successful ping counts as alive — a stale file or a
+    connect-refused/ECONNREFUSED path is safe to rebind. Deliberately
+    creates its own TransportClient so it never touches shared state.
+    """
+    try:
+        tc = TransportClient(socket_path)
+        resp = tc.send({"cmd": "ping"})
+        return resp.get("pong", False)
+    except Exception:
+        return False
+
+
 # ─── Core API ─────────────────────────────────────────────────
 
 

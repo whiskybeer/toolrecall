@@ -39,10 +39,20 @@ class SweepStaleLockFilesTest(unittest.TestCase):
         self.addCleanup(self._pid_file_patcher.stop)
         self.addCleanup(self._tmp.cleanup)
 
-    def _write_lck(self, name: str, pid: str) -> str:
+    def _write_lck(self, name: str, pid: str, flock: bool = False) -> str:
         path = os.path.join(self.lock_dir, name)
         with open(path, "w") as f:
             f.write(pid)
+        if flock:
+            # Simulate a live holder: the kernel lock is what makes a lock
+            # file "held" under the flock-based sweep contract. The written
+            # PID is informational only.
+            import fcntl
+
+            fh = open(path, "a+")
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Keep the fh referenced until the test ends so the flock stays.
+            self.addCleanup(fh.close)
         return path
 
     def test_sweep_removes_dead_pid_lock(self):
@@ -54,7 +64,12 @@ class SweepStaleLockFilesTest(unittest.TestCase):
         self.assertFalse(os.path.exists(dead))
 
     def test_sweep_keeps_live_pid_lock(self):
-        live = self._write_lck("daemon-live00000000001.lck", str(os.getpid()))
+        # A lock file whose flock is genuinely held must survive — even if
+        # the recorded PID were wrong (PID reuse, cross-namespace reads).
+        # Regression 2026-09-08: the runbook's `rm daemon-*.lck` recreated
+        # the file while the real holder kept flocking the orphaned inode;
+        # the PID-only check then swept files belonging to live daemons.
+        live = self._write_lck("daemon-live00000000001.lck", str(os.getpid()), flock=True)
         removed = daemon_mod._sweep_stale_lock_files()
         self.assertEqual(removed, 0)
         self.assertTrue(os.path.exists(live))
@@ -63,7 +78,7 @@ class SweepStaleLockFilesTest(unittest.TestCase):
         # The currently-running daemon's file (this test process) must
         # survive: same scenario as the production daemon during its own
         # restart sweep.
-        own = self._write_lck("daemon-own000000000001.lck", str(os.getpid()))
+        own = self._write_lck("daemon-own000000000001.lck", str(os.getpid()), flock=True)
         daemon_mod._sweep_stale_lock_files()
         self.assertTrue(os.path.exists(own))
 

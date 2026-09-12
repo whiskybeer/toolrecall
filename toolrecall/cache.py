@@ -575,10 +575,18 @@ def cached_read(path: str, source: str = "") -> dict:
 
     # ── 1. In-memory cache (fast path) ──
     entry = _file_cache.get(path)
-    if entry and (
-        trust_window
-        and now_ts - entry["cached_at"] <= file_ttl
-        or (not trust_window and entry["mtime"] == stat.st_mtime and entry["size"] == stat.st_size)
+    if (
+        entry
+        and not never_cache
+        and (
+            trust_window
+            and now_ts - entry["cached_at"] <= file_ttl
+            or (
+                not trust_window
+                and entry["mtime"] == stat.st_mtime
+                and entry["size"] == stat.st_size
+            )
+        )
     ):
         tokens = _estimate_tokens(entry["content"])
         context_tokens = tokens if source == "agent_tool" else 0
@@ -602,10 +610,14 @@ def cached_read(path: str, source: str = "") -> dict:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None
 
-    if row and (
-        trust_window
-        and now_ts - row["cached_at"] <= file_ttl
-        or (not trust_window and row["mtime"] == stat.st_mtime and row["size"] == stat.st_size)
+    if (
+        row
+        and not never_cache
+        and (
+            trust_window
+            and now_ts - row["cached_at"] <= file_ttl
+            or (not trust_window and row["mtime"] == stat.st_mtime and row["size"] == stat.st_size)
+        )
     ):
         _file_cache.put(
             path,
@@ -622,7 +634,13 @@ def cached_read(path: str, source: str = "") -> dict:
             "file_cache", hit=True, path=path, tokens_saved=tokens, context_tokens=context_tokens
         )
         return {"cached": True, "content": row["content"], "path": path}  # ── 2. SQLite hit ──
-    _record("file_cache", hit=False, path=path)
+    # Miss accounting only applies to cacheable paths. A ttl=0 (never_cache)
+    # file is not cache traffic: it can never produce a hit, so counting its
+    # reads as misses would permanently depress the hit rate (the Sep 2026
+    # stagnation: ~28% of all reads were never-cacheable session transcripts
+    # recorded as misses, capping the global rate at ~71%).
+    if not never_cache:
+        _record("file_cache", hit=False, path=path)
     # Count tokens_read_from_disk only for truly new content:
     # - brand new file (never in SQLite) → row is None
     # - file was modified (mtime changed) → row exists but stale

@@ -31,7 +31,12 @@ FROZEN_COUNTS = {
     "cli.py": 7,
     "client.py": 1,
     "config.py": 3,
-    "daemon.py": 18,
+    # 22 as of 2026-09-08 (was 18): +4 best-effort socket/PID closes added by
+    # the 956b25a network-honesty commit without a baseline bump (found when
+    # the flock-sweep work re-ran validate). All four are resource-release
+    # fail-soft (conn/server close, PID-file write) — socket ping and the
+    # kernel flock are authoritative, so the swallowed errors carry no signal.
+    "daemon.py": 22,
     "docs.py": 4,
     "healthcheck.py": 2,
     "mcp_bridge.py": 4,
