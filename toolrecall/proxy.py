@@ -80,6 +80,26 @@ def _dedup_env_num(key: str, default: int) -> int:
         return default
 
 
+def _canonicalize_default() -> str:
+    """Read [forward_proxy] canonicalize_default (default '' — header opt-in only).
+
+    When set (e.g. "hermes"), requests WITHOUT an explicit
+    X-ToolRecall-Canonicalize header are canonicalized under this profile.
+    An explicit header always wins (allows a different profile or an
+    unknown profile to opt OUT by naming one that doesn't exist). Never
+    applied to no-cache requests (X-ToolRecall-No-Cache still skips both
+    lookup and store)."""
+    try:
+        from toolrecall.config import load_config
+
+        val = load_config().get("forward_proxy", "canonicalize_default", default="")
+        if isinstance(val, str):
+            return val.strip().lower()
+        return ""
+    except Exception:
+        return ""
+
+
 def _maybe_dedup_body(body_bytes: bytes) -> tuple[bytes, dict | None]:
     """Dedup duplicate large text blocks in a chat-completions request body.
 
@@ -143,6 +163,14 @@ _RE_CANON_UUID = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 _RE_CANON_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\b")
+# Hermes WebUI volatile fields (observed in WebUI session system prompts,
+# 2026-09-10): a per-session hex id on the "Session ID:" line and the
+# "Conversation started:" date line. Both are constant WITHIN a session but
+# fork the canon key across sessions/restarts; neither carries model-relevant
+# semantics. Session-ID regex is anchored on the literal line prefix — bare
+# hex32 hashes elsewhere in a body (file digests, commit SHAs) must NOT merge.
+_RE_CANON_SESSION_ID = re.compile(r"\bSession ID: [0-9a-fA-F]{8,64}\b")
+_RE_CANON_CONV_STARTED = re.compile(r"^Conversation started: .*$", re.M)
 _RE_CTX_SECTION = re.compile(r"# Conversation context.*?(?=\n# )", re.S)
 
 _CTX_SECTION_MARKER = "# Conversation context"
@@ -277,6 +305,31 @@ def _canon_walk(node):
     return node
 
 
+def _hermes_canon_text(text):
+    """Hermes-profile text canon: CR + blank-line rules (inherited from warp —
+    same terminal/clipboard artifact classes), shared UUID/timestamp
+    placeholders, plus Hermes-specific volatile fields (WebUI session id,
+    conversation-start date). NO ctx-section/env-object/named-array
+    stripping — those are Warp-harness structures Hermes doesn't inject."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\n{2,}", "\n", text)
+    text = _RE_CANON_UUID.sub("00000000-0000-4000-8000-canonuuidplaceholder", text)
+    text = _RE_CANON_TIMESTAMP.sub("1970-01-01T00:00:00Z", text)
+    text = _RE_CANON_SESSION_ID.sub("Session ID: canon-session", text)
+    text = _RE_CANON_CONV_STARTED.sub("Conversation started: canon-date", text)
+    return text
+
+
+def _hermes_canon_walk(node):
+    if isinstance(node, dict):
+        return {k: _hermes_canon_walk(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_hermes_canon_walk(x) for x in node]
+    if isinstance(node, str):
+        return _hermes_canon_text(node)
+    return node
+
+
 def _canonicalize_body(profile: str, body: bytes):
     """Canonicalized body for cache-key hashing under `profile`, or None.
 
@@ -284,14 +337,22 @@ def _canonicalize_body(profile: str, body: bytes):
     harness (run UUIDs, timestamps, session context section, ephemeral env
     objects, skill-list arrays — live capture 2026-09-03). Envelope is parsed
     once and re-serialized with sorted keys; only the cache key uses the
-    canonical form — the provider always receives the original body."""
-    if profile != "warp":
+    canonical form — the provider always receives the original body.
+
+    Profile `hermes`: volatile fields observed in Hermes WebUI system prompts
+    (session id, conversation-start date) + shared UUID/timestamp/CR/
+    blank-line rules. Same envelope contract as `warp`."""
+    if profile == "warp":
+        walk = _canon_walk
+    elif profile == "hermes":
+        walk = _hermes_canon_walk
+    else:
         return None
     try:
         envelope = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-    envelope = _canon_walk(envelope)
+    envelope = walk(envelope)
     return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
@@ -745,7 +806,23 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Note: canonical replays serve the cached response for a body that
         # differs at the stripped positions only; correctness rests on those
         # positions being genuinely non-semantic.
+        # Build cache key: hash(method + host + path + body)
+        # Opt-out header: X-ToolRecall-No-Cache skips BOTH the HIT lookup and
+        # the store. Baseline arms in benchmarks use this to bill every pass.
+        # (Defined BEFORE the canonicalize_default fallback below, which
+        # must not apply the default profile to no-cache requests.)
+        no_cache = (self.headers.get("X-ToolRecall-No-Cache") or "").strip() in (
+            "1",
+            "true",
+            "yes",
+        )
+
         canonical_profile = (self.headers.get("X-ToolRecall-Canonicalize") or "").strip().lower()
+        if not canonical_profile and not no_cache:
+            # Session-wide default (e.g. [forward_proxy] canonicalize_default
+            # = "hermes"): apply the configured profile to headerless requests.
+            # Explicit header wins; no-cache requests stay byte-hashed.
+            canonical_profile = _canonicalize_default()
         hash_body = body_bytes
         if canonical_profile and body_bytes:
             canonical = _canonicalize_body(canonical_profile, body_bytes)
@@ -756,14 +833,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         body_hash = content_digest(hash_body)
         request_hash = api_request_hash(method, target_host, target_path, hash_body)
 
-        # Streaming requests: bypass cache entirely, use chunked passthrough
-        # Opt-out header: X-ToolRecall-No-Cache skips BOTH the HIT lookup and
-        # the store. Baseline arms in benchmarks use this to bill every pass.
-        no_cache = (self.headers.get("X-ToolRecall-No-Cache") or "").strip() in (
-            "1",
-            "true",
-            "yes",
-        )
         if is_streaming:
             # Stream cache (canonical profiles): streaming requests normally
             # bypass the cache, but Warp's harness ALWAYS streams — so without

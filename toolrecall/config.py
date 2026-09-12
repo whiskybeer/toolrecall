@@ -94,6 +94,10 @@ ENV_MAP = {
     # Forward-proxy request-body dedup (opt-in — proxy.py _maybe_dedup_body).
     # Default OFF: the proxy never rewrites request bodies silently.
     "TOOLRECALL_FORWARD_DEDUP": ("forward_proxy", "dedup"),
+    # Forward-proxy default canonicalization profile (proxy.py
+    # _canonicalize_default). '' = header opt-in only; e.g. "hermes" applies
+    # the profile to headerless requests (session-wide default).
+    "TOOLRECALL_CANONICALIZE_DEFAULT": ("forward_proxy", "canonicalize_default"),
 }
 
 
