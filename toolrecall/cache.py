@@ -2009,16 +2009,26 @@ def reset_stats():
     never happen silently again.
     """
     import logging
+    import traceback
 
     try:
         with _db() as conn:
             wiped = conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0]
             conn.execute("DELETE FROM cache_stats")
             conn.execute("DELETE FROM access_log")
+        # Caller forensics: the 2026-09-10 wipe storm (17 resets in 5h) was
+        # attributable only by timestamp correlation — the audit line named no
+        # caller. Frame list is path/line/function only (payload-free, no
+        # source text): enough to name the offending test/script immediately.
+        caller_frames = " <- ".join(
+            f"{fr.filename}:{fr.lineno}:{fr.name}"
+            for fr in traceback.extract_stack()[-7:-1]
+        )
         logging.getLogger(__name__).warning(
             "reset_stats: wiped cache_stats + %d access_log rows — "
-            "caller should be an explicit user action",
+            "caller should be an explicit user action | caller stack: %s",
             wiped,
+            caller_frames,
         )
     except Exception as e:
         warnings.warn(f"ToolRecall: reset_stats failed: {e}")

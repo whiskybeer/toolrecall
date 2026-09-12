@@ -219,6 +219,32 @@ class TestFileCache(unittest.TestCase):
 
         os.unlink(f3)
 
+    def test_reset_stats_logs_caller_stack(self):
+        """reset_stats audit line must name the caller (file:line:func chain).
+
+        The 2026-09-10 wipe storm (17 production resets in 5h) was attributable
+        only by timestamp correlation because the audit line carried no caller.
+        This guards the caller-stack addition so forensics never regress.
+        """
+        from toolrecall.cache import reset_stats
+
+        with self.assertLogs("toolrecall.cache", level="WARNING") as captured:
+            reset_stats()
+        audit_lines = [
+            ln for ln in captured.output if "reset_stats: wiped cache_stats" in ln
+        ]
+        self.assertTrue(audit_lines, f"no audit line in: {captured.output}")
+        self.assertIn(
+            "caller stack:",
+            audit_lines[0],
+            f"audit line missing caller stack: {audit_lines[0]}",
+        )
+        self.assertIn(
+            "test_reset_stats_logs_caller_stack",
+            audit_lines[0],
+            f"caller stack must name this test function: {audit_lines[0]}",
+        )
+
     def test_reset_stats_all_layers(self):
         """Prove reset_stats clears all 6 cache layer counters."""
         from toolrecall.cache import get_stats, reset_stats
