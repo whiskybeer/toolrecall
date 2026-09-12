@@ -5,8 +5,27 @@ Measures: unique token savings, hit rates, cost, cross-session behavior.
 
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# ISOLATION GUARD — run BEFORE any toolrecall import. This benchmark calls
+# reset_stats() (wipes cache_stats + access_log) and writes cache entries;
+# without a pinned DB it would reset/write the PRODUCTION cache.db
+# (the 2026-09-10 18:12/20:40 trend-window wipes were exactly this script
+# running against prod).
+if not os.environ.get("TOOLRECALL_CACHE_DB"):
+    bench_db = os.path.join(tempfile.mkdtemp(prefix="tr_bench_workload_"), "bench.db")
+    os.environ["TOOLRECALL_CACHE_DB"] = bench_db
+    print(f"  [isolation] TOOLRECALL_CACHE_DB not set — pinning to {bench_db}")
+elif (
+    os.environ["TOOLRECALL_CACHE_DB"].startswith("/home/")
+    and "/.toolrecall/cache.db" in os.environ["TOOLRECALL_CACHE_DB"]
+):
+    sys.exit(
+        "REFUSING to run: TOOLRECALL_CACHE_DB points at a production cache.db. "
+        "Set it to a scratch path (this benchmark wipes counters)."
+    )
 
 from toolrecall.cache import (
     cached_read,
