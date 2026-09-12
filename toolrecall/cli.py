@@ -309,7 +309,17 @@ def cmd_trend():
                 days = int(raw)
     from toolrecall.trend import trend_report
 
-    print(trend_report(days=days, as_json=as_json))
+    try:
+        print(trend_report(days=days, as_json=as_json))
+    except BrokenPipeError:
+        # Piped into a pager/editor that closed early (e.g. `| less`, `q`).
+        # Python's shutdown flush would print a spurious traceback — exit
+        # cleanly the way well-behaved CLI filters do.
+        try:
+            sys.stdout.close()
+        except BrokenPipeError:
+            pass
+        os._exit(0)
 
 
 def cmd_invalidate():

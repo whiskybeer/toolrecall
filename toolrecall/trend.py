@@ -216,16 +216,18 @@ def trend_report(days: int | None = 7, as_json: bool = False) -> str:
             else f"  {t['date']}  {t['reads']:>6}  {t['hits']:>6}  {t['misses']:>6}    -"
         )
     lines.append("")
+    lines.append("  Worst hit-rate classes (min 100 reads in window):")
+    lines.append("  path_class                                             reads    share   hit%")
+    lines.append("  " + "-" * 72)
+    for c in classes:
+        # path_class can exceed the 54-char column (deep paths) — f-string
+        # width is a MINIMUM, so an over-long class pushes the numeric
+        # columns right and mangles the table (no truncation happened).
+        cls = c["path_class"]
+        if len(cls) > 54:
+            cls = "…" + cls[-53:]  # keep the tail: the distinctive part
+        lines.append(f"  {cls:<54} {c['reads']:>6}  {c['share_pct']:>5}%  {c['hit_pct']:>5}")
     if classes:
-        lines.append("  Worst hit-rate classes (min 100 reads in window):")
-        lines.append(
-            "  path_class                                             reads    share   hit%"
-        )
-        lines.append("  " + "-" * 72)
-        for c in classes:
-            lines.append(
-                f"  {c['path_class']:<54} {c['reads']:>6}  {c['share_pct']:>5}%  {c['hit_pct']:>5}"
-            )
         lines.append("")
         lines.append("  A class with a persistently low hit% and a large share is either")
         lines.append("  rewritten every access (candidate for a [cache].file_ttls = 0 pin")
