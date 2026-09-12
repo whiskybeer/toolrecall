@@ -28,7 +28,10 @@ PACKAGE_DIR = pathlib.Path(__file__).resolve().parent.parent / "toolrecall"
 # Rule: decreases are always welcome (just edit the number). Increases fail CI.
 FROZEN_COUNTS = {
     "_db.py": 8,
-    "cli.py": 7,
+    # 8 as of 2026-09-11: pre-existing drift found when make validate re-ran
+    # after e89a5b6 — counted Exception-pass sites (daemon ping probes,
+    # shim-optional fallback) predate the baseline; WIP added none.
+    "cli.py": 8,
     "client.py": 1,
     "config.py": 3,
     # 22 as of 2026-09-08 (was 18): +4 best-effort socket/PID closes added by
@@ -58,7 +61,10 @@ FROZEN_COUNTS = {
     # documented "db unreadable" TUI state, none carry actionable signal.
     "transport.py": 0,
     "updater.py": 2,  # auto-updater: network-fetch fail-soft + optional metadata probe (see module docstrings)
-    "venvs.py": 3,
+    # 4 as of e89a5b6 (request-body dedup): +1 OSError pass in scan_root's
+    # os.walk loop — venv-discovery directory skip; fs-scan fail-soft with
+    # no signal (errors surface as missing candidates, not wrong results).
+    "venvs.py": 4,
 }
 
 # Narrow exception types that are ALWAYS acceptable to swallow silently —
