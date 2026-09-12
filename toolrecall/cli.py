@@ -1974,6 +1974,18 @@ def cmd_logs():
     print("\n".join(out) if out else "(no matching lines)")
 
 
+def cmd_top():
+    """`toolrecall top` — live TUI dashboard (curses, zero deps).
+
+    Read-only: per-cache hit rates + token accounting + access-log tail.
+    Talks to the daemon over UDS; falls back to read-only SQLite when the
+    daemon is down. Non-tty runs print a single plain-text snapshot.
+    """
+    from toolrecall.tui_top import main as tui_main
+
+    sys.exit(tui_main(sys.argv[2:]))
+
+
 def cmd_healthcheck():
     """Run the generalized daemon/cache healthcheck.
 
@@ -2310,6 +2322,7 @@ def main():
         "healthcheck": cmd_healthcheck,
         "logs": cmd_logs,
         "context": cmd_context,
+        "top": cmd_top,
     }
 
     if cmd in commands:

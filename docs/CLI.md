@@ -249,6 +249,30 @@ Each function imports its dependencies lazily — running `toolrecall status` do
   - Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error
 - **Full reference:** [Context Stale](CONTEXT_STALE.md), [Context Tracker](CONTEXT_TRACKER.md)
 
+### `toolrecall top`
+
+- **File:** `cli.py : cmd_top()` → `toolrecall/tui_top.py`
+- **Purpose:** Interactive TUI dashboard (stdlib `curses`, zero deps).
+  Read-only by design: the only write actions are the safe ones (refresh
+  a stale file, set a context checkpoint). No invalidate/reset keys.
+- **Views** (`1`–`4` or `Tab` to cycle, `q` quit, lone `ESC` quits):
+  - `1` **stats** — per-cache hits/misses/hit-rate/token accounting +
+    context-tracker summary
+  - `2` **log** — scrollable access-log tail (`↑`/`↓`, `PgUp`/`PgDn`)
+  - `3` **context** — stale (♻️ provably wrong in context), dirty (📝),
+    clean (🧹 droppable) file lists with token estimates
+  - `4` **help**
+- **Actions** (require the daemon): `Enter` on a stale file refreshes it
+  (`cache_refresh_file` — invalidate + fresh read, clears staleness);
+  `c` sets a new context-tracker checkpoint. A footer toast confirms each.
+- **Data source:** daemon UDS when reachable; automatic read-only SQLite
+  fallback for stats/log when the daemon is down — works on any machine,
+  hosted or not. Context tracker needs the daemon.
+- **Usage:** `toolrecall top` (interactive; auto plain-text snapshot when
+  stdout is not a tty) · `toolrecall top --once` (single snapshot).
+- **Options:** `--interval SECONDS` (default 2.0), `--db PATH` (cache.db
+  override), `--once`.
+
 ## Key Source Files Referenced
 
 | CLI Command | Backend Module |

@@ -39,6 +39,7 @@ FROZEN_COUNTS = {
     "normalizer.py": 1,
     "proxy.py": 2,
     "shim.py": 4,
+    "tui_top.py": 2,  # TUI: curses color-init fail-soft on monochrome terms + addnstr write-off-edge (both degrade to plain rendering)
     "transport.py": 0,
     "updater.py": 2,  # auto-updater: network-fetch fail-soft + optional metadata probe (see module docstrings)
     "venvs.py": 3,
