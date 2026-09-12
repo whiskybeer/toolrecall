@@ -1047,6 +1047,70 @@ class MCPMultiplexer:
 # ─── IPC Server ──────────────────────────────────────────
 
 
+# ─── A6 bind guard: local-networks-only (default), public = explicit opt-in ──
+
+
+def _is_local_network_bind(host: str) -> bool:
+    """True when `host` is a LOCAL network address (A6 hardening).
+
+    Allowed: loopback (127/8, ::1), RFC1918 private (10/8, 172.16/12,
+    192.168/16), link-local (169.254/16, fe80::/10), IPv6 ULA (fc00::/7),
+    and hostnames that RESOLVE to those (localhost, a VM's internal name).
+    Refused: public IPs, wildcard 0.0.0.0/:: (binds every interface incl.
+    public), unresolvable names — fail-closed.
+
+    Note: `ipaddress.is_private` is NOT used alone — it also flags
+    documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24),
+    benchmark nets (198.18/15) and IANA special blocks, which are NOT
+    local networks. Explicit RFC1918/ULA/link-local/loopback membership
+    is the contract.
+
+    Rationale (user requirement 2026-09-08): the shared daemon is a team
+    cache; a stray config value must not expose it to the internet. A
+    public bind stays possible via [network] allow_public = true —
+    explicit and logged at startup.
+    """
+    import ipaddress as _ip
+    import socket as _s
+
+    _LOCAL_NETS = [
+        _ip.ip_network("127.0.0.0/8"),
+        _ip.ip_network("10.0.0.0/8"),
+        _ip.ip_network("172.16.0.0/12"),
+        _ip.ip_network("192.168.0.0/16"),
+        _ip.ip_network("169.254.0.0/16"),
+        _ip.ip_network("::1/128"),
+        _ip.ip_network("fe80::/10"),
+        _ip.ip_network("fc00::/7"),
+    ]
+
+    def _local(ip) -> bool:
+        return any(ip in net for net in _LOCAL_NETS)
+
+    hostname = host.strip().lower()
+    if hostname in ("", "0.0.0.0", "::", "*"):
+        return False  # wildcard = every interface, not "local only"
+    try:
+        _ip.ip_address(hostname)
+        candidates = [hostname]
+    except ValueError:
+        # Hostname: resolve it. Split-DNS safe — EVERY address must be local.
+        try:
+            candidates = [ai[4][0] for ai in _s.getaddrinfo(hostname, None)]
+        except OSError:
+            return False
+        if not candidates:
+            return False
+    for a in candidates:
+        try:
+            ip = _ip.ip_address(a)
+        except ValueError:
+            return False
+        if not _local(ip):
+            return False
+    return True
+
+
 class DaemonServer:
     """IPC server — Unix Domain Socket (POSIX) or TCP (Windows).
 
@@ -1191,6 +1255,22 @@ class DaemonServer:
         free), and the loop continues.
         """
         from toolrecall import network_tls as nt
+
+        # Local-networks-only guard (A6 hardening, default ON): refuse a
+        # public bind unless [network] allow_public = true. Loopback,
+        # RFC1918, link-local, ULA always pass.
+        if not self.cfg.network_allow_public and not _is_local_network_bind(host):
+            print(
+                f"  ⚠️  Network daemon REFUSED to bind {host}: not a local "
+                f"network address (loopback/RFC1918/link-local/ULA only). "
+                f"To bind a public address deliberately, set "
+                f"[network] allow_public = true — and pair it with "
+                f"tls = true (SECURITY.md §9)."
+            )
+            self.logger.warning(
+                "network listener refused: bind=%s not local, allow_public=false", host
+            )
+            return
 
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

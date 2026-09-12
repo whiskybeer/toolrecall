@@ -87,6 +87,7 @@ ENV_MAP = {
     "TOOLRECALL_NETWORK_PORT": ("network", "port"),
     "TOOLRECALL_NETWORK_TOKEN": ("network", "token"),
     "TOOLRECALL_NETWORK_TLS": ("network", "tls"),
+    "TOOLRECALL_NETWORK_ALLOW_PUBLIC": ("network", "allow_public"),
     "TOOLRECALL_NETWORK_TLS_CERT": ("network", "tls_cert"),
     "TOOLRECALL_NETWORK_TLS_KEY": ("network", "tls_key"),
 }
@@ -292,6 +293,7 @@ class Config:
                 "tls",
                 "tls_cert",
                 "tls_key",
+                "allow_public",
                 "clients",
             }
         ),
@@ -602,6 +604,22 @@ class Config:
         Env override: TOOLRECALL_NETWORK_TLS
         """
         val = self.get("network", "tls", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
+    @property
+    def network_allow_public(self) -> bool:
+        """Allow binding a PUBLIC (non-local) address. Default: False.
+
+        Local-networks-only by default (user requirement 2026-09-08):
+        loopback, RFC1918 (10/8, 172.16/12, 192.168/16), link-local and
+        IPv6 ULA bind fine; a public IP or 0.0.0.0 is refused with an
+        explicit startup message. Set true ONLY when the daemon must be
+        internet-reachable deliberately — pair with tls = true.
+        Env override: TOOLRECALL_NETWORK_ALLOW_PUBLIC
+        """
+        val = self.get("network", "allow_public", default=False)
         if isinstance(val, str):
             return val.strip().lower() in ("1", "true", "yes", "on")
         return bool(val)
