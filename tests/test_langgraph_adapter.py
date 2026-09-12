@@ -277,10 +277,10 @@ class TestLangGraphBinding:
         assert tup.checkpoint["channel_values"]["messages"] == ["hi"]
         assert tup.metadata["source"] == "input"
 
-        # history ordering, oldest first
+        # history ordering — newest first (SqliteSaver convention)
         saver.put(config, dict(chk, id="ckpt-2"), {"source": "loop"}, {})
         hist = list(saver.list(config))
-        assert [t.checkpoint["id"] for t in hist] == ["ckpt-1", "ckpt-2"]
+        assert [t.checkpoint["id"] for t in hist] == ["ckpt-2", "ckpt-1"]
 
         # fork: get_tuple at the older checkpoint restores exactly it
         old = saver.get_tuple({"configurable": {"thread_id": "thr", "checkpoint_id": "ckpt-1"}})
@@ -291,14 +291,14 @@ class TestLangGraphBinding:
         newer = saver.get_tuple({"configurable": {"thread_id": "thr", "checkpoint_id": "ckpt-2"}})
         assert newer.parent_config["configurable"]["checkpoint_id"] == "ckpt-1"
 
-        # pending writes round-trip through serde
+        # pending writes round-trip through serde (3-tuples: task_id, chan, val)
         saver.put_writes(
             {"configurable": {"thread_id": "thr", "checkpoint_id": "ckpt-1"}},
             [("messages", {"interrupt": True})],
             "task-abc",
         )
         tup_old = saver.get_tuple({"configurable": {"thread_id": "thr", "checkpoint_id": "ckpt-1"}})
-        assert ("messages", {"interrupt": True}) in tup_old.pending_writes
+        assert ("task-abc", "messages", {"interrupt": True}) in tup_old.pending_writes
 
         # delete_thread clears history
         saver.delete_thread("thr")

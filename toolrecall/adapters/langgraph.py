@@ -348,7 +348,19 @@ class _SaverCore:
         metadata: Optional[dict],
         parent_checkpoint: Optional[Any],
     ) -> str:
-        """Store a checkpoint row + append to the thread index."""
+        """Store a checkpoint row + append to the thread index.
+
+        Parent fallback: real graph runs don't always pass the previous
+        checkpoint_id in config to put(), so parent_checkpoint can be None
+        even mid-thread. When it is, link to the thread's current tip —
+        matching how MemorySaver chains checkpoints in practice.
+        """
+        if parent_checkpoint is None:
+            ids = self._read_index(thread_id, checkpoint_ns)
+            if ids:
+                prev = self.get(thread_id, checkpoint_ns, ids[-1])
+                if prev is not None:
+                    parent_checkpoint = prev["checkpoint"]
         row = self.build_row(checkpoint, metadata, parent_checkpoint, "[]")
         self._store_row(self._row_key(thread_id, checkpoint_ns, checkpoint["id"]), row)
         self._append_index(thread_id, checkpoint_ns, checkpoint["id"])
@@ -490,7 +502,7 @@ def get_saver(ttl: Optional[int] = None, serde: Optional[Any] = None):
                 }
             pending = (
                 [
-                    (chan, self._core._deserialize(pv))
+                    (w["task_id"], chan, self._core._deserialize(pv))
                     for w in parsed["pending"]
                     for chan, pv in w["writes"]
                 ]
@@ -511,7 +523,17 @@ def get_saver(ttl: Optional[int] = None, serde: Optional[Any] = None):
             ns = (
                 (config or {}).get("configurable", {}).get("checkpoint_ns", "") if thread_id else ""
             )
-            ids = self._core.list_ids(thread_id, ns, limit=limit) if thread_id else []
+            ids = self._core.list_ids(thread_id, ns) if thread_id else []
+            # Contract: newest FIRST (SqliteSaver semantics). list_ids is
+            # oldest-first (append order) — reverse, then apply limit on the
+            # newest end. `before` cuts everything newer than it.
+            if before is not None:
+                before_id = before["configurable"].get("checkpoint_id")
+                if before_id in ids:
+                    ids = ids[: ids.index(before_id)]
+            ids = list(reversed(ids))
+            if limit is not None:
+                ids = ids[:limit]
             for cid in ids:
                 tuple_ = self.get_tuple(
                     {
