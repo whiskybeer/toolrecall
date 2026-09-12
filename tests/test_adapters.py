@@ -406,14 +406,18 @@ class TestDedupMedia(unittest.TestCase):
         out, stats = self.dedup(self._convo(), min_chars=800, protect_last=0, media=True)
         self.assertEqual(stats["blocks"], 2)
         self.assertEqual(out[0]["content"][0]["image_url"]["url"], self.url1)
-        self.assertTrue(out[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+        # stub replaces the whole image part with a text part (providers
+        # reject stub text in image_url.url — 400 "Invalid URL format")
+        self.assertEqual(out[1]["content"][0]["type"], "text")
+        self.assertTrue(out[1]["content"][0]["text"].startswith("[toolrecall-dedup]"))
         self.assertEqual(out[2]["content"][0]["image_url"]["url"], self.url2)
 
     def test_relabeled_mime_dedups(self):
         """Identical bytes under a different data: label are the same content."""
         out, stats = self.dedup(self._convo(), min_chars=800, protect_last=0, media=True)
         self.assertEqual(stats["blocks"], 2)
-        self.assertTrue(out[3]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+        self.assertEqual(out[3]["content"][0]["type"], "text")
+        self.assertTrue(out[3]["content"][0]["text"].startswith("[toolrecall-dedup]"))
 
     def test_default_media_off(self):
         out, stats = self.dedup(self._convo(), min_chars=800, protect_last=0)
@@ -517,7 +521,8 @@ class TestDedupMedia(unittest.TestCase):
         out, stats = self.dedup(convo, min_chars=1, protect_last=2, media=True)
         self.assertEqual(stats["blocks"], 1)
         self.assertEqual(out[0]["content"][0]["image_url"]["url"], self.url1)
-        self.assertTrue(out[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+        self.assertEqual(out[1]["content"][0]["type"], "text")
+        self.assertTrue(out[1]["content"][0]["text"].startswith("[toolrecall-dedup]"))
         self.assertEqual(out[2]["content"][0]["image_url"]["url"], self.url1)
         self.assertEqual(out[3]["content"][0]["image_url"]["url"], self.url1)
 
@@ -549,8 +554,9 @@ class TestDedupMedia(unittest.TestCase):
         out, stats = self.dedup(convo, min_chars=10, protect_last=0, media=True)
         self.assertEqual(stats["blocks"], 1)
         self.assertEqual(out[0]["content"], payload)  # first occurrence kept
-        self.assertTrue(out[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
-        self.assertIn("message 0", out[1]["content"][0]["image_url"]["url"])
+        self.assertEqual(out[1]["content"][0]["type"], "text")
+        self.assertTrue(out[1]["content"][0]["text"].startswith("[toolrecall-dedup]"))
+        self.assertIn("message 0", out[1]["content"][0]["text"])
 
     def test_handler_media_env_default_off(self):
         import os

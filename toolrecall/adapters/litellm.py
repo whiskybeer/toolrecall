@@ -135,10 +135,12 @@ def dedup_messages(
     - One identity space with text: a digest means "these bytes appeared
       earlier in this request", regardless of which part type carried them.
     - Byte floor is ``min_chars`` applied to decoded byte length; a stub
-      must also be strictly shorter than the data URL it replaces.
-    - The mime label is NOT part of the identity: identical bytes under
-      different ``data:image/...`` labels dedup (content addressing, not
-      format sniffing — this module never parses image structure).
+      must also be strictly cheaper than the part it replaces.
+    - A duplicate image part is REPLACED BY A SHORT TEXT PART (not a stub
+      inside ``image_url.url``): providers validate the URL field (OpenRouter
+      rejects stub text with 400 "Invalid URL format"), while a text part is
+      universally valid and readable by the model. The mime label is NOT
+      part of the identity: identical bytes under different labels dedup.
 
     The ``protect_last`` tail is the stub armor: consecutive image stubs
     can never reach the final N messages, so a harness that compacts old
@@ -235,10 +237,12 @@ def dedup_messages(
                     if stub is not None:
                         if new_parts is None:
                             new_parts = list(content)
-                        p2 = copy.copy(part)
-                        # preserve sibling keys (e.g. "detail") alongside the stub URL
-                        p2["image_url"] = {**part["image_url"], "url": stub}
-                        new_parts[j] = p2
+                        # Replace the ENTIRE image part with a text stub part.
+                        # Providers validate image_url.url as a URL (OpenRouter
+                        # 400 "Invalid URL format" — caught in the gate probe),
+                        # so the stub must live in a text part, which every
+                        # provider accepts and the model can read.
+                        new_parts[j] = {"type": "text", "text": stub}
             if new_parts is not None:
                 m2 = copy.copy(msg)
                 m2["content"] = new_parts
@@ -434,10 +438,13 @@ if __name__ == "__main__":
     assert mstats["blocks"] == 2, mstats
     assert mout[2]["content"][1]["image_url"]["url"] == url1  # first kept in full
     assert "detail" in mout[2]["content"][1]["image_url"]  # siblings preserved
-    assert mout[4]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]")
-    assert "message 2" in mout[4]["content"][0]["image_url"]["url"]
-    # relabeled mime, identical bytes -> deduped (content addressing)
-    assert mout[5]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]")
+    # stubbed dups become short TEXT parts (providers reject stub text in
+    # image_url.url with 400 "Invalid URL format" — gate-probe verified)
+    s4 = mout[4]["content"][0]
+    assert s4["type"] == "text" and s4["text"].startswith("[toolrecall-dedup]")
+    assert "message 2" in s4["text"]
+    s5 = mout[5]["content"][0]
+    assert s5["type"] == "text" and s5["text"].startswith("[toolrecall-dedup]")
     assert mout[7]["content"][0]["image_url"]["url"] == url2  # distinct image kept
     assert media_convo()[2]["content"][1]["image_url"]["url"] == url1  # input untouched
 
@@ -488,7 +495,7 @@ if __name__ == "__main__":
     ]
     tout, tstats = dedup_messages(tail_convo, min_chars=1, protect_last=2, media=True)
     assert tout[0]["content"][0]["image_url"]["url"] == url1  # first occurrence kept
-    assert tout[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]")
+    assert tout[1]["content"][0].get("text", "").startswith("[toolrecall-dedup]")
     assert tout[2]["content"][0]["image_url"]["url"] == url1  # protected tail
     assert tout[3]["content"][0]["image_url"]["url"] == url1  # protected tail
     assert tstats["blocks"] == 1, tstats
@@ -505,9 +512,8 @@ if __name__ == "__main__":
             assert h_on.media is True
             data2 = {"messages": media_convo(), "model": "gpt-x"}
             await h_on.async_pre_call_hook(None, None, data2, "acompletion")
-            assert data2["messages"][4]["content"][0]["image_url"]["url"].startswith(
-                "[toolrecall-dedup]"
-            )
+            s = data2["messages"][4]["content"][0]
+            assert s["type"] == "text" and s["text"].startswith("[toolrecall-dedup]")
         finally:
             del os.environ["TOOLRECALL_DEDUP_MEDIA"]
 

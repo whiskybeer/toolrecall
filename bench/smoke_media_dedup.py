@@ -144,11 +144,11 @@ def invariants() -> dict:
 
     # I3: repeats stub to short references
     stubbed = [
-        p["image_url"]["url"]
+        p.get("text", "")
         for m in out_on
         if isinstance(m.get("content"), list)
         for p in m["content"]
-        if p.get("type") == "image_url" and p["image_url"]["url"].startswith("[toolrecall-dedup]")
+        if p.get("type") == "text" and p.get("text", "").startswith("[toolrecall-dedup]")
     ]
     res["I3_repeats_stubbed"] = len(stubbed) > 0 and all(len(s) < 200 for s in stubbed)
 
