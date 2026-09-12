@@ -8,7 +8,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 
 ## Available Adapters
 
-| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` | ✅ `ToolRecallCache` BaseCache | `pip install toolrecall[langchain]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |\n| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
+| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |\n| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
 
 ---
 
@@ -120,6 +120,52 @@ The module is importable **without** `langchain_core` installed. Base class inhe
 **Namespace:** `langchain`
 
 [Full docs →](../../docs/langchain.md)
+
+---
+
+## LangGraph — `ToolRecallCheckpointSaver` + `@cached_tool`
+
+Two integration points: a `BaseCheckpointSaver` (graph state checkpoints) and a tool decorator (node tool calls). Install the extra: `pip install toolrecall[langgraph]`.
+
+### Graph Checkpoints (BaseCheckpointSaver)
+
+```python
+from toolrecall.adapters.langgraph import get_saver
+
+graph = builder.compile(checkpointer=get_saver(ttl=86400))
+
+# Standard LangGraph threading + time travel:
+cfg = {"configurable": {"thread_id": "run-1"}}
+graph.invoke(inputs, config=cfg)
+hist = list(graph.get_state_history(cfg))          # full checkpoint history
+graph.invoke(None, config={**cfg, "configurable": {"checkpoint_id": hist[2].config["configurable"]["checkpoint_id"]}})
+# ^ resumes from checkpoint #2: state restored from ToolRecall's cache
+```
+
+- Thread state survives process restarts (SQLite-backed, per-thread/per-namespace keys)
+- `checkpoint_id` in config restores that exact node — the fork/resume primitive tree-search and mutation-loop orchestrators branch from
+- History, pending writes, parent linkage (`parent_config`) all preserved
+- Graceful bypass: daemon down → writes are no-ops, reads return None (never raises)
+
+### Node Tool Cache
+
+```python
+from toolrecall.adapters.langgraph import cached_tool
+
+@cached_tool(ttl=300)
+def search_web(query: str) -> str:
+    return external_api_call(query)   # runs only on cache miss
+```
+
+Same contract as the ADK adapter: async-safe, namespaced under `langgraph` (no key collisions), best-effort — daemon down means live execution.
+
+**Limitations (v1):** sync-path only for state serialization via a JSON serde (pass a custom `serde` for non-JSON channel values); `delete_thread` is logical (index cleared, rows age out via TTL).
+
+### Lazy Base Binding
+
+Same pattern as the LangChain adapter: the module imports without `langgraph` installed; `get_saver()` raises a clear `ImportError` otherwise.
+
+[Full docs →](../../docs/langgraph-adapter.md)
 
 ---
 
