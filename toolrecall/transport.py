@@ -134,7 +134,17 @@ def bind_socket(sock: socket.socket, path: str):
     if _is_tcp(path):
         host, port = _parse_tcp(path)
         # Local-only IPC: never bind to all interfaces ('' / 0.0.0.0 / ::).
-        host = _safe_bind_host(host)
+        # Sink-level barrier (CodeQL py/bind-socket-all-network-interfaces):
+        # _parse_tcp already normalizes wildcards to loopback, but CodeQL
+        # cannot see through the helper, so the guard is repeated here on the
+        # value that reaches sock.bind — wildcard or empty means the
+        # invariant was violated and we fail closed instead of listening on
+        # every interface.
+        if host.strip() in _WILDCARD_HOSTS or not host:
+            raise ValueError(
+                f"refusing to bind socket to all interfaces (host={host!r}); "
+                f"local IPC must use a loopback address"
+            )
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
     else:

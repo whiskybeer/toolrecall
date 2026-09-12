@@ -63,6 +63,40 @@ _RE_CANON_UUID = re.compile(
 )
 _RE_CANON_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z\b")
 _RE_CTX_SECTION = re.compile(r"# Conversation context.*?(?=\n# )", re.S)
+
+_CTX_SECTION_MARKER = "# Conversation context"
+# A heading line the context section runs until (exclusive). After CR
+# normalization in _canon_text, section breaks are always bare "\n# ".
+_CTX_SECTION_BREAK = "\n# "
+
+
+def _strip_ctx_section(text: str) -> str:
+    """Remove every '# Conversation context ...' section in O(n).
+
+    Replaces _RE_CTX_SECTION.sub("", text): the regex is polynomial on
+    adversarial input (CodeQL py/polynomial-redos) — with many repetitions of
+    the marker and no following "\\n# " heading, each lazy .*? scans to
+    end-of-string, giving O(n²). The str.find loop below is linear and
+    produces byte-identical output on normal input (regression-tested in
+    tests/test_canon_redos.py).
+    """
+    if _CTX_SECTION_MARKER not in text:
+        return text
+    out = []
+    last = 0
+    while True:
+        start = text.find(_CTX_SECTION_MARKER, last)
+        if start == -1:
+            break
+        end = text.find(_CTX_SECTION_BREAK, start + len(_CTX_SECTION_MARKER))
+        if end == -1:
+            break  # unterminated section runs to EOF — everything after `start` drops
+        out.append(text[last:start])
+        last = end  # keep the "\n" that precedes the next heading (regex lookahead did too)
+    out.append(text[last:])
+    return "".join(out)
+
+
 _RE_DANGLING_COMMA = re.compile(r",(\s*\})")
 _RE_LEADING_COMMA = re.compile(r"\{\s*,")
 _RE_SPACE_AFTER_COLON = re.compile(r":[ \t]+")
@@ -146,7 +180,7 @@ def _canon_text(text):
     text = re.sub(r"\n{2,}", "\n", text)
     text = _RE_CANON_UUID.sub("00000000-0000-4000-8000-canonuuidplaceholder", text)
     text = _RE_CANON_TIMESTAMP.sub("1970-01-01T00:00:00Z", text)
-    text = _RE_CTX_SECTION.sub("", text)
+    text = _strip_ctx_section(text)
     text = _strip_env_objects(text)
     text = _collapse_named_arrays(text)
     return text

@@ -96,6 +96,23 @@ _HOP_BY_HOP = {
     "accept-encoding",  # identity requested so the relay is byte-safe
 }
 
+# Characters that enable HTTP response splitting (CodeQL
+# py/http-response-splitting): a CR/LF in a header value would let an
+# attacker terminate the header block and inject a second response. Both
+# relay directions (client→upstream request headers, upstream→client
+# response headers) pass header values through verbatim, so every value is
+# stripped of CR/LF before use; a header whose NAME carries CR/LF is
+# dropped entirely — there is no legitimate reason for one.
+_HEADER_UNSAFE = ("\r", "\n")
+
+
+def _sanitize_header_pairs(pairs):
+    """Yield (k, v) with CR/LF removed; drop headers with unsafe names."""
+    for k, v in pairs:
+        if any(c in k for c in _HEADER_UNSAFE):
+            continue
+        yield k, v.replace("\r", "").replace("\n", "")
+
 
 def make_request_hash(method: str, host: str, path: str, body: bytes) -> str:
     """Deterministic request hash — mirrors the proxy's key derivation.
@@ -225,7 +242,11 @@ class WarpEdgeHandler(http.server.BaseHTTPRequestHandler):
 
         conn = http.client.HTTPConnection(self.proxy_host, self.proxy_port, timeout=300)
         try:
-            headers = {k: v for k, v in self.headers.items() if k.lower() not in _HOP_BY_HOP}
+            headers = dict(
+                _sanitize_header_pairs(
+                    (k, v) for k, v in self.headers.items() if k.lower() not in _HOP_BY_HOP
+                )
+            )
             # The one annotation the TR proxy needs: which provider is behind us.
             headers["X-Target-Host"] = self.provider_host
             # Auto-canonicalization: this edge fronts Warp's harness, whose
@@ -256,7 +277,7 @@ class WarpEdgeHandler(http.server.BaseHTTPRequestHandler):
             # 2026-09-05: upstream without Content-Length yielded
             # `Content-Length: 0` and the client saw b'').
             self.send_response(resp.status)
-            for k, v in resp.getheaders():
+            for k, v in _sanitize_header_pairs(resp.getheaders()):
                 if k.lower() in _HOP_BY_HOP:
                     continue
                 self.send_header(k, v)
