@@ -127,12 +127,63 @@ def stats_via_daemon() -> dict | None:
     return None
 
 
+def _open_ro(db: str):
+    """Open a cache.db read-only, with a copy-snapshot fallback.
+
+    Plain ``mode=ro`` fails on a WAL database when the -shm index is
+    missing/uncreatable (e.g. directory not writable, shm deleted by a
+    cleaner while no writer exists to rebuild it) -> sqlite3.Error
+    "unable to open database file". Fallback: copy db + -wal into a
+    writable temp dir and read there — recovers committed-but-
+    uncheckpointed WAL frames without touching the original.
+
+    Returns a connection, or None if both paths fail.
+    """
+    try:
+        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+        # connect() is LAZY and even 'SELECT 1' is a constant — probe with a
+        # statement that forces a real page read (sqlite_master scan), which
+        # is where the ro/WAL -shm failure actually surfaces.
+        con.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        return con
+    except sqlite3.Error:
+        try:
+            con.close()
+        except Exception:
+            pass
+    import shutil
+    import tempfile
+
+    try:
+        snapdir = tempfile.mkdtemp(prefix="tr_top_read_")
+        snap = os.path.join(snapdir, "cache.db")
+        shutil.copy(db, snap)
+        for suffix in ("-wal",):
+            sidecar = db + suffix
+            if os.path.exists(sidecar):
+                try:
+                    shutil.copy(sidecar, snap + suffix)
+                except OSError:
+                    pass
+        con = sqlite3.connect("file:" + snap + "?mode=ro", uri=True)
+        try:
+            con.execute("SELECT 1").fetchone()
+        except sqlite3.Error:
+            return None
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass
+        return con
+    except (OSError, sqlite3.Error):
+        return None
+
+
 def stats_via_sqlite(db: str) -> dict | None:
     """Read-only SQLite fallback. Returns dict with _daemon=False, or None."""
     stats: dict[str, Any] = {}
-    try:
-        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
-    except sqlite3.Error:
+    con = _open_ro(db)
+    if con is None:
         return None
     try:
         rows = con.execute(
@@ -161,9 +212,8 @@ def stats_via_sqlite(db: str) -> dict | None:
 
 def access_rows(db: str, limit: int = 200) -> list:
     """Recent access_log rows, newest last. [] if unavailable."""
-    try:
-        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
-    except sqlite3.Error:
+    con = _open_ro(db)
+    if con is None:
         return []
     try:
         rows = con.execute(
@@ -408,6 +458,17 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 % ("cache", "hits", "misses", "rate", "tokens-srvd", "last-act"),
                 A_BOLD,
             )
+            if not any(cat in st for cat in CATEGORIES):
+                y = put(
+                    y + 1,
+                    "  no cache data — daemon down AND db unreadable: %s" % snap.get("db", "?"),
+                    A_MISS,
+                )
+                y = put(
+                    y + 1,
+                    "  (check TOOLRECALL_CACHE_DB / start the daemon: toolrecall daemon start)",
+                    A_DIM,
+                )
             for cat in CATEGORIES:
                 c = st.get(cat)
                 if not c:
