@@ -481,36 +481,43 @@ class TestContextTrackerViaDaemonIPC:
         assert callable(context_get_stats)
         assert callable(context_reset)
 
-    def test_client_without_daemon(self):
+    def test_client_without_daemon(self, tmp_path):
         """Client functions handle daemon-not-running gracefully.
 
-        Note: This test stops the daemon temporarily. Other tests in
-        TestContextTrackerDaemonIntegration will skip if daemon is down.
+        Hermetic: point the client at a socket that does not exist instead of
+        stopping the daemon. The previous body ran `toolrecall daemon --stop`,
+        which on Linux is `systemctl --user stop toolrecall-daemon` — it killed
+        the PRODUCTION daemon (2026-09-10 20:21:23, traced from a sibling
+        session running this module) and never brought it back. An explicit
+        stop defeats `Restart=always`, so ToolRecall stayed down 5.5 minutes
+        and a cron watchdog failed at 20:25 against the dead daemon.
         """
-        # Stop the daemon if it's running (ignore if not installed / no daemon)
-        import subprocess
-
-        try:
-            subprocess.run(["toolrecall", "daemon", "--stop"], capture_output=True)
-        except FileNotFoundError:
-            pass
-        time.sleep(0.5)
-
+        import toolrecall.client as client_mod
         from toolrecall.client import (
             context_set_checkpoint,
             context_get_dirty,
             context_reset,
         )
 
-        result = context_set_checkpoint("no_daemon_test")
-        assert isinstance(result, dict)
-        # Should return error about daemon, not crash
+        saved = client_mod.DEFAULT_PATH
+        # Nothing listens here → every client call takes the daemon-down path.
+        client_mod.set_socket_path(str(tmp_path / "no-daemon.sock"))
+        try:
+            # Assert the SPECIFIC down-path result, not just "a dict": a dict
+            # assertion alone would pass even if the call silently succeeded.
+            result = context_set_checkpoint("no_daemon_test")
+            assert isinstance(result, dict)
+            assert result.get("error") == "daemon_unavailable"
 
-        result = context_get_dirty()
-        assert isinstance(result, dict)
+            result = context_get_dirty()
+            assert isinstance(result, dict)
+            assert result.get("error") == "daemon_unavailable"
 
-        result = context_reset()
-        assert isinstance(result, dict)
+            result = context_reset()
+            assert isinstance(result, dict)
+            assert result.get("error") == "daemon_unavailable"
+        finally:
+            client_mod.set_socket_path(saved)  # leave the live daemon reachable
 
 
 class TestContextTrackerDaemonIntegration:
