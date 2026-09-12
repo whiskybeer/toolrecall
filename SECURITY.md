@@ -347,14 +347,27 @@ what the network surface adds.
 
 ### 9.2 Authorization: remote is default-deny
 
-Remote requests resolve policy ONLY from `[network.clients."<token-id>"]` —
-the global `[mcp]` settings NEVER apply to remote callers. A token-id with no
-entry is denied reads, terminal, everything:
+Two layers, both enforced before a remote command reaches a handler:
+
+**Layer 1 — command allow-list (`REMOTE_ALLOWED_COMMANDS`, review A6-3).**
+A remote caller may only invoke: `ping`, `cached_read`,
+`cached_shell_exec`, `cached_terminal`, `cached_skill`, `cached_write`,
+`cached_patch`, `cache_refresh_file`. Everything else — `mcp_*` (operator
+credentials!), `docs_*`, `recall_*`, `cache_invalidate`, `cache_status`,
+`context_*`, `shutdown`, `restart` — gets `remote_denied` before routing.
+A command added to `_route` in the future is NOT remote-reachable until
+deliberately added to the allow-list (default-deny by construction).
+
+**Layer 2 — per-token policy.** Remote requests resolve policy ONLY from
+`[network.clients."<token-id>"]` — the global `[mcp]` settings NEVER apply
+to remote callers. A token-id with no entry is denied reads, terminal,
+writes, everything:
 
 | Capability | Local (UDS) | Remote (TCP), no entry | Remote, scoped entry |
 |---|---|---|---|
-| cached_read | global allowed_paths | ❌ denied | only entry's allowed_paths |
+| cached_read / cached_write / cached_patch | global allowed_paths | ❌ denied | only entry's allowed_paths (A6-1: writes share the read gate) |
 | cached_terminal | global allow_terminal | ❌ denied | only if entry sets allow_terminal=true |
+| mcp_call, docs_*, recall_*, cache_invalidate, cache_status, context_*, shutdown, restart | ✅ local | ❌ remote_denied (Layer 1) | ❌ remote_denied (Layer 1) |
 | sensitive-file blocklist | ✅ always | ✅ always | ✅ always |
 
 The authenticated token-id OVERWRITES `request["client"]` on every remote
@@ -371,9 +384,36 @@ its name. **Compromised token = exactly the scoped policy, nothing more.**
 | Spoof another agent's `[mcp.clients]` policy | ❌ Server overwrites `client` with the token-id |
 | Unauthenticated listener | ❌ Empty token = listener refuses to start; enabled-without-token prints an explicit refusal |
 | Compromised daemon host | Out of scope — the daemon holds the token and the cache; a host attacker wins regardless |
-| Malicious team member | Limited by their `[network.clients]` scope; their writes (cached_write/patch/invalidate) affect the SHARED cache — scope `allow_invalidate` and prefer read-mostly entries |
+| Malicious team member | Limited by their `[network.clients]` scope; their writes (cached_write/patch) affect the SHARED cache — scope `allowed_paths` tightly and review A6-5 below. `allow_invalidate` and cache management are LOCAL-ONLY since the A6 review (remote command allow-list) |
 
-### 9.4 Operational guidance
+### 9.4 Shared-cache trust model (A6-5, review 2026-09-08)
+
+A network daemon means a **shared cache**: whatever member A writes, member B
+may read as a hit. That is the feature — and its trust assumption. Stated
+plainly:
+
+1. **Cache integrity is collective.** `cached_write`/`cached_patch` are path-
+   gated per member, but a file INSIDE a member's scope can be overwritten by
+   that member with attacker-chosen content; everyone sharing that scope then
+   reads the poisoned entry. A team daemon is only as trustworthy as the least
+   privileged member with write scope. Read-mostly deployments (no
+   `cached_write` in any member's scope, or writes confined to a scratch
+   directory) keep the blast radius at "reads wrong data", not "runs wrong
+   data" — prefer them.
+2. **No per-identity cache isolation.** Entries are keyed by path/command —
+   NOT by which member wrote them. Two members with the same `allowed_paths`
+   see each other's writes by design. If members must not see each other's
+   data, give them separate daemon instances (different ports/DBs); do not
+   expect the cache to partition itself.
+3. **Hits serve content, not provenance.** A remote hit returns the cached
+   bytes with no marker of which member produced them. Audit attributions
+   come from the daemon's payload-free log (`net req=N cmd=… token-id` in
+   the log line), not from the data itself.
+4. **Revocation is config-driven.** Per-member tokens ([network.clients]
+   token key) revoke at next handshake when the entry is removed. A member
+   holding an active TLS connection keeps it until the next handshake.
+
+### 9.5 Operational guidance
 
 - **Bind is local-only by default (hardening, 2026-09-08):** the listener
   refuses non-local binds (public IPs, wildcard `0.0.0.0`) with an explicit
