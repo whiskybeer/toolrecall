@@ -213,14 +213,38 @@ class SecurityGate:
         # (or direct non-MCP callers with no client field) get the global
         # [mcp] settings — default-deny semantics are unchanged.
         self.client_policy = cfg.mcp_client_policy()
+        # A6: policy table for REMOTE (TCP) callers, keyed by token-id from
+        # [network.clients."<id>"]. Remote = untrusted-ish: the base policy
+        # is empty-deny and ONLY a [network.clients] entry can grant — the
+        # global [mcp] settings never leak to remote callers.
+        self.remote_policy = cfg.network_clients
+        self.remote_mode = False
         self.logger = logging.getLogger(__name__)
+
+    def _enter_remote_mode(self) -> None:
+        """Route policy lookups through the remote table (called once at
+        TCP-listener startup; the daemon's own UDS path stays global)."""
+        self.remote_mode = True
 
     def effective_policy(self, client: str | None) -> dict:
         """Resolve the effective [mcp] policy for one agent request.
 
-        Per-client overrides from [mcp.clients."<name>"] win; everything the
-        client doesn't override falls back to the global [mcp] values.
+        Local (UDS) requests: per-client overrides from
+        [mcp.clients."<name>"] win; everything the client doesn't override
+        falls back to the global [mcp] values.
+
+        Remote (TCP) requests: policy comes ONLY from
+        [network.clients."<token-id>"] — nothing falls back to the global
+        [mcp] settings. A token-id with no entry is denied everything
+        (compromised token = exactly the scoped policy, nothing more).
         """
+        if self.remote_mode:
+            entry = self.remote_policy.get(client or "", {})
+            return {
+                "allowed_paths": entry.get("allowed_paths", []),
+                "allow_terminal": entry.get("allow_terminal", False),
+                "allowed_terminal_commands": entry.get("allowed_terminal_commands", []),
+            }
         eff = {
             "allowed_paths": self.allowed_paths,
             "allow_terminal": self.allow_terminal,
@@ -1129,6 +1153,175 @@ class DaemonServer:
         thread.start()
         print(f"  storage sync: enabled, every {interval}s")
 
+    # ─── Network listener (A6: shared team daemon, opt-in) ───
+
+    def _should_start_network_listener(self) -> bool:
+        """A6 gate: TCP listener starts ONLY on explicit opt-in + token.
+
+        enabled=false → never. enabled=true but empty token → never
+        (a network daemon without auth must not exist); start() prints
+        why. Everything defaults off, so a config without [network] is
+        byte-identical to pre-A6 behavior.
+        """
+        return bool(self.cfg.network_enabled) and bool(self.cfg.network_token)
+
+    def _network_tokens(self) -> dict:
+        """{token-bytes: token-id} for the auth handshake.
+
+        Single-token deployments: the whole table is one entry keyed by
+        the configured token; its id is the token-id every remote request
+        is re-stamped with (policy identity). Multi-token support (one id
+        per team member) rides on the same [network].token string format
+        later — the handshake already handles arbitrary tables.
+        """
+        return {self.cfg.network_token: "network-client"}
+
+    def _run_tcp_listener(self, host: str, port: int):
+        """Accept loop for the TCP listener. Runs in its own thread.
+
+        One bad connection must never take the listener down: every
+        per-connection failure is caught, logged (outcome only, payload-
+        free), and the loop continues.
+        """
+        from toolrecall import network_tls as nt
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            srv.bind((host, port))
+        except OSError as e:
+            print(f"  ⚠️  Network listener failed to bind {host}:{port}: {e}")
+            return
+        srv.listen(16)
+        self._tcp_srv = srv
+        actual_port = srv.getsockname()[1]
+        tls_desc = "TLS" if self.cfg.network_tls else "HMAC-only"
+        print(
+            f"  Network daemon: tcp://{host}:{actual_port} ({tls_desc}, "
+            f"token auth — remote requests run under the daemon's policy)"
+        )
+        self._tcp_port = actual_port
+
+        tokens = self._network_tokens()
+        # Remote requests resolve policy via [network.clients] only —
+        # flip the gate into remote mode before the first connection.
+        self.security._enter_remote_mode()
+        tls_ctx = None
+        if self.cfg.network_tls:
+            try:
+                tls_ctx = nt.server_context(self.cfg.network_tls_cert, self.cfg.network_tls_key)
+            except nt.TLSConfigError as e:
+                print(f"  ⚠️  Network TLS disabled: {e}")
+                tls_ctx = None
+
+        while self._running:
+            try:
+                srv.settimeout(1.0)
+                conn, addr = srv.accept()
+            except (socket.timeout, TimeoutError):
+                continue
+            except OSError:
+                break  # listener closed
+            self._executor.submit(self._handle_tcp, conn, tokens, tls_ctx)
+        try:
+            srv.close()
+        except OSError:
+            pass
+
+    def _handle_tcp(self, conn: socket.socket, tokens: dict | None = None, tls_ctx=None):
+        """Handle one remote connection: TLS wrap (optional) → HMAC auth →
+        same framed request loop as the UDS path.
+
+        Identity: after auth, EVERY request's "client" field is over-
+        written with the authenticated token-id — a remote caller cannot
+        inherit another agent's [mcp.clients] policy by asserting its
+        name (A4 spoof-proofing at the transport boundary).
+        """
+        from toolrecall import network_auth as na
+
+        if tokens is None:
+            tokens = self._network_tokens()
+
+        request = None
+        try:
+            if tls_ctx is not None:
+                conn = tls_ctx.wrap_socket(conn, server_side=True)
+            token_id = na.server_handshake(conn, tokens)
+        except Exception:
+            # Auth failure / TLS failure / mid-handshake disconnect:
+            # outcome-only log, no payload, connection dropped.
+            self.logger.info("net outcome=auth_rejected")
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
+
+        try:
+            conn.settimeout(30.0)
+            while True:
+                request = receive_message(conn)
+                if request is None:
+                    break
+                # ── Identity override (A6 security boundary) ──
+                request["client"] = token_id
+                # Protocol version gate — identical to the UDS path.
+                req_v = request.get("v", 1)
+                try:
+                    req_v = int(req_v)
+                except (TypeError, ValueError):
+                    req_v = 1
+                if req_v > PROTOCOL_VERSION and request.get("cmd") != "ping":
+                    send_message(
+                        conn,
+                        {
+                            "error": (
+                                f"protocol_version_mismatch: client wire v{req_v} > "
+                                f"daemon v{PROTOCOL_VERSION}. Upgrade the daemon: "
+                                f"pip install --upgrade toolrecall"
+                            ),
+                            "daemon_protocol_version": PROTOCOL_VERSION,
+                        },
+                    )
+                    break
+                request_id = next(self._req_counter)
+                t0 = time.perf_counter()
+                response = self._route(request)
+                _dt_ms = (time.perf_counter() - t0) * 1000
+                if "error" in response:
+                    self.logger.info(
+                        "net req=%d cmd=%s outcome=error dur=%.1fms err=%s",
+                        request_id,
+                        request.get("cmd", "?"),
+                        _dt_ms,
+                        str(response.get("error", ""))[:120],
+                    )
+                else:
+                    self.logger.info(
+                        "net req=%d cmd=%s outcome=ok dur=%.1fms",
+                        request_id,
+                        request.get("cmd", "?"),
+                        _dt_ms,
+                    )
+                send_message(conn, response)
+        except (
+            socket.timeout,
+            json.JSONDecodeError,
+            ConnectionResetError,
+            BrokenPipeError,
+            OSError,
+        ):
+            pass
+        except Exception:
+            self.logger.exception(
+                "net req cmd=%s handler crashed", request.get("cmd", "?") if request else "?"
+            )
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     def start(self):
         """Start the IPC server (blocking). Must be called AFTER fork()."""
         # Lazy-init ThreadPoolExecutor AFTER fork — avoids corrupted locks
@@ -1171,6 +1364,22 @@ class DaemonServer:
             except Exception as e:
                 print(f"  ⚠️  Forward proxy failed to start: {e}")
                 print("     API response caching on :8569 is unavailable.")
+
+            # Start shared network daemon (A6) — opt-in, default OFF.
+            if self._should_start_network_listener():
+                self._tcp_thread = threading.Thread(
+                    target=self._run_tcp_listener,
+                    args=(self.cfg.network_bind, self.cfg.network_port),
+                    daemon=True,
+                    name="NetworkListener",
+                )
+                self._tcp_thread.start()
+            elif self.cfg.network_enabled and not self.cfg.network_token:
+                print(
+                    "  ⚠️  [network] enabled but no token — network daemon NOT "
+                    "started. Set TOOLRECALL_NETWORK_TOKEN (or [network].token). "
+                    "A network daemon without auth must not exist."
+                )
 
             # Start periodic GC background thread
             self._gc_thread = threading.Thread(target=self._run_periodic_gc, daemon=True)
@@ -1229,6 +1438,14 @@ class DaemonServer:
             self._server.close()
         except Exception as e:  # noqa: BLE001 — shutdown must never abort mid-teardown
             warnings.warn(f"ToolRecall: server close failed during shutdown: {e}")
+        # A6: close the TCP listener too (it loops on _running, but close()
+        # unblocks a pending accept() immediately).
+        tcp_srv = getattr(self, "_tcp_srv", None)
+        if tcp_srv is not None:
+            try:
+                tcp_srv.close()
+            except Exception:
+                pass
         # Clean up socket file (UDS only — TCP sockets aren't files)
         if not IS_WINDOWS:
             try:

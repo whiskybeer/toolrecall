@@ -75,6 +75,39 @@ enabled = false
 # into using unsafe shell execution paths.
 log_shell_fallback = true
 
+# ─── Shared Network Daemon (opt-in, default OFF) ──────
+# A6: let a whole team share one warm cache over TCP.
+# OFF by default — with this section untouched the daemon is byte-identical
+# to local-only operation (UDS on POSIX, loopback TCP on Windows).
+#
+# Auth: HMAC-SHA256 challenge-response per connection — the token itself
+#   NEVER crosses the wire. Clients need the same token to connect.
+#   Prefer TOOLRECALL_NETWORK_TOKEN (env) over the config key so the
+#   secret stays out of toolrecall.toml; if you set it here, chmod 600.
+#   An EMPTY token disables the listener even when enabled = true.
+# TLS: set tls = true for TLS (stdlib `ssl` — no extra dependencies).
+#   Requires tls_cert (PEM chain) + tls_key (PEM private key, chmod 600).
+#   Recommended whenever bind is not 127.0.0.1; on an open network TLS is
+#   mandatory — HMAC alone does not encrypt cache contents.
+# Per-agent policy: [network.clients."<token-id>"] maps a token-id to the
+#   same policy shape as [mcp.clients."<name>"] (allowed_paths,
+#   allow_terminal, allowed_terminal_commands). A token-id NOT listed
+#   here is denied everything remote (default-deny).
+# Cache semantics across machines: see docs/ARCHITECTURE.md §Network —
+#   file-cache entries keyed by path are only valid cross-machine with a
+#   shared filesystem; terminal entries are cwd-scoped (by design).
+# [network]
+# enabled = false
+# bind = "127.0.0.1"       # non-loopback ONLY behind VPN/SSH tunnel (+tls)
+# port = 8570              # 8568 = Windows IPC, 8569 = forward proxy
+# token = ""               # or TOOLRECALL_NETWORK_TOKEN env (preferred)
+# tls = false
+# tls_cert = ""            # required if tls = true
+# tls_key = ""             # required if tls = true
+# [network.clients."ci-runner"]
+# allowed_paths = ["~/projects"]
+# allow_terminal = false
+
 [cache.terminal_ttls]
 "hostname" = 3600
 "whoami" = 3600

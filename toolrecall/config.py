@@ -79,6 +79,15 @@ ENV_MAP = {
     "TOOLRECALL_CB_FAILURE_THRESHOLD": ("resilience", "cb_failure_threshold"),
     "TOOLRECALL_CB_WINDOW": ("resilience", "cb_window"),
     "TOOLRECALL_CB_OPEN_SECONDS": ("resilience", "cb_open_seconds"),
+    # Shared network daemon (A6): opt-in TCP listener with HMAC auth.
+    # All defaults OFF/loopback — see [network] in config.toml.
+    "TOOLRECALL_NETWORK_ENABLED": ("network", "enabled"),
+    "TOOLRECALL_NETWORK_BIND": ("network", "bind"),
+    "TOOLRECALL_NETWORK_PORT": ("network", "port"),
+    "TOOLRECALL_NETWORK_TOKEN": ("network", "token"),
+    "TOOLRECALL_NETWORK_TLS": ("network", "tls"),
+    "TOOLRECALL_NETWORK_TLS_CERT": ("network", "tls_cert"),
+    "TOOLRECALL_NETWORK_TLS_KEY": ("network", "tls_key"),
 }
 
 
@@ -261,6 +270,21 @@ class Config:
             }
         ),
         "recall": frozenset({"enabled", "ttl"}),
+        # Shared network daemon (A6). network.clients is a freeform
+        # sub-table: its keys are agent names mapped to [mcp.clients]
+        # policy entries (A4 machinery), validated there.
+        "network": frozenset(
+            {
+                "enabled",
+                "bind",
+                "port",
+                "token",
+                "tls",
+                "tls_cert",
+                "tls_key",
+                "clients",
+            }
+        ),
         "docs": frozenset({"index_ttl"}),
         "sources": frozenset(
             {"scan_dirs", "scan_extensions", "scan_ignore", "max_file_kb", "memory"}
@@ -305,7 +329,18 @@ class Config:
                     # but a misnamed sub-table (e.g. [mcp.client]) still is.
                     if key in self._FREEFORM_KEYS and isinstance(key_val, dict) and key_val:
                         first = next(iter(key_val))
-                        if isinstance(key_val[first], dict):
+                        if (
+                            isinstance(key_val[first], dict)
+                            # Only recurse when the freeform sub-table is a
+                            # KNOWN key of this section (e.g. [mcp.clients],
+                            # [mcp_multiplex.servers_config]). A freeform
+                            # table that IS the section's sub-table namespace
+                            # (e.g. [network.clients]) has user-defined
+                            # sub-keys validated against the section schema,
+                            # not against the parent's key list — recursing
+                            # there produces false "typo" warnings.
+                            and key in valid_keys
+                        ):
                             for sub in key_val[first]:
                                 if sub not in valid_keys:
                                     warnings.warn(
@@ -497,6 +532,93 @@ class Config:
         # strip + rstrip("/"): a trailing slash in config would otherwise
         # produce "https://base//v1/..." URLs; empty string falls back too.
         return val.strip().rstrip("/") if val and val.strip() else "https://api.turso.tech"
+
+    # ─── Network Daemon (A6) Properties ───────────────
+
+    @property
+    def network_enabled(self) -> bool:
+        """Shared network daemon master switch. Default: False (opt-in).
+
+        When False the daemon binds UDS only — behavior is byte-identical
+        to pre-A6. Env override: TOOLRECALL_NETWORK_ENABLED=true
+        """
+        val = self.get("network", "enabled", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
+    @property
+    def network_bind(self) -> str:
+        """Bind address for the TCP listener. Default: 127.0.0.1 (loopback).
+
+        A non-loopback bind exposes the cache to the network — only do this
+        behind a VPN/SSH tunnel, and pair it with [network].tls=true.
+        Env override: TOOLRECALL_NETWORK_BIND
+        """
+        return self.get("network", "bind", default="127.0.0.1")
+
+    @property
+    def network_port(self) -> int:
+        """TCP port for the network daemon. Default: 8570.
+
+        8568 = Windows IPC TCP, 8569 = forward proxy — 8570 keeps them apart.
+        Env override: TOOLRECALL_NETWORK_PORT
+        """
+        try:
+            return int(self.get("network", "port", default=8570))
+        except (TypeError, ValueError):
+            return 8570
+
+    @property
+    def network_token(self) -> str:
+        """Pre-shared HMAC token for the network daemon. Default: "" (none).
+
+        An empty token disables the listener even when enabled=true — a
+        network daemon without auth must never start. Remote clients must
+        present hmac_sha256(token, nonce) during the auth handshake.
+        Env override: TOOLRECALL_NETWORK_TOKEN (preferred — keeps the
+        secret out of toolrecall.toml; chmod 600 the file if you use it).
+        """
+        val = self.get("network", "token", default="")
+        return val.strip() if isinstance(val, str) else ""
+
+    @property
+    def network_tls(self) -> bool:
+        """TLS on the network listener. Default: False (opt-in).
+
+        Off: HMAC auth only — fine on loopback or inside a VPN/SSH tunnel.
+        On: listener speaks TLS (stdlib `ssl`, zero extra deps); requires
+        tls_cert + tls_key. Clients enable via TOOLRECALL_NETWORK_TLS.
+        Env override: TOOLRECALL_NETWORK_TLS
+        """
+        val = self.get("network", "tls", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
+    @property
+    def network_tls_cert(self) -> str | None:
+        """PEM certificate chain path for [network].tls=true."""
+        val = self.get("network", "tls_cert", default=None)
+        return os.path.expanduser(val) if val else None
+
+    @property
+    def network_tls_key(self) -> str | None:
+        """PEM private-key path for [network].tls=true. chmod 600."""
+        val = self.get("network", "tls_key", default=None)
+        return os.path.expanduser(val) if val else None
+
+    @property
+    def network_clients(self) -> dict:
+        """Per-token-id agent policy for remote connections.
+
+        Maps token-id → [mcp.clients] policy entry (A4 machinery). A
+        token-id NOT listed here gets global-deny on remote: no allowed
+        paths, no terminal, no invalidate — "compromised token = exactly
+        the scoped policy, nothing more" requires explicit scoping.
+        """
+        raw = self.get("network", "clients", default={})
+        return raw if isinstance(raw, dict) else {}
 
     @property
     def file_ttl(self) -> int:

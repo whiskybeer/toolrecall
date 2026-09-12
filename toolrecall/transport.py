@@ -223,6 +223,13 @@ class TransportClient:
     """Platform-agnostic IPC client (UDS on POSIX, TCP on Windows).
 
     Stateless — connects per request.
+
+    A6 network daemon: when TOOLRECALL_NETWORK_TOKEN is set and the path
+    is tcp://, every connection first performs the HMAC challenge-
+    response handshake (and a TLS wrap when TOOLRECALL_NETWORK_TLS=true).
+    Without a token, behavior is unchanged (Windows loopback TCP has no
+    auth). Remote selection stays EXPLICIT: TOOLRECALL_TRANSPORT=tcp://
+    — setting only the token never flips the default transport.
     """
 
     def __init__(self, path: str | None = None):
@@ -235,6 +242,38 @@ class TransportClient:
     @property
     def is_tcp(self) -> bool:
         return _is_tcp(self._path)
+
+    def _network_auth_enabled(self) -> bool:
+        """HMAC handshake needed for this client?"""
+        return self.is_tcp and bool(os.environ.get("TOOLRECALL_NETWORK_TOKEN"))
+
+    def _connect(self, sock: socket.socket, timeout: float) -> socket.socket:
+        """Connect (+TLS wrap +HMAC handshake when configured).
+
+        Returns the socket to use for the session: the same one, or the
+        TLS-wrapped replacement (wrap_socket swaps the object — callers
+        MUST use the return value, not the argument).
+        """
+        connect_socket(sock, self._path)
+        if not self._network_auth_enabled():
+            return sock
+        from toolrecall import network_auth as na
+
+        if os.environ.get("TOOLRECALL_NETWORK_TLS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            from toolrecall import network_tls as nt
+
+            ca = os.environ.get("TOOLRECALL_NETWORK_TLS_CA") or None
+            ctx = nt.client_context(verify=True, ca_path=ca)
+            host, _port = _parse_tcp(self._path)
+            sock = nt.wrap_client(sock, ctx, server_hostname=host if ca else None)
+        token = os.environ["TOOLRECALL_NETWORK_TOKEN"].encode()
+        na.client_handshake(sock, token)
+        return sock
 
     def close(self):
         """No-op — TransportClient is stateless (connects per request).
@@ -254,15 +293,21 @@ class TransportClient:
         reported as ``daemon_unavailable``, which made a busy daemon
         (e.g. cache_status queued behind multi-MB cached_read inserts)
         look down and sent operators restarting a healthy service.
+        A6: an auth rejection is its own error (``network_auth_rejected``)
+        — never masked as the daemon being down.
         """
         try:
             sock = create_socket(self._path)
             sock.settimeout(timeout)
             try:
-                connect_socket(sock, self._path)
+                sock = self._connect(sock, timeout)
             except (ConnectionRefusedError, FileNotFoundError, OSError):
                 sock.close()
                 return {"error": "daemon_unavailable"}
+            except Exception as e:
+                sock.close()
+                # Auth/TLS handshake failures are distinct from "daemon down"
+                return {"error": "network_auth_rejected", "detail": str(e)[:120]}
             send_message(sock, payload)
             resp = receive_message(sock)
             sock.close()

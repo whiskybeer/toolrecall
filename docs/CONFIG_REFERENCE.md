@@ -75,6 +75,14 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `mcp_client_hint_policy` | Per-client `[mcp.clients]` overrides of `emit_context_hints`, keyed by MCP `clientInfo.name` | `{}` |
 | `mcp_multiplex_servers` | Server names to multiplex | `[]` |
 | `mcp_multiplex_servers_config` | Resolved server configs | Registry + overrides |
+| `network_enabled` | Shared network daemon master switch (A6, opt-in) | `False` |
+| `network_bind` | TCP listener bind address | `127.0.0.1` (loopback) |
+| `network_port` | TCP listener port | `8570` |
+| `network_token` | Pre-shared HMAC token (empty = listener disabled) | `""` |
+| `network_tls` | TLS on the network listener (stdlib `ssl`) | `False` |
+| `network_tls_cert` | PEM certificate chain (required if `network_tls`) | `None` |
+| `network_tls_key` | PEM private key (required if `network_tls`) | `None` |
+| `network_clients` | Token-id → `[mcp.clients]`-shaped policy; unlisted ids = default-deny | `{}` |
 
 ## Environment Variables (`TOOLRECALL_*`)
 
@@ -107,6 +115,13 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_HASH_ALGORITHM` | `cache.hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM=sha256` |
 | `TOOLRECALL_LOG_SHELL_FALLBACK` | `cache.log_shell_fallback` | |
 | `TOOLRECALL_RECALL_ENABLED` | `recall.enabled` | `TOOLRECALL_RECALL_ENABLED=true` |
+| `TOOLRECALL_NETWORK_ENABLED` | `network.enabled` | `TOOLRECALL_NETWORK_ENABLED=true` |
+| `TOOLRECALL_NETWORK_BIND` | `network.bind` | `TOOLRECALL_NETWORK_BIND=0.0.0.0` (VPN only) |
+| `TOOLRECALL_NETWORK_PORT` | `network.port` | `TOOLRECALL_NETWORK_PORT=8570` |
+| `TOOLRECALL_NETWORK_TOKEN` | `network.token` | `TOOLRECALL_NETWORK_TOKEN=$(openssl rand -hex 32)` |
+| `TOOLRECALL_NETWORK_TLS` | `network.tls` | `TOOLRECALL_NETWORK_TLS=true` |
+| `TOOLRECALL_NETWORK_TLS_CERT` | `network.tls_cert` | `TOOLRECALL_NETWORK_TLS_CERT=/etc/tr/cert.pem` |
+| `TOOLRECALL_NETWORK_TLS_KEY` | `network.tls_key` | `TOOLRECALL_NETWORK_TLS_KEY=/etc/tr/key.pem` |
 | `TOOLRECALL_FORWARD_PORT` | (not in config.toml) | `TOOLRECALL_FORWARD_PORT=9090` |
 | `TOOLRECALL_FETCH_MAX_BYTES` | (not in config.toml) | `TOOLRECALL_FETCH_MAX_BYTES=1048576` (1MB) |
 | `TOOLRECALL_FETCH_LOG` | (not in config.toml) | `TOOLRECALL_FETCH_LOG=~/.toolrecall/fetch_api.log` |

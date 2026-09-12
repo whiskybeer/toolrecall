@@ -321,5 +321,70 @@ their guarantees:
 
 ---
 
+## 9. Shared Network Daemon (A6) Threat Model
+
+The opt-in TCP listener (`[network] enabled=true`, default **off**) lets a team
+share one warm cache. Everything in §1–§5 still applies; this section covers
+what the network surface adds.
+
+### 9.1 What the wire carries
+
+- **Authentication:** HMAC-SHA256 challenge-response per connection
+  (`network_auth.py`). The server sends a 32-byte random nonce; the client
+  answers `HMAC_SHA256(token, nonce)`; the token itself NEVER crosses the
+  wire. Constant-time compare; nonces are single-use (replay cache) with a
+  3-second handshake window; explicit AUTH_ACCEPT frame so a rejection is
+  distinguishable from a dead daemon.
+- **Encryption:** none by default. With `[network] tls=true` (stdlib `ssl`,
+  no extra deps) the channel is encrypted and — with
+  `TOOLRECALL_NETWORK_TLS_CA` pinning the daemon's cert — the server is
+  authenticated to the client (mitM resistance).
+- **Payloads:** framed JSON, same as the UDS protocol — cache reads, terminal
+  output, MCP payloads. **HMAC alone does not encrypt**: on loopback or inside
+  a VPN/SSH tunnel that is fine; on any network where a third party can
+  capture packets, TLS is REQUIRED (the daemon prints a warning when
+  `bind != 127.0.0.1` without TLS).
+
+### 9.2 Authorization: remote is default-deny
+
+Remote requests resolve policy ONLY from `[network.clients."<token-id>"]` —
+the global `[mcp]` settings NEVER apply to remote callers. A token-id with no
+entry is denied reads, terminal, everything:
+
+| Capability | Local (UDS) | Remote (TCP), no entry | Remote, scoped entry |
+|---|---|---|---|
+| cached_read | global allowed_paths | ❌ denied | only entry's allowed_paths |
+| cached_terminal | global allow_terminal | ❌ denied | only if entry sets allow_terminal=true |
+| sensitive-file blocklist | ✅ always | ✅ always | ✅ always |
+
+The authenticated token-id OVERWRITES `request["client"]` on every remote
+request — a remote caller cannot inherit another agent's policy by asserting
+its name. **Compromised token = exactly the scoped policy, nothing more.**
+
+### 9.3 Attack scenarios, honestly stated
+
+| Scenario | Outcome |
+|---|---|
+| Token sniffing (no TLS, open network) | Possible — HMAC proof is replay-protected but the channel is clear; cache CONTENTS also readable. Run TLS or a tunnel. |
+| Replay a captured (nonce, response) | ❌ Nonce cache rejects; 3s window; only valid proofs claim nonces |
+| Offline brute-force of the token | Feasible for weak tokens — the nonce+proof is all an attacker needs. Use `openssl rand -hex 32` (256-bit). |
+| Spoof another agent's `[mcp.clients]` policy | ❌ Server overwrites `client` with the token-id |
+| Unauthenticated listener | ❌ Empty token = listener refuses to start; enabled-without-token prints an explicit refusal |
+| Compromised daemon host | Out of scope — the daemon holds the token and the cache; a host attacker wins regardless |
+| Malicious team member | Limited by their `[network.clients]` scope; their writes (cached_write/patch/invalidate) affect the SHARED cache — scope `allow_invalidate` and prefer read-mostly entries |
+
+### 9.4 Operational guidance
+
+- Token: `TOOLRECALL_NETWORK_TOKEN` env (preferred) or `[network].token` with
+  `chmod 600` on the config file. Generate with `openssl rand -hex 32`.
+- Bind: keep `127.0.0.1` unless the daemon MUST serve the network; if it must,
+  `tls=true` + pinned CA + a `[network.clients]` entry per consumer.
+- TLS certs: self-signed team cert is fine (pin it on clients via
+  `TOOLRECALL_NETWORK_TLS_CA`); a real CA chain also works.
+- Audit: remote requests log `net req=... outcome=...` (payload-free) in the
+  daemon's rotating log; auth failures log `net outcome=auth_rejected`.
+
+---
+
 This project is maintained by a solo developer. For security issues, open a GitHub issue with the `security` label or contact the author directly. There is no bug bounty program.
 [^notall]: Not all agents tested yet — please report bugs at https://github.com/whiskybeer/toolrecall/issues
