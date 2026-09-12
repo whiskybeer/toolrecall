@@ -321,6 +321,13 @@ enabled = true
 "**/*.log.[0-9]*" = 86400   # rotated logs: immutable — window only skips stat()
 "~/vendor/**" = 3600        # build-touched vendored deps: skip identical re-reads
 "package-lock.json" = 86400
+# Agent session transcripts: rewritten on EVERY turn, up to several MB.
+# Caching them floods file_cache (123 entries >1MB / 260MB observed) and the
+# multi-MB INSERTs stall cache_status behind the SQLite write lock.
+# ttl=0 = serve-through: read fresh from disk, never persisted.
+"~/.hermes/webui/sessions/*.json" = 0
+"~/.hermes/sessions/*.json" = 0
+"**/webui/sessions/*.json" = 0
 
 # ─── Resilience (coalescing / retry / circuit breaker) ─
 # All opt-in; every default preserves the pre-resilience behavior.

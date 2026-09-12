@@ -7,6 +7,7 @@ Daemon is managed by systemd --user. These tests verify that:
 """
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -32,8 +33,23 @@ class TestDaemonPIDFallback(unittest.TestCase):
         # hermetic (and don't depend on the production daemon being down).
         self._orig_sock_fn = daemon._default_socket_path
         daemon._default_socket_path = lambda: os.path.join(self.tmpdir, "no.sock")
+        # CRITICAL hermeticity: stop_daemon() tries `systemctl --user stop
+        # toolrecall-daemon` FIRST. Without stubbing, every test-suite run
+        # STOPPED THE PRODUCTION DAEMON (observed 5× on 2026-09-06: unit
+        # flapped at 18:14/18:27/18:35/18:48/19:04, each correlated with a
+        # pytest run). Stub subprocess.run with a failing result so the
+        # systemd path is inert and tests exercise the PID-file fallback —
+        # which is exactly what this class claims to test.
+        self._sp_patcher = patch(
+            "toolrecall.daemon.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="inactive", stderr="stubbed"
+            ),
+        )
+        self._sp_patcher.start()
 
     def tearDown(self):
+        self._sp_patcher.stop()
         daemon.PID_FILE = self._orig_pid_file
         daemon._default_socket_path = self._orig_sock_fn
         # Clean up any leftover PID file

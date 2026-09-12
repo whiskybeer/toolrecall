@@ -2018,9 +2018,17 @@ def garbage_collect() -> int:
             now = time.time()
             c1 = conn.execute("DELETE FROM terminal_cache WHERE expires_at < ?", (now,)).rowcount
             c2 = conn.execute("DELETE FROM mcp_cache WHERE expires_at < ?", (now,)).rowcount
-            c4 = conn.execute(
-                "DELETE FROM recall_cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now,)
-            ).rowcount
+            # recall_cache may predate the expires_at column (added by the
+            # v0.8.20 migration in _db._init). Check PRAGMA instead of
+            # catching OperationalError: a missing column previously aborted
+            # the WHOLE GC (terminal/mcp purge + VACUUM never ran).
+            recall_cols = {row[1] for row in conn.execute("PRAGMA table_info(recall_cache)")}
+            c4 = 0
+            if "expires_at" in recall_cols:
+                c4 = conn.execute(
+                    "DELETE FROM recall_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now,),
+                ).rowcount
             ONE_DAY = 86400
             c3 = conn.execute(
                 """

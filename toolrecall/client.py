@@ -55,6 +55,17 @@ def _get_client() -> TransportClient:
     return _client
 
 
+# Transport errors that mean "daemon can't serve this — use the fallback".
+# daemon_unavailable = down; daemon_timeout = alive but busy (honesty fix
+# 2026-09-06). A busy daemon should ALSO trigger the direct-read fallback:
+# the caller is better served by a fresh disk read than by an error.
+DAEMON_DOWN_ERRORS = ("daemon_unavailable", "daemon_timeout")
+
+
+def _is_daemon_down(resp: dict) -> bool:
+    return resp.get("error") in DAEMON_DOWN_ERRORS
+
+
 def _check_daemon() -> bool:
     """Quick ping to check if daemon is reachable.
 
@@ -129,7 +140,7 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_read", "path": path, "source": source})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp  # Success or real error from Daemon
     # Fallback: check allowed_paths ourselves, then read directly
     from toolrecall.config import load_config
@@ -156,7 +167,7 @@ def cached_shell_exec(command: str) -> dict:
     client = _get_client()
     payload = {"cmd": "cached_shell_exec", "command": command, "cwd": os.getcwd()}
     resp = client.send(payload)
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp
     # Fall back to direct wrapper stripping + cached_terminal
     from toolrecall.cache import cached_shell_exec as _direct_shell_exec
@@ -179,7 +190,7 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
     if ttl is not None:
         payload["ttl"] = ttl
     resp = client.send(payload)
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp
     # SECURITY: fail-closed on daemon unavailable — terminal is a gated
     # operation that requires the daemon's SecurityGate. Without the
@@ -198,7 +209,7 @@ def cached_skill(name: str) -> dict:
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_skill", "name": name})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp
     return _get_direct_cache().cached_skill(name)
 
@@ -212,7 +223,7 @@ def cached_write(path: str, content: str) -> dict:
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_write", "path": path, "content": content})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp
     # SECURITY: fail-closed on daemon unavailable — write is a gated
     # operation that requires the daemon's SecurityGate. Without the
@@ -234,7 +245,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
     resp = client.send(
         {"cmd": "cached_patch", "path": path, "old_string": old_string, "new_string": new_string}
     )
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp
     # SECURITY: fail-closed on daemon unavailable — patch is a gated
     # operation that requires the daemon's SecurityGate. Without the
@@ -256,7 +267,7 @@ def docs_search(query: str, source: str | None = None) -> str:
     if source:
         payload["source"] = source
     resp = client.send(payload)
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp.get("result", str(resp))
     return _get_direct_docs().docs_search(query, source=source)
 
@@ -269,7 +280,7 @@ def docs_get_page(path: str, source: str = "") -> str:
     """
     client = _get_client()
     resp = client.send({"cmd": "docs_get_page", "source": source, "path": path})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp.get("result", str(resp))
     return _get_direct_docs().docs_get_page(path, source)
 
@@ -282,7 +293,7 @@ def cache_status() -> str:
     """
     client = _get_client()
     resp = client.send({"cmd": "cache_status"})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp.get("result", str(resp))
     stats = _get_direct_cache().get_stats()
     lines = ["ToolRecall Cache Status", "=" * 40]
@@ -304,7 +315,7 @@ def cache_invalidate() -> str:
     """
     client = _get_client()
     resp = client.send({"cmd": "cache_invalidate"})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp.get("result", "Cache invalidated via daemon")
     _get_direct_cache().invalidate_all()
     return "Cache invalidated (direct)"
@@ -318,7 +329,7 @@ def refresh_file(path: str) -> dict:
     """
     client = _get_client()
     resp = client.send({"cmd": "cache_refresh_file", "path": path})
-    if "error" not in resp or resp["error"] != "daemon_unavailable":
+    if not _is_daemon_down(resp):
         return resp
     return _get_direct_cache().refresh_file(path)
 

@@ -375,6 +375,14 @@ def _init(schema: str = ""):
                 )
             except sqlite3.OperationalError as e:
                 warnings.warn(f"ToolRecall: cache_stats column rename failed: {e}")
+        # Migration: v0.8.x → v0.8.20 — recall_cache.expires_at (GC purges
+        # expired recall entries; DBs created before the column existed made
+        # every GC run fail with "no such column", which also skipped VACUUM)
+        # NOTE: kept FIRST among table-specific migrations — it only depends
+        # on recall_cache existing, so it lands even on partial legacy DBs
+        # where later migrations (stderr/cwd on terminal_cache etc.) would
+        # abort on a missing table.
+        _add_column(conn, "recall_cache", "expires_at REAL")
         # Migration: v0.7.5 → v0.8.0 — add tokens_saved column
         _add_column(conn, "cache_stats", "tokens_saved INTEGER DEFAULT 0")
         # Migration: v0.8.x → v0.9.0 — add updated_at column for cache_stats freshness

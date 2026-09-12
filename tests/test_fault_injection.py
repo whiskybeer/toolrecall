@@ -10,7 +10,8 @@ never an empty/None result that downstream code would treat as a valid
 Scenarios:
   1. socket file missing          -> daemon_unavailable
   2. connect refused              -> daemon_unavailable
-  3. accept then hang (timeout)   -> daemon_unavailable
+  3. accept then hang (timeout)   -> daemon_timeout (honesty fix 2026-09-06:
+                                     a live-but-slow daemon is NOT "unavailable")
   4. EOF before length prefix     -> Empty response
   5. EOF mid-payload (truncated)  -> Empty response (not garbage parse)
   6. oversized length prefix      -> Message too large + socket drained
@@ -20,6 +21,8 @@ Scenarios:
  10. ping() returns False on every fault above (connectivity check)
  11. response after delay within timeout (slow-but-alive daemon) -> succeeds
  12. empty payload with correct prefix -> Empty response
+ 13. RST before response          -> daemon_connection_dropped (honesty fix:
+                                     distinguishable from a dead daemon)
 """
 
 import os
@@ -92,9 +95,8 @@ class FaultyServer:
                 conn.close()
             elif self.mode == "reset":
                 # RST: close WITHOUT reading the request. Client's sendall
-                # hits ECONNRESET -> mapped to daemon_unavailable (indistin-
-                # guishable from a daemon that never existed — a documented
-                # consequence of the coarse OSError mapping in send()).
+                # hits ECONNRESET -> daemon_connection_dropped (honesty fix
+                # 2026-09-06: previously conflated with daemon_unavailable).
                 conn.close()
             elif self.mode == "eof_mid_payload":
                 # Send a valid length prefix claiming a large payload, then
@@ -172,11 +174,17 @@ class TestTransportFaultInjection(unittest.TestCase):
         os.unlink(self.sock_path)
 
     def test_hang_times_out(self):
-        """Daemon accepts but never responds -> daemon_unavailable within timeout."""
+        """Daemon accepts but never responds -> daemon_timeout within timeout.
+
+        Honesty fix 2026-09-06: previously reported as daemon_unavailable,
+        which made a busy-but-healthy daemon look dead and triggered
+        pointless restarts (cache_status queued behind multi-MB inserts).
+        """
         t0 = time.monotonic()
         resp = self._serve_and_send("hang", timeout=0.5)
         elapsed = time.monotonic() - t0
-        self.assertEqual(resp, {"error": "daemon_unavailable"})
+        self.assertEqual(resp["error"], "daemon_timeout")
+        self.assertIn("detail", resp)  # explanation payload present
         self.assertLess(elapsed, 3.0)  # must respect the caller's timeout
 
     def test_slow_daemon_within_timeout_succeeds(self):
@@ -193,11 +201,11 @@ class TestTransportFaultInjection(unittest.TestCase):
 
     def test_rst_before_response(self):
         """Abortive close (RST, daemon killed before reading request) ->
-        daemon_unavailable. Documented ambiguity: send() maps all OSError
-        to daemon_unavailable, so RST-mid-request looks identical to a
-        daemon that never existed."""
+        daemon_connection_dropped. Honesty fix 2026-09-06: previously mapped
+        to daemon_unavailable (documented ambiguity) — a dropped connection
+        is now distinguishable from a daemon that never existed."""
         resp = self._serve_and_send("rst")
-        self.assertEqual(resp, {"error": "daemon_unavailable"})
+        self.assertEqual(resp, {"error": "daemon_connection_dropped"})
 
     def test_eof_mid_payload(self):
         """Daemon dies mid-payload -> Empty response (no garbage parse)."""

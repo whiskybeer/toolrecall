@@ -246,25 +246,40 @@ class TransportClient:
         pass
 
     def send(self, payload: dict, timeout: float = 5.0) -> dict:
-        """Send a request and receive response."""
+        """Send a request and receive response.
+
+        Error honesty: a *connect* failure means the daemon is down
+        (``daemon_unavailable``); a *response* timeout means the daemon is
+        alive but slow (``daemon_timeout``) — historically both were
+        reported as ``daemon_unavailable``, which made a busy daemon
+        (e.g. cache_status queued behind multi-MB cached_read inserts)
+        look down and sent operators restarting a healthy service.
+        """
         try:
             sock = create_socket(self._path)
             sock.settimeout(timeout)
-            connect_socket(sock, self._path)
+            try:
+                connect_socket(sock, self._path)
+            except (ConnectionRefusedError, FileNotFoundError, OSError):
+                sock.close()
+                return {"error": "daemon_unavailable"}
             send_message(sock, payload)
             resp = receive_message(sock)
             sock.close()
             if resp is None:
                 return {"error": "Empty response"}
             return resp
-        except (
-            ConnectionRefusedError,
-            FileNotFoundError,
-            socket.timeout,
-            OSError,
-            ConnectionResetError,
-            BrokenPipeError,
-        ):
+        except socket.timeout:
+            return {
+                "error": "daemon_timeout",
+                "detail": (
+                    f"daemon alive but no response within {timeout}s — "
+                    "likely busy (large reads / lock contention)"
+                ),
+            }
+        except (ConnectionResetError, BrokenPipeError):
+            return {"error": "daemon_connection_dropped"}
+        except OSError:
             return {"error": "daemon_unavailable"}
         except Exception as e:
             return {"error": str(e)}
