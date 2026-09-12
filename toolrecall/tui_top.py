@@ -58,6 +58,14 @@ HELP_TEXT = [
     "r         force refresh now",
     "q / esc   quit",
     "",
+    "METRIC TIERS (don't conflate):",
+    "  IO      — hits/rate, tokens served cache vs disk: latency only,",
+    "            NOT money. Content reaches the LLM either way.",
+    "  CONTEXT — tokens_not_sent_to_llm: input tokens dropped from the",
+    "            LLM context (checkpoint flow; 0 = flow inactive).",
+    "  MONEY   — billed input/output tokens: only from provider usage",
+    "            via the API proxy. No proxy traffic = no data.",
+    "",
     "Data: daemon UDS when up, read-only SQLite fallback when down.",
     "Actions need the daemon; they are safe (no cache-wide invalidation).",
 ]
@@ -317,7 +325,7 @@ def render_plain(snapshot: dict) -> str:
     lines.append("")
     lines.append(
         "%-14s %8s %8s %7s %12s %10s"
-        % ("cache", "hits", "misses", "rate", "tokens-srvd", "last-act")
+        % ("cache [IO]", "hits", "misses", "rate", "IO-offload", "last-act")
     )
     for cat in CATEGORIES:
         c = st.get(cat)
@@ -492,7 +500,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             y = put(
                 y,
                 " %-14s %9s %9s %7s %12s %10s"
-                % ("cache", "hits", "misses", "rate", "tokens-srvd", "last-act"),
+                % ("cache [IO]", "hits", "misses", "rate", "IO-offload", "last-act"),
                 A_BOLD,
             )
             if not any(cat in st for cat in CATEGORIES):
