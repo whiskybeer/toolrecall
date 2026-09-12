@@ -63,9 +63,9 @@ sequenceDiagram
 | `context_get_stats` | Full status — current dirty list and checkpoint | `{}` | `{dirty: [...], clean: [...], checkpoint: N, total_files: N}` |
 | `context_reset` | Clear all checkpoints and dirty state | `{}` | `{reset: true, checkpoint: 0}` |
 
-### Auto-Hint: Every Tool Response Includes Context Guidance
+### Auto-Hint: Context Guidance After Checkpoint Opt-In
 
-The MCP bridge automatically calls `context_get_hint` after every tool call (except context tools themselves) and appends the hint to the result. This means **every tool response** tells the agent what to drop from context:
+The MCP bridge calls `context_get_hint` after every tool call (except context tools themselves) and appends the hint to the result — **but only after the client has called `context_set_checkpoint` at least once** (checkpoint opt-in, per-client policy since `c66b16c`). Agents that never call the context tools — e.g. Claude Code — get no hint text at all, so append-only harnesses pay zero hint overhead. Once an agent demonstrates the checkpoint pattern, every tool response tells it what to drop from context:
 
 ```
 🧹 Drop these clean files from context (re-read from cache if needed):
@@ -302,6 +302,7 @@ flowchart TB
 | **Do nothing** | ❌ None | Zero | — |
 | **Manual `/compress`** | ⚠️ One-time reduction | CLI command per session | Hermes only |
 | **Context Tracker + TR cache** | ✅ **~90% reduction, bounded context** | ~500 LOC, 4 MCP tools | ToolRecall daemon |
+| **Anthropic context editing** (`clear_tool_uses_20250919`) | ✅ Bounded tool-result growth (harness-side) | Zero config; server-side clearing | API caller opts in; threshold/keep-N selection only — no per-file clean/dirty targeting |
 | **Semantic compression** | ⚠️ Depends on quality, loses detail | LLM call per compress | Auxiliary model |
 | **Provider-side caching** | ⚠️ Only input token cost, not compute | Zero (automatic) | Byte-identical payloads |
 | **Reset session** | ✅ 100% (but start over) | Manual | Start from scratch |
@@ -317,6 +318,7 @@ flowchart TB
 | **Content hash vs mtime:** Dirty detection uses mtime (path-based), not content hash. Two writes with identical content that restore the original mtime would not appear dirty. | Very low | Writing identical content is an edge case. Even if it happens, the agent would re-read from cache — same content, no harm. |
 | **`cached_terminal` with state-changing commands:** `terraform apply`, `npm install` change many files. TR can't know which ones. | Medium | Documented. Agent should checkpoint after such commands. |
 | **Multiple agents sharing one daemon:** If two agents write the same file, both see it as dirty, but each only knows about their own checkpoints. | Low | Multi-agent scenarios must coordinate checkpoints or use separate daemons. |
+| **No external transcript pruning in append-only harnesses:** the tracker's signal is only actionable in harnesses that let the agent rewrite its own message array. Claude Code hooks cannot prune earlier tool results (verified against current docs), and Anthropic's API context editing (`clear_tool_uses_20250919`) accepts only threshold/keep-N selection — no clean/dirty input. In those harnesses the tracker is inert; hints are off by default (checkpoint opt-in, `c66b16c`). | High for Claude Code-class agents | Use Anthropic's native context editing there; reserve the tracker for prunable harnesses (Hermes). See [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md). |
 
 
 

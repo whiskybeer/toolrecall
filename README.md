@@ -167,7 +167,7 @@ The Context Tracker records which files were **written** (made *dirty*) since a 
 | **Clean** | Read but not modified | **Drop from context**, re-read from cache if needed |
 | **Untracked** | Never read | Not in context — no action |
 
-**Available in the MCP Bridge as five tools** — `context_set_checkpoint`, `context_get_dirty`, `context_get_stats`, `context_reset`, `context_get_hint`. The bridge **auto-appends a hint to every tool response** telling the agent which clean files to drop, so no agent-side config is required beyond the pattern.
+**Available in the MCP Bridge as five tools** — `context_set_checkpoint`, `context_get_dirty`, `context_get_stats`, `context_reset`, `context_get_hint`. The bridge **auto-appends a drop hint to tool responses after the agent's first `context_set_checkpoint` call** (checkpoint opt-in), telling it which clean files to drop — agents that never checkpoint (e.g. Claude Code) see no hint text. No agent-side config is required beyond the pattern.
 
 **Measured, not modeled.** On real runs (Hermes agent, DeepSeek V4 Flash — a model with prefix caching already on), the tracker sent **9.5× fewer request tokens per turn** (8,077 vs 76,430 at turn 10) and the session ran **7.4× longer** (140 vs 19 turns) before hitting the context wall. Because it shrinks the context window itself — not just what the provider caches — the benefit holds for **prefix and non-prefix models alike**.
 

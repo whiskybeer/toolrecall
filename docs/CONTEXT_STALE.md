@@ -87,7 +87,7 @@ The interface is file paths — deliberately. No `tool_use` IDs, no provider con
 **The honest hard part:** mapping a path back to the block of your conversation that holds its content. ToolRecall cannot do this for you, because it never sees your conversation. How you do it depends on your harness:
 
 - **Custom loop** — you control serialisation, so you already know which message carries which file.
-- **Anthropic `clear_tool_uses`** — keep a `{path: tool_use_id}` map at read time, then pass the matching IDs. ToolRecall tells you *which* files are wrong; the mapping is yours.
+- **Anthropic context editing (`clear_tool_uses_20250919`)** — clears old tool results server-side, but selection is threshold / keep-N only (`trigger` / `keep` / `clear_at_least` / `exclude_tools`): you cannot pass specific `tool_use_id`s, and the clearing decision cannot be driven by "this file is stale/clean" signals. ToolRecall tells you *which* files are wrong; the clearing decision itself stays with the API caller. If you control the caller, wire the stale signal into your own pre-call message rewrite — that is the only per-file path.
 - **MCP agent** — the `=== stale-files ===` block appears in tool output. The model can act on it directly, or your wrapper can regex it out.
 - **Human in a chat UI** — read the list, delete the outdated paste.
 

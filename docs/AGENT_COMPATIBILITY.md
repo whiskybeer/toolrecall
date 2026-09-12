@@ -134,7 +134,7 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 |---------|---------|----------|
 | **Forward Proxy** | ✅ Verified — saves real cost | Orthogonal to tool loop |
 | **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
-| **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | See §3 of the [full A/B test report](https://gist.github.com/whiskybeer/...) |
+| **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | Numbers and methodology in "The Numbers" and "Root causes" below |
 | **Context tracker** | ❌ No benefit — but now silent by default (see below) | Same report; opt-in mechanism in `c66b16c` |
 
 ### The Numbers
@@ -184,6 +184,31 @@ tools, so:
 The tracker still provides **no benefit** to Claude Code: an append-only
 harness cannot act on drop-clean instructions, so hints would be inert even
 if emitted. The gain here is removal of overhead, not a new capability.
+
+### Why there is no fix from ToolRecall's side (verified against the platform docs)
+
+The tracker's clean/dirty decision engine is sound; the blocker is that no
+external surface can act on it in Claude Code:
+
+- **Hooks cannot prune retroactively.** Every Claude Code hook is
+  forward-looking or observational: `PreToolUse` can modify a tool *input*,
+  `PostToolUse` can only *add* context via `additionalContext` (the wrong
+  direction). No hook can remove or rewrite a `tool_result` from an earlier
+  turn.
+- **API context editing is harness-owned.** Anthropic's `clear_tool_uses_20250919`
+  (context-management beta) does clear old tool results server-side — but only
+  the API caller (Claude Code itself) can set it, and selection is
+  threshold / keep-N (`trigger`, `keep`, `clear_at_least`, `exclude_tools`);
+  it deliberately accepts no per-file clean/dirty signal.
+
+So the only layer that can cut the token bill in an append-only harness —
+retroactive transcript pruning — belongs to the harness/API and takes no
+external input. **If you want this class of savings in Claude Code, turn on
+Anthropic's context editing / let Claude Code compact** — that is the native
+version of what the tracker provides, and it is the better tool there. The
+tracker's value stays in harnesses where the agent prunes its own context
+(e.g. Hermes). See also [CONTEXT_STALE.md](CONTEXT_STALE.md) for the
+file-level stale signal ToolRecall exposes to harnesses that *can* use it.
 
 ### What to Use Instead
 
