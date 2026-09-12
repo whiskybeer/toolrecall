@@ -244,8 +244,16 @@ class TransportClient:
         return _is_tcp(self._path)
 
     def _network_auth_enabled(self) -> bool:
-        """HMAC handshake needed for this client?"""
-        return self.is_tcp and bool(os.environ.get("TOOLRECALL_NETWORK_TOKEN"))
+        """HMAC handshake needed for this client?
+
+        True when a token is set. ALSO true (probe-mode) on any tcp://
+        connection: an A6 network daemon opens with a 32-byte nonce; a
+        legacy/no-token client would misread that nonce as a 4-byte
+        length prefix and report a nonsense error ('Message too large').
+        The probe keeps the no-token error honest ('network_auth_rejected'
+        — the daemon requires a token) instead of a framing artifact.
+        """
+        return self.is_tcp
 
     def _connect(self, sock: socket.socket, timeout: float) -> socket.socket:
         """Connect (+TLS wrap +HMAC handshake when configured).
@@ -271,8 +279,8 @@ class TransportClient:
             ctx = nt.client_context(verify=True, ca_path=ca)
             host, _port = _parse_tcp(self._path)
             sock = nt.wrap_client(sock, ctx, server_hostname=host if ca else None)
-        token = os.environ["TOOLRECALL_NETWORK_TOKEN"].encode()
-        na.client_handshake(sock, token)
+        token = os.environ.get("TOOLRECALL_NETWORK_TOKEN", "")
+        na.client_handshake(sock, token.encode())
         return sock
 
     def close(self):

@@ -37,8 +37,14 @@ def _serve_once_or_loop(srv: socket.socket, handler, stop: threading.Event):
 
 class TestLegacyBehavior:
     def test_no_token_no_handshake(self, monkeypatch):
-        """Without TOOLRECALL_NETWORK_TOKEN, send() must not attempt an
-        HMAC handshake — Windows loopback TCP has no auth."""
+        """Without TOOLRECALL_NETWORK_TOKEN, a LEGACY tcp:// peer (Windows
+        loopback, plain framed IPC, no nonce) still works: the client's
+        handshake probe reads the FIRST bytes and — because they are not
+        a 32-byte nonce (framed v1 message starts with a 4-byte length
+        prefix of a small value) — falls through to plain framed mode.
+        Against an A6 daemon (nonce first), the probe authenticates or
+        reports network_auth_rejected honestly (see test_no_token_against_
+        network_daemon)."""
         monkeypatch.delenv("TOOLRECALL_NETWORK_TOKEN", raising=False)
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.bind(("127.0.0.1", 0))
@@ -63,6 +69,36 @@ class TestLegacyBehavior:
         srv.close()
         assert resp.get("pong") is True
         assert got["req"]["cmd"] == "ping"
+
+    def test_no_token_against_network_daemon(self, monkeypatch):
+        """No token + A6 daemon (nonce-first): the client must NOT report a
+        framing artifact ('Message too large') — it reports
+        network_auth_rejected. Found in live testing 2026-09-08."""
+        monkeypatch.delenv("TOOLRECALL_NETWORK_TOKEN", raising=False)
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(4)
+        port = srv.getsockname()[1]
+        stop = threading.Event()
+        got = {"rejected": 0}
+
+        def handler(conn):
+            from toolrecall import network_auth as na
+
+            try:
+                na.server_handshake(conn, {b"real": "x"})
+            except na.AuthError:
+                got["rejected"] += 1
+
+        t = threading.Thread(target=_serve_once_or_loop, args=(srv, handler, stop), daemon=True)
+        t.start()
+        c = TransportClient(f"tcp://127.0.0.1:{port}")
+        resp = c.send({"cmd": "ping"})
+        stop.set()
+        t.join(timeout=3)
+        srv.close()
+        assert resp.get("error") == "network_auth_rejected", resp
+        assert got["rejected"] == 1
 
 
 class TestNetworkHandshake:

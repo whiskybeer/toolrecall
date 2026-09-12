@@ -34,6 +34,7 @@ from __future__ import annotations
 import hmac
 import secrets
 import socket
+import ssl
 import threading
 from collections import OrderedDict
 
@@ -218,8 +219,37 @@ def client_handshake(
     """
     if isinstance(token, str):
         token = token.encode("utf-8")
-    conn.settimeout(timeout)
+    # Peer discrimination (live-test finding, 2026-09-08): an A6 daemon
+    # SPEAKS FIRST (32-byte nonce), a legacy framed peer (Windows loopback,
+    # no auth) WAITS for our frame. Peek with a short window:
+    #   - nonce bytes arrive fast  -> A6 daemon: run the HMAC greeting.
+    #   - nothing within 0.25s     -> legacy peer waiting for our request:
+    #     return without sending handshake bytes; plain framing proceeds.
+    # (Both-wait deadlock otherwise: we peek, they recv, 3s timeout, error.)
+    conn.settimeout(0.25)
     try:
+        if not isinstance(conn, ssl.SSLSocket):
+            try:
+                peek = conn.recv(NONCE_SIZE, socket.MSG_PEEK)
+            except ValueError:
+                # Some socket flavors don't support MSG_PEEK — treat as A6.
+                peek = b""
+            if len(peek) >= 4 and len(peek) < NONCE_SIZE and peek[:1] != b"\x01":
+                import struct as _s
+
+                (declared,) = _s.unpack("!I", peek[:4])
+                if declared <= 1024 * 1024:
+                    # Framed-IPC length prefix, not a nonce: legacy peer.
+                    conn.settimeout(None)
+                    return
+    except (socket.timeout, TimeoutError):
+        # No first-speaker within 0.25s: a legacy framed peer waiting for
+        # our request. Plain mode — the caller sends/receives frames
+        # directly. (An A6 daemon ALWAYS sends its nonce immediately.)
+        conn.settimeout(None)
+        return
+    try:
+        conn.settimeout(AUTH_WINDOW_S)
         nonce = _recv_exact(conn, NONCE_SIZE)
         conn.sendall(client_greeting(token, nonce))
         verdict = _recv_exact(conn, 1)
