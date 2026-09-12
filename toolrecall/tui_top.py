@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import curses
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -299,6 +300,56 @@ def money_today(usage_csv: str | None = None) -> dict | None:
         # (pre-v2 rows, estimate fallbacks) — report None, not $0.00.
         "cost_usd": cost if cost_rows else None,
     }
+
+
+def blocked_reads_today(log_path: str | None = None) -> list[dict]:
+    """Blocked reads today (sensitive-file / policy-denied), from the
+    daemon log. Bounded tail (8k lines), today only, deduped per path
+    with count + current size (content never reached the LLM — the
+    size shown is what the security gate kept out).
+    """
+    path = log_path or os.path.join(
+        os.path.expanduser("~"), ".toolrecall", "logs", "toolrecall.log"
+    )
+    if not os.path.isfile(path):
+        return []
+    day_start = time.mktime(time.strptime(time.strftime("%Y-%m-%d"), "%Y-%m-%d"))
+    blocked: dict[str, dict] = {}
+    try:
+        with open(path, errors="replace") as f:
+            tail = f.readlines()[-8000:]
+    except OSError:
+        return []
+    rx = re.compile(
+        r"^(\S+ \S+) \w+ toolrecall\.\w+ "
+        r"(?:Blocked read of sensitive file: (.+?) \(matched"
+        r"|Blocked path not in allowed_paths[^:]*: )(.+)$"
+    )
+    for line in tail:
+        if "Blocked" not in line:
+            continue
+        m = rx.match(line)
+        if not m:
+            continue
+        path = (m.group(2) or m.group(3) or "").strip()
+        if not path:
+            continue
+        try:
+            ts = time.mktime(time.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+        if ts < day_start:
+            continue
+        entry = blocked.setdefault(path, {"path": path, "count": 0, "last": 0.0})
+        entry["count"] += 1
+        entry["last"] = max(entry["last"], ts)
+    out = sorted(blocked.values(), key=lambda e: -e["count"])
+    for e in out:
+        try:
+            e["size_str"] = human_tokens(os.path.getsize(e["path"]))
+        except OSError:
+            e["size_str"] = "?"  # deleted or permission-denied — still blocked
+    return out
 
 
 def context_via_daemon() -> dict | None:
@@ -819,6 +870,43 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                         "  enter: refresh selected file   c: set checkpoint",
                         A_DIM,
                     )
+                # Blocked reads FIRST (security info outranks the hygiene list):
+                # sensitive/policy-denied content the security gate refused —
+                # never sent to the LLM. From the daemon log (today, bounded).
+                blocked = blocked_reads_today()
+                if blocked:
+                    n_blocked = sum(b["count"] for b in blocked)
+                    y = put(
+                        y + 1,
+                        "  blocked reads today (never sent to LLM): %d across %d paths"
+                        % (n_blocked, len(blocked)),
+                        A_BOLD,
+                    )
+                    for b in blocked[:4]:
+                        y = put(
+                            y,
+                            "    %4dx  %8s  %s"
+                            % (b["count"], b["size_str"], b["path"][: max(24, max_x - 40)]),
+                            A_DIM,
+                        )
+                # Clean files with sizes (the drop candidates behind the
+                # ctx-dropped counter — size = what would stop being re-sent).
+                clean_paths = ctx.get("clean") or []
+                if clean_paths and max_y - y > 4:
+                    avail = max_y - y - 2
+                    shown = clean_paths[: max(1, avail)]
+                    y = put(
+                        y + 1,
+                        "  clean files (safe to drop; first %d of %d):"
+                        % (len(shown), len(clean_paths)),
+                        A_BOLD,
+                    )
+                    for p in shown:
+                        try:
+                            size_str = human_tokens(os.path.getsize(p))
+                        except OSError:
+                            size_str = "?"
+                        y = put(y, "    %8s  %s" % (size_str, p), A_DIM)
         elif view == "stats_footer":
             pass
 
