@@ -306,6 +306,31 @@ def _try_parse_usage(body: str) -> dict:
         return {}
 
 
+def _parse_sse_usage_tail(tail: bytes) -> dict:
+    """Extract the usage block from the tail of a relayed SSE stream. Never raises.
+
+    OpenAI-compatible providers that honor stream_options.include_usage emit
+    one final chunk whose data payload carries the real usage object (prompt,
+    completion, cost, cache breakdown). The tail is the last ~8KB of the
+    stream, so the usage chunk is in there whenever the provider sent one.
+    Returns {} when absent (non-SSE bodies, providers without usage) — the
+    caller then falls back to the request-size estimate.
+    """
+    try:
+        text = tail.decode("utf-8", "replace")
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if not line.startswith("data:") or line == "data: [DONE]":
+                continue
+            obj = json.loads(line[5:].strip())
+            usage = obj.get("usage")
+            if isinstance(usage, dict) and (usage.get("prompt_tokens") or usage.get("cost")):
+                return usage
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, TypeError):
+        pass
+    return {}
+
+
 def _csv_escape(s: str) -> str:
     """Escape a string for CSV — replace commas and newlines that would break columns."""
     return s.replace(",", ";").replace("\n", " ").replace("\r", " ")
@@ -318,6 +343,7 @@ def _log_proxy_usage(
     request_hash: str,
     body: str = "",
     prompt_tokens_override: int = 0,
+    usage: dict | None = None,
 ) -> None:
     """Append one usage row to the proxy_usage.csv log.
 
@@ -331,8 +357,12 @@ def _log_proxy_usage(
         request_hash: SHA-256 cache key (first 16 chars logged)
         body: response body to extract usage from (optional)
         prompt_tokens_override: if > 0, use this instead of parsing (for STREAM)
+        usage: pre-parsed provider usage dict (from a stream's final SSE
+            chunk). Takes precedence over body parsing; empty/None falls
+            back to body parsing, then prompt_tokens_override.
     """
-    usage = _try_parse_usage(body)
+    if usage is None:
+        usage = _try_parse_usage(body)
     pt = (
         prompt_tokens_override
         if prompt_tokens_override > 0
@@ -1102,6 +1132,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         for k, v in self.headers.items():
             if k.lower() not in skip_headers:
                 headers[k] = v
+        # Last bytes of the relayed stream, for post-stream usage parsing.
+        # Bound before the try so the usage-log block after `except` can
+        # always reference it (empty → estimate fallback path).
+        usage_tail = b""
 
         try:
             conn.request(method, path, body=body or None, headers=headers)
@@ -1126,6 +1160,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # Relay body chunk by chunk — SSE lines or raw bytes.
             # With canonical_profile: tee chunks for later cache store.
             tee_buf: list[bytes] = []
+            # Usage-tail capture: providers that honor stream_options.include_usage
+            # (OpenAI-compatible: OpenRouter, DeepSeek, OpenAI, ...) emit ONE final
+            # SSE chunk carrying the real usage block. Buffer a small sliding tail
+            # so we can parse it after the relay — billed truth replaces the old
+            # len(body)//4 prompt estimate and the always-0 completion column.
+            usage_tail = b""
             while True:
                 chunk = resp.read(4096)
                 if not chunk:
@@ -1134,6 +1174,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
                 if canonical_profile:
                     tee_buf.append(chunk)
+                usage_tail = (usage_tail + chunk)[-8192:]
 
             conn.close()
 
@@ -1153,22 +1194,36 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        # Log STREAM usage — prompt tokens estimated from request body,
-        # completion tokens unavailable (SSE chunks, not parseable here).
+        # Log STREAM usage. Billed truth when the provider emitted a final
+        # usage chunk (OpenAI-compatible include_usage); otherwise fall back
+        # to the len(body)//4 request-size estimate (completion stays 0).
         import hashlib
 
         stream_body_hash = hashlib.sha256(body).hexdigest() if body else ""
         pt_est = max(1, len(body) // 4) if body else 0
+        usage = _parse_sse_usage_tail(usage_tail)
         log.info(
-            "STREAM: %s %s%s (body=%d bytes, ~%d est prompt tokens)",
+            "STREAM: %s %s%s (body=%d bytes, %s)",
             method,
             host,
             path,
             len(body or b""),
-            pt_est,
+            (
+                f"billed p={usage.get('prompt_tokens', 0)} c={usage.get('completion_tokens', 0)}"
+                if usage
+                else f"~{pt_est} est prompt tokens, no usage chunk"
+            ),
         )
         _log_proxy_usage(
-            "STREAM", host, path, request_hash=stream_body_hash, prompt_tokens_override=pt_est
+            "STREAM",
+            host,
+            path,
+            request_hash=stream_body_hash,
+            usage=usage,
+            # Estimate fallback: when the provider sent no usage chunk, keep
+            # the historical len(body)//4 prompt approximation so the row
+            # still carries a nonzero magnitude.
+            prompt_tokens_override=pt_est if not usage else 0,
         )
 
     def _replay_stream_from_cache(

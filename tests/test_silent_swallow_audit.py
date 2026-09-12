@@ -44,7 +44,11 @@ FROZEN_COUNTS = {
     "mcp_bridge.py": 4,
     "mcp_cache_fs.py": 3,
     "normalizer.py": 1,
-    "proxy.py": 2,
+    # 4 as of 2026-09-10 (stream usage truth): +1 in _parse_sse_usage_tail —
+    # best-effort parse of the final SSE chunk's usage block. Any malformed
+    # tail must degrade to {} so the caller falls back to the byte estimate;
+    # the swallow carries no signal (usage absence is a normal provider case).
+    "proxy.py": 4,
     "shim.py": 4,
     "tui_top.py": 5,  # TUI fail-soft (was 2): 9f1a0d5 added WAL-snapshot fallback
     # handlers without a baseline bump — OSError on sidecar copy (missing -wal
