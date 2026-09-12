@@ -14,12 +14,18 @@ from toolrecall.resilience import CircuitBreaker, CircuitBreakerOpen, Coalescer,
 
 class TestCoalescer(unittest.TestCase):
     def test_n_callers_one_execution(self):
-        c = Coalescer()
+        c = Coalescer(window=30)
         calls = []
+        start = threading.Event()
 
         def producer():
             calls.append(1)
-            time.sleep(0.05)  # widen the race window
+            # Hold the flight open until every caller has entered run():
+            # a thread arriving AFTER the winner completes is a NEW
+            # request and legitimately re-executes. Without this gate the
+            # test is a race under heavy parallel-suite load (threads can
+            # be scheduled late).
+            start.wait(timeout=5)
             return "result"
 
         results = []
@@ -33,8 +39,11 @@ class TestCoalescer(unittest.TestCase):
         threads = [threading.Thread(target=caller) for _ in range(10)]
         for t in threads:
             t.start()
+            # Give each thread time to enter run() and register as waiter
+            time.sleep(0.02)
+        start.set()  # release the winner now that all are registered
         for t in threads:
-            t.join()
+            t.join(timeout=10)
 
         self.assertEqual(len(calls), 1, "producer must execute exactly once")
         self.assertEqual(results, ["result"] * 10)
