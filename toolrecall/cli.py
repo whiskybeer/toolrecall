@@ -1727,17 +1727,21 @@ def _attach_hermes_to_proxy() -> tuple[bool, str]:
     with open(cfg_path) as f:
         lines = f.readlines()
 
-    # locate the llm: section's base_url line (first base_url after 'llm:')
+    # locate the primary LLM section's base_url line. Hermes uses `model:`
+    # as the top-level key (with llm: as legacy alias); also match `llm:`
+    # for older configs. The FIRST matching top-level section wins.
+    section_keys = ("model:", "llm:")
     in_llm = False
     target_idx = None
     current_url = ""
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith("llm:") and line.startswith("llm:"):
+        if any(line.startswith(k) for k in section_keys) and stripped.endswith(":"):
             in_llm = True
             continue
         if in_llm and line and not line[0].isspace():  # next top-level key
-            break
+            in_llm = False
+            continue
         if in_llm and stripped.startswith("base_url:"):
             target_idx = i
             current_url = stripped.split(":", 1)[1].strip().strip("'\"")
