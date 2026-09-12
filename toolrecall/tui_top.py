@@ -460,7 +460,24 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             )
             if not any(cat in st for cat in CATEGORIES):
                 db_path = snap.get("db", "?")
-                if not os.path.exists(db_path):
+                other_db = "/home/hermes/.toolrecall/cache.db"
+                if not os.path.exists(db_path) and os.path.exists(other_db):
+                    # Classic multi-user box: the daemon runs as another user
+                    # (its state is private to that user), we run as someone
+                    # else. Say so instead of a bare 'no data'.
+                    y = put(
+                        y + 1,
+                        "  no cache data for user '%s' — but %s exists (owned by another user)"
+                        % (os.environ.get("USER", "?"), other_db),
+                        A_MISS,
+                    )
+                    y = put(
+                        y + 1,
+                        "  (daemon state is per-user; view it as that user: sudo -u hermes -i toolrecall top,"
+                        " or copy the db)",
+                        A_DIM,
+                    )
+                elif not os.path.exists(db_path):
                     y = put(
                         y + 1,
                         "  no cache data on this machine: %s does not exist" % db_path,
