@@ -404,6 +404,7 @@ enabled = false   # opt-in Recall Tier (lossless-recoverable eviction)
   - [Odysseus](docs/odysseus.md) — `cached_tool` decorator + MCP server caching
 - [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes
 - [Normalizer](docs/NORMALIZER.md) — cache key normalization, deterministic JSON
+- [Canonicalization](docs/CANONICALIZATION.md) — request-body canonicalization (warp profile): volatile-field stripping for cross-session replay, experiment status + known risks
 - [Knowledge DB](docs/KNOWLEDGE_DB.md) — FTS5 indexing guide
 - [Real-Agent Benchmark](docs/REAL_AGENT_BENCHMARK.md) — edit-heavy session results
 - [Appendix](docs/APPENDIX.md) — comparison tables, OSI model, ROI, audit

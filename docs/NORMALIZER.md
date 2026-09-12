@@ -79,7 +79,7 @@ Or during `toolrecall init` — the interactive setup prompts you with a detaile
 ## What It Does NOT Do
 
 - **No semantic embeddings** — this is pure deterministic normalization (sorting, stripping, lowercasing). It does not use any ML model.
-- **No false positives** — because it's deterministic, two different arguments never collide. The same input always produces the same key, and different inputs always produce different keys.
+- **No semantic merging** — normalization maps *the same call, formatted differently* to one key. It never merges two semantically different calls; that category of feature (with its real false-positive risk) exists separately as the [warp request-canonicalization profile](CANONICALIZATION.md) and is gated behind its own experiment status.
 - **No data modification** — normalization only affects the cache key. The actual cached response is stored and returned as-is.
 
 ## Canonical Commands (`[norm].canonical_commands`)
