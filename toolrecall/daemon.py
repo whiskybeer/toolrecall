@@ -1193,10 +1193,31 @@ class DaemonServer:
         self.security = SecurityGate(self.cfg)
         self.multiplexer = MCPMultiplexer(self.cfg)
         self._context = ContextTracker(ignore_prefixes=self.cfg.tracker_ignore_read_prefixes)
+        # Restore persisted tracker state (option A): keeps the checkpoint
+        # flow alive across daemon restarts instead of resetting it. TTL
+        # gated ([tracker].persist_ttl, default 6h — a read set from a
+        # previous session must not describe this session's context) and
+        # mtime re-validated inside restore(). Fail-soft: any problem
+        # leaves the fresh in-memory tracker as before.
+        try:
+            _restored = self._context.restore(ttl=self.cfg.tracker_persist_ttl)
+            if _restored.get("restored"):
+                self.logger.info(
+                    "tracker restored from persisted state: %s paths, %s dirty, cp=%s",
+                    _restored.get("paths", 0),
+                    _restored.get("dirty", 0),
+                    _restored.get("reason", "?"),
+                )
+        except Exception as e:  # noqa: BLE001 — restore is an optimization, never a boot gate
+            warnings.warn(f"ToolRecall: tracker state restore skipped: {e}")
         # Startup checkpoint: banks nothing (read set is empty) and does
         # NOT arm the flow — armed only becomes true on an agent-driven
         # checkpoint, so the TUI can distinguish "daemon restarted" from
-        # "flow actively driven".
+        # "flow actively driven". AFTER restore(): the restored state keeps
+        # its checkpoint counter/armed flag, and this call banks nothing
+        # extra (a restored read set that was already banked is guarded by
+        # the restored _banked set; a restored-but-unbanked read set banks
+        # exactly once here, same as it would have on the pre-restart side).
         self._context.set_checkpoint(name="daemon_start", armed=False)
         self._server = None
         self._running = False
@@ -1239,6 +1260,14 @@ class DaemonServer:
                 if not self._running:
                     return
                 time.sleep(1)
+            # Tracker snapshot piggybacks on this cadence (crash insurance):
+            # a SIGKILL/OOM only loses the last 60s of read/dirty tracking,
+            # not the whole flow. Must run BEFORE db_checkpoint so the row
+            # is inside the WAL that's about to be merged.
+            try:
+                self._context.snapshot()
+            except Exception as e:  # noqa: BLE001 — insurance, never break the loop
+                self.logger.debug("periodic tracker snapshot failed: %s", e)
             try:
                 db_checkpoint(truncate=True)
             except Exception:
@@ -1626,6 +1655,21 @@ class DaemonServer:
         self._running = False
         if self._executor:
             self._executor.shutdown(wait=False)
+        # Tracker snapshot (option A) BEFORE the WAL checkpoint: the row is
+        # written through _db(), and the truncate-checkpoint below merges
+        # those WAL frames into the main DB — so the tracker state survives
+        # even if -wal/-shm sidecars are later unlinked by a competitor.
+        try:
+            _snap = self._context.snapshot()
+            if _snap.get("saved"):
+                self.logger.info(
+                    "tracker snapshot saved: %s read paths, %s dirty, cp=%s",
+                    _snap.get("paths", 0),
+                    _snap.get("dirty", 0),
+                    _snap.get("checkpoint", 0),
+                )
+        except Exception as e:  # noqa: BLE001 — shutdown must never abort on snapshot failure
+            warnings.warn(f"ToolRecall: tracker snapshot failed during shutdown: {e}")
         # Durability: merge WAL frames into the main DB before we unlink
         # anything or exit, so every committed cache entry survives the
         # daemon's shutdown — even if the -wal/-shm sidecars were unlinked

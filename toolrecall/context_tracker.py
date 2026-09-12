@@ -27,8 +27,10 @@ Thread safety:
 """
 
 import fnmatch
+import json
 import os  # noqa: E402 (needed by mark_dirty/mark_read below — see note at file end)
 import time
+import warnings
 from threading import RLock
 
 # ─── Hint emission safety ─────────────────────────────────
@@ -174,6 +176,192 @@ class ContextTracker:
         self._read_seq: dict[str, int] = {}
         self._write_seq: dict[str, int] = {}
         self._lock = RLock()
+
+    # ─── Persistence (option A): snapshot / restore via _db() ──────
+    #
+    # The tracker was purely in-memory — every daemon restart reset the
+    # checkpoint flow and the agent had to re-arm it. Snapshot state is
+    # persisted into the same SQLite DB the caches use (tracker_state
+    # table, singleton row, JSON payload) through the shared _db() lock;
+    # restore on boot is gated by a TTL and re-validates read-set mtimes.
+
+    def snapshot(self) -> dict:
+        """Serialize tracker state into the shared DB (tracker_state row).
+
+        Called on graceful daemon shutdown and periodically (crash
+        insurance). Best-effort by design: any DB failure logs a warning
+        and returns {"saved": False, ...} — persistence must never break
+        the daemon's stop path. The JSON payload carries everything
+        restore() needs: read set (path → mtime at read time), dirty map,
+        read/write sequence numbers, banked-once guard set, banked token
+        total, checkpoint counter, and the armed flag.
+
+        Returns:
+            {"saved": bool, "paths": int, "dirty": int, "checkpoint": int}
+        """
+        with self._lock:
+            payload: dict = {
+                "checkpoint_counter": self._checkpoint_counter,
+                "armed": self._agent_armed,
+                "ctx_dropped_tokens": self._ctx_dropped_tokens,
+                "seq": self._seq,
+                # Sorted for deterministic payloads (easier diffing in tests).
+                "read_set": {p: self._read_set[p] for p in sorted(self._read_set)},
+                "dirty": {p: self._dirty[p] for p in sorted(self._dirty)},
+                "read_seq": {p: self._read_seq[p] for p in sorted(self._read_seq)},
+                "write_seq": {p: self._write_seq[p] for p in sorted(self._write_seq)},
+                "banked": sorted(self._banked),
+            }
+        saved_at = time.time()
+        try:
+            from toolrecall._db import _db
+
+            with _db() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS tracker_state ("
+                    "id INTEGER PRIMARY KEY CHECK (id = 1),"
+                    "payload TEXT NOT NULL,"
+                    "saved_at REAL NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO tracker_state (id, payload, saved_at) VALUES (1, ?, ?)",
+                    (json.dumps(payload), saved_at),
+                )
+            read_n = len(payload["read_set"])
+            dirty_n = len(payload["dirty"])
+            return {
+                "saved": True,
+                "paths": read_n,
+                "dirty": dirty_n,
+                "checkpoint": payload["checkpoint_counter"],
+            }
+        except Exception as e:  # noqa: BLE001 — persistence must never break shutdown
+            warnings.warn(f"ToolRecall: tracker snapshot failed: {e}")
+            return {
+                "saved": False,
+                "paths": len(payload["read_set"]),
+                "dirty": len(payload["dirty"]),
+                "checkpoint": payload["checkpoint_counter"],
+            }
+
+    def restore(self, ttl: float = 21600.0) -> dict:
+        """Restore tracker state from the DB row written by snapshot().
+
+        Gates:
+          - TTL (seconds): a read set from yesterday describes files the
+            agent saw in a PREVIOUS session — restoring it across sessions
+            is wrong. Default 6h; 0 disables restore.
+          - Sensitive paths: never restored (defense in depth — cached_read
+            blocks them, but the snapshot predates the current blocklist).
+          - Read-set mtime re-validation: a file whose mtime changed after
+            the snapshot was written is no longer the content the agent
+            saw; it is dropped from the read set rather than reported
+            clean (which would invite a wrong drop).
+
+        Never arms the flow implicitly: the daemon's startup checkpoint
+        (armed=False) stays distinct from an agent-driven one, so the TUI
+        can still tell "restored, agent never checkpointed this boot" from
+        a live flow. If the snapshot says the flow WAS armed, the armed
+        flag is restored with it — that's exactly what persistence means.
+
+        Returns:
+            {"restored": bool, "reason": str, "paths": int, "dirty": int}
+            reason: "ok" | "no-state" | "ttl-expired" | "disabled" | "error"
+        """
+        if ttl <= 0:
+            return {"restored": False, "reason": "disabled", "paths": 0, "dirty": 0}
+        try:
+            from toolrecall._db import _db, _is_sensitive_path
+
+            with _db() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS tracker_state ("
+                    "id INTEGER PRIMARY KEY CHECK (id = 1),"
+                    "payload TEXT NOT NULL,"
+                    "saved_at REAL NOT NULL)"
+                )
+                row = conn.execute(
+                    "SELECT payload, saved_at FROM tracker_state WHERE id = 1"
+                ).fetchone()
+        except Exception as e:  # noqa: BLE001 — a broken DB must not break boot
+            warnings.warn(f"ToolRecall: tracker restore failed: {e}")
+            return {"restored": False, "reason": "error", "paths": 0, "dirty": 0}
+        if row is None:
+            return {"restored": False, "reason": "no-state", "paths": 0, "dirty": 0}
+        try:
+            payload = json.loads(row["payload"])
+            saved_at = float(row["saved_at"])
+        except (ValueError, TypeError, KeyError):
+            return {"restored": False, "reason": "error", "paths": 0, "dirty": 0}
+        if time.time() - saved_at > ttl:
+            return {"restored": False, "reason": "ttl-expired", "paths": 0, "dirty": 0}
+
+        read_set: dict[str, float] = {}
+        for p, mtime in (payload.get("read_set") or {}).items():
+            if _is_sensitive_path(p):
+                continue
+            try:
+                cur = os.path.getmtime(p)
+            except OSError:
+                continue  # file deleted since snapshot — not readable, not clean
+            if abs(cur - float(mtime)) > 1e-6:
+                continue  # modified after snapshot — content is new, drop it
+            read_set[p] = float(mtime)
+
+        dirty: dict[str, dict] = {}
+        for p, info in (payload.get("dirty") or {}).items():
+            if _is_sensitive_path(p):
+                continue
+            # Dirty entries are kept even when the file vanished: the
+            # write DID happen, and get_stale() already renders deleted
+            # files as size-0 stale entries.
+            dirty[p] = {
+                "mtime": float(info.get("mtime", 0.0)),
+                "tick": int(info.get("tick", 0)),
+            }
+
+        with self._lock:
+            self._checkpoint_counter = max(0, int(payload.get("checkpoint_counter", 0)))
+            self._agent_armed = bool(payload.get("armed", False))
+            self._ctx_dropped_tokens = max(0, int(payload.get("ctx_dropped_tokens", 0)))
+            self._seq = max(0, int(payload.get("seq", 0)))
+            self._read_set = read_set
+            self._dirty = dirty
+            self._read_seq = {
+                p: int(v) for p, v in (payload.get("read_seq") or {}).items() if p in read_set
+            }
+            self._write_seq = {
+                p: int(v) for p, v in (payload.get("write_seq") or {}).items() if p in dirty
+            }
+            # Banked-once guard set: restored as-is so tokens already
+            # banked pre-restart are never re-added post-restart.
+            self._banked = {
+                p for p in (payload.get("banked") or []) if isinstance(p, str) and p in read_set
+            }
+        return {
+            "restored": True,
+            "reason": "ok",
+            "paths": len(read_set),
+            "dirty": len(dirty),
+        }
+
+    def clear_persisted(self) -> bool:
+        """Delete the persisted snapshot row (companion to reset()).
+
+        Returns True when a row was removed, False otherwise (best-effort).
+        A missing tracker_state table is the normal never-snapshotted case
+        — handled silently, not warned about.
+        """
+        try:
+            from toolrecall._db import _db
+
+            with _db() as conn:
+                cur = conn.execute("DELETE FROM tracker_state WHERE id = 1")
+                return bool(cur.rowcount)
+        except Exception as e:  # noqa: BLE001 — reset must not fail on a broken DB
+            if "no such table" not in str(e).lower():
+                warnings.warn(f"ToolRecall: tracker persisted-state clear failed: {e}")
+            return False
 
     def set_checkpoint(self, name: str = "", armed: bool = True) -> dict:
         """Set a checkpoint — everything clean after this point.
@@ -467,6 +655,10 @@ class ContextTracker:
         After reset, tracker behaves as if freshly initialized.
         The agent should call set_checkpoint() again before resuming.
 
+        Also clears the persisted snapshot row: reset means "forget
+        everything", and a later daemon restart must not resurrect
+        state the agent explicitly dropped.
+
         Returns:
             {"reset": True, "checkpoint": 0}
         """
@@ -480,6 +672,7 @@ class ContextTracker:
             self._ctx_dropped_tokens = 0
             self._banked.clear()
             self._agent_armed = False
+            self.clear_persisted()
             return {"reset": True, "checkpoint": 0}
 
     @property

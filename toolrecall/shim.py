@@ -107,6 +107,233 @@ def _get_tr():
     return _TR
 
 
+# ─── CONTEXT-tier source tagging (shim reads as agent_tool) ───
+#
+# Problem being fixed: every shim-served cache hit was tagged
+# source="shim", which counts toward disk-read avoidance but NEVER
+# toward tokens_not_sent_to_llm (the CONTEXT tier). Yet in an agent
+# process the shim is exactly how the agent's file reads are served —
+# the content it returns IS the LLM's context. The CONTEXT tier was
+# measuring ~nothing on shim-installed agents.
+#
+# The over-counting danger in the other direction: a shim hit does not
+# automatically enter LLM context. Libraries vendored in site-packages,
+# binary blobs, package metadata, and multi-MB data files are read by
+# processes that merely RUN INSIDE an agent — tagging all of them as
+# context savings would overstate the tier (the same inflation class as
+# the 2026-09-10 tracker fix: 380MB of session JSONs counted as
+# "droppable context"). So the tag is a conservative AND-gate, failed
+# closed to "shim": only agent-process + human-code-shaped + text +
+# small files count.
+
+# Env-var markers that say "this process is an agent harness" (checked
+# as prefixes; verified live: Hermes gateway/webui both set HERMES_*).
+_AGENT_ENV_MARKERS = (
+    "HERMES_",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CURSOR_TRACE_ID",
+    "AIDER_MODEL",
+    "WINDSURF_",
+    "CODEIUM_",
+    "TRAE_",
+    "GITHUB_COPILOT",
+    "COPILOT_CLI",
+    "REPLIT_",
+    "CODEX_",
+    "OPENCODE_",
+    "CODEBUDDY_",
+    "QODO_",
+)
+
+# Directory markers for code the agent runs WITH, not code it authored.
+# Reads from these trees almost never enter LLM context.
+_LIBRARY_DIR_MARKERS = (
+    "/site-packages/",
+    "/dist-packages/",
+    "/node_modules/",
+    "/.venv/",
+    "/venv/",
+    "/virtualenvs/",
+    "/__pycache__/",
+    "/.tox/",
+    "/.nox/",
+    "/.mypy_cache/",
+    "/.pytest_cache/",
+    "/.ruff_cache/",
+    "/.git/",
+    "/vendor/",
+    "/.hermes/",  # agent home data (sessions, cache) — daemon-side reads
+)
+
+# Binary-ish suffixes: content the model would never read as text.
+_BINARY_SUFFIXES = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".webp",
+        ".tiff",
+        ".pdf",
+        ".ps",
+        ".eps",
+        ".zip",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".tar",
+        ".tgz",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".bin",
+        ".o",
+        ".a",
+        ".obj",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+        ".eot",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".duckdb",
+        ".parquet",
+        ".mp3",
+        ".mp4",
+        ".mkv",
+        ".avi",
+        ".mov",
+        ".flac",
+        ".ogg",
+        ".wav",
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".wasm",
+        ".jar",
+        ".whl",
+        ".egg",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".iso",
+        ".img",
+        ".dmg",
+        ".deb",
+        ".rpm",
+    }
+)
+
+# Cap on file size that plausibly enters LLM context. Reads larger than
+# this are clamped by every harness's read tool (Hermes clamps hard); a
+# multi-MB cache hit is data, not context.
+MAX_AGENT_CONTEXT_BYTES = 256 * 1024
+
+_agent_process_cache: bool | None = None
+_tag_source_mode_cache: str | None = None
+
+
+def _env_has_agent_marker() -> bool:
+    """True if any agent-harness env marker is present in this process."""
+    for key in os.environ:
+        for marker in _AGENT_ENV_MARKERS:
+            if key.startswith(marker):
+                return True
+    return False
+
+
+def _process_is_agent() -> bool:
+    """Cached once per process: does this process belong to an agent harness?"""
+    global _agent_process_cache
+    if _agent_process_cache is None:
+        try:
+            _agent_process_cache = _env_has_agent_marker()
+        except Exception:
+            _agent_process_cache = False
+    return _agent_process_cache
+
+
+def _tag_source_mode() -> str:
+    """Resolve the tagging mode: TOOLRECALL_SHIM_TAG_SOURCE env > [shim].tag_source TOML > "auto".
+
+    Modes: "auto" (gate below), "always" (force agent_tool — for agent
+    harnesses whose env markers this build doesn't know), "never" (old
+    behavior: shim hits never count toward the CONTEXT tier).
+    Invalid values fall back to "auto".
+    """
+    global _tag_source_mode_cache
+    if _tag_source_mode_cache is None:
+        raw = (os.environ.get("TOOLRECALL_SHIM_TAG_SOURCE") or "").strip().lower()
+        if not raw:
+            try:
+                from toolrecall.config import load_config
+
+                raw = str(load_config().get("shim", "tag_source", default="auto")).strip().lower()
+            except Exception:
+                raw = "auto"
+        if raw not in ("auto", "always", "never"):
+            raw = "auto"
+        _tag_source_mode_cache = raw
+    return _tag_source_mode_cache
+
+
+def _looks_like_library_path(path: str) -> bool:
+    """True for vendored/package trees — run by the process, not read by the model."""
+    norm = path.replace(os.sep, "/")
+    return any(marker in norm for marker in _LIBRARY_DIR_MARKERS)
+
+
+def _tag_source_for(path: str) -> str:
+    """Decide the cached_read source for a shim read, pre-call.
+
+    Returns "agent_tool" only when the whole AND-gate passes; "shim"
+    otherwise (fail closed — under-tagging slightly understates the
+    CONTEXT tier, over-tagging would inflate it with tokens that were
+    never in a context window).
+
+    Gate (auto mode): agent-process env marker AND not a library path AND
+    not a binary suffix AND file size ≤ 256KB. Uses only the path and one
+    os.stat — no content read (source must be chosen before cached_read,
+    and the gate must not double the open() work). Binary CONTENT (a
+    text-suffixed file full of NULs) slips through by design: the suffix
+    blocklist catches the real-world cases, and a text-served binary blob
+    is bounded by the size cap.
+    """
+    mode = _tag_source_mode()
+    if mode == "never":
+        return "shim"
+    if mode == "always":
+        return "agent_tool"
+    # ── auto gate (AND-gate, fail closed) ──
+    if not _process_is_agent():
+        return "shim"
+    if _looks_like_library_path(path):
+        return "shim"
+    suffix = os.path.splitext(path)[1].lower()
+    if suffix in _BINARY_SUFFIXES:
+        return "shim"
+    try:
+        _within_cap = os.path.getsize(path) <= MAX_AGENT_CONTEXT_BYTES
+    except OSError:
+        # stat failed — cached_read will surface the real error for this
+        # path; tagging it "shim" vs "agent_tool" is moot either way.
+        _within_cap = True
+    if not _within_cap:
+        return "shim"
+    return "agent_tool"
+
+
 # ─── Internal infrastructure paths to skip (never benefit from caching) ───
 # These are loaded from toolrecall.toml [shim].exclude_prefixes (or
 # TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var) on first call to _should_skip().
@@ -227,7 +454,14 @@ def _shim_open(path, mode="r", *args, **kwargs):
         tr = _get_tr()
         if tr and mode in ("r", "rt"):
             try:
-                result = tr["read"](path_str, source="shim")
+                # Source tagging: a shim hit in an agent process IS the
+                # agent's file-read path — tag it agent_tool so the CONTEXT
+                # tier (tokens_not_sent_to_llm) counts it, but only when
+                # the conservative pre-call gate passes. The gate must run
+                # BEFORE the call (source is a cached_read argument, and
+                # the call itself records the hit): it uses path shape +
+                # one os.stat, never the content. stats stay exactly-once.
+                result = tr["read"](path_str, source=_tag_source_for(path_str))
                 # Only serve from shim if it was a cache HIT.
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly

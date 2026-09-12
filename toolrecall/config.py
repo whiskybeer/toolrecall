@@ -58,7 +58,9 @@ ENV_MAP = {
     "TOOLRECALL_NORM_SORT_LISTS": ("norm", "sort_lists"),
     "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
+    "TOOLRECALL_SHIM_TAG_SOURCE": ("shim", "tag_source"),
     "TOOLRECALL_TRACKER_IGNORE_PREFIXES": ("tracker", "ignore_read_prefixes"),
+    "TOOLRECALL_TRACKER_PERSIST_TTL": ("tracker", "persist_ttl"),
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
     "TOOLRECALL_RECALL_TTL": ("recall", "ttl"),
     "TOOLRECALL_DOCS_INDEX_TTL": ("docs", "index_ttl"),
@@ -246,7 +248,7 @@ class Config:
                 "cb_open_seconds",
             }
         ),
-        "shim": frozenset({"exclude_prefixes"}),
+        "shim": frozenset({"exclude_prefixes", "tag_source"}),
         "mcp": frozenset(
             {
                 "allowed_paths",
@@ -277,6 +279,7 @@ class Config:
                 "tool_access_control",
             }
         ),
+        "tracker": frozenset({"ignore_read_prefixes", "persist_ttl"}),
         "storage": frozenset(
             {
                 "backend",
@@ -983,6 +986,29 @@ class Config:
         return []
 
     # ─── Context Tracker Properties ─────────────────────
+
+    @property
+    def tracker_persist_ttl(self) -> float:
+        """How long a persisted tracker snapshot stays restorable, in seconds.
+
+        Configured via [tracker].persist_ttl in toolrecall.toml, or
+        TOOLRECALL_TRACKER_PERSIST_TTL env var (seconds). Default 21600
+        (6 hours): long enough to survive a daemon restart / crash loop
+        within one working day, short enough that a read set never
+        describes a previous DAY's session — restoring yesterday's
+        read set would report files as "clean in the agent's context"
+        that the agent has not seen today (wrong drops).
+        0 disables restore entirely (snapshot still written, state simply
+        not read back — old behavior).
+
+        Read-set mtimes are re-validated on restore regardless of TTL:
+        a file modified after the snapshot is dropped from the read set.
+        """
+        val = self.get("tracker", "persist_ttl", default=21600)
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 21600.0
 
     @property
     def tracker_ignore_read_prefixes(self) -> list:
