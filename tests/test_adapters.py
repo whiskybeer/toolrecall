@@ -13,6 +13,8 @@ these tests focus on:
 """
 
 import sys
+import unittest
+
 import pytest
 
 
@@ -351,3 +353,222 @@ class TestLiteLLMAdapter:
 
         assert hasattr(toolrecall.adapters.litellm, "handler")
         assert toolrecall.adapters.litellm.handler is not None
+
+
+class TestDedupMedia(unittest.TestCase):
+    """Experimental media dedup: data-URL image parts (default OFF).
+
+    Identity = sha256 over DECODED bytes (shared keyspace with text);
+    floor = min_chars on decoded length; armor = protect_last tail.
+    """
+
+    def setUp(self):
+        from toolrecall.adapters.litellm import dedup_messages
+
+        self.dedup = dedup_messages
+        self.png1 = b"\x89PNG\r\n\x1a\n" + b"A" * 1200
+        self.png2 = b"\x89PNG\r\n\x1a\n" + b"B" * 1200
+        import base64
+
+        self.url1 = "data:image/png;base64," + base64.b64encode(self.png1).decode()
+        self.url1_relabel = "data:image/jpeg;base64," + base64.b64encode(self.png1).decode()
+        self.url2 = "data:image/png;base64," + base64.b64encode(self.png2).decode()
+
+    def _convo(self):
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1, "detail": "high"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url2}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1_relabel}},
+                ],
+            },
+        ]
+
+    def test_dup_image_stubbed(self):
+        out, stats = self.dedup(self._convo(), min_chars=800, protect_last=0, media=True)
+        self.assertEqual(stats["blocks"], 2)
+        self.assertEqual(out[0]["content"][0]["image_url"]["url"], self.url1)
+        self.assertTrue(out[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+        self.assertEqual(out[2]["content"][0]["image_url"]["url"], self.url2)
+
+    def test_relabeled_mime_dedups(self):
+        """Identical bytes under a different data: label are the same content."""
+        out, stats = self.dedup(self._convo(), min_chars=800, protect_last=0, media=True)
+        self.assertEqual(stats["blocks"], 2)
+        self.assertTrue(out[3]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+
+    def test_default_media_off(self):
+        out, stats = self.dedup(self._convo(), min_chars=800, protect_last=0)
+        self.assertEqual(stats["blocks"], 0)
+        self.assertEqual(out[1]["content"][0]["image_url"]["url"], self.url1)
+
+    def test_sibling_keys_preserved(self):
+        out, _ = self.dedup(self._convo(), min_chars=800, protect_last=0, media=True)
+        self.assertIn("detail", out[0]["content"][0]["image_url"])
+
+    def test_https_never_deduped(self):
+        convo = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "https://x/i.png"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "https://x/i.png"}},
+                ],
+            },
+        ]
+        out, stats = self.dedup(convo, min_chars=1, protect_last=0, media=True)
+        self.assertEqual(stats["blocks"], 0)
+        self.assertEqual(out[1]["content"][0]["image_url"]["url"], "https://x/i.png")
+
+    def test_corrupt_base64_left_alone(self):
+        bad = "data:image/png;base64,!!notb64!!"
+        convo = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": bad}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": bad}},
+                ],
+            },
+        ]
+        out, stats = self.dedup(convo, min_chars=1, protect_last=0, media=True)
+        self.assertEqual(stats["blocks"], 0)
+        self.assertEqual(out[1]["content"][0]["image_url"]["url"], bad)
+
+    def test_small_image_below_floor(self):
+        import base64
+
+        tiny = "data:image/png;base64," + base64.b64encode(b"tiny").decode()
+        convo = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": tiny}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": tiny}},
+                ],
+            },
+        ]
+        out, stats = self.dedup(convo, min_chars=800, protect_last=0, media=True)
+        self.assertEqual(stats["blocks"], 0)
+        self.assertEqual(out[1]["content"][0]["image_url"]["url"], tiny)
+
+    def test_protect_last_armor(self):
+        """The last protect_last messages are never stubbed — a harness
+        that compacts old content always keeps the latest full copies."""
+        convo = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": self.url1}},
+                ],
+            },
+        ]
+        out, stats = self.dedup(convo, min_chars=1, protect_last=2, media=True)
+        self.assertEqual(stats["blocks"], 1)
+        self.assertEqual(out[0]["content"][0]["image_url"]["url"], self.url1)
+        self.assertTrue(out[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+        self.assertEqual(out[2]["content"][0]["image_url"]["url"], self.url1)
+        self.assertEqual(out[3]["content"][0]["image_url"]["url"], self.url1)
+
+    def test_input_not_mutated(self):
+        convo = self._convo()
+        snapshot = repr(convo)
+        self.dedup(convo, min_chars=800, protect_last=0, media=True)
+        self.assertEqual(repr(convo), snapshot)
+
+    def test_text_and_image_share_keyspace(self):
+        """A text block and an image part with the same payload bytes share
+        one identity space: the later occurrence stubs, whatever its type."""
+        import base64
+
+        payload = "same-payload-" + "x" * 1200  # ASCII: str bytes == payload bytes
+        img_url = (
+            "data:application/octet-stream;base64,"
+            + base64.b64encode(payload.encode("utf-8")).decode()
+        )
+        convo = [
+            {"role": "user", "content": payload},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": img_url}},
+                ],
+            },
+        ]
+        out, stats = self.dedup(convo, min_chars=10, protect_last=0, media=True)
+        self.assertEqual(stats["blocks"], 1)
+        self.assertEqual(out[0]["content"], payload)  # first occurrence kept
+        self.assertTrue(out[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]"))
+        self.assertIn("message 0", out[1]["content"][0]["image_url"]["url"])
+
+    def test_handler_media_env_default_off(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TOOLRECALL_DEDUP_MEDIA", None)
+            from toolrecall.adapters.litellm import ToolRecallDedupHandler
+
+            h = ToolRecallDedupHandler()
+            self.assertFalse(h.media)
+
+    def test_handler_media_env_on(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"TOOLRECALL_DEDUP_MEDIA": "1"}, clear=False):
+            from toolrecall.adapters.litellm import ToolRecallDedupHandler
+
+            h = ToolRecallDedupHandler()
+            self.assertTrue(h.media)

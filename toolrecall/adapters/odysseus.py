@@ -90,6 +90,7 @@ Key patterns (consistent with adapters/google_adk.py)
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -194,25 +195,42 @@ def cached_tool(func: Optional[F] | None = None, *, ttl: Optional[int] | None = 
     return decorator
 
 
-async def cached_async_tool(
-    func: Optional[Callable[..., Awaitable[Any]]] | None = None, *, ttl: Optional[int] | None = None
+def cached_async_tool(
+    func: Optional[Callable[..., Awaitable[Any]]] = None, *, ttl: Optional[int] | None = None
 ) -> Callable:
-    """Async version of @cached_tool for async tool functions.
+    """Decorator: cache the return value of an async tool via ToolRecall.
 
     Same semantics as cached_tool but wraps async def functions with
-    await-based cache check/store.
+    await-based cache check/store. Works bare or with arguments:
+
+        @cached_async_tool
+        async def fetch(url): ...
+
+        @cached_async_tool(ttl=600)
+        async def fetch(url): ...
     """
     if func is not None:
-        return await _make_async_cached_wrapper(func, ttl=ttl)
+        if not asyncio.iscoroutinefunction(func):
+            raise TypeError(f"cached_async_tool requires an async function, got {func.__name__!r}")
+        return _make_async_cached_wrapper(func, ttl=ttl)
 
-    async def decorator(f: Callable[..., Awaitable[Any]]) -> Callable:
-        return await _make_async_cached_wrapper(f, ttl=ttl)
+    def decorator(f: Callable[..., Awaitable[Any]]) -> Callable:
+        if not asyncio.iscoroutinefunction(f):
+            raise TypeError(f"cached_async_tool requires an async function, got {f.__name__!r}")
+        return _make_async_cached_wrapper(f, ttl=ttl)
 
     return decorator
 
 
 def _make_cached_wrapper(func: F, *, ttl: Optional[int] | None = None) -> Callable:
-    """Internal: wrap a sync function with cache check + store."""
+    """Internal: wrap a sync or async function with cache check + store.
+
+    Async functions route to the await-based wrapper (same convention as
+    google_adk.cached_tool). The sync wrapper must never see a coroutine —
+    it would cache str(coroutine) garbage in the daemon's mcp_cache.
+    """
+    if asyncio.iscoroutinefunction(func):
+        return _make_async_cached_wrapper(func, ttl=ttl)
     tool_name = func.__name__
 
     @functools.wraps(func)
@@ -230,10 +248,15 @@ def _make_cached_wrapper(func: F, *, ttl: Optional[int] | None = None) -> Callab
     return wrapper
 
 
-async def _make_async_cached_wrapper(
+def _make_async_cached_wrapper(
     func: Callable[..., Awaitable[Any]], *, ttl: Optional[int] | None = None
 ) -> Callable[..., Awaitable[Any]]:
-    """Internal: wrap an async function with cache check + store."""
+    """Internal: wrap an async function with await-based cache check + store.
+
+    Plain (non-async) factory: it returns the async wrapper; it never awaits
+    anything itself. Being ``async def`` here was a bug — the decorator had
+    to await it, which made ``@cached_async_tool`` unusable as a decorator.
+    """
     tool_name = func.__name__
 
     @functools.wraps(func)

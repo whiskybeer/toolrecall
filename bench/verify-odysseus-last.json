@@ -1,0 +1,13 @@
+{
+  "phases": {
+    "live_daemon": {
+      "sync_miss_hit": "PASS (live execs: 2, hits: 2, distinct-args miss: 1)",
+      "async_decorated": "PASS (live execs: 1, hits: 1)"
+    },
+    "restart": {
+      "cross_restart_hits": "PASS (0 live execs after daemon restart)"
+    },
+    "db_namespace": "PASS"
+  },
+  "result": "PASS"
+}

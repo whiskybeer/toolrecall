@@ -1,0 +1,21 @@
+{
+  "workload": "8-step browser-agent session, 2 pages, byte-identical re-screenshots",
+  "arm_off": {
+    "total_chars": 446042,
+    "stubs": 0
+  },
+  "arm_on": {
+    "total_chars": 287832,
+    "stubs": 13
+  },
+  "chars_saved": 158210,
+  "chars_saved_pct": 35.5,
+  "invariants": {
+    "I1_media_off_passthrough": true,
+    "I2_distinct_kept": true,
+    "I3_repeats_stubbed": true,
+    "I4_tail_protected": true,
+    "I5_weird_passthrough": true
+  },
+  "note": "MECHANISM smoke only \u2014 characters, not dollars. No savings claim."
+}

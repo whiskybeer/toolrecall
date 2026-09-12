@@ -49,10 +49,12 @@ Self-test:  python3 -m toolrecall.adapters.litellm
 
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
 import logging
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from toolrecall.keys import digest16
 
@@ -78,6 +80,29 @@ STUB_TEMPLATE = (
     "The byte-identical content already appears in message {index} of this request."
 )
 
+IMAGE_STUB_TEMPLATE = (
+    "[toolrecall-dedup] Duplicate image omitted ({nbytes} bytes, sha256:{digest}). "
+    "The byte-identical image already appears in message {index} of this request."
+)
+
+
+def _decode_data_url(url: Any) -> Optional[bytes]:
+    """Decode a ``data:<mime>;base64,<payload>`` URL to raw bytes, else None.
+
+    ``validate=False`` (b64decode default) is deliberate: alternate base64
+    wrapping/whitespace still decodes, so identity is the decoded bytes, not
+    the wrap. Non-data URLs (``https://``) return None — their identity is
+    the URL, not content this module can see. Decoded bytes are only ever
+    hashed, never emitted.
+    """
+    if not isinstance(url, str) or not url.startswith("data:") or ";base64," not in url:
+        return None
+    payload = url.split(";base64,", 1)[1]
+    try:
+        return base64.b64decode(payload)
+    except (binascii.Error, ValueError):
+        return None
+
 
 def _digest(text: str) -> str:
     """16-hex content digest — delegates to the canonical Layer-0 primitive.
@@ -94,8 +119,31 @@ def dedup_messages(
     min_chars: int = 800,
     protect_last: int = 2,
     stub_roles: Tuple[str, ...] = DEFAULT_STUB_ROLES,
+    media: bool = False,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """Return (new_messages, stats). Input objects are never mutated."""
+    """Return (new_messages, stats). Input objects are never mutated.
+
+    ``media=True`` (experimental, off by default) extends dedup to image
+    parts (``{"type": "image_url", "image_url": {"url": ...}}``). Scope,
+    deliberately narrow to keep the replay guarantee:
+
+    - data URLs only (``data:<mime>;base64,<payload>``) — tool-returned
+      screenshots. ``https://`` references are NOT deduped: their identity
+      is the URL, not the content.
+    - Hashed over the DECODED bytes, so the same image with different
+      base64 wrapping/whitespace still hits.
+    - One identity space with text: a digest means "these bytes appeared
+      earlier in this request", regardless of which part type carried them.
+    - Byte floor is ``min_chars`` applied to decoded byte length; a stub
+      must also be strictly shorter than the data URL it replaces.
+    - The mime label is NOT part of the identity: identical bytes under
+      different ``data:image/...`` labels dedup (content addressing, not
+      format sniffing — this module never parses image structure).
+
+    The ``protect_last`` tail is the stub armor: consecutive image stubs
+    can never reach the final N messages, so a harness that compacts old
+    content always has the latest full copies.
+    """
     n = len(messages)
     protect_from = max(0, n - max(0, protect_last))
     seen: Dict[str, int] = {}  # digest -> index of first occurrence
@@ -119,6 +167,32 @@ def dedup_messages(
             return None
         blocks += 1
         chars_saved += len(text) - len(stub)
+        return stub
+
+    def maybe_stub_media(url: str, msg_index: int, can_stub: bool) -> Optional[str]:
+        """Same contract as maybe_stub, for data-URL image parts.
+
+        Identity = sha256 of the DECODED bytes (shared keyspace with text:
+        sha256 over the part's byte payload, whatever the part type). Byte
+        floor is min_chars on decoded length — image tokens are priced per
+        image, so min_chars under-selects unless callers lower it.
+        """
+        nonlocal blocks, chars_saved
+        decoded = _decode_data_url(url)
+        if decoded is None or len(decoded) < min_chars:
+            return None
+        h = digest16(decoded)
+        first = seen.get(h)
+        if first is None:
+            seen[h] = msg_index
+            return None
+        if not can_stub:
+            return None
+        stub = IMAGE_STUB_TEMPLATE.format(nbytes=len(decoded), digest=h, index=first)
+        if len(stub) >= len(url):
+            return None
+        blocks += 1
+        chars_saved += len(url) - len(stub)
         return stub
 
     for i, msg in enumerate(messages):
@@ -149,6 +223,22 @@ def dedup_messages(
                         p2 = copy.copy(part)
                         p2["text"] = stub
                         new_parts[j] = p2
+                elif (
+                    media
+                    and isinstance(part, dict)
+                    and part.get("type") == "image_url"
+                    and isinstance(part.get("image_url"), dict)
+                    and isinstance(part["image_url"].get("url"), str)
+                ):
+                    url = part["image_url"]["url"]
+                    stub = maybe_stub_media(url, i, can_stub)
+                    if stub is not None:
+                        if new_parts is None:
+                            new_parts = list(content)
+                        p2 = copy.copy(part)
+                        # preserve sibling keys (e.g. "detail") alongside the stub URL
+                        p2["image_url"] = {**part["image_url"], "url": stub}
+                        new_parts[j] = p2
             if new_parts is not None:
                 m2 = copy.copy(msg)
                 m2["content"] = new_parts
@@ -157,7 +247,10 @@ def dedup_messages(
     return out, {
         "blocks": blocks,
         "chars_saved": chars_saved,
-        "est_tokens_saved": chars_saved // 4,  # chars/4 heuristic, logging only
+        # chars/4 heuristic, logging only — TEXT-calibrated. For image stubs
+        # it OVERSTATES provider savings (image tokens are priced per image,
+        # not per char); real multimodal figures come from the bench harness.
+        "est_tokens_saved": chars_saved // 4,
     }
 
 
@@ -168,6 +261,12 @@ class ToolRecallDedupHandler(CustomLogger):
         self.min_chars = int(os.getenv("TOOLRECALL_DEDUP_MIN_CHARS", "800"))
         self.protect_last = int(os.getenv("TOOLRECALL_DEDUP_PROTECT_LAST", "2"))
         self.enabled = os.getenv("TOOLRECALL_DEDUP_DISABLED", "").lower() not in (
+            "1",
+            "true",
+            "yes",
+        )
+        # Experimental (v1, default off): dedup data-URL image parts.
+        self.media = os.getenv("TOOLRECALL_DEDUP_MEDIA", "").lower() in (
             "1",
             "true",
             "yes",
@@ -196,6 +295,7 @@ class ToolRecallDedupHandler(CustomLogger):
                 messages,
                 min_chars=self.min_chars,
                 protect_last=self.protect_last,
+                media=self.media,
             )
             if stats["blocks"]:
                 data["messages"] = new_messages
@@ -288,6 +388,129 @@ if __name__ == "__main__":
 
     asyncio.run(run_hook())
 
-    saved = stats["chars_saved"]
-    print(f"self-test OK — litellm importable: {_HAVE_LITELLM}")
-    print(f"stubbed {stats['blocks']} blocks, saved {saved} chars (~{saved // 4} tokens est.)")
+    # --- Media (experimental, data-URL images) ---
+    PNG1 = b"\x89PNG\r\n\x1a\n" + b"A" * 1200  # decoded size > min_chars floor
+    PNG2 = b"\x89PNG\r\n\x1a\n" + b"B" * 1200
+    url1 = "data:image/png;base64," + base64.b64encode(PNG1).decode()
+    url1_relabeled = "data:image/jpeg;base64," + base64.b64encode(PNG1).decode()
+    url2 = "data:image/png;base64," + base64.b64encode(PNG2).decode()
+
+    def media_convo():
+        return [
+            {"role": "system", "content": "You are a browser agent."},
+            {"role": "user", "content": "Check the page."},
+            {
+                "role": "tool",
+                "content": [
+                    {"type": "text", "text": FILE_A},
+                    {"type": "image_url", "image_url": {"url": url1, "detail": "high"}},
+                ],
+            },
+            {"role": "user", "content": "Again."},
+            {
+                "role": "tool",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": url1}},  # dup -> stub
+                ],
+            },
+            {
+                "role": "tool",
+                "content": [
+                    # same bytes, relabeled mime + different wrap -> same identity
+                    {"type": "image_url", "image_url": {"url": url1_relabeled}},
+                ],
+            },
+            {"role": "user", "content": "New page."},
+            {
+                "role": "tool",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": url2}},  # distinct -> kept
+                ],
+            },
+            {"role": "user", "content": "Summarize."},
+        ]
+
+    mout, mstats = dedup_messages(media_convo(), min_chars=800, protect_last=2, media=True)
+    assert mstats["blocks"] == 2, mstats
+    assert mout[2]["content"][1]["image_url"]["url"] == url1  # first kept in full
+    assert "detail" in mout[2]["content"][1]["image_url"]  # siblings preserved
+    assert mout[4]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]")
+    assert "message 2" in mout[4]["content"][0]["image_url"]["url"]
+    # relabeled mime, identical bytes -> deduped (content addressing)
+    assert mout[5]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]")
+    assert mout[7]["content"][0]["image_url"]["url"] == url2  # distinct image kept
+    assert media_convo()[2]["content"][1]["image_url"]["url"] == url1  # input untouched
+
+    # media=False (default): identical image parts pass through untouched
+    mout_off, mstats_off = dedup_messages(media_convo(), min_chars=800, protect_last=2)
+    assert mstats_off["blocks"] == 0
+    assert mout_off[4]["content"][0]["image_url"]["url"] == url1
+
+    # https:// refs are never deduped (identity is the URL, not content)
+    https_convo = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "https://x/img.png"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "https://x/img.png"}},
+            ],
+        },
+    ]
+    hout, hstats = dedup_messages(https_convo, min_chars=1, protect_last=0, media=True)
+    assert hstats["blocks"] == 0
+    assert hout[1]["content"][0]["image_url"]["url"] == "https://x/img.png"
+
+    # corrupt base64 -> left alone, no crash
+    bad_convo = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,!!notb64!!"}},
+            ],
+        }
+    ]
+    bout, bstats = dedup_messages(bad_convo, min_chars=1, protect_last=0, media=True)
+    assert bstats["blocks"] == 0
+    assert bout[0]["content"][0]["image_url"]["url"] == "data:image/png;base64,!!notb64!!"
+
+    # armor: with protect_last=2, only the tail's last TWO messages are
+    # guaranteed full copies — earlier dups stub, the last two never do
+    tail_convo = [
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url1}}]},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url1}}]},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url1}}]},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url1}}]},
+    ]
+    tout, tstats = dedup_messages(tail_convo, min_chars=1, protect_last=2, media=True)
+    assert tout[0]["content"][0]["image_url"]["url"] == url1  # first occurrence kept
+    assert tout[1]["content"][0]["image_url"]["url"].startswith("[toolrecall-dedup]")
+    assert tout[2]["content"][0]["image_url"]["url"] == url1  # protected tail
+    assert tout[3]["content"][0]["image_url"]["url"] == url1  # protected tail
+    assert tstats["blocks"] == 1, tstats
+
+    # handler: media flag from env, off by default
+    async def run_media_hook():
+        data = {"messages": media_convo(), "model": "gpt-x"}
+        h_off = ToolRecallDedupHandler()
+        await h_off.async_pre_call_hook(None, None, data, "acompletion")
+        assert data["messages"][4]["content"][0]["image_url"]["url"] == url1
+        os.environ["TOOLRECALL_DEDUP_MEDIA"] = "1"
+        try:
+            h_on = ToolRecallDedupHandler()
+            assert h_on.media is True
+            data2 = {"messages": media_convo(), "model": "gpt-x"}
+            await h_on.async_pre_call_hook(None, None, data2, "acompletion")
+            assert data2["messages"][4]["content"][0]["image_url"]["url"].startswith(
+                "[toolrecall-dedup]"
+            )
+        finally:
+            del os.environ["TOOLRECALL_DEDUP_MEDIA"]
+
+    asyncio.run(run_media_hook())
+
+    print("self-test OK (text + media)")
