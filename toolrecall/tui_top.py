@@ -459,16 +459,29 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 A_BOLD,
             )
             if not any(cat in st for cat in CATEGORIES):
-                y = put(
-                    y + 1,
-                    "  no cache data — daemon down AND db unreadable: %s" % snap.get("db", "?"),
-                    A_MISS,
-                )
-                y = put(
-                    y + 1,
-                    "  (check TOOLRECALL_CACHE_DB / start the daemon: toolrecall daemon start)",
-                    A_DIM,
-                )
+                db_path = snap.get("db", "?")
+                if not os.path.exists(db_path):
+                    y = put(
+                        y + 1,
+                        "  no cache data on this machine: %s does not exist" % db_path,
+                        A_MISS,
+                    )
+                    y = put(
+                        y + 1,
+                        "  (the dashboard shows the machine it runs on — run it where the daemon lives)",
+                        A_DIM,
+                    )
+                else:
+                    y = put(
+                        y + 1,
+                        "  no cache data — daemon down AND db unreadable: %s" % db_path,
+                        A_MISS,
+                    )
+                    y = put(
+                        y + 1,
+                        "  (check TOOLRECALL_CACHE_DB / start the daemon: toolrecall daemon start)",
+                        A_DIM,
+                    )
             for cat in CATEGORIES:
                 c = st.get(cat)
                 if not c:
