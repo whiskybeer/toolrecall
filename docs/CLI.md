@@ -19,6 +19,7 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall init` | `cmd_init()` | `toolrecall/cli.py` |
 | `toolrecall status` | `cmd_status()` | `toolrecall/cli.py` |
 | `toolrecall stats` | `cmd_stats()` | `toolrecall/cli.py` |
+| `toolrecall trend` | `cmd_trend()` | `toolrecall/cli.py` |
 | `toolrecall invalidate` | `cmd_invalidate()` | `toolrecall/cli.py` |
 | `toolrecall reset-stats` | `cmd_reset_stats()` | `toolrecall/cli.py` |
 | `toolrecall index` | `cmd_index()` | `toolrecall/cli.py` |
@@ -57,6 +58,14 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 
 - **File:** `cli.py : cmd_stats()`
 - **Purpose:** Same as `status` but returns JSON-formatted detailed statistics.
+
+### `toolrecall trend`
+
+- **File:** `cli.py : cmd_trend()`, aggregation in `toolrecall/trend.py`
+- **Purpose:** Daily hit-rate trend + worst miss-heavy path classes, computed from the `access_log` rolling window (~50k entries). Lets users verify how well the cache serves *their* workload over time and identify never-cacheable classes (rewritten-on-every-access files) that cap the headline rate. See README section "Verifying Your Hit Rate".
+- **Flags:** `--days N` (default 7), `--json` (machine-readable: `{"trend", "miss_classes", "coverage"}`).
+- **No daemon:** opens the cache DB read-only (WAL-safe); works even when the daemon is down. Not in `_DAEMON_REQUIRED`.
+- **Stateless:** no rollup tables or background aggregation — window retention is the retention policy.
 
 ### `toolrecall invalidate`
 
@@ -255,13 +264,21 @@ Each function imports its dependencies lazily — running `toolrecall status` do
 - **Purpose:** Interactive TUI dashboard (stdlib `curses`, zero deps).
   Read-only by design: the only write actions are the safe ones (refresh
   a stale file, set a context checkpoint). No invalidate/reset keys.
-- **Views** (`1`–`4` or `Tab` to cycle, `q` quit, lone `ESC` quits):
+- **Views** (`1`–`5` or `Tab` to cycle, `q` quit, lone `ESC` quits):
   - `1` **stats** — per-cache hits/misses/hit-rate/token accounting +
     context-tracker summary
   - `2` **log** — scrollable access-log tail (`↑`/`↓`, `PgUp`/`PgDn`)
-  - `3` **context** — stale (♻️ provably wrong in context), dirty (📝),
-    clean (🧹 droppable) file lists with token estimates
-  - `4` **help**
+  - `3` **trend** — daily file_cache hit-rate from `access_log` (7-day view
+    with bar visual) + worst hit-rate path classes (the plateau diagnostic,
+    from `toolrecall/trend.py`; daemon-independent, reads the db directly)
+  - `4` **context** — stale (♻️ provably wrong in context), dirty (📝),
+    clean (🧹 droppable) file lists with token estimates (daemon required —
+    tracker state lives in daemon memory)
+  - `5` **help**
+- **Wrong-user guard:** if the current user has no cache data but another
+  user's `~/.toolrecall/cache.db` exists on the box (daemon runs as that
+  user), the stats view says so and prints the `sudo -u` escape instead of
+  a bare empty table — daemon state is per-user.
 - **Actions** (require the daemon): `Enter` on a stale file refreshes it
   (`cache_refresh_file` — invalidate + fresh read, clears staleness);
   `c` sets a new context-tracker checkpoint. A footer toast confirms each.

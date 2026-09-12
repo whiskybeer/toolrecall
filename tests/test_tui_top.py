@@ -119,7 +119,7 @@ def test_main_once_prints_snapshot(seeded_db, monkeypatch):
 
 
 def test_view_names_and_context_view_exist():
-    assert tui_top.VIEW_NAMES == ["stats", "log", "context", "help"]
+    assert tui_top.VIEW_NAMES == ["stats", "log", "trend", "context", "help"]
     assert tui_top.context_via_daemon is not None
     assert tui_top.action_refresh_file is not None
     assert tui_top.action_set_checkpoint is not None

@@ -369,7 +369,7 @@ def render_plain(snapshot: dict) -> str:
 
 # ─── Curses UI ───────────────────────────────────────────────
 
-VIEW_NAMES = ["stats", "log", "context", "help"]
+VIEW_NAMES = ["stats", "log", "trend", "context", "help"]
 
 
 def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
@@ -398,6 +398,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         "snap": None,
         "log": [],
         "ctx": None,
+        "trend": None,
         "toast": "",
         "toast_ts": 0.0,
         "last": 0.0,
@@ -415,6 +416,17 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         state["snap"] = snapshot_fn()
         state["log"] = log_fn()
         state["ctx"] = context_via_daemon()
+        # trend reads the db directly (like log_fn); cheap + daemon-independent
+        try:
+            from toolrecall.trend import coverage, daily_trend, miss_classes
+
+            state["trend"] = {
+                "days": daily_trend(7),
+                "classes": miss_classes(min_reads=10),
+                "coverage": coverage(),
+            }
+        except Exception:  # noqa: BLE001 — trend must never break the dashboard
+            state["trend"] = None
 
     def put(y: int, s: str, attr=0) -> int:
         max_y, max_x = scr.getmaxyx()
@@ -437,7 +449,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         # header
         y = put(
             0,
-            " toolrecall top  [%s]  daemon: %s  pid %s%s  %ds  1 stats 2 log 3 ctx 4 help r q"
+            " toolrecall top  [%s]  daemon: %s  pid %s%s  %ds  1 stats 2 log 3 trend 4 ctx 5 help r q"
             % (
                 view,
                 "live" if daemon else "down(sqlite)",
@@ -447,6 +459,30 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             ),
             A_BOLD,
         )
+        y = put(y, "", 0)  # breathing line between header and view body
+
+        # wrong-user warning: own db missing but another user's exists
+        if view in ("stats", "trend") and not daemon and not any(c in st for c in CATEGORIES):
+            db_path = snap.get("db", "?")
+            for cand in os.listdir("/home") if os.path.isdir("/home") else []:
+                if cand == os.environ.get("USER", ""):
+                    continue
+                other_db = "/home/%s/.toolrecall/cache.db" % cand
+                if os.path.exists(other_db):
+                    y = put(
+                        y,
+                        "  ⚠ no cache data for user '%s' — but %s exists (another user's daemon state)"
+                        % (os.environ.get("USER", "?"), other_db),
+                        A_MISS,
+                    )
+                    y = put(
+                        y,
+                        "  daemon state is per-user: run as that user, e.g."
+                        " sudo -u %s -i toolrecall top" % cand,
+                        A_DIM,
+                    )
+                    y = put(y, "", 0)
+                    break
 
         if view == "help":
             for line in HELP_TEXT:
@@ -536,11 +572,52 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     ),
                     A_HIT if hit else A_MISS,
                 )
+        elif view == "trend":
+            t = state.get("trend")
+            y = put(y + 1, " daily hit-rate trend (file_cache, from access_log):", A_BOLD)
+            if not t:
+                y = put(y + 1, "  trend data unavailable (db unreadable?)", A_DIM)
+            else:
+                cov = t["coverage"]
+                y = put(
+                    y,
+                    "  coverage: %s → %s  (%d/%d window entries)"
+                    % (cov["oldest"], cov["newest"], cov["window_entries"], cov["window_max"]),
+                    A_DIM,
+                )
+                y = put(y + 1, "  date        reads   hits  misses  hit%")
+                for d in t["days"]:
+                    hp = "-" if d["hit_pct"] is None else "%5.1f" % d["hit_pct"]
+                    # crude bar: one ▄ per ~5% — instant visual anchor
+                    bar = "▄" * int((d["hit_pct"] or 0) / 5)
+                    y = put(
+                        y,
+                        "  %s  %6d  %6d  %6d  %s  %s"
+                        % (d["date"], d["reads"], d["hits"], d["misses"], hp, bar),
+                        A_HIT
+                        if (d["hit_pct"] or 0) >= 70
+                        else (A_MISS if (d["hit_pct"] or 0) < 50 else 0),
+                    )
+                classes = t["classes"]
+                if classes:
+                    y = put(y + 1, "  worst hit-rate path classes (min 10 reads):", A_BOLD)
+                    for c in classes:
+                        y = put(
+                            y,
+                            "  %-52s %6d  %5s%%  %5s"
+                            % (c["path_class"], c["reads"], c["share_pct"], c["hit_pct"]),
+                            A_MISS if (c["hit_pct"] or 100) < 50 else A_DIM,
+                        )
         elif view == "context":
             ctx = state["ctx"]
-            y = put(y + 1, " context tracker (daemon live required):", A_BOLD)
+            y = put(
+                y + 1,
+                " context tracker (requires the daemon — state lives in daemon memory):",
+                A_BOLD,
+            )
             if ctx is None:
                 y = put(y + 1, "  daemon unreachable — context data unavailable", A_DIM)
+                y = put(y + 1, "  start it:  toolrecall daemon start", A_DIM)
             else:
                 y = put(
                     y,
@@ -597,6 +674,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             msg = {
                 "stats": "view: per-cache stats",
                 "log": "view: access log (up/down scroll)",
+                "trend": "view: daily hit-rate trend",
                 "context": "view: context tracker",
                 "help": "view: help",
             }.get(view, "")
@@ -640,7 +718,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 key = -1
         if key == ord("q"):
             return 0
-        elif key in (ord("1"), ord("2"), ord("3"), ord("4")):
+        elif key in (ord("1"), ord("2"), ord("3"), ord("4"), ord("5")):
             state["view"] = VIEW_NAMES[key - ord("1")]
             state["sel"] = 0
             state["scroll"] = 0
