@@ -149,13 +149,24 @@ class TestCLIStop(unittest.TestCase):
             with open(p, "w") as f:
                 f.write(fake_text)
 
+        # CRITICAL hermeticity: cmd_stop() → daemon.stop_daemon() stops the
+        # LIVE production daemon — first via `systemctl --user stop`, then
+        # (if that "fails") via SIGTERM to the PID in ~/.toolrecall/daemon.pid,
+        # then unlinks the real socket. Both paths must be inert here.
+        # NOTE: stubbing only subprocess.run is NOT enough — the stubbed rc=1
+        # makes stop_daemon() fall through to the PID-file path, which kills
+        # the prod daemon anyway (observed 2026-09-09 21:03:47 during a
+        # pytest of test_cli.py, and again while verifying this fix).
+        # Patch the whole stop_daemon function instead.
         with (
             patch("toolrecall.cli._PROXY_WIRING_FILES", sorted(fake)),
             patch("toolrecall.cli._revert_proxy_wiring") as mock_revert,
+            patch("toolrecall.daemon.stop_daemon") as mock_stop,
         ):
             mock_revert.return_value = ["fake/reverted"]
             cmd_stop()
 
+        mock_stop.assert_called_once()
         output = self.stdout.getvalue()
         self.assertIn("ToolRecall Stop", output)
 
