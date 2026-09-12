@@ -1427,7 +1427,7 @@ def cmd_setup():
             (steps_ok if ok else errors).append(f"API proxy: {msg}")
         elif interactive:
             print()
-            print("  Attach Hermes' LLM traffic to the ToolRecall API proxy?")
+            print("  Attach the detected agent's LLM traffic to the ToolRecall API proxy?")
             print("  This is what enables billed-token savings (api_cache replay")
             print("  + usage capture). Proxy is health-checked; a backup of your")
             print("  config is kept; detach anytime: toolrecall proxy detach")
@@ -1708,18 +1708,37 @@ def _proxy_alive(timeout: float = 3.0) -> bool:
 
 
 def _attach_hermes_to_proxy() -> tuple[bool, str]:
-    """Point Hermes' LLM provider at the ToolRecall forward proxy.
+    """Point the detected agent's LLM provider at the ToolRecall proxy.
 
-    Edits ~/.hermes/config.yaml: llm.base_url → http://127.0.0.1:8569/v1
-    (text-level line edit, YAML structure untouched). Writes a backup
-    config.yaml.toolrecall-bak first; `toolrecall proxy detach` restores it.
+    Agent-agnostic target resolution (first existing wins):
+      1. TOOLRECALL_PROXY_TARGET env — explicit config path
+      2. $AGENT_HOME/config.yaml (any agent honoring AGENT_HOME; Hermes
+         sets it via its systemd unit)
+      3. ~/.hermes/config.yaml (Hermes default)
+    The `model:`/`llm:` section base_url line-edit works for any
+    OpenAI-compatible YAML config with that shape.
 
-    Refuses when: no Hermes config, base_url already proxied, or proxy
-    unreachable. Returns (ok, message).
+    Writes a <config>.toolrecall-bak backup; `toolrecall proxy detach`
+    restores it. Refuses when: no config found, base_url already proxied,
+    or proxy unreachable. Returns (ok, message).
     """
-    cfg_path = os.path.expanduser("~/.hermes/config.yaml")
-    if not os.path.isfile(cfg_path):
-        return False, "no Hermes config at ~/.hermes/config.yaml — skipping proxy attach"
+    explicit = os.environ.get("TOOLRECALL_PROXY_TARGET")
+    candidates = []
+    if explicit:
+        candidates.append(os.path.expanduser(explicit))
+    agent_home = os.environ.get("AGENT_HOME") or os.environ.get("TOOLRECALL_AGENT_HOME")
+    if agent_home:
+        candidates.append(os.path.join(os.path.expanduser(agent_home), "config.yaml"))
+    candidates.append(os.path.expanduser("~/.hermes/config.yaml"))
+    cfg_path = next((c for c in candidates if os.path.isfile(c)), None)
+    if cfg_path is None:
+        return False, (
+            "no agent config found (tried: "
+            + ", ".join(candidates)
+            + ") — for other clients set OPENAI_BASE_URL=http://127.0.0.1:"
+            + os.environ.get("TOOLRECALL_FORWARD_PORT", "8569")
+            + "/v1 manually"
+        )
 
     port = os.environ.get("TOOLRECALL_FORWARD_PORT", "8569")
     proxy_base = f"http://127.0.0.1:{port}/v1"
@@ -1769,23 +1788,36 @@ def _attach_hermes_to_proxy() -> tuple[bool, str]:
     )
     with open(cfg_path, "w") as f:
         f.writelines(lines)
-    return True, f"Hermes llm.base_url → {proxy_base} (backup: {backup})"
+    return True, f"agent llm.base_url → {proxy_base} (config: {cfg_path}; backup: {backup})"
 
 
 def _detach_hermes_from_proxy() -> int:
-    """Restore the pre-proxy Hermes config (reversal of _attach)."""
-    cfg_path = os.path.expanduser("~/.hermes/config.yaml")
-    backup = cfg_path + ".toolrecall-bak"
-    if not os.path.exists(backup):
-        print("no backup found — nothing to detach (or already detached)")
-        return 1
-    import shutil
+    """Restore the pre-proxy agent config (reversal of _attach).
 
-    shutil.copy2(backup, cfg_path)
-    os.remove(backup)
-    print(f"✅ restored {cfg_path} from backup — Hermes no longer uses the proxy")
-    print("   restart Hermes to pick up the change")
-    return 0
+    Searches the same candidate list as attach for a config with a
+    .toolrecall-bak sibling (agent-agnostic).
+    """
+    candidates = []
+    explicit = os.environ.get("TOOLRECALL_PROXY_TARGET")
+    if explicit:
+        candidates.append(os.path.expanduser(explicit))
+    agent_home = os.environ.get("AGENT_HOME") or os.environ.get("TOOLRECALL_AGENT_HOME")
+    if agent_home:
+        candidates.append(os.path.join(os.path.expanduser(agent_home), "config.yaml"))
+    candidates.append(os.path.expanduser("~/.hermes/config.yaml"))
+    for cfg_path in candidates:
+        backup = cfg_path + ".toolrecall-bak"
+        if os.path.exists(backup):
+            import shutil
+
+            shutil.copy2(backup, cfg_path)
+            os.remove(backup)
+            print(f"✅ restored {cfg_path} from backup — agent no longer uses the proxy")
+            print("   restart the agent to pick up the change")
+            return 0
+    print("no backup found (searched: " + ", ".join(candidates) + ")")
+    print("nothing to detach — or already detached")
+    return 1
 
 
 _MANUAL_AGENT_GUIDE = """

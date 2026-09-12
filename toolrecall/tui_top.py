@@ -591,8 +591,19 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             )
             if not any(cat in st for cat in CATEGORIES):
                 db_path = snap.get("db", "?")
-                other_db = "/home/hermes/.toolrecall/cache.db"
-                if not os.path.exists(db_path) and os.path.exists(other_db):
+                # multi-user scan: any OTHER user's ~/.toolrecall/cache.db
+                other_db = None
+                home_root = "/home"
+                if os.path.isdir(home_root):
+                    for cand in sorted(os.listdir(home_root)):
+                        if cand == os.environ.get("USER", ""):
+                            continue
+                        cand_db = os.path.join(home_root, cand, ".toolrecall", "cache.db")
+                        if os.path.exists(cand_db):
+                            other_db = cand_db
+                            other_user = cand
+                            break
+                if not os.path.exists(db_path) and other_db:
                     # Classic multi-user box: the daemon runs as another user
                     # (its state is private to that user), we run as someone
                     # else. Say so instead of a bare 'no data'.
@@ -604,8 +615,8 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     )
                     y = put(
                         y + 1,
-                        "  (daemon state is per-user; view it as that user: sudo -u hermes -i toolrecall top,"
-                        " or copy the db)",
+                        "  (daemon state is per-user; view it as that user:"
+                        " sudo -u %s -i toolrecall top, or copy the db)" % other_user,
                         A_DIM,
                     )
                 elif not os.path.exists(db_path):
