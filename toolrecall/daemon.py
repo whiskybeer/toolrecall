@@ -82,6 +82,39 @@ from toolrecall.context_tracker import (
 PID_FILE = os.path.expanduser("~/.toolrecall/daemon.pid")
 
 
+def _should_manage_pid_file(socket_path: str | None) -> bool:
+    """True when this daemon owns the PRODUCTION socket.
+
+    Only the production daemon may read/write/remove the shared
+    ``~/.toolrecall/daemon.pid``. Hermetic daemons (pytest, e2e rigs) bind
+    sockets under the system temp dir, and on 2026-09-10 one of them — a
+    ``/tmp/toolrecall_e2e_*/toolrecall.sock`` daemon that then lost the global
+    ``:8569`` bind race and exited — still overwrote the production PID file
+    with its own (soon dead) PID. ``toolrecall healthcheck`` and
+    ``daemon --stop`` then pointed at a non-existent process.
+
+    Mirrors the tempdir exemption used by the production-path guard in
+    ``tests/conftest.py``: the classification must NOT go through
+    ``transport._default_socket_path()``, which honors ``TOOLRECALL_TRANSPORT``
+    and would therefore call a test socket "production".
+
+    Non-path transports (``tcp://`` on Windows) keep the legacy behavior —
+    there the PID file is the stop mechanism.
+    """
+    if not socket_path:
+        return False
+    if socket_path.startswith("tcp://"):
+        return True
+    import tempfile
+
+    try:
+        real = os.path.realpath(socket_path)
+        tmp = os.path.realpath(tempfile.gettempdir())
+    except OSError:
+        return False
+    return real != tmp and not real.startswith(tmp + os.sep)
+
+
 def _instance_lock_path(socket_path: str) -> str:
     """Return a lock-file path for a given socket path.
 
@@ -1806,8 +1839,10 @@ class DaemonServer:
 
     def _handle_shutdown(self) -> None:
         """Graceful shutdown: clean PID, socket, then exit."""
-        # Clean up PID file
-        if os.path.exists(PID_FILE):
+        # Clean up PID file — only if this daemon owns the production socket.
+        # A hermetic daemon never wrote it; deleting the production daemon's
+        # PID file on its way out is the same defect in reverse.
+        if _should_manage_pid_file(getattr(self, "socket_path", None)) and os.path.exists(PID_FILE):
             try:
                 os.remove(PID_FILE)
             except Exception:
@@ -2612,9 +2647,16 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
         log_file = os.path.expanduser("~/.toolrecall/daemon.log")
         sys.stdout = open(log_file, "a")
         sys.stderr = sys.stdout
-        os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
-        with open(PID_FILE, "w") as f:
-            f.write(str(os.getpid()))
+        if _should_manage_pid_file(socket_path):
+            os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+            with open(PID_FILE, "w") as f:
+                f.write(str(os.getpid()))
+        else:
+            _banner_log.info(
+                "hermetic socket %s — not writing production PID file %s",
+                socket_path,
+                PID_FILE,
+            )
     elif not foreground and IS_WINDOWS:
         # Windows: use multiprocessing instead of fork
         import multiprocessing as mp
@@ -2629,11 +2671,19 @@ def run_daemon(socket_path: str | None = None, foreground: bool = False):
         # Foreground mode (incl. systemd-managed, which runs --foreground):
         # write the PID file so `daemon --status`/`daemon --stop` reflect the
         # live daemon instead of a stale value from a previous background run.
+        # Hermetic (tempdir) sockets are excluded — see _should_manage_pid_file.
         if not IS_WINDOWS:
             try:
-                os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
-                with open(PID_FILE, "w") as f:
-                    f.write(str(os.getpid()))
+                if _should_manage_pid_file(socket_path):
+                    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+                    with open(PID_FILE, "w") as f:
+                        f.write(str(os.getpid()))
+                else:
+                    _banner_log.info(
+                        "hermetic socket %s — not writing production PID file %s",
+                        socket_path,
+                        PID_FILE,
+                    )
             except OSError:
                 pass  # PID file is best-effort; socket ping is authoritative
 
