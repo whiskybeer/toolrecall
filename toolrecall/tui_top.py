@@ -647,12 +647,22 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             for line in HELP_TEXT:
                 y = put(y, " " + line)
         elif view == "stats":
-            y = put(
-                y,
-                " %-14s %9s %9s %7s %12s %10s"
-                % ("cache [IO]", "hits", "misses", "rate", "IO-offload", "last-act"),
-                A_BOLD,
-            )
+            narrow = max_x < 88
+            if narrow:
+                # phone/narrow SSH: drop the last-act column (low value)
+                y = put(
+                    y,
+                    " %-14s %8s %8s %6s %10s"
+                    % ("cache [IO]", "hits", "miss", "rate", "IO-offload"),
+                    A_BOLD,
+                )
+            else:
+                y = put(
+                    y,
+                    " %-14s %9s %9s %7s %12s %10s"
+                    % ("cache [IO]", "hits", "misses", "rate", "IO-offload", "last-act"),
+                    A_BOLD,
+                )
             if not any(cat in st for cat in CATEGORIES):
                 db_path = snap.get("db", "?")
                 # multi-user scan: any OTHER user's ~/.toolrecall/cache.db
@@ -710,32 +720,47 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 if not c:
                     continue
                 attr = A_DIM if (c["hits"] + c["misses"]) == 0 else 0
-                y = put(
-                    y,
-                    " %-14s %9s %9s %7s %12s %10s"
-                    % (
-                        cat,
-                        f"{c['hits']:,}",
-                        f"{c['misses']:,}",
-                        c["hit_rate"],
-                        human_tokens(c["tokens_served_from_cache"]),
-                        age_str(c.get("updated_at", 0)),
-                    ),
-                    attr,
-                )
+                if narrow:
+                    y = put(
+                        y,
+                        " %-14s %8s %8s %6s %10s"
+                        % (
+                            cat,
+                            f"{c['hits']:,}",
+                            f"{c['misses']:,}",
+                            c["hit_rate"],
+                            human_tokens(c["tokens_served_from_cache"]),
+                        ),
+                        attr,
+                    )
+                else:
+                    y = put(
+                        y,
+                        " %-14s %9s %9s %7s %12s %10s"
+                        % (
+                            cat,
+                            f"{c['hits']:,}",
+                            f"{c['misses']:,}",
+                            c["hit_rate"],
+                            human_tokens(c["tokens_served_from_cache"]),
+                            age_str(c.get("updated_at", 0)),
+                        ),
+                        attr,
+                    )
             # ── MONEY reconciliation (usage CSV — billed truth) ──
             money = state.get("money")
             if money:
-                y = put(y + 1, " money [billed via proxy, today]:", A_BOLD)
+                y = put(y + 1, "", 0)  # section gap
+                y = put(y, " money [billed via proxy, today]:", A_BOLD)
                 y = put(
                     y,
-                    "  requests %d   billed-prompt %s   completions %s   replays %d"
-                    % (
-                        money["requests"],
-                        human_tokens(money["prompt"]),
-                        human_tokens(money["completion"]),
-                        money["replays"],
-                    ),
+                    "  requests %d   billed-prompt %s"
+                    % (money["requests"], human_tokens(money["prompt"])),
+                )
+                y = put(
+                    y,
+                    "  completions %s   replays %d"
+                    % (human_tokens(money["completion"]), money["replays"]),
                 )
                 if money["median"] and money["median"] > 100_000:
                     y = put(
@@ -746,11 +771,12 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     )
                     y = put(
                         y,
-                        "  → run the checkpoint flow (view 4: press c) to cut history re-billing",
+                        "  → run the checkpoint flow (view 4, press c) to cut history re-billing",
                         A_DIM,
                     )
             else:
-                y = put(y + 1, " money [billed]: no proxy traffic captured today", A_DIM)
+                y = put(y + 1, "", 0)  # section gap
+                y = put(y, " money [billed]: no proxy traffic captured today", A_DIM)
         elif view == "log":
             rows = state["log"]
             body_h = max(1, max_y - y - 2)
@@ -777,10 +803,15 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 y = put(y + 1, "  trend data unavailable (db unreadable?)", A_DIM)
             else:
                 cov = t["coverage"]
+                y = put(y + 1, "", 0)  # section gap
                 y = put(
                     y,
-                    "  coverage: %s → %s  (%d/%d window entries)"
-                    % (cov["oldest"], cov["newest"], cov["window_entries"], cov["window_max"]),
+                    "  coverage: %s → %s" % (cov["oldest"], cov["newest"]),
+                    A_DIM,
+                )
+                y = put(
+                    y,
+                    "  window: %d/%d entries" % (cov["window_entries"], cov["window_max"]),
                     A_DIM,
                 )
                 y = put(y + 1, "  date        reads   hits  misses  hit%")
@@ -798,12 +829,18 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     )
                 classes = t["classes"]
                 if classes:
-                    y = put(y + 1, "  worst hit-rate path classes (min 10 reads):", A_BOLD)
+                    y = put(y + 1, "", 0)  # section gap
+                    y = put(y, "  worst hit-rate classes (min 10 reads):", A_BOLD)
                     for c in classes:
+                        # path_class can exceed 42 chars — truncate to tail so
+                        # numeric columns stay aligned on narrow terminals.
+                        cls = c["path_class"]
+                        if len(cls) > 42:
+                            cls = "…" + cls[-41:]
                         y = put(
                             y,
-                            "  %-52s %6d  %5s%%  %5s"
-                            % (c["path_class"], c["reads"], c["share_pct"], c["hit_pct"]),
+                            "  %-42s %6d  %5s%%  %5s"
+                            % (cls, c["reads"], c["share_pct"], c["hit_pct"]),
                             A_MISS if (c["hit_pct"] or 100) < 50 else A_DIM,
                         )
         elif view == "context":
@@ -835,15 +872,17 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     _drop_state = "armed — flow driven, nothing banked yet"
                 else:
                     _drop_state = "INACTIVE — agent must call context_set_checkpoint"
+                y = put(y, "", 0)  # section gap
                 y = put(
                     y,
                     "  ctx dropped: %s tok  (%s)" % (human_tokens(dropped), _drop_state),
                 )
                 stale = ctx.get("stale", [])
+                y = put(y + 1, "", 0)  # section gap
                 y = put(
                     y,
-                    "  stale files (read then overwritten — content in agent context"
-                    " is WRONG): %d  (~%s tok reclaimable)"
+                    "  stale files (read then overwritten — context copy is"
+                    " WRONG): %d  (~%s tok reclaimable)"
                     % (len(stale), human_tokens(ctx.get("est_reclaimable_tokens", 0))),
                     A_BOLD if stale else 0,
                 )
@@ -867,7 +906,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 if stale:
                     y = put(
                         y + 1,
-                        "  enter: refresh selected file   c: set checkpoint",
+                        "  enter: refresh selected   c: set checkpoint",
                         A_DIM,
                     )
                 # Blocked reads FIRST (security info outranks the hygiene list):
@@ -876,9 +915,10 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 blocked = blocked_reads_today()
                 if blocked:
                     n_blocked = sum(b["count"] for b in blocked)
+                    y = put(y + 1, "", 0)  # section gap
                     y = put(
-                        y + 1,
-                        "  blocked reads today (never sent to LLM): %d across %d paths"
+                        y,
+                        "  blocked reads (never sent to LLM): %d / %d paths"
                         % (n_blocked, len(blocked)),
                         A_BOLD,
                     )
@@ -895,9 +935,10 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 if clean_paths and max_y - y > 4:
                     avail = max_y - y - 2
                     shown = clean_paths[: max(1, avail)]
+                    y = put(y + 1, "", 0)  # section gap
                     y = put(
-                        y + 1,
-                        "  clean files (safe to drop; first %d of %d):"
+                        y,
+                        "  clean files (safe to drop; %d of %d shown):"
                         % (len(shown), len(clean_paths)),
                         A_BOLD,
                     )
