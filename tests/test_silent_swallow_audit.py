@@ -36,7 +36,9 @@ FROZEN_COUNTS = {
     # the flock-sweep work re-ran validate). All four are resource-release
     # fail-soft (conn/server close, PID-file write) — socket ping and the
     # kernel flock are authoritative, so the swallowed errors carry no signal.
-    "daemon.py": 22,
+    # 23 as of 51aff04 (A6 review): +1 srv.close() OSError pass on the
+    # TLS-refusal shutdown path — listener cleanup before exit, no signal.
+    "daemon.py": 23,
     "docs.py": 4,
     "healthcheck.py": 2,
     "mcp_bridge.py": 4,
@@ -44,7 +46,12 @@ FROZEN_COUNTS = {
     "normalizer.py": 1,
     "proxy.py": 2,
     "shim.py": 4,
-    "tui_top.py": 2,  # TUI: curses color-init fail-soft on monochrome terms + addnstr write-off-edge (both degrade to plain rendering)
+    "tui_top.py": 5,  # TUI fail-soft (was 2): 9f1a0d5 added WAL-snapshot fallback
+    # handlers without a baseline bump — OSError on sidecar copy (missing -wal
+    # is the normal case), sqlite3.Error on snapshot probe + connect (snapshot
+    # is a best-effort fallback; main path already returned None honestly), and
+    # Exception on con.close() in the probe failure path. All degrade to the
+    # documented "db unreadable" TUI state, none carry actionable signal.
     "transport.py": 0,
     "updater.py": 2,  # auto-updater: network-fetch fail-soft + optional metadata probe (see module docstrings)
     "venvs.py": 3,

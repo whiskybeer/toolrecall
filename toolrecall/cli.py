@@ -292,6 +292,26 @@ def cmd_stats():
     print(_json.dumps(stats, indent=2))
 
 
+def cmd_trend():
+    """Daily hit-rate trend + worst miss classes (self-serve verification)."""
+    days = 7
+    as_json = False
+    for arg in sys.argv[2:]:
+        if arg == "--json":
+            as_json = True
+        elif arg == "--days":
+            continue
+        elif arg.isdigit() and "--days" in sys.argv:
+            days = int(arg)
+        elif arg.startswith("--days="):
+            raw = arg.split("=", 1)[1]
+            if raw.isdigit():
+                days = int(raw)
+    from toolrecall.trend import trend_report
+
+    print(trend_report(days=days, as_json=as_json))
+
+
 def cmd_invalidate():
     """Clear cache via Daemon or direct SQLite fallback."""
     try:
@@ -2252,6 +2272,7 @@ def main():
         print("  init            Create default config.toml and .env")
         print("  status          Cache status and stats")
         print("  stats           Detailed stats (JSON)")
+        print("  trend           Daily hit-rate trend + worst miss classes")
         print("  invalidate      Clear all caches")
         print("  reset-stats     Reset statistics counters (preserves cache entries)")
         print("  index           Build/update knowledge database")
@@ -2305,6 +2326,7 @@ def main():
         "stop": cmd_stop,
         "status": cmd_status,
         "stats": cmd_stats,
+        "trend": cmd_trend,
         "invalidate": cmd_invalidate,
         "reset-stats": cmd_reset_stats,
         "index": cmd_index,

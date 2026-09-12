@@ -100,6 +100,59 @@ Full detail in [Architecture](docs/ARCHITECTURE.md).
 
 ---
 
+## Verifying Your Hit Rate — `toolrecall trend`
+
+> **TL;DR:** Lifetime hit rate is one number; your workload is a curve. `toolrecall trend` shows the daily hit rate and — crucially — *which path classes* are missing, so you can tell "cache is broken" from "this directory is never cacheable" and fix either honestly.
+
+`toolrecall stats` shows cumulative counters since install. They average over every regime your workload has been through, so a 62% day and an 82% day become an invisible 71%. The trend view answers the question that actually matters: **how good is ToolRecall for my use case, right now, and where is it losing reads?**
+
+```console
+$ toolrecall trend
+  ToolRecall Hit-Rate Trend (daily, from access_log)
+  =====================================================
+  coverage: 2026-09-07 05:32 → 2026-09-08 12:36 (50000/50000 window entries)
+
+  date        reads   hits  misses  hit%
+  ------------------------------------------
+  2026-09-07   30399   18744   11655   61.7
+  2026-09-08   19599   14143    5456   72.2
+
+  Worst hit-rate classes (min 100 reads in window):
+  path_class                                             reads    share   hit%
+  ------------------------------------------------------------------------
+  /home/u/.hermes/webui                              14315   28.6%   27.9
+  /home/u/.hermes/cron                                9163   18.3%   34.9
+  /home/u/docs                                        2211    4.4%   91.7
+```
+
+### Reading the output
+
+- **Daily table** — hit% per day. A falling or flat-lined rate is a signal; a rising one after a config change confirms the change worked.
+- **Worst classes** — path classes (directory level) with the lowest hit rates, ≥100 reads each. The two numbers to weigh together:
+  - **share%** — how much of your traffic this class is. A 5% class missing 90% of its reads costs little; a 28% class missing 72% caps your whole rate.
+  - **hit%** — persistently low usually means the class is *rewritten on every access* (session transcripts, logs, generated files). Those reads can never hit by construction.
+
+### Acting on it
+
+If a high-share class is rewritten every access, pin it to never-cache so it exits the miss accounting instead of polluting it:
+
+```toml
+# ~/.config/toolrecall/toolrecall.toml
+[cache]
+file_ttls = { "~/.hermes/webui/sessions/*" = 0 }
+```
+
+`ttl = 0` = serve-through: every read is honest (fresh from disk), and the class stops counting as misses — your headline hit rate reflects only what the cache *can* do. If instead the class has stable files and still misses (low hit% on low-churn content), that is a real cache bug — please [open an issue](https://github.com/nousresearch/toolrecall/issues).
+
+### Notes
+
+- **Data source / retention:** computed at query time from the `access_log` rolling window (~50k reads). No rollup tables, nothing scheduled, no extra state. Old days roll out of the window as new reads push them out — the trend is a *recent* view by design.
+- **Read-only, daemon-free:** the CLI opens the cache DB read-only (WAL-safe); it neither needs nor touches the running daemon.
+- **`--json`** for scripting/observers: `{"trend": [...], "miss_classes": [...], "coverage": {...}}`.
+- **`--days N`** limits the daily table to the most recent N days (default 7).
+
+---
+
 ## Context Tracker
 
 > **TL;DR:** ToolRecall caches file reads so re-reading is instant (~0.1ms). The Context Tracker adds **dirty-file awareness**: the agent drops old file content from its context window and re-reads on demand from cache — keeping context bounded and breaking the O(n²) attention-cost snowball.
@@ -310,6 +363,8 @@ pip install toolrecall[libsql-sync]  # libSQL + Turso Cloud sync
 toolrecall setup          One-shot: config + systemd + daemon start  [required once]
 toolrecall status         Cache status and stats                     [auto-starts]
 toolrecall stats          Detailed cache statistics (JSON)           [auto-starts]
+toolrecall trend          Daily hit-rate trend + worst miss classes  [no daemon]
+toolrecall trend --json   Machine-readable trend (observer/CI)       [no daemon]
 toolrecall invalidate     Clear all caches                           [auto-starts]
 toolrecall mcp            Start MCP Bridge                           [auto-starts]
 toolrecall serve          Forward proxy (cache API responses)        [auto-starts]
