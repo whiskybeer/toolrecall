@@ -181,6 +181,7 @@ class TestProfileSemantics:
 import http.client  # noqa: E402
 import http.server  # noqa: E402
 import os  # noqa: E402
+import tempfile  # noqa: E402
 import socket  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -226,6 +227,15 @@ class _HTTPHarness:
     def start_class(cls, testcase):
         testcase._orig_allowed = proxy_mod._host_allowed
         proxy_mod._host_allowed = lambda h: h.startswith(cls.host_prefix)
+        # Billed-truth hygiene: _log_proxy_usage writes the PRODUCTION
+        # proxy_usage.csv by default (~/.toolrecall/proxy_usage.csv). This
+        # file is the billed-cost source of truth — never test data (same
+        # pattern as test_proxy_stream_usage.py). Point it at a temp CSV
+        # for the whole class.
+        cls._tmpdir = tempfile.mkdtemp(prefix="tr_canon_usage_")
+        cls._orig_usage_path = proxy_mod._USAGE_LOG_PATH
+        proxy_mod._USAGE_LOG_PATH = os.path.join(cls._tmpdir, "proxy_usage.csv")
+        proxy_mod._init_usage_log()
         testcase.upstream = http.server.HTTPServer(("127.0.0.1", 0), _MockLLMHandler)
         threading.Thread(target=testcase.upstream.serve_forever, daemon=True).start()
         testcase._orig_connect = http.client.HTTPSConnection.connect
@@ -241,6 +251,7 @@ class _HTTPHarness:
     def stop_class(cls, testcase):
         proxy_mod._host_allowed = testcase._orig_allowed
         http.client.HTTPSConnection.connect = testcase._orig_connect
+        proxy_mod._USAGE_LOG_PATH = cls._orig_usage_path
         testcase.upstream.shutdown()
 
     @staticmethod
