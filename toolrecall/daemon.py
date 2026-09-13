@@ -58,6 +58,7 @@ from toolrecall.cache import (
     cached_api_store as _cache_api_store,
     _is_sensitive_path,
     invalidate_all,
+    invalidate_api_cache,
     get_stats,
     _record as _cache_record,
 )
@@ -2158,8 +2159,29 @@ class DaemonServer:
         err = self.security.check_invalidate()
         if err:
             return {"error": err}
+        scope = req.get("scope", "agent")
+        if scope not in ("agent", "api"):
+            return {"error": f"unknown scope: {scope!r} (expected 'agent' or 'api')"}
+        if scope == "api":
+            # Opt-in wipe of billed LLM responses — the agent caches are
+            # cleared too, so callers get the full table sweep they asked
+            # for, with api row counts reported (money-tier visibility).
+            invalidate_all()
+            api_rows = invalidate_api_cache()
+            return {
+                "result": (
+                    f"All ToolRecall caches cleared (scope=api): agent caches + "
+                    f"{api_rows} api_cache entries"
+                ),
+                "api_entries_cleared": api_rows,
+            }
         invalidate_all()
-        return {"result": "All ToolRecall caches cleared"}
+        return {
+            "result": (
+                "All ToolRecall agent caches cleared (api_cache untouched — "
+                "resend with scope=api to include it)"
+            )
+        }
 
     def _handle_refresh_file(self, req: dict) -> dict:
         """Invalidate and re-read a single file. Safe — no security gate needed.

@@ -318,19 +318,17 @@ class TestCanonicalizeDefaultHTTP(unittest.TestCase):
         # test above may leave entries under the same canon hash space. A
         # clean api_cache per test makes each test self-contained.
         # NOTE: cache_invalidate/invalidate_all deliberately do NOT clear
-        # api_cache (found 2026-09-11 while closing the tee-store race —
-        # every cache table but api_cache is in the DELETE list). For this
-        # hermetic throwaway daemon we clear api_cache directly via IPC.
-        pong = self.daemon.client.send({"cmd": "cache_invalidate"})
-        self.addCleanup(lambda: self.daemon.client.send({"cmd": "cache_invalidate"}))
-        assert pong.get("result") or pong.get("error") is None, f"invalidate failed: {pong}"
-        # Clear api_cache directly on the daemon's DB (invalidate_all skips
-        # that table — see NOTE above). The daemon's long-lived connection
-        # sees the committed delete (WAL mode, same file).
-        import sqlite3 as _sq
-
-        with _sq.connect(self.daemon.db_path) as _conn:
-            _conn.execute("DELETE FROM api_cache")
+        # api_cache by default (billed LLM responses — see invalidate_all's
+        # docstring). scope="api" is the explicit opt-in wipe over IPC, so
+        # the daemon's long-lived connection sees the committed delete
+        # (WAL mode, same file).
+        pong = self.daemon.client.send({"cmd": "cache_invalidate", "scope": "api"})
+        self.addCleanup(
+            lambda: self.daemon.client.send({"cmd": "cache_invalidate", "scope": "api"})
+        )
+        # Transport returns the handler dict (+ version key) flattened:
+        # {"result": "<str>", "api_entries_cleared": N, "v": 1}.
+        assert pong.get("api_entries_cleared") is not None, f"scope=api invalidate failed: {pong}"
 
     def _restore_default(self):
         proxy_mod._canonicalize_default = self._orig_canon_default

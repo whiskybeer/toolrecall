@@ -376,7 +376,7 @@ toolrecall status         Cache status and stats                     [auto-start
 toolrecall stats          Detailed cache statistics (JSON)           [auto-starts]
 toolrecall trend          Daily hit-rate trend + worst miss classes  [no daemon]
 toolrecall trend --json   Machine-readable trend (observer/CI)       [no daemon]
-toolrecall invalidate     Clear all caches                           [auto-starts]
+toolrecall invalidate     Clear agent caches (api_cache: scope=api)  [auto-starts]
 toolrecall mcp            Start MCP Bridge                           [auto-starts]
 toolrecall serve          Forward proxy (cache API responses)        [auto-starts]
 toolrecall serve --9000   Custom port forward proxy

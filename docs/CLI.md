@@ -80,7 +80,7 @@ Most commands accept `--help` / `-h` for per-command usage and options
 ### `toolrecall invalidate`
 
 - **File:** `cli.py : cmd_invalidate()`
-- **Purpose:** Clear all caches (file, terminal, MCP, script). Uses daemon if running, else direct SQLite.
+- **Purpose:** Clear agent caches (file, terminal, MCP, script) — api_cache (billed LLM responses) is deliberately kept; pass scope="api" to include it. Uses daemon if running, else direct SQLite.
 
 ### `toolrecall reset-stats`
 

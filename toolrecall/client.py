@@ -324,18 +324,25 @@ def cache_status() -> str:
     return "\n".join(lines)
 
 
-def cache_invalidate() -> str:
+def cache_invalidate(scope: str = "agent") -> str:
     """Invalidate cache via daemon or direct SQLite.
 
     Daemon-first: sends invalidation command to the running daemon.
     Falls back to direct SQLite invalidation when daemon is unavailable.
+
+    scope="agent" (default) clears the agent caches only — api_cache
+    (billed LLM responses) is deliberately untouched. scope="api" is the
+    explicit opt-in that also wipes api_cache and reports its row count.
     """
     client = _get_client()
-    resp = client.send({"cmd": "cache_invalidate"})
+    resp = client.send({"cmd": "cache_invalidate", "scope": scope})
     if not _is_daemon_down(resp):
         return resp.get("result", "Cache invalidated via daemon")
     _get_direct_cache().invalidate_all()
-    return "Cache invalidated (direct)"
+    if scope == "api":
+        rows = _get_direct_cache().invalidate_api_cache()
+        return f"Cache invalidated (direct, scope=api): {rows} api_cache entries"
+    return "Cache invalidated (direct, agent caches — api_cache untouched)"
 
 
 def refresh_file(path: str) -> dict:

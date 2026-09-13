@@ -138,8 +138,23 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "cache_invalidate",
-        "description": "Clear all caches. ⚠ Requires mcp.allow_invalidate=true in config.",
-        "inputSchema": {"type": "object", "properties": {}, "required": []},
+        "description": (
+            "Clear ToolRecall caches. Default scope='agent' clears agent caches "
+            "only (api_cache with billed LLM responses is kept). scope='api' "
+            "ALSO wipes api_cache — re-bills cached calls. "
+            "⚠ Requires mcp.allow_invalidate=true in config."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["agent", "api"],
+                    "description": "'agent' (default) = tool caches only; 'api' = also clear api_cache",
+                }
+            },
+            "required": [],
+        },
     },
     {
         "name": "cache_refresh_file",
