@@ -45,6 +45,12 @@ def cmd_replay(args: list[str]) -> None:
         _cmd_import(rest)
     elif sub == "delete":
         _cmd_delete(rest)
+    elif sub == "tree":
+        _cmd_tree(rest)
+    elif sub == "fork":
+        _cmd_fork(rest)
+    elif sub == "at":
+        _cmd_at(rest)
     elif sub in ("-h", "--help", "help"):
         _print_usage()
     else:
@@ -67,6 +73,11 @@ Subcommands:
   export <scenario>    Export scenario as JSON (portable, git-committable)
   import <file.json>   Import scenario from exported JSON file
   delete <scenario>    Delete a scenario
+  tree                 List replay trees
+  tree <tree_id>       Show nodes of a tree
+  tree new <name>      Create a replay tree (prints tree_id + root node)
+  fork <tree> <node> <name>  Fork a branch from a node
+  at <tree> <node>     Show the call chain a node inherits (root first)
 
 Examples:
   toolrecall replay record my-test
@@ -75,6 +86,9 @@ Examples:
   toolrecall replay import tests/fixtures/my-test.json
   toolrecall replay stop
   toolrecall replay list
+  toolrecall replay tree new sweep1
+  toolrecall replay fork <tree_id> <root_node> branch-A
+  toolrecall replay at <tree_id> <node_id>
 """)
 
 
@@ -229,6 +243,89 @@ def _cmd_delete(rest: list[str]) -> None:
     replay = ReplayManager()
     count = replay.delete_scenario(scenario)
     print(f"Deleted scenario '{scenario}' ({count} calls removed).")
+
+
+# ─── Tree / fork subcommands (G1) ──────────────────────────────────────────────
+
+
+def _cmd_tree(rest: list[str]) -> None:
+    """tree                       — list trees
+    tree <tree_id>              — show nodes of a tree
+    tree new <name>             — create a tree (prints tree_id and root node)"""
+    from toolrecall.replay import ReplayManager
+
+    replay = ReplayManager()
+    if not rest:
+        trees = replay.list_trees()
+        if not trees:
+            print("No replay trees. Create one: toolrecall replay tree new <name>")
+            return
+        print(f"{'TREE ID':<18} {'NODES':>6} {'CALLS':>6}  CREATED")
+        for t in trees:
+            print(
+                f"{t['tree_id']:<18} {t['nodes']:>6} {t['calls']:>6}  {time_str(t['created_at'])}"
+            )
+        return
+    if rest[0] == "new":
+        if len(rest) < 2:
+            print("Error: Missing tree name. Usage: toolrecall replay tree new <name>")
+            return
+        tree = replay.fork_tree(rest[1])
+        print(f"Tree created: {tree['tree_id']}")
+        print(f"  root node: {tree['root']}")
+        return
+    tid = rest[0]
+    try:
+        tree = replay.get_tree(tid)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+    print(f"Tree {tid} — {len(tree['nodes'])} nodes (newest first):")
+    for n in tree["nodes"]:
+        parent = n["parent_id"] or "—"
+        print(
+            f"  {n['node_id']}  depth {n['depth']:<3} parent {parent}  "
+            f"{n['branch_name']}  ({time_str(n['created_at'])})"
+        )
+
+
+def _cmd_fork(rest: list[str]) -> None:
+    """fork <tree_id> <parent_node_id> <branch_name> — fork a branch node"""
+    if len(rest) < 3:
+        print("Usage: toolrecall replay fork <tree_id> <parent_node_id> <branch_name>")
+        return
+    from toolrecall.replay import ReplayManager
+
+    replay = ReplayManager()
+    try:
+        node = replay.fork_node(rest[0], rest[1], rest[2])
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+    print(
+        f"Branch '{rest[2]}' forked from {rest[1]}: node {node['node_id']} (depth {node['depth']})"
+    )
+
+
+def _cmd_at(rest: list[str]) -> None:
+    """at <tree_id> <node_id>    — show the call chain inherited by a node"""
+    if len(rest) < 2:
+        print("Usage: toolrecall replay at <tree_id> <node_id>")
+        return
+    from toolrecall.replay import ReplayManager
+
+    replay = ReplayManager()
+    chain = replay.list_nodes(rest[0], rest[1])
+    if not chain:
+        print(f"Error: Unknown node {rest[1]!r} in tree {rest[0]!r}")
+        return
+    print(f"Node {rest[1]} chain (root first, deepest = replay view):")
+    for n in chain:
+        own = replay.node_call_count(rest[0], n["node_id"])
+        marker = " ←" if n["node_id"] == rest[1] else ""
+        print(
+            f"  depth {n['depth']:<3} {n['node_id']}  {n['branch_name']:<20} {own} own calls{marker}"
+        )
 
 
 def time_str(ts: float) -> str:

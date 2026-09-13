@@ -33,6 +33,7 @@ Usage:
 
 import json
 import time
+import uuid
 from typing import Any, Optional
 
 from toolrecall._db import _db
@@ -43,6 +44,8 @@ from toolrecall.keys import content_digest
 # ─── Constants ─────────────────────────────────────────────────────────────────
 
 REPLAY_TABLE = "replay_scenarios"
+REPLAY_TREE_NODES = "replay_tree_nodes"
+REPLAY_TREE_CALLS = "replay_tree_calls"
 
 
 # ─── Scenario Mode ─────────────────────────────────────────────────────────────
@@ -333,64 +336,406 @@ class ReplayManager:
         ).fetchone()
         return row["next_idx"] if row else 0
 
+    # ── Tree / fork primitives (G1) ────────────────────────────────────────
+
+    def _ensure_tree_tables(self):
+        """Create the fork-tree tables if they don't exist.
+
+        Separate from _ensure_table() so legacy scenarios pay nothing and
+        the flat table's schema never changes (no migration).
+        """
+        with _db() as conn:
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {REPLAY_TREE_NODES} (
+                    tree_id TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    parent_id TEXT,
+                    branch_name TEXT NOT NULL,
+                    depth INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (tree_id, node_id)
+                )
+            """)
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {REPLAY_TREE_CALLS} (
+                    tree_id TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    call_index INTEGER NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    args_hash TEXT NOT NULL,
+                    args_json TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    recorded_at REAL NOT NULL,
+                    PRIMARY KEY (tree_id, node_id, call_index)
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_replay_tree_lookup
+                ON {REPLAY_TREE_CALLS} (tree_id, node_id, tool_name, args_hash)
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_replay_tree_nodes
+                ON {REPLAY_TREE_NODES} (tree_id, parent_id)
+            """)
+
+    def fork_tree(self, tree_name: str) -> dict:
+        """Create a new replay tree with a root node.
+
+        Args:
+            tree_name: Human-readable tree label (e.g. a scenario name)
+
+        Returns:
+            dict with tree_id, root (node_id), name
+        """
+        self._ensure_tree_tables()
+        tree_id = uuid.uuid4().hex[:16]
+        root_id = uuid.uuid4().hex[:16]
+        with _db() as conn:
+            conn.execute(
+                f"INSERT INTO {REPLAY_TREE_NODES} "
+                f"(tree_id, node_id, parent_id, branch_name, depth, created_at) "
+                f"VALUES (?, ?, NULL, ?, 0, ?)",
+                (tree_id, root_id, tree_name, time.time()),
+            )
+        return {"tree_id": tree_id, "root": root_id, "name": tree_name}
+
+    def fork_node(self, tree_id: str, parent_node_id: str, branch_name: str) -> dict:
+        """Fork a new branch node under a parent node.
+
+        The child node starts empty; replay_at() walks the parent chain,
+        so the branch inherits every call recorded on its ancestors until
+        a call recorded ON the branch shadows it (divergence mechanic).
+
+        Args:
+            tree_id: Tree to fork in
+            parent_node_id: Node to fork from (the checkpoint)
+            branch_name: Human-readable branch label
+
+        Returns:
+            dict with tree_id, node_id, parent_id, depth
+
+        Raises:
+            ValueError: unknown tree or parent node
+        """
+        self._ensure_tree_tables()
+        with _db() as conn:
+            prow = conn.execute(
+                f"SELECT depth FROM {REPLAY_TREE_NODES} WHERE tree_id = ? AND node_id = ?",
+                (tree_id, parent_node_id),
+            ).fetchone()
+            if prow is None:
+                raise ValueError(f"Unknown parent node {parent_node_id!r} in tree {tree_id!r}")
+            node_id = uuid.uuid4().hex[:16]
+            depth = int(prow["depth"]) + 1
+            conn.execute(
+                f"INSERT INTO {REPLAY_TREE_NODES} "
+                f"(tree_id, node_id, parent_id, branch_name, depth, created_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?)",
+                (tree_id, node_id, parent_node_id, branch_name, depth, time.time()),
+            )
+        return {
+            "tree_id": tree_id,
+            "node_id": node_id,
+            "parent_id": parent_node_id,
+            "depth": depth,
+            "branch_name": branch_name,
+        }
+
+    def record_call_at(
+        self, tree_id: str, node_id: str, tool_name: str, args: dict, response: Any
+    ) -> dict:
+        """Record a tool call ON a specific tree node (not the flat table).
+
+        Recording on a forked node shadows the same call recorded on an
+        ancestor — replay_at() prefers the deepest match.
+        """
+        self._ensure_tree_tables()
+        args_json = normalize_tool_args(args)
+        args_hash = _make_hash(tool_name, args)
+        with _db() as conn:
+            row = conn.execute(
+                f"SELECT COALESCE(MAX(call_index), -1) + 1 as next_idx "
+                f"FROM {REPLAY_TREE_CALLS} WHERE tree_id = ? AND node_id = ?",
+                (tree_id, node_id),
+            ).fetchone()
+            call_index = int(row["next_idx"]) if row else 0
+            conn.execute(
+                f"INSERT INTO {REPLAY_TREE_CALLS} "
+                f"(tree_id, node_id, call_index, tool_name, args_hash, args_json, "
+                f"response_json, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    tree_id,
+                    node_id,
+                    call_index,
+                    tool_name,
+                    args_hash,
+                    args_json,
+                    json.dumps(response, default=str),
+                    time.time(),
+                ),
+            )
+        return {
+            "tree_id": tree_id,
+            "node_id": node_id,
+            "call_index": call_index,
+            "args_hash": args_hash,
+        }
+
+    def replay_at(self, tree_id: str, node_id: str, tool_name: str, args: dict) -> Optional[Any]:
+        """Replay a tool call as of a tree node.
+
+        Walks the node chain child → root and returns the DEEPEST recorded
+        match for (tool_name, args_hash). This is the fork mechanic: a
+        branch reuses its ancestors' recorded prefix and replays only its
+        own divergence calls — without re-executing the shared prefix.
+
+        Returns None when no node on the chain recorded this call.
+        """
+        self._ensure_tree_tables()
+        args_hash = _make_hash(tool_name, args)
+        with _db() as conn:
+            chain = conn.execute(
+                f"""
+                WITH RECURSIVE chain(node_id, hop) AS (
+                    SELECT node_id, 0 FROM {REPLAY_TREE_NODES}
+                    WHERE tree_id = ? AND node_id = ?
+                    UNION ALL
+                    SELECT n.parent_id, c.hop + 1 FROM {REPLAY_TREE_NODES} n
+                    JOIN chain c ON n.node_id = c.node_id AND n.tree_id = ?
+                    WHERE n.parent_id IS NOT NULL
+                )
+                SELECT c.response_json
+                FROM chain ch
+                JOIN {REPLAY_TREE_CALLS} c
+                  ON c.tree_id = ? AND c.node_id = ch.node_id
+                 AND c.tool_name = ? AND c.args_hash = ?
+                ORDER BY ch.hop ASC, c.call_index DESC
+                LIMIT 1
+                """,
+                (tree_id, node_id, tree_id, tree_id, tool_name, args_hash),
+            ).fetchone()
+            if chain is not None:
+                return json.loads(chain["response_json"])
+        return None
+
+    def get_tree(self, tree_id: str) -> dict:
+        """Get tree metadata + all nodes (newest first)."""
+        self._ensure_tree_tables()
+        with _db() as conn:
+            nodes = conn.execute(
+                f"SELECT node_id, parent_id, branch_name, depth, created_at "
+                f"FROM {REPLAY_TREE_NODES} WHERE tree_id = ? "
+                f"ORDER BY depth DESC, created_at",
+                (tree_id,),
+            ).fetchall()
+        if not nodes:
+            raise ValueError(f"Unknown tree {tree_id!r}")
+        return {
+            "tree_id": tree_id,
+            "nodes": [
+                {
+                    "node_id": n["node_id"],
+                    "parent_id": n["parent_id"],
+                    "branch_name": n["branch_name"],
+                    "depth": n["depth"],
+                    "created_at": n["created_at"],
+                }
+                for n in nodes
+            ],
+        }
+
+    def list_nodes(self, tree_id: str, node_id: str) -> list[dict]:
+        """List the ancestor chain of a node, root first."""
+        self._ensure_tree_tables()
+        with _db() as conn:
+            rows = conn.execute(
+                f"""
+                WITH RECURSIVE chain(node_id, parent_id, branch_name, depth) AS (
+                    SELECT node_id, parent_id, branch_name, depth
+                    FROM {REPLAY_TREE_NODES}
+                    WHERE tree_id = ? AND node_id = ?
+                    UNION ALL
+                    SELECT n.node_id, n.parent_id, n.branch_name, n.depth
+                    FROM {REPLAY_TREE_NODES} n
+                    JOIN chain c ON n.node_id = c.parent_id AND n.tree_id = ?
+                )
+                SELECT node_id, parent_id, branch_name, depth FROM chain
+                ORDER BY depth
+                """,
+                (tree_id, node_id, tree_id),
+            ).fetchall()
+        return [
+            {
+                "node_id": r["node_id"],
+                "parent_id": r["parent_id"],
+                "branch_name": r["branch_name"],
+                "depth": r["depth"],
+            }
+            for r in rows
+        ]
+
+    def node_call_count(self, tree_id: str, node_id: str) -> int:
+        """Number of calls recorded directly on a node (not inherited)."""
+        self._ensure_tree_tables()
+        with _db() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS cnt FROM {REPLAY_TREE_CALLS} "
+                f"WHERE tree_id = ? AND node_id = ?",
+                (tree_id, node_id),
+            ).fetchone()
+            return int(row["cnt"]) if row else 0
+
+    def delete_tree(self, tree_id: str) -> dict:
+        """Delete a tree and all its nodes and calls. Returns counts."""
+        self._ensure_tree_tables()
+        with _db() as conn:
+            n_nodes = conn.execute(
+                f"DELETE FROM {REPLAY_TREE_NODES} WHERE tree_id = ?", (tree_id,)
+            ).rowcount
+            n_calls = conn.execute(
+                f"DELETE FROM {REPLAY_TREE_CALLS} WHERE tree_id = ?", (tree_id,)
+            ).rowcount
+        return {"nodes": n_nodes, "calls": n_calls}
+
+    def list_trees(self) -> list[dict]:
+        """List all trees with node/call counts."""
+        self._ensure_tree_tables()
+        with _db() as conn:
+            rows = conn.execute(
+                f"SELECT n.tree_id, MIN(n.created_at) AS created_at, "
+                f"COUNT(DISTINCT n.node_id) AS nodes, "
+                f"(SELECT COUNT(*) FROM {REPLAY_TREE_CALLS} c "
+                f" WHERE c.tree_id = n.tree_id) AS calls "
+                f"FROM {REPLAY_TREE_NODES} n GROUP BY n.tree_id ORDER BY created_at"
+            ).fetchall()
+        return [
+            {
+                "tree_id": r["tree_id"],
+                "created_at": r["created_at"],
+                "nodes": r["nodes"],
+                "calls": r["calls"],
+            }
+            for r in rows
+        ]
+
 
 # ─── Convenience functions ─────────────────────────────────────────────────────
 
 
-def start_recording(scenario: str) -> dict:
+# ─── Scoped mode registry (G4: per-branch session isolation) ──────────────────
+#
+# The legacy _active singleton allows exactly ONE record/replay session per
+# process: recording scenario A while replaying B is impossible, and
+# concurrent tree branches (GEPA batch evaluation) would fight over one
+# global mode. _scopes keys independent _Mode instances by scope id so each
+# branch drives its own mode. scope=None always resolves to the legacy
+# singleton — existing callers are byte-for-byte unaffected.
+
+_scopes: dict[str, _Mode] = {}
+
+
+def _scope_mode(scope: Optional[str]) -> _Mode:
+    """Return the _Mode for a scope, creating it on first use.
+
+    scope=None returns the legacy module singleton.
+    """
+    if scope is None:
+        return _active
+    mode = _scopes.get(scope)
+    if mode is None:
+        mode = _Mode()
+        _scopes[scope] = mode
+    return mode
+
+
+def start_recording(scenario: str, scope: Optional[str] = None) -> dict:
     """Start recording mode for a scenario.
 
-    Every tool call that goes through the daemon will be recorded.
+    Args:
+        scenario: Scenario name — every tool call through the daemon is recorded.
+        scope: Optional scope id (e.g. a tree branch). When set, this recording
+            session lives in a scope-isolated _Mode instead of the legacy
+            module singleton, so concurrent sessions don't fight over one
+            global record/replay state.
 
     Returns:
         dict with status and scenario name
     """
-    _active.start(scenario, "record")
-    return {"replay_mode": "record", "scenario": scenario}
+    _scope_mode(scope).start(scenario, "record")
+    return {"replay_mode": "record", "scenario": scenario, "scope": scope}
 
 
-def start_replay(scenario: str) -> dict:
+def start_replay(scenario: str, scope: Optional[str] = None, node_id: Optional[str] = None) -> dict:
     """Start replay mode for a scenario.
 
     Tool calls matching recorded responses will be served from cache
     without executing anything.
 
+    Args:
+        scenario: Scenario name to replay from.
+        scope: Optional scope id for scope-isolated replay state.
+        node_id: Optional tree node id — informational in the returned dict;
+            tree-mode replay is selected per-call via intercept_call(tree_id=...).
+
     Returns:
         dict with status and scenario name
     """
-    _active.start(scenario, "replay")
-    return {"replay_mode": "replay", "scenario": scenario}
+    _scope_mode(scope).start(scenario, "replay")
+    return {
+        "replay_mode": "replay",
+        "scenario": scenario,
+        "scope": scope,
+        "node_id": node_id,
+    }
 
 
-def stop() -> dict:
+def stop(scope: Optional[str] = None) -> dict:
     """Stop Replay mode (both recording and replaying).
+
+    Args:
+        scope: Stop only this scope's mode. None stops the legacy singleton.
+            A stopped scope is removed from the registry.
 
     Returns:
         dict with previous mode and scenario, or message if inactive
     """
-    prev = {"mode": _active.mode, "scenario": _active.scenario}
-    _active.stop()
+    mode = _scope_mode(scope)
+    prev = {"mode": mode.mode, "scenario": mode.scenario}
+    mode.stop()
+    if scope is not None and mode is not _active:
+        _scopes.pop(scope, None)
     if prev["mode"] is None:
         return {"replay_mode": "inactive", "message": "Replay mode was not active"}
     return {"replay_mode": "stopped", "was": prev["mode"], "scenario": prev["scenario"]}
 
 
-def status() -> dict:
+def status(scope: Optional[str] = None) -> dict:
     """Get current Replay mode status.
+
+    Args:
+        scope: Report this scope's status; None reports the legacy singleton.
 
     Returns:
         dict with mode, scenario, and is_active
     """
+    mode = _scope_mode(scope)
     return {
-        "replay_mode": _active.mode or "inactive",
-        "scenario": _active.scenario,
-        "is_active": _active.is_active(),
-        "is_recording": _active.is_recording(),
-        "is_replaying": _active.is_replaying(),
+        "replay_mode": mode.mode or "inactive",
+        "scenario": mode.scenario,
+        "is_active": mode.is_active(),
+        "is_recording": mode.is_recording(),
+        "is_replaying": mode.is_replaying(),
+        "scope": scope,
     }
 
 
-def intercept_call(tool_name: str, args: dict) -> Optional[dict]:
+def intercept_call(
+    tool_name: str,
+    args: dict,
+    scope: Optional[str] = None,
+    tree_id: Optional[str] = None,
+    node_id: Optional[str] = None,
+) -> Optional[dict]:
     """Intercept a tool call for Recording/replay.
 
     Called by the daemon before executing a tool. If replay is active:
@@ -398,37 +743,56 @@ def intercept_call(tool_name: str, args: dict) -> Optional[dict]:
     - Record mode: returns None (let it execute), the response is recorded
       by the caller via record_response()
 
+    Scope/tree awareness (G4): scope selects an isolated mode state so
+    concurrent branches (e.g. GEPA batch evaluation) don't share one global
+    record/replay session. With tree_id+node_id set in replay mode, the
+    response resolves through the tree node chain via replay_at() (deepest
+    node match wins) instead of the flat scenario table.
+
     This is the integration point between the daemon and Replay mode.
 
     Args:
         tool_name: The tool being called
         args: The tool arguments
+        scope: Scope-isolated mode state (None = legacy singleton)
+        tree_id: Replay tree id (replay mode with tree resolution)
+        node_id: Tree node to replay as of
 
     Returns:
         Dict with {"replay_hit": True, "data": ...} on replay hit,
         or None if no replay action needed (normal execution)
     """
-    if not _active.is_active():
+    mode = _scope_mode(scope)
+    if not mode.is_active():
         return None
 
     manager = ReplayManager()
 
-    if _active.is_replaying():
-        scenario = _active.scenario
+    if mode.is_replaying():
+        scenario = mode.scenario
         assert scenario is not None
-        response = manager.find_replay(scenario, tool_name, args)
+        if tree_id is not None and node_id is not None:
+            response = manager.replay_at(tree_id, node_id, tool_name, args)
+        else:
+            response = manager.find_replay(scenario, tool_name, args)
         if response is not None:
             return {"replay_hit": True, "data": response}
         return {"replay_hit": False, "message": f"No replay found for {tool_name}"}
 
-    if _active.is_recording():
+    if mode.is_recording():
         return {"replay_hit": False, "message": "recording"}
 
     return None
 
 
 def record_response(
-    tool_name: str, args: dict, response: Any, scenario: Optional[str] | None = None
+    tool_name: str,
+    args: dict,
+    response: Any,
+    scenario: Optional[str] | None = None,
+    scope: Optional[str] = None,
+    tree_id: Optional[str] = None,
+    node_id: Optional[str] = None,
 ) -> dict:
     """Record a tool response after real execution.
 
@@ -440,14 +804,23 @@ def record_response(
         args: The tool arguments
         response: The response to record
         scenario: Override scenario name (uses active scenario by default)
+        scope: Scope-isolated recording state (None = legacy singleton)
+        tree_id: With node_id, record ON this tree node via record_call_at
+        node_id: Tree node to record on
 
     Returns:
         dict with recording result
     """
-    if not _active.is_recording():
+    mode = _scope_mode(scope)
+    if not mode.is_recording():
         return {"replay_mode": "not_recording"}
 
-    actual_scenario = scenario or _active.scenario
+    if tree_id is not None and node_id is not None:
+        manager = ReplayManager()
+        result = manager.record_call_at(tree_id, node_id, tool_name, args, response)
+        return {"replay_mode": "record", "tree": result}
+
+    actual_scenario = scenario or mode.scenario
     if actual_scenario is None:
         return {"replay_mode": "error", "message": "No active scenario"}
 

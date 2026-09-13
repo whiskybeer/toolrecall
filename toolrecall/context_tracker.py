@@ -144,6 +144,7 @@ class ContextTracker:
     def __init__(
         self,
         ignore_prefixes: list[str] | tuple[str, ...] | None = None,
+        branch_id: str | None = None,
     ):
         self._dirty: dict[str, dict] = {}
         self._read_set: dict[str, float] = {}
@@ -151,6 +152,12 @@ class ContextTracker:
         self._ctx_dropped_tokens: int = 0
         self._agent_armed: bool = False
         self._banked: set[str] = set()
+        # ── Branch scoping (G4) ─────────────────────────────
+        # None = legacy behavior (shared singleton row in tracker_state).
+        # A branch id namespaces persistence into tracker_state_branch so
+        # concurrent tree branches snapshot/restore independently and a
+        # branch's clean/dirty state never leaks into another's view.
+        self._branch_id: str | None = branch_id
         self._ignore_prefixes: tuple[str, ...] = tuple(
             os.path.expanduser(p) for p in (ignore_prefixes or ())
         )
@@ -217,16 +224,29 @@ class ContextTracker:
             from toolrecall._db import _db
 
             with _db() as conn:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS tracker_state ("
-                    "id INTEGER PRIMARY KEY CHECK (id = 1),"
-                    "payload TEXT NOT NULL,"
-                    "saved_at REAL NOT NULL)"
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO tracker_state (id, payload, saved_at) VALUES (1, ?, ?)",
-                    (json.dumps(payload), saved_at),
-                )
+                if self._branch_id is None:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS tracker_state ("
+                        "id INTEGER PRIMARY KEY CHECK (id = 1),"
+                        "payload TEXT NOT NULL,"
+                        "saved_at REAL NOT NULL)"
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO tracker_state (id, payload, saved_at) VALUES (1, ?, ?)",
+                        (json.dumps(payload), saved_at),
+                    )
+                else:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS tracker_state_branch ("
+                        "branch_id TEXT PRIMARY KEY,"
+                        "payload TEXT NOT NULL,"
+                        "saved_at REAL NOT NULL)"
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO tracker_state_branch "
+                        "(branch_id, payload, saved_at) VALUES (?, ?, ?)",
+                        (self._branch_id, json.dumps(payload), saved_at),
+                    )
             read_n = len(payload["read_set"])
             dirty_n = len(payload["dirty"])
             return {
@@ -274,15 +294,27 @@ class ContextTracker:
             from toolrecall._db import _db, _is_sensitive_path
 
             with _db() as conn:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS tracker_state ("
-                    "id INTEGER PRIMARY KEY CHECK (id = 1),"
-                    "payload TEXT NOT NULL,"
-                    "saved_at REAL NOT NULL)"
-                )
-                row = conn.execute(
-                    "SELECT payload, saved_at FROM tracker_state WHERE id = 1"
-                ).fetchone()
+                if self._branch_id is None:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS tracker_state ("
+                        "id INTEGER PRIMARY KEY CHECK (id = 1),"
+                        "payload TEXT NOT NULL,"
+                        "saved_at REAL NOT NULL)"
+                    )
+                    row = conn.execute(
+                        "SELECT payload, saved_at FROM tracker_state WHERE id = 1"
+                    ).fetchone()
+                else:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS tracker_state_branch ("
+                        "branch_id TEXT PRIMARY KEY,"
+                        "payload TEXT NOT NULL,"
+                        "saved_at REAL NOT NULL)"
+                    )
+                    row = conn.execute(
+                        "SELECT payload, saved_at FROM tracker_state_branch WHERE branch_id = ?",
+                        (self._branch_id,),
+                    ).fetchone()
         except Exception as e:  # noqa: BLE001 — a broken DB must not break boot
             warnings.warn(f"ToolRecall: tracker restore failed: {e}")
             return {"restored": False, "reason": "error", "paths": 0, "dirty": 0}
@@ -348,6 +380,10 @@ class ContextTracker:
     def clear_persisted(self) -> bool:
         """Delete the persisted snapshot row (companion to reset()).
 
+        Branch-scoped trackers (branch_id set) clear their own
+        tracker_state_branch row; legacy trackers clear the singleton
+        tracker_state row exactly as before.
+
         Returns True when a row was removed, False otherwise (best-effort).
         A missing tracker_state table is the normal never-snapshotted case
         — handled silently, not warned about.
@@ -356,7 +392,13 @@ class ContextTracker:
             from toolrecall._db import _db
 
             with _db() as conn:
-                cur = conn.execute("DELETE FROM tracker_state WHERE id = 1")
+                if self._branch_id is None:
+                    cur = conn.execute("DELETE FROM tracker_state WHERE id = 1")
+                    return bool(cur.rowcount)
+                cur = conn.execute(
+                    "DELETE FROM tracker_state_branch WHERE branch_id = ?",
+                    (self._branch_id,),
+                )
                 return bool(cur.rowcount)
         except Exception as e:  # noqa: BLE001 — reset must not fail on a broken DB
             if "no such table" not in str(e).lower():
