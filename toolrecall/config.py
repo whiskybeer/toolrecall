@@ -100,6 +100,10 @@ ENV_MAP = {
     # _canonicalize_default). '' = header opt-in only; e.g. "hermes" applies
     # the profile to headerless requests (session-wide default).
     "TOOLRECALL_CANONICALIZE_DEFAULT": ("forward_proxy", "canonicalize_default"),
+    # SecurityGate symlink policy (path_utils Layer B, F1): lexical
+    # in-allowed-dir symlinks permitted (default true; false = strict
+    # realpath-only containment).
+    "TOOLRECALL_ALLOW_SYMLINK_ESCAPES": ("security", "allow_symlink_escapes"),
 }
 
 
@@ -124,6 +128,7 @@ def _apply_env_overrides(config: dict) -> dict:
             "circuit_breaker",
             "dedup",
             "enabled",
+            "allow_symlink_escapes",
         }
     )
     for env_key, (section, key) in ENV_MAP.items():
@@ -277,6 +282,7 @@ class Config:
                 "ast_check_enabled",
                 "dangerous_tool_keywords",
                 "tool_access_control",
+                "allow_symlink_escapes",
             }
         ),
         "tracker": frozenset({"ignore_read_prefixes", "persist_ttl"}),
@@ -317,7 +323,7 @@ class Config:
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
         # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
         "forward_proxy": frozenset({"port", "extra_hosts", "dedup", "canonicalize_default"}),
-        "update": frozenset({"enabled", "check_interval_hours"}),
+        "update": frozenset({"enabled", "check_interval_hours", "index_url"}),
     }
     # Sub-tables whose keys are user-defined names (per-client policies,
     # per-server configs, per-command TTL patterns) — never validated.
@@ -740,6 +746,23 @@ class Config:
         return self.get("mcp", "allow_terminal", default=False)
 
     @property
+    def mcp_allow_symlink_escapes(self) -> bool:
+        """Permit reads through symlinks located INSIDE an allowed directory
+        even when their target is not (path_utils Layer B, F1).
+
+        Default True — matches historical behavior and legitimate layouts
+        (/etc/os-release → /usr/lib/os-release, venv site-packages links).
+        Set false (here or TOOLRECALL_ALLOW_SYMLINK_ESCAPES=0) for strict
+        realpath-only containment: no symlink inside an allowed dir can
+        widen what is readable. The sensitive-file blocklist applies
+        either way.
+        """
+        val = self.get("security", "allow_symlink_escapes", default=True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() not in ("0", "false", "no", "off")
+
+    @property
     def mcp_allowed_terminal_commands(self) -> list:
         """Regex allowlist for terminal commands (e.g. ['^npm run (lint|test)$']).
         If list is empty but allow_terminal=True, all commands are allowed (DANGEROUS).
@@ -1063,6 +1086,17 @@ class Config:
         if env is not None:
             return env.strip().lower() not in ("0", "false", "no", "off")
         return bool(self.get("update", "enabled", default=True))
+
+    @property
+    def update_index_url(self) -> str | None:
+        """Explicit package index for the auto-updater (F2 supply-chain pin).
+
+        When set, upgrades are pinned to this URL; otherwise the env var
+        TOOLRECALL_UPDATE_INDEX_URL applies; otherwise the official PyPI.
+        Configured via [update].index_url in toolrecall.toml.
+        """
+        val = self.get("update", "index_url", default=None)
+        return str(val).strip() if val else None
 
     @property
     def update_check_interval_hours(self) -> float:

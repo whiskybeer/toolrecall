@@ -1,6 +1,7 @@
 """Tests for stdlib-based Fetch MCP Server."""
 
 import os
+import socket
 import sys
 from unittest.mock import patch
 
@@ -27,12 +28,22 @@ class TestMCPFetch:
         assert len(TOOLS) == 3
 
     def test_validate_url_valid(self):
-        """Valid HTTPS URLs pass validation."""
+        """Valid HTTPS URLs pass validation (DNS mocked hermetic — public IP)."""
         from toolrecall.mcp_fetch import _validate_url
 
-        assert _validate_url("https://example.com") is None
-        assert _validate_url("http://example.com/path?q=1") is None
-        assert _validate_url("https://api.github.com/repos/whiskybeer/toolrecall") is None
+        public = [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+        with patch("socket.getaddrinfo", return_value=public):
+            assert _validate_url("https://example.com") is None
+            assert _validate_url("http://example.com/path?q=1") is None
+            assert _validate_url("https://api.github.com/repos/whiskybeer/toolrecall") is None
 
     def test_validate_url_invalid(self):
         """Invalid URLs are rejected."""
@@ -44,13 +55,65 @@ class TestMCPFetch:
         assert _validate_url("file:///etc/passwd") is not None
         assert _validate_url("not-a-url") is not None
 
-    def test_validate_url_rejects_localhost(self):
-        """localhost URLs are technically valid (http scheme)."""
+    def test_validate_url_unresolvable_host(self):
+        """A host that cannot resolve is rejected (no blind passthrough)."""
         from toolrecall.mcp_fetch import _validate_url
 
-        # localhost http/https is allowed by validator (no special block)
-        assert _validate_url("http://localhost:8569") is None
-        # This is intentional — the security gate blocks it at daemon level
+        with patch(
+            "socket.getaddrinfo", side_effect=socket.gaierror(8, "Name or service not known")
+        ):
+            err = _validate_url("https://nonexistent-host.example.invalid")
+        assert err is not None
+        assert "resolve" in err.lower()
+
+    def test_validate_url_blocks_loopback_and_private(self):
+        """SSRF (F14): loopback, RFC1918, link-local/IMDS, ULA, mapped-v6 blocked."""
+        from toolrecall.mcp_fetch import _validate_url
+
+        blocked = [
+            ("http://127.0.0.1:8569/", "127.0.0.1"),
+            ("http://10.0.0.5/", "10.0.0.5"),
+            ("http://192.168.1.10/", "192.168.1.10"),
+            ("http://172.16.0.9/", "172.16.0.9"),
+            ("http://169.254.169.254/latest/meta-data/", "169.254.169.254"),
+            ("http://100.64.0.1/", "100.64.0.1"),
+            ("http://[::1]/", "::1"),
+            ("http://[fd00::1]/", "fd00::1"),
+            ("http://[::ffff:10.0.0.1]/", "::ffff:10.0.0.1"),
+            # Decimal spelling of 127.0.0.1 — urlsplit does NOT normalize it.
+            ("http://2130706433/", "2130706433"),
+        ]
+        for url, _ip in blocked:
+            # Real getaddrinfo: numeric hosts resolve offline.
+            assert _validate_url(url) is not None, url
+        # Hostname spelling that resolves to a private address.
+        private = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 80))]
+        with patch("socket.getaddrinfo", return_value=private):
+            assert _validate_url("http://internal.example/") is not None
+
+    def test_validate_url_rejects_embedded_credentials(self):
+        """user:host confusion — userinfo must not satisfy the host check."""
+        from toolrecall.mcp_fetch import _validate_url
+
+        err = _validate_url("https://evil.example@example.com/")
+        assert err is not None
+
+    def test_validate_url_rejects_localhost(self):
+        """localhost/loopback now BLOCKED (was: allowed pre-F14)."""
+        from toolrecall.mcp_fetch import _validate_url
+
+        assert _validate_url("http://localhost:8569") is not None
+        assert _validate_url("http://localhost/") is not None
+
+    def test_validate_url_allows_public_numeric(self):
+        """A public numeric IP passes the resolver check (mocked v4/v6 mix)."""
+        from toolrecall.mcp_fetch import _validate_url
+
+        public = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1::1", 443, 0, 0)),
+        ]
+        with patch("socket.getaddrinfo", return_value=public):
+            assert _validate_url("https://example.com/") is None
 
     def test_handle_url_requires_url(self):
         """fetch_url requires a URL parameter."""

@@ -133,6 +133,91 @@ class TestSymlinkPathCheck(unittest.TestCase):
         self.assertIsNotNone(err, "/usr/lib path should be blocked")
 
 
+class TestSymlinkPolicyConfigurable(unittest.TestCase):
+    """F1: the in-allowed-dir symlink allowance is an explicit, documented,
+    configurable policy ([security] allow_symlink_escapes, default true) —
+    not an undocumented realpath bypass.
+
+    Layer A (realpath containment) is ALWAYS enforced regardless of the
+    flag; Layer B (lexical location inside an allowed dir) is what the
+    flag controls.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.real_dir = os.path.join(self.tmpdir, "real_target")
+        os.makedirs(self.real_dir, exist_ok=True)
+        with open(os.path.join(self.real_dir, "secret.txt"), "w") as f:
+            f.write("target-outside-allowlist")
+        # The allowed dir and a symlink INSIDE it pointing OUTSIDE it.
+        self.allowed = os.path.join(self.tmpdir, "allowed")
+        os.makedirs(self.allowed, exist_ok=True)
+        self.escape_link = os.path.join(self.allowed, "escape_link")
+        os.symlink(self.real_dir, self.escape_link)
+        self.escape_file = os.path.join(self.escape_link, "secret.txt")
+        # A symlink chain fully inside allowed dirs (must stay allowed).
+        self.inner_real = os.path.join(self.allowed, "inner.txt")
+        with open(self.inner_real, "w") as f:
+            f.write("inside")
+        self.inner_link = os.path.join(self.allowed, "inner_link.txt")
+        os.symlink(self.inner_real, self.inner_link)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _gate(self, allow: bool):
+        class MockConfig:
+            mcp_allowed_paths = [self.allowed]
+            mcp_allow_terminal = False
+            mcp_allowed_terminal_commands = []
+            mcp_allow_invalidate = False
+            mcp_multiplex_enabled = True
+            mcp_multiplex_servers = ["time"]
+            mcp_tool_access_control = False
+            mcp_dangerous_tool_keywords = []
+            mcp_cognitive_check_enabled = True
+            mcp_ast_check_enabled = True
+            mcp_allow_symlink_escapes = allow
+            mcp_client_policy = lambda self: {}  # noqa: E731
+
+        from toolrecall.daemon import SecurityGate
+
+        return SecurityGate(MockConfig())
+
+    def test_default_allows_in_allowed_dir_symlink(self):
+        """Default keeps historical behavior: lexical location in allowed dir wins."""
+        self.assertIsNone(self._gate(True).check_read_path(self.escape_file))
+
+    def test_strict_mode_blocks_escape_symlink(self):
+        """allow_symlink_escapes=false: realpath containment only — blocked."""
+        err = self._gate(False).check_read_path(self.escape_file)
+        self.assertIsNotNone(err, "escape symlink must be blocked in strict mode")
+
+    def test_strict_mode_still_allows_fully_internal_symlink(self):
+        """Strict mode blocks only escapes; internal symlinks stay readable."""
+        self.assertIsNone(self._gate(False).check_read_path(self.inner_link))
+
+    def test_layer_a_enforced_even_with_allow_true(self):
+        """Realpath containment is unconditional: target outside → Layer B only
+        rescues paths whose LEXICAL location is inside an allowed dir."""
+        from toolrecall.path_utils import check_path_allowed
+
+        outside = os.path.join(self.tmpdir, "outside_link.txt")
+        os.symlink(os.path.join(self.real_dir, "secret.txt"), outside)
+        self.assertFalse(
+            check_path_allowed(outside, [self.allowed], True),
+            "symlink living outside the allowlist must never pass",
+        )
+        self.assertFalse(check_path_allowed(outside, [self.allowed], False))
+
+    def test_check_path_allowed_flag_passthrough(self):
+        """The helper honors the flag directly (client fallback path)."""
+        from toolrecall.path_utils import check_path_allowed
+
+        self.assertTrue(check_path_allowed(self.escape_file, [self.allowed], True))
+        self.assertFalse(check_path_allowed(self.escape_file, [self.allowed], False))
+
+
 class TestAccessLogFiltering(unittest.TestCase):
     """cache.py _record() must only write to access_log when path is meaningful.
 

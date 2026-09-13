@@ -234,6 +234,10 @@ DEFAULT_CONFIG = {
     "security": {
         "tool_access_control": False,
         "dangerous_tool_keywords": [],
+        # F1 symlink policy: allow reads through symlinks located inside an
+        # allowed dir even when their target is not (/etc/os-release style).
+        # false = strict realpath-only containment.
+        "allow_symlink_escapes": True,
     },
     "forward_proxy": {
         "port": 8569,
@@ -246,6 +250,10 @@ DEFAULT_CONFIG = {
     "update": {
         "enabled": True,
         "check_interval_hours": 24,
+        # Supply-chain pin (F2): upgrades pull from ONE index. Empty =
+        # official PyPI; override in config.toml or via
+        # TOOLRECALL_UPDATE_INDEX_URL for a private mirror.
+        "index_url": "",
     },
 }
 

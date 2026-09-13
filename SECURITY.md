@@ -42,6 +42,13 @@ If terminal execution is enabled (`allow_terminal = true`), an injected agent mi
 ### E. Protocol Strictness
 - **Mitigation:** ToolRecall does not accept raw text. All inputs over the multiplexer must be strictly formed JSON-RPC 2.0 payloads. Malformed escape sequences or corrupted payloads crash the `json.loads()` decoder instantly and are discarded.
 
+### F. Outbound Fetch SSRF Protections (F14)
+The built-in `fetch` MCP server (`toolrecall.mcp_fetch`) is reachable by any connected agent, so its outbound HTTP is constrained:
+- **Destination validation:** `_validate_url` resolves the target host via `socket.getaddrinfo` and rejects non-public addresses — loopback, RFC 1918 private ranges, carrier-grade NAT (100.64/10), link-local (incl. the cloud metadata endpoint 169.254.169.254), reserved/multicast/unspecified, IPv6 unique-local, and IPv4-mapped IPv6 spellings. Numeric IP spellings (decimal/octal/hex) are covered because the *resolved* address is checked, not the hostname string.
+- **No credentials in URLs** (userinfo would confuse host validation).
+- **No redirects:** 3xx responses are surfaced to the caller instead of followed — a redirect target is never implicitly trusted. An agent can re-request the redirect target explicitly, which validates it like any other URL.
+- **Residual risk (documented):** validation is resolve-then-request, so a DNS-rebinding window remains (TOCTOU between `getaddrinfo` and the connection). Closing it requires pinning the connection to the validated IP (custom HTTPS connection pool) — not implemented. Public-instance operators should run the fetch tool inside an egress-restricted network.
+
 ---
 
 ## 2. MCP Keyword Access Control
@@ -107,7 +114,7 @@ The Daemon does not open any TCP ports for its IPC layer. All daemon-to-bridge c
 
 | Claim/Feature | Honest Assessment |
 |---|---|
-| `allowed_paths` security | **Default-deny:** empty list = NO readable paths. The blocklist (.env, .ssh, .pem) applies even within allowed paths as a secondary safety net. The allowlist is the primary trust boundary — the blocklist catches slips. |
+| `allowed_paths` security | **Default-deny:** empty list = NO readable paths. The blocklist (.env, .ssh, .pem) applies even within allowed paths as a secondary safety net. The allowlist is the primary trust boundary — the blocklist catches slips. **Symlinks (F1):** realpath containment is always enforced; additionally, a path whose *lexical* location is inside an allowed directory is permitted even when its symlink target is not. This Layer-B allowance is configurable: `[security] allow_symlink_escapes = false` (or `TOOLRECALL_ALLOW_SYMLINK_ESCAPES=0`) enables strict realpath-only containment. Default `true` (distro/venv layouts depend on it, e.g. `/etc/os-release`); with it on, a writer inside an allowed directory can publish a symlink to anywhere readable through the gate — the sensitive-file blocklist still applies within it. |
 | `tool_access_control = true` | **Substring match on tool names** — not an OS sandbox. A tool named `post_message` passes through even if it modifies state. The keyword list (`write`, `delete`, `push`, etc.) is a best-effort allowlist. For real OS isolation, pair with Docker/gVisor. |
 | Python shim (`toolrecall.shim`) | **Monkey-patches `open()`, `subprocess.run()`, `subprocess.Popen()`** for transparent caching. Security model: `cwd`/`check`/`timeout` kwargs are safe (execution context, not content). `env`/`input` kwargs are blocked (change command behavior). The shim auto-detects agent shell wrappers and strips them before caching the inner command. Only affects Python processes where the `.pth` is installed. **Blast radius:** once installed in a venv, every Python process using that interpreter gets `open()` patched — a wrong cache hit could silently hand stale bytes to unrelated programs. Don't install on multi-tenant machines or where unrelated Python services run. Node.js agents (Claude Code, Codex, Cursor) are unaffected. |
 | Deterministic injection detection | **Regex + AST scan, not ML.** Covers ~86% of patterns in the labeled test corpus (70 injection, 50 legitimate). Remaining 14% are encoding-evasion variants, fabricated URLs, and zero-day patterns. The ONNX classifier (cold path fallback) is optional and unverified. |

@@ -167,7 +167,11 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
     if allowed_paths:
         from toolrecall.path_utils import check_path_allowed
 
-        if not check_path_allowed(path, allowed_paths):
+        if not check_path_allowed(
+            path,
+            allowed_paths,
+            getattr(cfg, "mcp_allow_symlink_escapes", True),
+        ):
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
     return _get_direct_cache().cached_read(path, source=source)
 

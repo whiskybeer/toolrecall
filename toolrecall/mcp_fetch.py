@@ -15,17 +15,30 @@ Content size limit:
     and truncated=True is returned.
   - This protects the MCP daemon from large responses that would consume
     all available memory (no streaming in stdio MCP).
+
+SSRF protection (F14):
+  - _validate_url resolves the target host and rejects non-public
+    addresses (loopback, link-local/IMDS, private ranges) — numeric and
+    IPv6-mapped spellings included.
+  - Redirects are NOT followed: HTTPError for 3xx is surfaced to the
+    caller instead (a redirect target could point at an internal
+    address that was never validated).
 """
 
 import json
 import sys
 import logging
 import os
-from urllib.request import Request, urlopen
+import ipaddress
+import socket
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlparse
 
 _LOG: logging.Logger | None = None
+
+# Carrier-grade NAT range (RFC 6598) — NOT covered by ipaddress.is_private.
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 # Maximum content bytes to fetch from a URL.
 # Configurable via TOOLRECALL_FETCH_MAX_BYTES env var (in bytes).
@@ -101,15 +114,71 @@ def _setup():
     _LOG = get_logger("fetch")
 
 
+def _no_redirects() -> HTTPRedirectHandler:
+    """Handler that refuses to follow redirects (SSRF guard, F14).
+
+    urllib follows 301/302/303/307 transparently by default; a redirect
+    could bounce a validated public URL onto an internal address that was
+    never validated. The HTTPError is surfaced to the caller instead —
+    the MCP tool result shows the redirect, the agent can re-request the
+    target explicitly (it will be validated like any other URL).
+    """
+    return _NoRedirects()
+
+
+class _NoRedirects(HTTPRedirectHandler):
+    """Redirect handler that never redirects: returns None so urllib raises
+    HTTPError for 3xx, surfacing the redirect target to the caller."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _validate_url(url: str) -> str | None:
-    """Validate URL. Returns error message or None on success."""
+    """Validate URL. Returns error message or None on success.
+
+    Blocks SSRF-prone destinations (F14): loopback, link-local (169.254/16 —
+    includes the cloud metadata endpoint), RFC 1918/CGNAT private ranges,
+    IPv6 unique-local, IPv4-mapped IPv6, and decimal/octal/hex IP spellings
+    (urlsplit normalizes none of them, so resolve the host explicitly).
+    The request pins redirects to the initially validated host via
+    _NoRedirects — a 302 to an internal address is not followed.
+    """
     if not url or not url.strip():
         return "URL is required"
     parsed = urlparse(url)
     if parsed.scheme not in ALLOWED_SCHEMES:
         return f"Unsupported scheme '{parsed.scheme}'. Only http and https are allowed."
-    if not parsed.netloc:
+    if not parsed.hostname:
         return "Invalid URL: missing hostname"
+    # Credentials in the netloc would make the blocked-host check below
+    # apply to a userinfo string, not the real destination host.
+    if parsed.username is not None or parsed.password is not None:
+        return "Invalid URL: credentials in the URL are not allowed"
+    host = parsed.hostname.rstrip(".")
+    try:
+        infos = socket.getaddrinfo(
+            host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror as e:
+        return f"Invalid URL: cannot resolve host ({e})"
+    for family, _type, _proto, _canonname, sockaddr in infos:
+        addr = ipaddress.ip_address(sockaddr[0])
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped  # ::ffff:10.0.0.1 is IPv4 traffic
+        ip = addr
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+            or ip in _CGNAT
+        ):
+            return f"Blocked URL: {host} resolves to a non-public address ({ip}) — SSRF protection"
     return None
 
 
@@ -123,8 +192,12 @@ def _do_fetch(url: str, method: str = "GET", max_bytes: int = MAX_CONTENT_BYTES)
     req.add_header("User-Agent", "toolrecall-fetch-mcp/0.1")
     req.add_header("Accept", "text/html,application/xhtml+xml,application/xml,text/plain,*/*")
 
+    # SSRF guard (F14): never follow redirects — the redirect target was
+    # never validated and could be an internal address. The resulting
+    # HTTPError (3xx) is surfaced to the caller below.
+    opener = build_opener(_no_redirects())
     try:
-        with urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        with opener.open(req, timeout=TIMEOUT_SECONDS) as resp:
             status = resp.status
             headers = dict(resp.headers)
             content_type = resp.headers.get("Content-Type", "").split(";")[0].strip()

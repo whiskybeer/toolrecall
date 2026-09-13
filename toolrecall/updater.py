@@ -235,12 +235,38 @@ def _pip_cmd() -> list[str]:
     return [sys.executable, "-m", "pip"]
 
 
+def _pip_index_args() -> list:
+    """Index pinning for the upgrade command (F2).
+
+    Precedence: explicit [update].index_url in config.toml > the
+    TOOLRECALL_UPDATE_INDEX_URL env var > the official PyPI URL. The point
+    is that the URL is PINNED — a default-on auto-updater must never let
+    pip discover indexes (e.g. via a hostile/filtered response or a
+    modified global pip.conf) that could serve attacker-controlled wheels
+    with code execution at next daemon start.
+    """
+    default_index = "https://pypi.org/simple"
+    val: str | None = None
+    try:
+        from toolrecall.config import load_config
+
+        val = load_config().update_index_url
+    except Exception:  # noqa: BLE001 — updater must never break the CLI
+        val = None
+    if not val:
+        val = os.environ.get("TOOLRECALL_UPDATE_INDEX_URL") or default_index
+    return ["--index-url", val, "--no-cache-dir"]
+
+
 def apply_update(latest: str) -> bool:
     """Upgrade toolrecall via this interpreter's pip. Records the outcome.
 
     Returns True only when pip exits 0. Editable installs are skipped.
     Running processes keep their imported code — only newly started
     processes (the restarted daemon) pick up the new version.
+
+    Security (F2): the install is pinned to one index (config/env/PyPI) and
+    runs with --no-cache-dir; no extra index URLs are honored.
     """
     state = _load_state()
 
@@ -252,7 +278,7 @@ def apply_update(latest: str) -> bool:
 
     try:
         r = subprocess.run(
-            _pip_cmd() + ["install", "--upgrade", "toolrecall"],
+            _pip_cmd() + ["install", "--upgrade", "toolrecall"] + _pip_index_args(),
             capture_output=True,
             text=True,
             timeout=_PIP_TIMEOUT_S,

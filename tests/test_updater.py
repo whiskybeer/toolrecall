@@ -48,6 +48,75 @@ class _StateIsolated(unittest.TestCase):
             return json.load(f)
 
 
+class TestIndexPinning(unittest.TestCase):
+    """F2: the auto-updater's install is pinned to one index (supply-chain)."""
+
+    def test_pip_index_args_default_pypi(self):
+        from toolrecall.updater import _pip_index_args
+
+        with _update_check_env("1"):
+            os.environ.pop("TOOLRECALL_UPDATE_INDEX_URL", None)
+            args = _pip_index_args()
+        self.assertIn("--index-url", args)
+        self.assertEqual(args[args.index("--index-url") + 1], "https://pypi.org/simple")
+        self.assertIn("--no-cache-dir", args)
+
+    def test_pip_index_args_env_override(self):
+        from toolrecall.updater import _pip_index_args
+
+        with patch.dict(
+            os.environ, {"TOOLRECALL_UPDATE_INDEX_URL": "https://mirror.example/simple"}
+        ):
+            args = _pip_index_args()
+        self.assertEqual(args[args.index("--index-url") + 1], "https://mirror.example/simple")
+
+    def test_pip_index_args_config_override(self):
+        import toolrecall.config as config_mod
+        from toolrecall.updater import _pip_index_args
+
+        cfg = config_mod.Config.__new__(config_mod.Config)
+        cfg._data = {"update": {"index_url": "https://internal-mirror.example/simple"}}
+        with patch("toolrecall.config.load_config", return_value=cfg):
+            args = _pip_index_args()
+        self.assertEqual(
+            args[args.index("--index-url") + 1], "https://internal-mirror.example/simple"
+        )
+
+    def test_apply_update_command_includes_pin(self):
+        """The actual pip invocation carries the pinned index flags."""
+        captured = {}
+
+        class FakeCompleted:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return FakeCompleted()
+
+        import toolrecall.config as config_mod
+
+        with _update_check_env("1"):
+            os.environ.pop("TOOLRECALL_UPDATE_INDEX_URL", None)
+            with (
+                patch.object(updater, "_load_state", return_value={}),
+                patch.object(updater, "_save_state"),
+                patch.object(updater, "_is_editable_install", return_value=False),
+                patch.object(updater.subprocess, "run", side_effect=fake_run),
+                patch.object(config_mod, "load_config") as lc,
+            ):
+                c = config_mod.Config.__new__(config_mod.Config)
+                c._data = {}
+                lc.return_value = c
+                ok = updater.apply_update("9.9.9")
+        self.assertTrue(ok)
+        self.assertIn("--index-url", captured["cmd"])
+        self.assertEqual(
+            captured["cmd"][captured["cmd"].index("--index-url") + 1], "https://pypi.org/simple"
+        )
+
+
 class TestVersionKey(unittest.TestCase):
     """Dependency-free semver compare (plan Task 1)."""
 

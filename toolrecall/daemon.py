@@ -221,6 +221,10 @@ class SecurityGate:
         self.allow_multiplex = cfg.mcp_multiplex_enabled
         self.allowed_servers = [s.lower() for s in (cfg.mcp_multiplex_servers or [])]
         self.tool_access_control = cfg.mcp_tool_access_control
+        # F1 symlink policy: lexical in-allowed-dir symlinks (path_utils
+        # Layer B). Default True (historical behavior); strict deployments
+        # set [security] allow_symlink_escapes = false.
+        self.allow_symlink_escapes = getattr(cfg, "mcp_allow_symlink_escapes", True)
         self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords or [
             "write",
             "edit",
@@ -322,7 +326,7 @@ class SecurityGate:
             )
         from toolrecall.path_utils import check_path_allowed
 
-        if not check_path_allowed(path, agent_paths):
+        if not check_path_allowed(path, agent_paths, self.allow_symlink_escapes):
             self.logger.warning("Blocked path not in allowed_paths for agent %r: %s", client, path)
             return "Path not allowed: access denied"
 
@@ -405,7 +409,7 @@ class SecurityGate:
 
         from toolrecall.path_utils import check_path_allowed
 
-        if not check_path_allowed(path, self.allowed_paths):
+        if not check_path_allowed(path, self.allowed_paths, self.allow_symlink_escapes):
             # Generic error — never leak the real resolved path to the caller
             self.logger.warning("Blocked path not in allowed_paths: %s", path)
             return "Path not allowed: access denied"
