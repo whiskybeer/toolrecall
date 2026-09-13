@@ -37,8 +37,6 @@ class TestRegistry(unittest.TestCase):
             tee_settle.settle("hash-b")
             done.append(True)
 
-        import threading
-
         threading.Thread(target=settle_later).start()
         t0 = time.monotonic()
         self.assertTrue(tee_settle.wait_settled("hash-b"))
@@ -67,7 +65,6 @@ class TestRegistry(unittest.TestCase):
         self.assertTrue(tee_settle.wait_settled("hash-e"))
 
     def test_concurrent_register_settle(self):
-        import threading
 
         for i in range(50):
             h = f"hash-{i}"

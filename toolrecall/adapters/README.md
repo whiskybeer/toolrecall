@@ -18,6 +18,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 from toolrecall.adapters import google_adk
 from google.adk.tools.function_tool import FunctionTool
 
+
 @FunctionTool
 @google_adk.cached_tool(ttl=300)
 def search_web(query: str) -> str:
@@ -82,6 +83,7 @@ from toolrecall.adapters.odysseus import install_mcp_cache
 
 # Wrap McpManager for cached MCP server results
 from src.mcp_manager import McpManager
+
 mgr = McpManager()
 install_mcp_cache(mgr)
 ```
@@ -137,8 +139,14 @@ graph = builder.compile(checkpointer=get_saver(ttl=86400))
 # Standard LangGraph threading + time travel:
 cfg = {"configurable": {"thread_id": "run-1"}}
 graph.invoke(inputs, config=cfg)
-hist = list(graph.get_state_history(cfg))          # full checkpoint history
-graph.invoke(None, config={**cfg, "configurable": {"checkpoint_id": hist[2].config["configurable"]["checkpoint_id"]}})
+hist = list(graph.get_state_history(cfg))  # full checkpoint history
+graph.invoke(
+    None,
+    config={
+        **cfg,
+        "configurable": {"checkpoint_id": hist[2].config["configurable"]["checkpoint_id"]},
+    },
+)
 # ^ resumes from checkpoint #2: state restored from ToolRecall's cache
 ```
 
@@ -152,9 +160,10 @@ graph.invoke(None, config={**cfg, "configurable": {"checkpoint_id": hist[2].conf
 ```python
 from toolrecall.adapters.langgraph import cached_tool
 
+
 @cached_tool(ttl=300)
 def search_web(query: str) -> str:
-    return external_api_call(query)   # runs only on cache miss
+    return external_api_call(query)  # runs only on cache miss
 ```
 
 Same contract as the ADK adapter: async-safe, namespaced under `langgraph` (no key collisions), best-effort — daemon down means live execution.
