@@ -1573,6 +1573,25 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     len(raw),
                 )
                 return
+            # Empty-stream guard (measured 2026-09-12, prod proxy): a
+            # degenerate but well-formed stream — reasoning tokens only, no
+            # content, no tool_calls (observed live: z-ai/glm-flash, 5×
+            # ct=0 HIT burst on one hash) — poisons its canonical entry:
+            # every harness retry replays the same useless stream instead
+            # of going live. Store only streams that carried client-visible
+            # output (content or tool_calls). Provider reasoning deltas
+            # (z-ai/DeepSeek-style `reasoning_content`) deliberately do NOT
+            # count: replaying them renders nothing user-visible, so a
+            # reasoning-only entry is poison, not a cache win. Discarded
+            # streams let the retry reach the provider fresh.
+            if not (content_parts or tool_calls_acc):
+                log.warning(
+                    "STREAM TEE: discarding empty stream (%d bytes, "
+                    "no content/tool_call deltas — reasoning-only streams "
+                    "are not cacheable output)",
+                    len(raw),
+                )
+                return
             body = raw
             self._client.send(
                 {
