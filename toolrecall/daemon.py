@@ -1323,14 +1323,22 @@ class DaemonServer:
     # ─── Network listener (A6: shared team daemon, opt-in) ───
 
     def _should_start_network_listener(self) -> bool:
-        """A6 gate: TCP listener starts ONLY on explicit opt-in + token.
+        """A6 gate: TCP listener starts ONLY on explicit opt-in + auth.
 
-        enabled=false → never. enabled=true but empty token → never
+        enabled=false → never. enabled=true but NO token anywhere (neither
+        shared [network].token nor any [network.clients.*].token) → never
         (a network daemon without auth must not exist); start() prints
         why. Everything defaults off, so a config without [network] is
         byte-identical to pre-A6 behavior.
         """
-        return bool(self.cfg.network_enabled) and bool(self.cfg.network_token)
+        if not self.cfg.network_enabled:
+            return False
+        if self.cfg.network_token:
+            return True
+        # A6-4: per-member tokens count as auth.
+        return any(
+            isinstance(e, dict) and e.get("token") for e in self.cfg.network_clients.values()
+        )
 
     def _network_tokens(self) -> dict:
         """{token-bytes: token-id} for the auth handshake.
@@ -1606,10 +1614,11 @@ class DaemonServer:
                     name="NetworkListener",
                 )
                 self._tcp_thread.start()
-            elif self.cfg.network_enabled and not self.cfg.network_token:
+            elif self.cfg.network_enabled and not self._should_start_network_listener():
                 print(
                     "  ⚠️  [network] enabled but no token — network daemon NOT "
-                    "started. Set TOOLRECALL_NETWORK_TOKEN (or [network].token). "
+                    "started. Set TOOLRECALL_NETWORK_TOKEN (or [network].token), "
+                    'or give a [network.clients."<id>"] entry its own token. '
                     "A network daemon without auth must not exist."
                 )
 
