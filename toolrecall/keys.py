@@ -169,3 +169,61 @@ def tool_key(
         ensure_ascii=False,
     )
     return content_digest(bound)
+
+
+# ---------------------------------------------------------------------------
+# SEP draft: MCP Tool Result Identity — version-tagged v1 derivations
+# ---------------------------------------------------------------------------
+# These implement the consumer-derivable identity contract proposed in
+# workspace/mcp-sep-tool-result-identity-draft.md (discussion #2964):
+#
+#   preimage   = utf8("mcp-request-key-v1") ∥ 0x00 ∥ utf8(JCS{tool, arguments})
+#   requestKey = "sha256:" ∥ hex(sha256(preimage))
+#   contentDigest = "sha256:" ∥ hex(sha256(JCS(content)))
+#
+# Deltas vs. legacy tool_key (all deliberate, all visible to reviewers):
+# - Canonicalization is RFC 8785 (JCS, toolrecall/jcs.py), not json.dumps:
+#   cross-implementation byte-equality is the whole point of the v1 format.
+# - The tool name lives INSIDE the canonical preimage (not a separate
+#   namespace column) — the collision-safety rule the SEP makes normative.
+# - int/float are deliberately indistinguishable (10 == 10.0): JCS routes
+#   numbers through IEEE-754 doubles exactly as an ECMAScript client parses
+#   JSON. Legacy tool_key keeps its int/float distinction (byte-compat).
+# - Values outside the JSON data model raise JCSTypeError — the caller
+#   surfaces "no identity asserted" rather than improvising a preimage.
+# - A full-width digest with an "sha256:" algorithm prefix; no truncation
+#   parameter (short references are a consumer-side presentation choice,
+#   per the SEP never global identifiers).
+#
+# Version tag: any future change to this preimage MUST bump the tag
+# ("mcp-request-key-v2" ...), making old/new keys coexist unambiguously.
+
+_MCP_REQUEST_KEY_V1_TAG = b"mcp-request-key-v1"
+
+
+def mcp_request_key_v1(tool: str, arguments: Any) -> str:
+    """Canonical request key per the MCP Tool Result Identity v1 draft.
+
+    Consumer-derivable: computable from (tool, arguments) alone, before or
+    after the call, on any machine, in any language with an RFC 8785
+    serializer. Raises JCSTypeError for values outside the JSON data model.
+    """
+    from toolrecall.jcs import canonicalize
+
+    canonical = canonicalize({"tool": tool, "arguments": arguments})
+    payload = _MCP_REQUEST_KEY_V1_TAG + b"\x00" + canonical.encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def mcp_content_digest_v1(content: Any) -> str:
+    """Canonical content digest of a tool result's content (v1 draft).
+
+    Full-width sha256 over the JCS-canonicalized content value. NOTE: JCS
+    is applied here because the v1 draft hashes the *logical* content
+    value; if the working group instead pins the *exact wire bytes* of the
+    content array, the derivation changes only in this one line (and the
+    golden vectors with it) — the version tag keeps both worlds coexisting.
+    """
+    from toolrecall.jcs import canonicalize
+
+    return "sha256:" + hashlib.sha256(canonicalize(content).encode("utf-8")).hexdigest()
