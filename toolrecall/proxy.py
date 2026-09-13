@@ -1313,9 +1313,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # tee_settle docstring — the store commits after the relay loop,
         # and r2 can arrive inside that window). Only when a tee will
         # actually happen (canonical profile + hash).
-        tee_registered = bool(canonical_profile and request_hash)
-        if tee_registered:
+        tee_registered = False
+        if canonical_profile and request_hash:
             tee_settle.register(request_hash)
+            tee_registered = True
 
         import http.client
 
@@ -1414,7 +1415,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # Settle on EVERY exit path (stored, discarded-truncated, relay
             # error) — a leaked registration would stall racing duplicates
             # until the 10s stale sweep.
-            if tee_registered:
+            if tee_registered and request_hash:
                 tee_settle.settle(request_hash)
 
         # Log STREAM usage. Billed truth when the provider emitted a final
