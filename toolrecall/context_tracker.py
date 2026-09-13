@@ -332,6 +332,23 @@ class ContextTracker:
         for p, mtime in (payload.get("read_set") or {}).items():
             if _is_sensitive_path(p):
                 continue
+            # Ignore-prefix filter on restore too: a snapshot from before a
+            # prefix was added (or written by an older build without the
+            # gate) must not resurrect poisoned entries (2026-09-12: infra
+            # reads like ~/.toolrecall/proxy_usage.csv poisoned the set).
+            if self._ignore_prefixes or self._ignore_globs:
+                skip = False
+                for pref in self._ignore_prefixes:
+                    if p.startswith(pref):
+                        skip = True
+                        break
+                if not skip:
+                    for pat in self._ignore_globs:
+                        if fnmatch.fnmatch(p, pat):
+                            skip = True
+                            break
+                if skip:
+                    continue
             try:
                 cur = os.path.getmtime(p)
             except OSError:

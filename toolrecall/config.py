@@ -1026,13 +1026,17 @@ class Config:
 
         Default: agent session transcript dirs + the agent home data dirs
         (~/.hermes/webui, ~/.hermes/sessions, ~/.hermes/cache, plus any
-        */webui/sessions path). Empty list = track everything (old behavior).
+        */webui/sessions path) + ToolRecall's own state dir (~/.toolrecall —
+        the daemon/TUI/healthcheck read its own CSVs/DBs serve-through; that
+        data is never in an agent context). Empty list = track everything
+        (old behavior).
         """
         default = [
             "~/.hermes/webui/sessions/",
             "~/.hermes/webui/sessions.json",
             "~/.hermes/sessions/",
             "~/.hermes/cache/",
+            "~/.toolrecall/",
             "*/webui/sessions/",
         ]
         raw = self.get(

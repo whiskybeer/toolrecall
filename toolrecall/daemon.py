@@ -1962,7 +1962,17 @@ class DaemonServer:
         source = req.get("source", "")
         result = _cache_read(path, source=source)
         if result and not result.get("error"):
-            self._context.mark_read(path)
+            # Context-tracker gate (2026-09-12): track ONLY agent-tool reads.
+            # The shim tags infra reads "shim" (its size/binary/library gates),
+            # and gateway processes (cron scripts, TUI, healthcheck, the Hermes
+            # gateway's own caches — models_dev_cache.json alone is 1.15M tok)
+            # funnel through the shim into cached_read. Tracking those
+            # poisoned the tracker's clean set: the "ctx dropped" number was
+            # 70% infra files that are never in any LLM context. Mirrors the
+            # context_tokens_saved rule — only agent-tool reads can drop
+            # content from context.
+            if source == "agent_tool":
+                self._context.mark_read(path)
         return result
 
     def _handle_shell_exec(self, req: dict) -> dict:

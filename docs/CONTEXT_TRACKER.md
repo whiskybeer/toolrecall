@@ -91,6 +91,37 @@ This metric is visible in:
 - Daemon ping response — includes `ctx_dropped_tokens` in `context_tracker` section
 - Healthcheck output — reported as `tokens_not_read_from_disk` / `ctx_recent`
 
+### The Two Context Metrics — Do Not Conflate
+
+ToolRecall reports TWO distinct "context" numbers. They measure different things and are both correct:
+
+| Metric | Where | Counts | Increments |
+|--------|-------|--------|------------|
+| **`tokens_not_sent_to_llm`** (cache tier) | `cache_stats.file_cache.context_tokens_saved`, shown by `toolrecall stats` / TUI CONTEXT line | Every **cache hit** of an agent-tool read: content served from cache instead of being pasted into the LLM context again | **Per hit** — re-reading the same file 3× counts 3× (each hit = one avoided re-send) |
+| **`ctx_dropped_tokens`** (tracker) | `context_get_stats()`, TUI ctx view, healthcheck | Each **file** whose content the agent can drop from context (read, not modified, banked once per checkpoint epoch) | **Per file, once per epoch** — repeat reads of an already-banked file add 0 |
+
+Worked example — `README.md` (7,930 tok), read twice after a checkpoint:
+
+- Cache tier: first read is a miss (+0, a miss is not a saving); repeat read is a hit (**+7,930** — that content was NOT sent to the LLM again).
+- Tracker: the file enters the clean set once and is banked **once** (+7,930 total, second read adds 0 — the agent already dropped it; re-banking would double-count a drop already made).
+
+**Which one to quote where:** the cache tier answers "how many tokens did caching keep out of the LLM window in total" (a savings rate). The tracker answers "what can the agent drop right now" (an action ledger). Never report tracker numbers as cumulative savings — they are deliberately de-duplicated per epoch.
+
+### Source Gate — Which Reads Count as Context Savings
+
+Only reads tagged `source="agent_tool"` count toward either context metric. The tagging happens at the source:
+
+| Reader | Tag | Context-tier counted? | Why |
+|--------|-----|----------------------|-----|
+| Agent tools (`read_file`, `skill_view` via MCP bridge) | `agent_tool` | ✅ Yes | This content genuinely sits in the LLM context |
+| Shim reads from agent processes (≤256KB text, non-library path) | `agent_tool` | ✅ Yes | Shim-read content reaches the context (it is what the agent saw) |
+| Shim reads of library/infra trees (`site-packages`, `/.hermes/`, `/.toolrecall/`, sessions) | `shim` | ❌ No | Gateway/config/cache files — never in any LLM context |
+| Untagged / internal daemon reads | *(none)* | ❌ No | Healthchecks, TUI, cron scripts |
+
+The gate lives in `daemon.py::_handle_read` (only `agent_tool` calls `mark_read`) and in `cache.py` (`context_tokens` counted only on `agent_tool` hits). Restore-path defense: persisted tracker snapshots are re-filtered through the ignore prefixes, so pre-gate poison cannot resurrect across restarts (85f3dc2).
+
+**Known boundary case:** a gateway process that carries `HERMES_*` env tags its own reads `agent_tool` — but its config/cache reads under `~/.hermes/` are excluded by the library-path gate in `shim.py::_tag_source_for` (`/.hermes/` is a library marker), so they stay out of both context metrics. Gateway self-reads of files *outside* `~/.hermes/` (rare) would count; that is the honest boundary of the current design.
+
 ### What Gets Tracked
 
 | Operation | Tracked as dirty? | Mechanism |

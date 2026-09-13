@@ -29,6 +29,8 @@ from the cache. **The agent never notices.**
 |-------------|---------------|---------|
 | `builtins.open` (read-only `r`/`rt`) | `cached_read` | mtime-based, in-memory + SQLite |
 
+**Tagging caveat (matters for the CONTEXT tier):** the shim patches `builtins.open`, so reads written as `with open(...)` are intercepted — but `pathlib.Path.read_text()` / `Path.open()` call `io.open` directly and **bypass the shim**. Code that mixes both styles (e.g. Hermes reads `config.yaml` via `open()`, the skills snapshot via `Path.read_text()`) shows up unevenly in the stats: the former is cached and counted, the latter is invisible to ToolRecall. This is a shim design boundary, not a bug; see [Context Tracker](CONTEXT_TRACKER.md#source-gate--which-reads-count-as-context-savings) for which reads count toward the context metrics.
+
 > **Why does the shim NOT intercept `subprocess.run` / `Popen`?** (Option B,
 > **scheduled v0.8.19**; on the current **v0.8.18 the shim still intercepts
 > `subprocess.run`/`Popen`** — this section describes the v0.8.19+ behavior.)
