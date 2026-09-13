@@ -124,10 +124,14 @@ allow_terminal = false
 
 def test_shared_cache_local_write_remote_read():
     """Write via local UDS client; read the SAME entry via remote TCP."""
+    from toolrecall.cache import _file_cache, _init as _cache_init
+
     with NetworkDaemonE2E() as nd:
+        # A6-7 namespacing tests share this process: drop any cross-test
+        # in-memory entries so the shared-cache flow starts cold.
+        _file_cache.clear()
+        _cache_init()
         # Local client over UDS (no token — local path needs none)
-        local = TransportClient(f"unix://{nd.sock_path}")
-        # TransportClient paths: use raw UDS path (no scheme) — same as prod
         local = TransportClient(nd.sock_path)
         test_file = os.path.join(nd._tmp.name, "shared.txt")
         with open(test_file, "w") as f:

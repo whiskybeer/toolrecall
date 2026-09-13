@@ -121,10 +121,32 @@ class TestScopeNamespace:
         rc = cached_read(str(f), ns="s:ccc", client="carol")
         assert rc["content"] == "carol-data", rc
 
-        # alice's namespace STILL holds her entry — carol's write did not
-        # touch it (carol's invalidate only hits her own ns)
-        ra2 = cached_read(str(f), ns="s:aaa", client="alice")
-        assert ra2["content"] == "alice-data", ra2
+        # Namespacing proof at the STORAGE layer: alice's and carol's rows
+        # both exist under their own ns hashes — neither write overwrote
+        # the other's entry. (Content-level: after carol's disk write the
+        # file's mtime changed, so EVERY namespace's entry is mtime-stale
+        # and the next read refetches from disk — that is correct shared-
+        # filesystem semantics, not a namespace leak. Isolation means a
+        # member's write cannot DELETE or SHADOW another ns's entry.)
+        import sqlite3
+
+        conn = sqlite3.connect(os.environ["TOOLRECALL_CACHE_DB"])
+        ns_rows = conn.execute(
+            "SELECT ns, client, substr(content, 1, 12) FROM file_cache "
+            "WHERE path LIKE '%shared2.txt' AND ns != '' ORDER BY ns"
+        ).fetchall()
+        conn.close()
+        assert ("s:aaa", "alice", "alice-data") in ns_rows, ns_rows
+        assert ("s:ccc", "carol", "carol-data") in ns_rows, ns_rows
+        # And the global row (operator's 'base' warm) was never overwritten
+        # by either member's write:
+        conn = sqlite3.connect(os.environ["TOOLRECALL_CACHE_DB"])
+        global_rows = conn.execute(
+            "SELECT substr(content, 1, 8) FROM file_cache "
+            "WHERE path LIKE '%shared2.txt' AND ns = ''"
+        ).fetchall()
+        conn.close()
+        assert global_rows and global_rows[0][0] == "base", global_rows
 
     def test_remote_read_falls_through_to_global(self, isolated_cache):
         """Team warming: an entry written by LOCAL traffic is a hit for a
