@@ -711,8 +711,10 @@ def cached_read(
     #   trust window means the window EXPIRED → re-read is authoritative
     # If row exists with SAME mtime → SQLite hit should have caught it above
     _row_exists = row is not None
-    _mtime_changed = _row_exists and row["mtime"] != stat.st_mtime
-    _window_expired = _row_exists and trust_window and now_ts - row["cached_at"] > file_ttl
+    _mtime_changed = row is not None and row["mtime"] != stat.st_mtime
+    _window_expired = (
+        row is not None and bool(trust_window) and now_ts - row["cached_at"] > file_ttl
+    )
     _is_new_file = row is None or _mtime_changed or _window_expired
 
     # ── 3. Cache miss — read from disk ──
