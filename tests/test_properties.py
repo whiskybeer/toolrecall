@@ -15,19 +15,30 @@ unusual external input:
     supported value type (the parser is the oracle).
 
 Run standalone: .venv/bin/python -m pytest tests/test_properties.py
+
+EVERY test in this module is hypothesis-driven; without hypothesis the
+module self-skips at collection (pytest.importorskip) instead of dying
+on an import error.
 """
 
-import os
-import string
-import tempfile
-import tomllib
-import unittest
+import pytest
 
-from hypothesis import given, settings, strategies as st
+pytest.importorskip(
+    "hypothesis",
+    reason="property tests need hypothesis — pip install 'toolrecall[dev]'",
+)
 
-from toolrecall.normalizer import normalize_command, normalize_json, normalize_tool_args
-from toolrecall.path_utils import check_path_allowed
-from toolrecall import toml_serializer
+import os  # noqa: E402
+import string  # noqa: E402
+import tempfile  # noqa: E402
+import tomllib  # noqa: E402
+import unittest  # noqa: E402
+
+from hypothesis import given, settings, strategies as st  # noqa: E402
+
+from toolrecall.normalizer import normalize_command, normalize_json, normalize_tool_args  # noqa: E402
+from toolrecall.path_utils import check_path_allowed  # noqa: E402
+from toolrecall import toml_serializer  # noqa: E402
 
 # ── strategies ────────────────────────────────────────────────
 

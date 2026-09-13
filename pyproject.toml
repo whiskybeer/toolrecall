@@ -45,6 +45,9 @@ dev = [
     "pytest >= 9.0",
     "ruff >= 0.1",
     "mypy >= 1.8",
+    # Property-based tests (tests/test_keys.py, tests/test_properties.py)
+    # degrade gracefully without it, but the release gate runs them.
+    "hypothesis >= 6.100",
 ]
 
 [project.urls]

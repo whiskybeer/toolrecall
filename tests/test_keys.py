@@ -144,77 +144,82 @@ class TestToolKeyGolden(unittest.TestCase):
 
 
 # Module-level strategies: lambdas inside st.recursive cannot close over
-# class-body names (class scope is not a closure scope).
-_KEYS = st.text(min_size=1, max_size=12)
-_JSON_VALUES = st.recursive(
-    st.none()
-    | st.booleans()
-    | st.integers(min_value=-(10**9), max_value=10**9)
-    | st.floats(allow_nan=False, allow_infinity=False)
-    | st.text(max_size=24),
-    lambda children: st.lists(children, max_size=4) | st.dictionaries(_KEYS, children, max_size=4),
-    max_leaves=8,
-)
-_ARG_DICTS = st.dictionaries(_KEYS, _JSON_VALUES, max_size=6)
+# class-body names (class scope is not a closure scope). Defined ONLY when
+# hypothesis is importable — evaluating st.recursive with st=None crashes
+# collection on machines without it (the @given-decorated class below is
+# likewise defined conditionally: its decorators evaluate at import time,
+# so a bare skipUnless on a broken strategy is not enough).
+if _HAVE_HYPOTHESIS:
+    _KEYS = st.text(min_size=1, max_size=12)
+    _JSON_VALUES = st.recursive(
+        st.none()
+        | st.booleans()
+        | st.integers(min_value=-(10**9), max_value=10**9)
+        | st.floats(allow_nan=False, allow_infinity=False)
+        | st.text(max_size=24),
+        lambda children: (
+            st.lists(children, max_size=4) | st.dictionaries(_KEYS, children, max_size=4)
+        ),
+        max_leaves=8,
+    )
+    _ARG_DICTS = st.dictionaries(_KEYS, _JSON_VALUES, max_size=6)
 
+    class TestToolKeyProperties(unittest.TestCase):
+        """The primitive contract — order invariance, injectivity, binding."""
 
-@unittest.skipUnless(_HAVE_HYPOTHESIS, "hypothesis not installed")
-class TestToolKeyProperties(unittest.TestCase):
-    """The primitive contract — order invariance, injectivity, binding."""
+        @settings(suppress_health_check=[HealthCheck.too_slow], max_examples=150)
+        @given(arg_dicts=_ARG_DICTS)
+        def test_kwarg_insertion_order_invariance(self, arg_dicts):
+            """Permuting dict insertion order must not change any key byte."""
+            base = tool_key("t", (), arg_dicts)
+            for _ in range(3):
+                shuffled = list(arg_dicts.items())
+                shuffled.reverse()
+                self.assertEqual(tool_key("t", (), dict(shuffled)), base)
+                self.assertEqual(
+                    tool_key("t", (), dict(shuffled), digest=False),
+                    _legacy_preimage("t", (), dict(shuffled)),
+                )
 
-    @settings(suppress_health_check=[HealthCheck.too_slow], max_examples=150)
-    @given(arg_dicts=_ARG_DICTS)
-    def test_kwarg_insertion_order_invariance(self, arg_dicts):
-        """Permuting dict insertion order must not change any key byte."""
-        base = tool_key("t", (), arg_dicts)
-        for _ in range(3):
-            shuffled = list(arg_dicts.items())
-            shuffled.reverse()
-            self.assertEqual(tool_key("t", (), dict(shuffled)), base)
+        @settings(suppress_health_check=[HealthCheck.too_slow], max_examples=150)
+        @given(arg_dicts=_ARG_DICTS)
+        def test_any_arg_difference_changes_digest(self, arg_dicts):
+            """Mutating any value must change the bound digest (collision-free
+            by sha256 assumption, verified structurally here)."""
+            base = tool_key("t", (), arg_dicts)
+            if not arg_dicts:
+                return
+            k = next(iter(arg_dicts))
+            mutated = dict(arg_dicts)
+            mutated[k] = object()  # non-JSON-safe → str-coerced, differs from any JSON value
+            self.assertNotEqual(tool_key("t", (), mutated), base)
+
+        @settings(suppress_health_check=[HealthCheck.too_slow], max_examples=100)
+        @given(t1=_KEYS, t2=_KEYS, a1=_ARG_DICTS, a2=_ARG_DICTS)
+        def test_tool_name_binds_into_digest(self, t1, t2, a1, a2):
+            """Digest path binds the tool name: same args, different tool →
+            different key. This is the collision bug Stage-0 was written to
+            prevent; if it ever fires, keys collide across tools."""
+            k1 = tool_key(t1, (), a1)
+            k2 = tool_key(t2, (), a1)
+            if t1 != t2:
+                self.assertNotEqual(k1, k2)
+            # preimage path is intentionally tool-free (legacy namespacing)
             self.assertEqual(
-                tool_key("t", (), dict(shuffled), digest=False),
-                _legacy_preimage("t", (), dict(shuffled)),
+                tool_key(t1, (), a1, digest=False),
+                tool_key(t2, (), a1, digest=False),
             )
 
-    @settings(suppress_health_check=[HealthCheck.too_slow], max_examples=150)
-    @given(arg_dicts=_ARG_DICTS)
-    def test_any_arg_difference_changes_digest(self, arg_dicts):
-        """Mutating any value must change the bound digest (collision-free
-        by sha256 assumption, verified structurally here)."""
-        base = tool_key("t", (), arg_dicts)
-        if not arg_dicts:
-            return
-        k = next(iter(arg_dicts))
-        mutated = dict(arg_dicts)
-        mutated[k] = object()  # non-JSON-safe → str-coerced, differs from any JSON value
-        self.assertNotEqual(tool_key("t", (), mutated), base)
-
-    @settings(suppress_health_check=[HealthCheck.too_slow], max_examples=100)
-    @given(t1=_KEYS, t2=_KEYS, a1=_ARG_DICTS, a2=_ARG_DICTS)
-    def test_tool_name_binds_into_digest(self, t1, t2, a1, a2):
-        """Digest path binds the tool name: same args, different tool →
-        different key. This is the collision bug Stage-0 was written to
-        prevent; if it ever fires, keys collide across tools."""
-        k1 = tool_key(t1, (), a1)
-        k2 = tool_key(t2, (), a1)
-        if t1 != t2:
-            self.assertNotEqual(k1, k2)
-        # preimage path is intentionally tool-free (legacy namespacing)
-        self.assertEqual(
-            tool_key(t1, (), a1, digest=False),
-            tool_key(t2, (), a1, digest=False),
-        )
-
-    @settings(max_examples=100)
-    @given(args=st.lists(st.text(max_size=20), max_size=4))
-    def test_positional_args_normalized_as_strings(self, args):
-        """Positional args coerce to str under _pos (legacy contract)."""
-        pre = _normalize_args(tuple(args), {})
-        if args:
-            parsed = json.loads(pre)
-            self.assertEqual(parsed["_pos"], [str(a) for a in args])
-        else:
-            self.assertNotIn("_pos", json.loads(pre))
+        @settings(max_examples=100)
+        @given(args=st.lists(st.text(max_size=20), max_size=4))
+        def test_positional_args_normalized_as_strings(self, args):
+            """Positional args coerce to str under _pos (legacy contract)."""
+            pre = _normalize_args(tuple(args), {})
+            if args:
+                parsed = json.loads(pre)
+                self.assertEqual(parsed["_pos"], [str(a) for a in args])
+            else:
+                self.assertNotIn("_pos", json.loads(pre))
 
 
 class TestPurityContract(unittest.TestCase):

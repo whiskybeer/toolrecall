@@ -12,13 +12,16 @@ Implements the full normative ruleset:
 
 - Strings (§3.2.2.2): minimal escaping — only ``"``, ``\\`` and the C0
   controls are escaped (short escapes ``\\b \\t \\n \\f \\r`` where they
-  exist, ``\\u00XX`` lowercase-hex otherwise); lone surrogates are escaped
-  ``\\udXXX`` as ECMAScript well-formed JSON.stringify does (keeps output
-  strictly UTF-8-encodable and lossless); all other code points are
-  emitted literally as UTF-8. This differs from ``json.dumps`` default
-  (which escapes non-ASCII) and from ``json.dumps(ensure_ascii=False)``
-  (which still emits ``\\u000f``-style escapes for control characters and
-  uses ``\\uXXXX`` with the source's case).
+  exist, ``\\u00XX`` lowercase-hex otherwise); all other code points are
+  emitted literally as UTF-8. Strings containing lone surrogates
+  (U+D800–U+DFFF) are REJECTED with ``JCSTypeError`` — they are invalid
+  Unicode under I-JSON, escaping them ES-style would produce bytes no
+  other implementation reproduces, and surrogate KEYS are unsortable
+  (their UTF-16 code units do not encode). This differs from
+  ``json.dumps`` default (which escapes non-ASCII) and from
+  ``json.dumps(ensure_ascii=False)`` (which still emits ``\\u000f``-style
+  escapes for control characters, uses ``\\uXXXX`` with the source's
+  case, and silently escapes lone surrogates).
 - Numbers (§3.2.2.3): ECMAScript ``Number::toString`` over IEEE-754
   doubles. Python's ``repr`` switches to exponent notation outside
   [1e-4, 1e16); ECMAScript outside [1e-6, 1e21); and Python pads the
@@ -126,10 +129,18 @@ def _es6_string(value: str) -> str:
         elif code < 0x20:
             out.append(f"\\u{code:04x}")
         elif 0xD800 <= code <= 0xDFFF:
-            # Lone surrogates are not valid Unicode (I-JSON); escape them as
-            # ECMAScript well-formed JSON.stringify does (ES2019+) so the
-            # output stays strictly UTF-8 encodable and lossless.
-            out.append(f"\\u{code:04x}")
+            # Lone surrogates are not valid Unicode (I-JSON). Policy: REJECT
+            # uniformly — for keys and values, single- and multi-key alike.
+            # Escaping them ES-style would emit bytes no other RFC 8785
+            # implementation reproduces (libraries disagree on the escape
+            # entirely), silently breaking the cross-language byte-equality
+            # this module exists for; and a surrogate key is unsortable (its
+            # UTF-16 code units do not encode). Callers catch JCSTypeError
+            # and surface "no identity asserted".
+            raise JCSTypeError(
+                f"string contains lone surrogate \\u{code:04X} "
+                "(invalid Unicode — not canonicalizable under RFC 8785)"
+            )
         else:
             out.append(ch)
     out.append('"')
@@ -158,6 +169,14 @@ def _serialize(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_serialize(v) for v in value) + "]"
     if isinstance(value, dict):
+        # Key validation BEFORE the sort: the UTF-16 sort key cannot encode
+        # a lone surrogate (UnicodeEncodeError) and non-str keys would raise
+        # TypeError/AttributeError from the comparison itself. Both are
+        # caller-hostile leaks; JCSTypeError is the contract.
+        for key in value:
+            if not isinstance(key, str):
+                raise JCSTypeError(f"object keys must be strings, got {type(key).__name__}")
+            _reject_lone_surrogates(key, "object key")
         if len(value) > 1:
             # JCS §3.2.3: sort by UTF-16 code units (surrogate-pair order),
             # not Python's code-point order.
@@ -168,11 +187,36 @@ def _serialize(value: Any) -> str:
     raise JCSTypeError(f"value of type {type(value).__name__} is outside the JSON data model")
 
 
-def canonicalize(value: Any) -> str:
-    """RFC 8785 canonical JSON of ``value`` as a str (UTF-8 encodable).
+def _reject_lone_surrogates(s: str, what: str) -> None:
+    """Raise JCSTypeError when *s* contains a surrogate code point (D800–DFFF).
 
-    Raises ``JCSTypeError`` for values outside the JSON data model
-    (NaN/Infinity, over-range integers, non-JSON types) — callers surface
-    that as "no identity asserted" rather than improvising a preimage.
+    Runs before any serialization so the failure mode is uniform
+    (JCSTypeError) regardless of position: a lone surrogate that reached
+    the UTF-16 sort would instead crash with UnicodeEncodeError, and one
+    reaching _es6_string would previously have been escaped ES-style.
     """
+    for ch in s:
+        if 0xD800 <= ord(ch) <= 0xDFFF:
+            raise JCSTypeError(
+                f"{what} contains lone surrogate U+{ord(ch):04X} "
+                "(invalid Unicode — not canonicalizable under RFC 8785)"
+            )
+
+
+def canonicalize(value: Any) -> str:
+    """RFC 8785 canonical JSON of ``value`` as a str.
+
+    Raises ``JCSTypeError`` for values outside the JSON data model:
+    NaN/Infinity, over-range integers, non-JSON types, non-string object
+    keys, and — uniformly, keys and values — strings containing lone
+    surrogates (Python's json.loads happily produces them from escapes
+    like ``"\\ud800"``, so hostile tool payloads can carry them). Callers
+    surface JCSTypeError as "no identity asserted" rather than
+    improvising a preimage; letting UnicodeEncodeError/TypeError escape
+    instead was the pre-rejection bug (it also made the policy
+    size-dependent: single-key objects passed while multi-key objects
+    crashed in the UTF-16 sort).
+    """
+    if isinstance(value, str):
+        _reject_lone_surrogates(value, "string")
     return _serialize(value)

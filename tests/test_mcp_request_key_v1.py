@@ -9,8 +9,17 @@ Two independent gates, per the golden-gate protocol:
    (tests/data/rfc8785/input-*.json → output-*.json, from the
    cyberphone/json-canonicalization reference repo) — every case.
 2. Re-derivation from raw stdlib: expected key bytes for the v1 derivation
-   are computed here from hashlib/json directly (hand-rolled copy of the
-   spec preimage), not by replaying captured outputs.
+   are computed here from hashlib directly (hand-rolled copy of the spec
+   preimages), not by replaying captured outputs. The contentDigest
+   preimage is version-tagged (mcp-content-digest-v1 ∥ 0x00 ∥ JCS(content))
+   — symmetric with requestKey, so derivation variants can never collide
+   as identical "sha256:<64hex>" strings.
+
+3. End-to-end golden vectors (tests/golden_mcp_v1.json): (tool, arguments)
+   → requestKey and content → contentDigest for representative payloads,
+   consumable by another language's implementer without running Python.
+   Generated alongside the reference implementation; regeneration is a
+   version-tag bump, never a silent overwrite.
 
 Property gates: key-order invariance, int/float identity (10 == 10.0),
 UTF-16 key sorting (astral before U+E000), rejection cases (NaN, Inf,
@@ -82,8 +91,8 @@ class TestKeyOrderAndSorting(unittest.TestCase):
     def test_utf16_sort_astral_before_e000(self):
         # U+10000 (astral, surrogate pair D800 DC00) sorts BEFORE U+FFFD
         # under UTF-16 code-unit ordering; code-point order is the reverse.
-        # The astral char is a VALID code point → emitted literally; only
-        # lone surrogates are escaped.
+        # The astral char is a VALID code point → emitted literally; lone
+        # surrogates are rejected outright (see TestSurrogatePolicy).
         value = {"\ufffd": 1, "\U00010000": 2}
         self.assertEqual(canonicalize(value), '{"\U00010000":2,"\ufffd":1}')
 
@@ -106,7 +115,8 @@ class TestV1Derivation(unittest.TestCase):
 
     def raw_content_digest(self, content):
         canonical = canonicalize(content)
-        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        payload = b"mcp-content-digest-v1\x00" + canonical.encode("utf-8")
+        return "sha256:" + hashlib.sha256(payload).hexdigest()
 
     def test_matches_raw_stdlib(self):
         cases = [
@@ -181,9 +191,138 @@ class TestV1Derivation(unittest.TestCase):
         d = keys.mcp_content_digest_v1([{"type": "text", "text": "hello"}])
         self.assertEqual(len(d), len("sha256:") + 64)
         raw = hashlib.sha256(
-            canonicalize([{"type": "text", "text": "hello"}]).encode("utf-8")
+            b"mcp-content-digest-v1\x00"
+            + canonicalize([{"type": "text", "text": "hello"}]).encode("utf-8")
         ).hexdigest()
         self.assertEqual(d, "sha256:" + raw)
+
+
+class TestSurrogatePolicy(unittest.TestCase):
+    """Lone surrogates are rejected UNIFORMLY — keys and values, any size.
+
+    Python's json.loads happily produces them from escapes like "\\ud800",
+    so a hostile tool payload can carry them; pre-rejection the failure was
+    size-dependent ({single surrogate key} passed, two keys crashed with
+    UnicodeEncodeError in the UTF-16 sort) and surrogate values were
+    escaped ES-style — bytes no other RFC 8785 implementation reproduces.
+    The contract now: JCSTypeError everywhere, never UnicodeEncodeError /
+    TypeError / AttributeError leaking to a caller that catches only
+    JCSTypeError.
+    """
+
+    def test_surrogate_key_rejected_single_and_multi(self):
+        for value in ({"\ud800": 1}, {"\ud800": 1, "a": 2}, {"a": 2, "\udbff": 1}):
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(JCSTypeError):
+                    canonicalize(value)
+
+    def test_surrogate_value_rejected_anywhere(self):
+        for value in (
+            {"a": "\ud800"},
+            ["\udbff\udfff"],
+            {"deep": {"nested": ["\ud800"]}},
+            "\ud800",  # top-level string
+        ):
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(JCSTypeError):
+                    canonicalize(value)
+
+    def test_v1_functions_raise_jcs_type_error_only(self):
+        # The remotely-reachable case: a hostile payload's lone-surrogate
+        # key must surface as the documented exception type, not a leak.
+        for fn, args in (
+            (keys.mcp_request_key_v1, ("t", {"\ud800": 1, "a": 2})),
+            (keys.mcp_request_key_v1, ("t", {"a": "\ud800"})),
+            (keys.mcp_content_digest_v1, ({"\ud800": 1},)),
+            (keys.mcp_content_digest_v1, ("\udbff\udfff",)),
+        ):
+            with self.subTest(fn=fn.__name__, args=repr(args)[:40]):
+                try:
+                    fn(*args)
+                except JCSTypeError:
+                    pass
+                except Exception as e:  # noqa: BLE001 — the leak IS the bug
+                    self.fail(f"{fn.__name__} leaked {type(e).__name__}: {e}")
+                else:
+                    self.fail(f"{fn.__name__} accepted a lone surrogate")
+
+    def test_non_string_keys_rejected_as_jcs_type_error(self):
+        for key in (1, None, True, 3.14):
+            with self.subTest(key=repr(key)):
+                with self.assertRaises(JCSTypeError):
+                    canonicalize({key: "v"})
+
+    def test_valid_astral_and_bmp_text_still_canonicalizes(self):
+        # Rejection is scoped to LONE surrogates; valid astral code points
+        # (surrogate PAIRS in Python strings) and BMP text are untouched.
+        self.assertEqual(
+            canonicalize({"k": "\U0001f600 é —"}),
+            '{"k":"\U0001f600 é —"}',
+        )
+
+    def test_digest_preimage_tag_discriminates_variants(self):
+        # The open-question case: two derivation variants (tagged JCS vs
+        # untagged JCS vs requestKey) must never be confusable. The tag
+        # makes them produce visibly different outputs.
+        content = [{"type": "text", "text": "hello"}]
+        tagged = keys.mcp_content_digest_v1(content)
+        untagged = (
+            "sha256:" + hashlib.sha256(canonicalize(content).encode("utf-8")).hexdigest()
+        )  # the pre-tag derivation — a would-be silent variant
+        request_key = keys.mcp_request_key_v1("t", content)
+        self.assertNotEqual(tagged, untagged)
+        self.assertNotEqual(tagged, request_key)
+
+
+class TestGoldenVectors(unittest.TestCase):
+    """End-to-end fixture: (tool, arguments) → key, content → digest.
+
+    golden_mcp_v1.json is the cross-implementation contract — a Go/Rust/TS
+    implementer replays these vectors without running Python. The file is
+    frozen: any byte change to the derivations must come with a version-tag
+    bump and a regenerated file, never a silent overwrite.
+    """
+
+    GOLDEN = os.path.join(os.path.dirname(__file__), "golden_mcp_v1.json")
+
+    @classmethod
+    def setUpClass(cls):
+        with open(cls.GOLDEN, encoding="utf-8") as fh:
+            cls.golden = json.load(fh)
+
+    def test_request_key_vectors(self):
+        for case in self.golden["request_keys"]:
+            with self.subTest(tool=case["tool"], note=case.get("note", "")):
+                self.assertEqual(
+                    keys.mcp_request_key_v1(case["tool"], case["arguments"]),
+                    case["requestKey"],
+                )
+
+    def test_content_digest_vectors(self):
+        for case in self.golden["content_digests"]:
+            with self.subTest(content=repr(case["content"])[:40], note=case.get("note", "")):
+                self.assertEqual(
+                    keys.mcp_content_digest_v1(case["content"]),
+                    case["contentDigest"],
+                )
+
+    def test_payload_json_vectors(self):
+        for case in self.golden["rejection_cases"]:
+            with self.subTest(note=case["note"]):
+                payload = json.loads(case["payload_json"])
+                if case["expected"] == "error":
+                    with self.assertRaises(JCSTypeError):
+                        keys.mcp_request_key_v1("t", payload)
+                else:
+                    # e.g. an escaped surrogate PAIR is a valid astral char:
+                    # must canonicalize, not reject.
+                    keys.mcp_request_key_v1("t", payload)
+
+    def test_spec_block_pins_the_preimages(self):
+        spec = self.golden["spec"]
+        self.assertIn("mcp-request-key-v1", spec["requestKey"])
+        self.assertIn("mcp-content-digest-v1", spec["contentDigest"])
+        self.assertIn("RFC 8785", spec["canonicalization"])
 
 
 class TestLegacyUntouched(unittest.TestCase):
