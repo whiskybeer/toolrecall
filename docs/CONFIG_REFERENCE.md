@@ -83,7 +83,7 @@ The Python configuration loader (`Config` class). Responsibilities:
 | `network_tls` | TLS on the network listener (stdlib `ssl`) | `False` |
 | `network_tls_cert` | PEM certificate chain (required if `network_tls`) | `None` |
 | `network_tls_key` | PEM private key (required if `network_tls`) | `None` |
-| `network_clients` | Token-id → `[mcp.clients]`-shaped policy; unlisted ids = default-deny | `{}` |
+| `network_clients` | Token-id → `[mcp.clients]`-shaped policy; unlisted ids = default-deny. Each entry may carry `token` (per-member auth, A6-4) and `private_writes` (member-level cache isolation, A6-7; default: scope-namespaced writes) | `{}` |
 
 ## Environment Variables (`TOOLRECALL_*`)
 

@@ -365,7 +365,7 @@ writes, everything:
 
 | Capability | Local (UDS) | Remote (TCP), no entry | Remote, scoped entry |
 |---|---|---|---|
-| cached_read / cached_write / cached_patch | global allowed_paths | ❌ denied | only entry's allowed_paths (A6-1: writes share the read gate) |
+| cached_read / cached_write / cached_patch | global allowed_paths | ❌ denied | only entry's allowed_paths (A6-1: writes share the read gate); writes land in the member's scope-ns (A6-7) |
 | cached_terminal | global allow_terminal | ❌ denied | only if entry sets allow_terminal=true |
 | mcp_call, docs_*, recall_*, cache_invalidate, cache_status, context_*, shutdown, restart | ✅ local | ❌ remote_denied (Layer 1) | ❌ remote_denied (Layer 1) |
 | sensitive-file blocklist | ✅ always | ✅ always | ✅ always |
@@ -400,15 +400,23 @@ plainly:
    `cached_write` in any member's scope, or writes confined to a scratch
    directory) keep the blast radius at "reads wrong data", not "runs wrong
    data" — prefer them.
-2. **No per-identity cache isolation.** Entries are keyed by path/command —
-   NOT by which member wrote them. Two members with the same `allowed_paths`
-   see each other's writes by design. If members must not see each other's
-   data, give them separate daemon instances (different ports/DBs); do not
-   expect the cache to partition itself.
-3. **Hits serve content, not provenance.** A remote hit returns the cached
-   bytes with no marker of which member produced them. Audit attributions
-   come from the daemon's payload-free log (`net req=N cmd=… token-id` in
-   the log line), not from the data itself.
+2. **Write namespacing (A6-7, 2026-09-13) bounds the blast radius.**
+   Remote member writes land under a scope namespace
+   (`s:<sha256(allowed_paths)[:16]>`): members with an IDENTICAL scope
+   share a namespace (they already trust each other's writes), different
+   scopes never collide, and the GLOBAL namespace stays reserved for
+   local (operator) traffic. A compromised member poisons only their own
+   scope-namespace — the global view and other scopes stay clean. Reads
+   fall through own-ns → global, so the team cache still warms from
+   operator traffic. `private_writes = true` per member upgrades to full
+   member-level isolation (`m:<id>`): their writes/reads touch no one
+   else's entries. Members needing genuine data privacy (not just
+   integrity) should use separate daemon instances.
+3. **Provenance exists (A6-7).** `access_log.client` and
+   `file_cache.client` record the identity behind every access and write
+   ('' = local/unknown). Audit "who wrote this entry" is now a DB query,
+   not guesswork; the daemon's payload-free log (`net req=N cmd=…`)
+   remains the runtime trail.
 4. **Revocation is config-driven.** Per-member tokens ([network.clients]
    token key) revoke at next handshake when the entry is removed. A member
    holding an active TLS connection keeps it until the next handshake.
