@@ -264,7 +264,7 @@ class ToolRecallGepaAdapter:
         batch: list[Any],
         candidate: dict[str, str],
         capture_traces: bool = False,
-    ) -> dict:
+    ) -> "EvalBatchResult":
         """Evaluate a candidate on a batch — one fork-tree branch per input.
 
         Matches GEPA's EvaluationBatch shape (duck-typed dict): ``outputs``,
