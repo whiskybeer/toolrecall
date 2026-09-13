@@ -169,9 +169,15 @@ def send_through_edge(
     import urllib.error
     import urllib.request
 
-    body = json.dumps({"model": model, "messages": messages, "max_tokens": 5}).encode("utf-8")
+    body = json.dumps(
+        {"model": model, "messages": messages, "max_tokens": 5, "temperature": 0}
+    ).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
+        # The provider key rides Authorization end-to-end: the edge passes it
+        # through verbatim (not in _HOP_BY_HOP) and the TR proxy routes on the
+        # sk-or- prefix. Edge auth is DISABLED on this rig (loopback only) —
+        # arms are isolated by cache behavior, not tokens.
         "Authorization": f"Bearer {token}",
     }
     if no_cache:
@@ -236,7 +242,10 @@ def run_arm(
     fork from the recorded prefix (fork arm). Returns per-instance stats."""
     results = {"arm": arm_name, "model": model, "instances": []}
     total_spend = 0.0
-    slot_shas: dict = {}
+    miss_sha_by_body: dict = {}
+    hit_sha_by_body: dict = {}
+    served_shas: dict = {}
+    cross_arm_shas: dict = {}
 
     for inst_idx, inst in enumerate(instances):
         built = build_session_convo_muted(inst, max_turns=max_turns)
@@ -260,7 +269,9 @@ def run_arm(
             for ti, msgs in enumerate(cands):
                 expected_shared = c > 0 and ti < len(turn_snapshots)
                 r = send_through_edge(edge_url, key, model, msgs, no_cache=no_cache)
-                spend = float(r.get("total_cost") or 0.0)
+                # spend tracking uses the HONEST billed figure (HIT = $0);
+                # the raw total_cost lands in the row below.
+                spend = 0.0 if r.get("cache") == "HIT" else float(r.get("total_cost") or 0.0)
                 total_spend += spend
                 row = {
                     "arm": arm_name,
@@ -282,18 +293,32 @@ def run_arm(
                     "ts": datetime.now(timezone.utc).isoformat(),
                 }
                 # ── G5 correctness tracking ───────────────────────────────
-                # Per (instance, candidate, turn) request slot: record the
-                # content hash seen on each MISS (the "real" response) and
-                # every later serve of the same slot. A HIT must replay the
-                # MISS content byte-exactly (C5 discipline from the warp
-                # bench). Cross-arm drift (fork vs naive on the SAME slot)
-                # must also be zero — the provider answer is deterministic
-                # at temperature 0 for identical bodies.
-                slot = (inst["instance_id"], c, ti)
+                # Keyed by BODY SHA (the cache's own key), not by slot: a
+                # shared-prefix turn in candidate 1 has no MISS in ITS slot —
+                # the MISS lived in candidate 0. Body-sha keys capture exactly
+                # what the cache keys on. THE correctness claim: for every
+                # body, all served content hashes form ONE distinct set (the
+                # HIT replay = the MISS response, byte-exact, C5 discipline).
+                # Cross-arm sha equality is NOT a correctness signal: live
+                # smoke showed deepseek-v4-flash is not byte-deterministic at
+                # temp=0, max_tokens=5 — deltas recorded informationally.
+                bsha = row["body_sha"]
                 if r.get("content_sha"):
-                    slot_shas.setdefault(slot, set()).add(r["content_sha"])
+                    served_shas.setdefault(bsha, set()).add(r["content_sha"])
+                    if r.get("cache") == "MISS":
+                        miss_sha_by_body[bsha] = r["content_sha"]
+                    elif r.get("cache") == "HIT":
+                        hit_sha_by_body.setdefault(bsha, set()).add(r["content_sha"])
+                        cross_arm_shas.setdefault(bsha, set()).add(r["content_sha"])
                 jsonl_rows.append(row)
                 cand_result["turns"].append(row)
+                # ── Billing honesty (learned live 2026-09-13, mirrors the warp
+                # bench): a TR HIT replays the STORED body verbatim, including
+                # the original MISS's usage.cost. billed = 0 on HIT; the
+                # replayed figure is cost_avoided.
+                is_tr_hit = r.get("cache") == "HIT"
+                row["billed_cost"] = 0.0 if is_tr_hit else (r.get("total_cost") or 0.0)
+                row["cost_avoided"] = (r.get("total_cost") or 0.0) if is_tr_hit else 0.0
                 if r.get("error"):
                     print(f"    [{arm_name}/c{c}/t{ti}] ERROR: {r['error'][:120]}", flush=True)
                 # hard spend cap — never exceed without looking
@@ -302,7 +327,7 @@ def run_arm(
                         f"COST ABORT: {arm_name} spent ${total_spend:.4f} > ${COST_ABORT:.2f} cap"
                     )
             cand_result["billed_cost_usd"] = round(
-                sum(float(t.get("total_cost") or 0.0) for t in cand_result["turns"]), 6
+                sum(float(t.get("billed_cost") or 0.0) for t in cand_result["turns"]), 6
             )
             cand_result["hits"] = sum(1 for t in cand_result["turns"] if t.get("cache") == "HIT")
             cand_result["misses"] = sum(1 for t in cand_result["turns"] if t.get("cache") == "MISS")
@@ -312,11 +337,14 @@ def run_arm(
                 f"{cand_result['hits']}H/{cand_result['misses']}M ${cand_result['billed_cost_usd']:.4f}",
                 flush=True,
             )
-            if smoke:
-                break  # smoke: one candidate per instance
+            # NOTE: no smoke break here — the fork mechanic only exists when
+            # c1 forks from c0's recorded prefix; a smoke that stopped after
+            # c0 would prove nothing. The instance break below bounds cost.
         results["instances"].append(inst_result)
         if smoke:
-            break  # smoke: one instance
+            # smoke runs BOTH candidates fully (c0 records the prefix, c1
+            # proves the fork replay) but only 1 instance.
+            break
 
     results["billed_cost_usd"] = round(
         sum(
@@ -326,16 +354,30 @@ def run_arm(
         6,
     )
     # ── G5 correctness verdict for this arm ──────────────────────────────
-    drift_slots = {s: shas for s, shas in slot_shas.items() if len(shas) > 1}
+    # Body-keyed: every HIT body must have a recorded MISS sha for the SAME
+    # body, and the HIT sha must equal it (byte-exact replay).
+    checked_bodies = {b for b in hit_sha_by_body if b in miss_sha_by_body}
+    replay_drift = sorted(b for b in checked_bodies if hit_sha_by_body[b] != {miss_sha_by_body[b]})
     results["correctness"] = {
-        "request_slots_tracked": len(slot_shas),
-        "slots_with_content_drift": len(drift_slots),
+        "miss_bodies": len(miss_sha_by_body),
+        "hit_bodies": len(hit_sha_by_body),
+        "hit_replay_checked": len(checked_bodies),
+        "hit_replay_drift": len(replay_drift),
         "drift_examples": [
-            {"instance_id": s[0], "candidate": s[1], "turn": s[2], "shas": sorted(v)}
-            for s, v in list(drift_slots.items())[:5]
+            {
+                "body_sha": b,
+                "miss_sha": miss_sha_by_body[b],
+                "hit_shas": sorted(hit_sha_by_body[b]),
+            }
+            for b in replay_drift[:5]
         ],
+        "cross_arm_bodies_multiple_shas": sum(
+            1 for shas in cross_arm_shas.values() if len(shas) > 1
+        ),
         "verdict": (
-            "PASS" if not drift_slots and slot_shas else ("NO-DATA" if not slot_shas else "FAIL")
+            "PASS"
+            if checked_bodies and not replay_drift
+            else ("NO-DATA" if not checked_bodies else "FAIL")
         ),
     }
     return results
@@ -356,10 +398,10 @@ def summarize(results: list) -> list:
                         errors += 1
                     if t.get("expected_shared"):
                         shared_turns += 1
-                        shared_billed += float(t.get("total_cost") or 0.0)
+                        shared_billed += float(t.get("billed_cost") or 0.0)
                         shared_hits += 1 if t.get("cache") == "HIT" else 0
                     else:
-                        divergent_billed += float(t.get("total_cost") or 0.0)
+                        divergent_billed += float(t.get("billed_cost") or 0.0)
         total = shared_billed + divergent_billed
         corr = arm.get("correctness", {})
         summary.append(
@@ -377,8 +419,8 @@ def summarize(results: list) -> list:
                 "errors": errors,
                 "correctness": {
                     "verdict": corr.get("verdict", "NO-DATA"),
-                    "slots_tracked": corr.get("request_slots_tracked", 0),
-                    "drift_slots": corr.get("slots_with_content_drift", 0),
+                    "hit_replay_checked": corr.get("hit_replay_checked", 0),
+                    "hit_replay_drift": corr.get("hit_replay_drift", 0),
                 },
             }
         )
@@ -405,7 +447,13 @@ def main() -> int:
     ap.add_argument("--candidates", type=int, default=5, help="B: candidates per instance")
     ap.add_argument("--max-turns", type=int, default=8)
     ap.add_argument("--arms", default="naive,fork")
-    ap.add_argument("--smoke", action="store_true", help="1 instance, 1 candidate, 3 turns")
+    ap.add_argument("--smoke", action="store_true", help="1 instance, 2 candidates, 3 turns")
+    ap.add_argument(
+        "--reset-cache",
+        action="store_true",
+        help="Wipe the bench rig's api_cache before the run (fresh cold start). "
+        "The rig daemon must use the /tmp/gepa_bench/cache.db bench DB — never prod.",
+    )
     ap.add_argument(
         "--out", default=None, help="Output base path (default: bench/results/gepa_fork_ab_<UTC>)"
     )
@@ -419,10 +467,36 @@ def main() -> int:
     key_b = os.environ.get("KEY_B", "").strip()
     if args.execute:
         if not key_a or not key_b:
-            raise SystemExit("Both KEY_A (fork) and KEY_B (naive) are required for the billed run")
+            raise SystemExit(
+                "Both KEY_A (fork) and KEY_B (naive) are required for the billed run. "
+                "Same key twice is allowed for a SMOKE run (arms differ by cache header, "
+                "attribution via usage.cost) — pass KEY_A=$key KEY_B=$key explicitly."
+            )
+        if key_a == key_b:
+            print(
+                "!! KEY_A == KEY_B — single-key run: per-key dashboard cross-check (G4) "
+                "degenerates to one window; per-request usage.cost is the attribution.",
+                flush=True,
+            )
 
     if args.smoke:
         args.instances, args.candidates, args.max_turns = 1, 2, 3
+
+    # Cold-start guard: a stale bench cache would hand the fork arm's c0 free
+    # HITs (it must MISS + record the prefix) and corrupt every downstream
+    # number. --reset-cache wipes ONLY the bench rig DB (never prod).
+    if args.reset_cache:
+        import sqlite3
+        import os as _os
+
+        bench_db = _os.environ.get("BENCH_CACHE_DB", "/tmp/gepa_bench/cache.db")
+        if "gepa_bench" not in bench_db:
+            raise SystemExit(f"refusing to wipe non-bench DB: {bench_db}")
+        con = sqlite3.connect(bench_db)
+        n = con.execute("DELETE FROM api_cache").rowcount
+        con.commit()
+        con.close()
+        print(f"reset-cache: wiped {n} api_cache rows from {bench_db}", flush=True)
 
     loaded = load_instances(args.instances)
     instances = loaded["instances"]
@@ -477,11 +551,27 @@ def main() -> int:
 
     # ── G4: dashboard cross-check ──────────────────────────────────────────
     jsonl_sums = {
-        "fork": sum(float(r.get("total_cost") or 0) for r in jsonl_rows if r["arm"] == "fork"),
-        "naive": sum(float(r.get("total_cost") or 0) for r in jsonl_rows if r["arm"] == "naive"),
+        "fork": sum(float(r.get("billed_cost") or 0) for r in jsonl_rows if r["arm"] == "fork"),
+        "naive": sum(float(r.get("billed_cost") or 0) for r in jsonl_rows if r["arm"] == "naive"),
     }
     crosscheck = []
+    single_key = key_a == key_b
     for arm_name, key_name in (("fork", "KEY_A"), ("naive", "KEY_B")):
+        if single_key:
+            # One shared key + concurrent prod traffic on it → the dashboard
+            # window includes unrelated spend; a ±5% check is meaningless.
+            # Per-request usage.cost is the attribution (recorded per row).
+            crosscheck.append(
+                {
+                    "arm": arm_name,
+                    "key": key_name,
+                    "jsonl_usd": round(jsonl_sums[arm_name], 6),
+                    "dashboard_usd": None,
+                    "drift": None,
+                    "verdict": "SKIPPED (single shared key — per-request usage.cost attribution)",
+                }
+            )
+            continue
         jsonl_total = jsonl_sums[arm_name]
         dash = dash_delta.get(key_name, 0.0)
         drift = abs(jsonl_total - dash) / dash if dash else 0.0
@@ -603,19 +693,21 @@ def main() -> int:
                 f"fork adds ${(f_b - fork['shared_prefix_billed_usd']) / max(1, args.candidates - 1):.4f}",
             )
         )
-        # C-F4: correctness — HIT replays byte-exact, cross-arm answers identical
-        corr_pairs = [s["correctness"] for s in summary]
-        all_pass = all(c["verdict"] == "PASS" for c in corr_pairs) and corr_pairs
-        total_tracked = sum(c["slots_tracked"] for c in corr_pairs)
-        total_drift = sum(c["drift_slots"] for c in corr_pairs)
-        verdicts.append(
-            (
-                "C-F4 correctness: HIT replays byte-exact; fork == naive answers",
-                f"PASS — {total_tracked} slots tracked, {total_drift} drift"
-                if all_pass
-                else f"FAIL — {total_drift} drift slots of {total_tracked}",
-            )
-        )
+        # C-F4: correctness — HIT replays byte-exact WITHIN each body (the
+        # naive arm serves only MISSes → NO-DATA there is expected; the gate
+        # needs at least one arm WITH verified HIT-replays).
+        corr_pairs = [s["correctness"] for s in summary if "correctness" in s]
+        failing = [c for c in corr_pairs if c["verdict"] == "FAIL"]
+        passing = [c for c in corr_pairs if c["verdict"] == "PASS"]
+        total_checked = sum(c.get("hit_replay_checked", 0) for c in corr_pairs)
+        total_drift = sum(c.get("hit_replay_drift", 0) for c in corr_pairs)
+        if failing:
+            c4 = f"FAIL — {total_drift} drift of {total_checked} verified HIT bodies"
+        elif passing:
+            c4 = f"PASS — {total_checked} HIT bodies verified byte-exact replays (0 drift)"
+        else:
+            c4 = "NO-DATA — no HIT bodies anywhere (fork arm produced no replays)"
+        verdicts.append(("C-F4 correctness: every HIT replays its body's MISS byte-exact", c4))
     for cc in crosscheck:
         verdicts.append((f"G4 dashboard cross-check ({cc['key']})", cc["verdict"]))
 
