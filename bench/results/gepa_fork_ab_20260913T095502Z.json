@@ -1,0 +1,443 @@
+{
+  "meta": {
+    "date": "2026-09-13T09:55:02.173141+00:00",
+    "edge": "http://127.0.0.1:8573/v1/chat/completions",
+    "model": "deepseek/deepseek-v4-flash",
+    "dataset": "princeton-nlp/swe-bench-lite (test split)",
+    "instances": [
+      "astropy__astropy-12907"
+    ],
+    "candidates_B": 2,
+    "max_turns": 3,
+    "smoke": true,
+    "cost_abort_cap_usd": 0.6,
+    "note_cost": "total_cost is OpenRouter-billed per request; G4 cross-checks per-key dashboard window delta vs JSONL sums. cached_tokens = provider prefix cache, tracked separately, never conflated.",
+    "note_arms": "fork arm = shared prefix recorded once, candidates replay it; naive arm = equal work, cache OFF, every turn bills. 2 keys."
+  },
+  "summary": [
+    {
+      "arm": "fork",
+      "model": "deepseek/deepseek-v4-flash",
+      "billed_cost_usd": 0.00014,
+      "shared_prefix_turns": 3,
+      "shared_prefix_hits": 3,
+      "shared_prefix_hit_ratio": 1.0,
+      "shared_prefix_billed_usd": 0.0,
+      "divergent_billed_usd": 0.00014,
+      "errors": 0,
+      "correctness": {
+        "verdict": "PASS",
+        "hit_replay_checked": 3,
+        "hit_replay_drift": 0
+      }
+    },
+    {
+      "arm": "naive",
+      "model": "deepseek/deepseek-v4-flash",
+      "billed_cost_usd": 0.00037,
+      "shared_prefix_turns": 3,
+      "shared_prefix_hits": 0,
+      "shared_prefix_hit_ratio": 0.0,
+      "shared_prefix_billed_usd": 0.000138,
+      "divergent_billed_usd": 0.000232,
+      "errors": 0,
+      "correctness": {
+        "verdict": "NO-DATA",
+        "hit_replay_checked": 0,
+        "hit_replay_drift": 0
+      }
+    }
+  ],
+  "dashboard_crosscheck": [
+    {
+      "arm": "fork",
+      "key": "KEY_A",
+      "jsonl_usd": 0.00014,
+      "dashboard_usd": null,
+      "drift": null,
+      "verdict": "SKIPPED (single shared key \u2014 per-request usage.cost attribution)"
+    },
+    {
+      "arm": "naive",
+      "key": "KEY_B",
+      "jsonl_usd": 0.00037,
+      "dashboard_usd": null,
+      "drift": null,
+      "verdict": "SKIPPED (single shared key \u2014 per-request usage.cost attribution)"
+    }
+  ],
+  "raw": [
+    {
+      "arm": "fork",
+      "model": "deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "candidates": [
+            {
+              "candidate": 0,
+              "mutation": null,
+              "turns": [
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 0,
+                  "expected_shared": false,
+                  "body_sha": "e8ec7da7734303b7",
+                  "cache": "MISS",
+                  "prompt_tokens": 423,
+                  "completion_tokens": 5,
+                  "total_cost": 1.64801e-05,
+                  "cached_tokens": 256,
+                  "latency_ms": 1417,
+                  "content_sha": "4a546641202a4871",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:42.007419+00:00",
+                  "billed_cost": 1.64801e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 1,
+                  "expected_shared": false,
+                  "body_sha": "8008eb159e957539",
+                  "cache": "MISS",
+                  "prompt_tokens": 2206,
+                  "completion_tokens": 5,
+                  "total_cost": 4.59746e-05,
+                  "cached_tokens": 2048,
+                  "latency_ms": 1820,
+                  "content_sha": "4a546641202a4871",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:43.827634+00:00",
+                  "billed_cost": 4.59746e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 2,
+                  "expected_shared": false,
+                  "body_sha": "fb06c75dc5cb08a0",
+                  "cache": "MISS",
+                  "prompt_tokens": 3994,
+                  "completion_tokens": 5,
+                  "total_cost": 7.58086e-05,
+                  "cached_tokens": 3840,
+                  "latency_ms": 1199,
+                  "content_sha": "bcd171390cb4c5ea",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:45.026915+00:00",
+                  "billed_cost": 7.58086e-05,
+                  "cost_avoided": 0.0
+                }
+              ],
+              "billed_cost_usd": 0.000138,
+              "hits": 0,
+              "misses": 3
+            },
+            {
+              "candidate": 1,
+              "mutation": "prioritize the smallest possible patch",
+              "turns": [
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 0,
+                  "expected_shared": true,
+                  "body_sha": "e8ec7da7734303b7",
+                  "cache": "HIT",
+                  "prompt_tokens": 423,
+                  "completion_tokens": 5,
+                  "total_cost": 1.64801e-05,
+                  "cached_tokens": 256,
+                  "latency_ms": 16,
+                  "content_sha": "4a546641202a4871",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:45.043623+00:00",
+                  "billed_cost": 0.0,
+                  "cost_avoided": 1.64801e-05
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 1,
+                  "expected_shared": true,
+                  "body_sha": "8008eb159e957539",
+                  "cache": "HIT",
+                  "prompt_tokens": 2206,
+                  "completion_tokens": 5,
+                  "total_cost": 4.59746e-05,
+                  "cached_tokens": 2048,
+                  "latency_ms": 18,
+                  "content_sha": "4a546641202a4871",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:45.061795+00:00",
+                  "billed_cost": 0.0,
+                  "cost_avoided": 4.59746e-05
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 2,
+                  "expected_shared": true,
+                  "body_sha": "fb06c75dc5cb08a0",
+                  "cache": "HIT",
+                  "prompt_tokens": 3994,
+                  "completion_tokens": 5,
+                  "total_cost": 7.58086e-05,
+                  "cached_tokens": 3840,
+                  "latency_ms": 11,
+                  "content_sha": "bcd171390cb4c5ea",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:45.073961+00:00",
+                  "billed_cost": 0.0,
+                  "cost_avoided": 7.58086e-05
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 3,
+                  "expected_shared": false,
+                  "body_sha": "520be8da008ed982",
+                  "cache": "MISS",
+                  "prompt_tokens": 17,
+                  "completion_tokens": 5,
+                  "total_cost": 1.9943e-06,
+                  "cached_tokens": 0,
+                  "latency_ms": 5552,
+                  "content_sha": "e681d4698580d609",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:50.626460+00:00",
+                  "billed_cost": 1.9943e-06,
+                  "cost_avoided": 0.0
+                }
+              ],
+              "billed_cost_usd": 2e-06,
+              "hits": 3,
+              "misses": 1
+            }
+          ]
+        }
+      ],
+      "billed_cost_usd": 0.00014,
+      "correctness": {
+        "miss_bodies": 4,
+        "hit_bodies": 3,
+        "hit_replay_checked": 3,
+        "hit_replay_drift": 0,
+        "drift_examples": [],
+        "cross_arm_bodies_multiple_shas": 0,
+        "verdict": "PASS"
+      }
+    },
+    {
+      "arm": "naive",
+      "model": "deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "candidates": [
+            {
+              "candidate": 0,
+              "mutation": null,
+              "turns": [
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 0,
+                  "expected_shared": false,
+                  "body_sha": "e8ec7da7734303b7",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 423,
+                  "completion_tokens": 5,
+                  "total_cost": 1.64801e-05,
+                  "cached_tokens": 256,
+                  "latency_ms": 900,
+                  "content_sha": "a212ac3b2f8b95ba",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:51.527807+00:00",
+                  "billed_cost": 1.64801e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 1,
+                  "expected_shared": false,
+                  "body_sha": "8008eb159e957539",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 2206,
+                  "completion_tokens": 5,
+                  "total_cost": 4.59746e-05,
+                  "cached_tokens": 2048,
+                  "latency_ms": 1056,
+                  "content_sha": "801aa8cea95c0dda",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:52.584692+00:00",
+                  "billed_cost": 4.59746e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 2,
+                  "expected_shared": false,
+                  "body_sha": "fb06c75dc5cb08a0",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 3994,
+                  "completion_tokens": 5,
+                  "total_cost": 0.0001673798,
+                  "cached_tokens": 2048,
+                  "latency_ms": 2472,
+                  "content_sha": "383b44383b225e63",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:55.057589+00:00",
+                  "billed_cost": 0.0001673798,
+                  "cost_avoided": 0.0
+                }
+              ],
+              "billed_cost_usd": 0.00023,
+              "hits": 0,
+              "misses": 0
+            },
+            {
+              "candidate": 1,
+              "mutation": "prioritize the smallest possible patch",
+              "turns": [
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 0,
+                  "expected_shared": true,
+                  "body_sha": "e8ec7da7734303b7",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 423,
+                  "completion_tokens": 5,
+                  "total_cost": 1.64801e-05,
+                  "cached_tokens": 256,
+                  "latency_ms": 1029,
+                  "content_sha": "89c3ee52dbc28b53",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:56.086975+00:00",
+                  "billed_cost": 1.64801e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 1,
+                  "expected_shared": true,
+                  "body_sha": "8008eb159e957539",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 2206,
+                  "completion_tokens": 5,
+                  "total_cost": 4.59746e-05,
+                  "cached_tokens": 2048,
+                  "latency_ms": 2268,
+                  "content_sha": "b471d690c2d2bddf",
+                  "error": null,
+                  "ts": "2026-09-13T09:54:58.355255+00:00",
+                  "billed_cost": 4.59746e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 2,
+                  "expected_shared": true,
+                  "body_sha": "fb06c75dc5cb08a0",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 3994,
+                  "completion_tokens": 5,
+                  "total_cost": 7.58086e-05,
+                  "cached_tokens": 3840,
+                  "latency_ms": 1808,
+                  "content_sha": "7ae86c9673445146",
+                  "error": null,
+                  "ts": "2026-09-13T09:55:00.163579+00:00",
+                  "billed_cost": 7.58086e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 1,
+                  "turn": 3,
+                  "expected_shared": false,
+                  "body_sha": "520be8da008ed982",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 17,
+                  "completion_tokens": 5,
+                  "total_cost": 1.9943e-06,
+                  "cached_tokens": 0,
+                  "latency_ms": 1822,
+                  "content_sha": "efab619527cc1ca8",
+                  "error": null,
+                  "ts": "2026-09-13T09:55:01.985757+00:00",
+                  "billed_cost": 1.9943e-06,
+                  "cost_avoided": 0.0
+                }
+              ],
+              "billed_cost_usd": 0.00014,
+              "hits": 0,
+              "misses": 0
+            }
+          ]
+        }
+      ],
+      "billed_cost_usd": 0.00037,
+      "correctness": {
+        "miss_bodies": 0,
+        "hit_bodies": 0,
+        "hit_replay_checked": 0,
+        "hit_replay_drift": 0,
+        "drift_examples": [],
+        "cross_arm_bodies_multiple_shas": 0,
+        "verdict": "NO-DATA"
+      }
+    }
+  ]
+}

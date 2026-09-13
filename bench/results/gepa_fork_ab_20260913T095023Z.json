@@ -1,0 +1,257 @@
+{
+  "meta": {
+    "date": "2026-09-13T09:50:23.783534+00:00",
+    "edge": "http://127.0.0.1:8573/v1/chat/completions",
+    "model": "deepseek/deepseek-v4-flash",
+    "dataset": "princeton-nlp/swe-bench-lite (test split)",
+    "instances": [
+      "astropy__astropy-12907"
+    ],
+    "candidates_B": 2,
+    "max_turns": 3,
+    "smoke": true,
+    "cost_abort_cap_usd": 0.6,
+    "note_cost": "total_cost is OpenRouter-billed per request; G4 cross-checks per-key dashboard window delta vs JSONL sums. cached_tokens = provider prefix cache, tracked separately, never conflated.",
+    "note_arms": "fork arm = shared prefix recorded once, candidates replay it; naive arm = equal work, cache OFF, every turn bills. 2 keys."
+  },
+  "summary": [
+    {
+      "arm": "fork",
+      "model": "deepseek/deepseek-v4-flash",
+      "billed_cost_usd": 0.0,
+      "shared_prefix_turns": 0,
+      "shared_prefix_hits": 0,
+      "shared_prefix_hit_ratio": 0.0,
+      "shared_prefix_billed_usd": 0.0,
+      "divergent_billed_usd": 0.0,
+      "errors": 0,
+      "correctness": {
+        "verdict": "PASS",
+        "hit_replay_checked": 0,
+        "hit_replay_drift": 0
+      }
+    },
+    {
+      "arm": "naive",
+      "model": "deepseek/deepseek-v4-flash",
+      "billed_cost_usd": 0.000439,
+      "shared_prefix_turns": 0,
+      "shared_prefix_hits": 0,
+      "shared_prefix_hit_ratio": 0.0,
+      "shared_prefix_billed_usd": 0.0,
+      "divergent_billed_usd": 0.000439,
+      "errors": 0,
+      "correctness": {
+        "verdict": "NO-DATA",
+        "hit_replay_checked": 0,
+        "hit_replay_drift": 0
+      }
+    }
+  ],
+  "dashboard_crosscheck": [
+    {
+      "arm": "fork",
+      "key": "KEY_A",
+      "jsonl_usd": 0.0,
+      "dashboard_usd": 0.003968,
+      "drift": 1.0,
+      "verdict": "FAIL"
+    },
+    {
+      "arm": "naive",
+      "key": "KEY_B",
+      "jsonl_usd": 0.000439,
+      "dashboard_usd": 0.003968,
+      "drift": 0.8893,
+      "verdict": "FAIL"
+    }
+  ],
+  "raw": [
+    {
+      "arm": "fork",
+      "model": "deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "candidates": [
+            {
+              "candidate": 0,
+              "mutation": null,
+              "turns": [
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 0,
+                  "expected_shared": false,
+                  "body_sha": "e8ec7da7734303b7",
+                  "cache": "HIT",
+                  "prompt_tokens": 423,
+                  "completion_tokens": 5,
+                  "total_cost": 2.95617e-05,
+                  "cached_tokens": 0,
+                  "latency_ms": 29,
+                  "content_sha": "b8e3fb91ef447e44",
+                  "error": null,
+                  "ts": "2026-09-13T09:50:19.044875+00:00",
+                  "billed_cost": 0.0,
+                  "cost_avoided": 2.95617e-05
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 1,
+                  "expected_shared": false,
+                  "body_sha": "8008eb159e957539",
+                  "cache": "HIT",
+                  "prompt_tokens": 2206,
+                  "completion_tokens": 5,
+                  "total_cost": 0.0001506274,
+                  "cached_tokens": 0,
+                  "latency_ms": 15,
+                  "content_sha": "bb3ef3383d89bfac",
+                  "error": null,
+                  "ts": "2026-09-13T09:50:19.060110+00:00",
+                  "billed_cost": 0.0,
+                  "cost_avoided": 0.0001506274
+                },
+                {
+                  "arm": "fork",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 2,
+                  "expected_shared": false,
+                  "body_sha": "fb06c75dc5cb08a0",
+                  "cache": "HIT",
+                  "prompt_tokens": 3994,
+                  "completion_tokens": 5,
+                  "total_cost": 0.0001673798,
+                  "cached_tokens": 2048,
+                  "latency_ms": 12,
+                  "content_sha": "b142230db909e141",
+                  "error": null,
+                  "ts": "2026-09-13T09:50:19.072676+00:00",
+                  "billed_cost": 0.0,
+                  "cost_avoided": 0.0001673798
+                }
+              ],
+              "billed_cost_usd": 0.0,
+              "hits": 3,
+              "misses": 0
+            }
+          ]
+        }
+      ],
+      "billed_cost_usd": 0.0,
+      "correctness": {
+        "miss_slots": 0,
+        "hit_slots": 3,
+        "hit_replay_checked": 0,
+        "hit_replay_drift": 0,
+        "drift_examples": [],
+        "cross_arm_slots_multiple_shas": 0,
+        "verdict": "PASS"
+      }
+    },
+    {
+      "arm": "naive",
+      "model": "deepseek/deepseek-v4-flash",
+      "instances": [
+        {
+          "instance_id": "astropy__astropy-12907",
+          "candidates": [
+            {
+              "candidate": 0,
+              "mutation": null,
+              "turns": [
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 0,
+                  "expected_shared": false,
+                  "body_sha": "e8ec7da7734303b7",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 423,
+                  "completion_tokens": 5,
+                  "total_cost": 1.64801e-05,
+                  "cached_tokens": 256,
+                  "latency_ms": 1583,
+                  "content_sha": "5b07f73cb26defe2",
+                  "error": null,
+                  "ts": "2026-09-13T09:50:20.656188+00:00",
+                  "billed_cost": 1.64801e-05,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 1,
+                  "expected_shared": false,
+                  "body_sha": "8008eb159e957539",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 2206,
+                  "completion_tokens": 5,
+                  "total_cost": 0.0001506274,
+                  "cached_tokens": 0,
+                  "latency_ms": 1743,
+                  "content_sha": "074b3a57b2468ace",
+                  "error": null,
+                  "ts": "2026-09-13T09:50:22.399121+00:00",
+                  "billed_cost": 0.0001506274,
+                  "cost_avoided": 0.0
+                },
+                {
+                  "arm": "naive",
+                  "model": "deepseek/deepseek-v4-flash",
+                  "instance_id": "astropy__astropy-12907",
+                  "instance_index": 0,
+                  "candidate": 0,
+                  "turn": 2,
+                  "expected_shared": false,
+                  "body_sha": "fb06c75dc5cb08a0",
+                  "cache": "NOCACHE",
+                  "prompt_tokens": 3994,
+                  "completion_tokens": 5,
+                  "total_cost": 0.0002720326,
+                  "cached_tokens": 0,
+                  "latency_ms": 1124,
+                  "content_sha": "a66e0270a1941cd4",
+                  "error": null,
+                  "ts": "2026-09-13T09:50:23.523892+00:00",
+                  "billed_cost": 0.0002720326,
+                  "cost_avoided": 0.0
+                }
+              ],
+              "billed_cost_usd": 0.000439,
+              "hits": 0,
+              "misses": 0
+            }
+          ]
+        }
+      ],
+      "billed_cost_usd": 0.000439,
+      "correctness": {
+        "miss_slots": 0,
+        "hit_slots": 0,
+        "hit_replay_checked": 0,
+        "hit_replay_drift": 0,
+        "drift_examples": [],
+        "cross_arm_slots_multiple_shas": 0,
+        "verdict": "NO-DATA"
+      }
+    }
+  ]
+}
