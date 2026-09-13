@@ -247,7 +247,7 @@ Full detail: [Recall Tier](docs/RECALL_TIER.md)
 | Streaming requests | ✅ rewritten before the stream relay | ⚠️ LiteLLM bypasses `async_pre_call_hook` on some paths (see adapter docstring) |
 | Extra process | none | LiteLLM Proxy |
 
-The built-in path was verified end-to-end against live OpenRouter billing through `:8569` (2026-09-10): a two-turn conversation re-pasting a ~1,141-token tool result billed 1,245 prompt tokens on turn 2 with dedup vs 2,217+ without — turn 2's *billed cost* stayed ≈ turn 1's because the keep-first prefix remains byte-identical to provider prompt caching.
+The built-in path was verified end-to-end against live OpenRouter billing through `:8569`: a two-turn conversation re-pasting a ~1,141-token tool result billed 1,245 prompt tokens on turn 2 with dedup vs 2,217+ without — turn 2's *billed cost* stayed ≈ turn 1's because the keep-first prefix remains byte-identical to provider prompt caching.
 
 Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) · ready-to-use config: [litellm-proxy-config.yaml](docs/examples/litellm-proxy-config.yaml)
 

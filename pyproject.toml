@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolrecall"
-version = "0.8.20"
+version = "0.8.21"
 description = "−36% LLM API cost on 450-turn agent sessions (billed keys, not estimates). One daemon: forward proxy, context tracker, MCP multiplexer, security gate. Works with any model/provider — additive to prefix caching."
 readme = "README-pypi.md"
 authors = [{name = "Robin Schultka", email = "robin@toolrecall.dev"}]
