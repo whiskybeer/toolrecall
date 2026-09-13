@@ -1,3 +1,4 @@
+import os
 import re
 import sqlite3
 import hashlib
@@ -219,6 +220,12 @@ _db_lock = RLock()
 _db_real: sqlite3.Connection | None = None
 _db_refcount: int = 0  # Reentrancy counter: commit only at outermost exit
 _db_path_cached: str | None = None  # Track DB path to detect env var changes
+_last_env_db: str | None = (
+    os.environ.get("TOOLRECALL_CACHE_DB") or ""
+)  # Raw TOOLRECALL_CACHE_DB at last _db(); initialized AT IMPORT so
+# the first _db() call doesn't count the import-time env as a "change"
+# (that would rebuild the config and discard test-time cfg mutations like
+# IsolatedDB/_point_db — the 2026-09-13 TestFailSoft breakage).
 
 
 @contextmanager
@@ -247,12 +254,33 @@ def _db():
 
     On exception: rollback + release (no lock leak).
     """
-    global _db_real, _db_refcount, _db_path_cached
+    global _db_real, _db_refcount, _db_path_cached, _last_env_db, _cached_config
     _db_lock.acquire()
     _should_commit = False  # Initialize before try — always in scope
     try:
         cfg = _get_cached_config()
         db_path = _active_db_path(cfg)
+        # Env-var change detection (2026-09-13, tr-mcp-keys wipe forensics):
+        # the cached Config was built at import time — if TOOLRECALL_CACHE_DB
+        # is set/changed AFTER import (test-module pin, conftest ordering
+        # race), the cached cfg still resolves the OLD db AND
+        # _active_db_path(cfg) keeps returning it, so the db_path-change
+        # check below can NEVER fire and every write (reset_stats!) goes to
+        # the old — possibly production — DB.
+        # Rule: reload only when the RAW env CHANGED since the last _db()
+        # call (last-seen comparison). Deliberately NOT compared against
+        # _db_path_cached: tests repoint the connection via direct cfg
+        # mutation (IsolatedDB/_point_db) without touching env — comparing
+        # against the connection path would swap the connection mid-test
+        # and destroy their isolation (broke 6 tests). env pop + re-set
+        # between tests counts as a change (unset != value). Cheap: one
+        # os.environ.get per _db() call; zero reloads while env is stable.
+        _env_now = os.environ.get("TOOLRECALL_CACHE_DB") or ""
+        if _env_now != _last_env_db:
+            _last_env_db = _env_now
+            _cached_config = None
+            cfg = _get_cached_config()
+            db_path = _active_db_path(cfg)
         # Detect DB path change (e.g. tests switching TOOLRECALL_CACHE_DB or
         # TOOLRECALL_LIBSQL_DB_PATH). If the path changed, close the old
         # connection AND reload config so the new db path is picked up.
@@ -265,7 +293,6 @@ def _db():
                     _db_real = None
                     # Force config reload on DB path change — env var or
                     # test fixture may have changed the path or backend.
-                    global _cached_config
                     _cached_config = None
                     cfg = _get_cached_config()
                     db_path = _active_db_path(cfg)

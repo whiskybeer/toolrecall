@@ -39,14 +39,14 @@ def _make(content: str = "x = 1\n", path: str = None) -> str:
 def _point_db(path) -> None:
     """Point the _db() singleton at `path`, the IsolatedDB way.
 
-    Setting the env var alone is NOT enough: _db() caches the Config
-    object, and its path-change detection only reloads when the old
-    connection is still open. Mirrors test_daemon_error_honesty's
-    IsolatedDB: patch the cached config's paths.cache_db, then drop the
-    singleton so the next _db() reopens on the new path.
+    Sets BOTH levers: the env var (raw source of truth — _db() reloads the
+    config when the raw env changes, 2026-09-13 late-pin fix) AND patches
+    the cached config's paths.cache_db. Then drops the singleton so the
+    next _db() reopens on the new path.
     """
     from toolrecall import _db as db_mod
 
+    os.environ["TOOLRECALL_CACHE_DB"] = str(path)
     cfg = db_mod._get_cached_config()
     cfg._data.setdefault("paths", {})["cache_db"] = str(path)
     if db_mod._db_real is not None:

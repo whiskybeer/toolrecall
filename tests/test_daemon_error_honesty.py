@@ -43,6 +43,11 @@ class _TempDbFixture:
 
         cfg = db_mod._get_cached_config()
         self._saved = {"cache_db": cfg.get("paths", "cache_db")}
+        # Env lever too: _db() reloads the config when the raw env changes
+        # (2026-09-13 late-pin fix), so the env must agree with the patched
+        # cfg or the reload discards the patch mid-with-block.
+        self._saved["env"] = os.environ.get("TOOLRECALL_CACHE_DB")
+        os.environ["TOOLRECALL_CACHE_DB"] = self.db_path
         cfg._data.setdefault("paths", {})["cache_db"] = self.db_path
         self._saved["_db_real"] = db_mod._db_real
         self._saved["_db_path_cached"] = db_mod._db_path_cached
@@ -61,6 +66,10 @@ class _TempDbFixture:
         db_mod._db_path_cached = self._saved["_db_path_cached"]
         cfg = db_mod._get_cached_config()
         cfg._data.setdefault("paths", {})["cache_db"] = self._saved["cache_db"]
+        if self._saved["env"] is None:
+            os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        else:
+            os.environ["TOOLRECALL_CACHE_DB"] = self._saved["env"]
         return False
 
 

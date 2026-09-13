@@ -43,7 +43,8 @@ import toolrecall.cache as _cache_mod  # noqa: E402
 
 
 def _refresh_config_singleton():
-    """Rebuild toolrecall.cache's module-level config singleton.
+    """Rebuild toolrecall.cache's module-level config singleton AND re-pin
+    the DB (env + _db() singleton reset).
 
     pytest imports test modules alphabetically: test_docs_*.py imports
     toolrecall (via toolrecall.docs) BEFORE this module's env-var lines run,
@@ -51,8 +52,28 @@ def _refresh_config_singleton():
     TOOLRECALL_STALE_WHILE_REVALIDATE / TOOLRECALL_ADAPTIVE_* set. Rebuilding
     it in setUpClass makes _swr_window()/_adaptive_cfg() see the intended
     values regardless of collection order.
+
+    DB re-pin (2026-09-13): modules that run BEFORE this one (e.g.
+    test_file_cache) overwrite TOOLRECALL_CACHE_DB at their import and the
+    late-pin fix in _db() correctly follows the new value — so by the time
+    these classes run, the env no longer points at test_swr.db and the
+    schema this module expects is absent. Re-assert our own pin (env +
+    cached-config rebuild + connection reset) so every class is
+    self-contained regardless of import order. Mirrors the _point_db
+    pattern in test_tracker_persistence.
     """
+    os.environ["TOOLRECALL_CACHE_DB"] = test_db_path
     _cache_mod.config = _cache_mod.load_config()
+    import toolrecall._db as _db_mod
+
+    if _db_mod._db_real is not None:
+        _db_mod._db_real.close()
+        _db_mod._db_real = None
+    _db_mod._db_path_cached = None
+    # Re-apply the schema: the re-opened DB is a fresh temp file that may
+    # never have had _init() run (cache._init runs at import against the
+    # import-time DB, not this re-pinned one).
+    _cache_mod._init()
 
 
 class TestSwrTerminal(unittest.TestCase):
