@@ -1360,6 +1360,29 @@ class DaemonServer:
         # Single-token deployments: one shared token, one id.
         return {self.cfg.network_token: "network-client"}
 
+    def _member_ns(self, token_id: str) -> str:
+        """A6-7 cache namespace for a remote member's WRITES.
+
+        - private_writes=true  → member-level ns ("m:<id>"): full isolation,
+          the member's writes/reads never touch any other member's entries.
+        - default              → scope-level ns ("s:<sha256(allowed_paths)>"):
+          members with an IDENTICAL scope share a namespace (they already
+          trust each other's writes — same paths, same policy), while a
+          member with a different scope can never collide with them. The
+          GLOBAL namespace stays reserved for local (operator) traffic,
+          which is the trusted warming source for the team cache.
+        """
+        entry = self.cfg.network_clients.get(token_id, {})
+        if not isinstance(entry, dict):
+            return ""
+        if entry.get("private_writes"):
+            return f"m:{token_id}"
+        scope = entry.get("allowed_paths", [])
+        import hashlib as _hashlib
+
+        scope_json = json.dumps(sorted(scope), sort_keys=True).encode()
+        return "s:" + _hashlib.sha256(scope_json).hexdigest()[:16]
+
     def _run_tcp_listener(self, host: str, port: int):
         """Accept loop for the TCP listener. Runs in its own thread.
 
@@ -1483,6 +1506,10 @@ class DaemonServer:
                 # Mark as remote: policy resolves from [network.clients]
                 # only (per-request flag — the UDS path is unaffected)
                 request["_remote"] = True
+                # A6-7: the member's write namespace travels with every
+                # request — cache writes land under their scope (or
+                # member-level for private_writes=true), never global.
+                request["_ns"] = self._member_ns(token_id)
                 # ── Remote command allow-list (A6-3, review 2026-09-08) ──
                 # One choke point BEFORE routing: a remote caller may only
                 # invoke the cache-relevant commands. Everything else —
@@ -1967,10 +1994,12 @@ class DaemonServer:
         if bypass:
             from toolrecall.cache import invalidate_file
 
-            invalidate_file(path)
+            invalidate_file(path, ns=req.get("_ns", ""))
         # If source is "agent_tool", pass it through so context tokens are tracked
         source = req.get("source", "")
-        result = _cache_read(path, source=source)
+        result = _cache_read(
+            path, source=source, ns=req.get("_ns", ""), client=req.get("client", "")
+        )
         if result and not result.get("error"):
             # Context-tracker gate (2026-09-12): track ONLY agent-tool reads.
             # The shim tags infra reads "shim" (its size/binary/library gates),
@@ -2056,7 +2085,7 @@ class DaemonServer:
         )
         if err:
             return {"error": err}
-        result = _cache_write(path, content)
+        result = _cache_write(path, content, ns=req.get("_ns", ""), client=req.get("client", ""))
         # Track write as dirty for context tracker
         if result and not result.get("error"):
             self._context.mark_dirty(path)
@@ -2079,7 +2108,13 @@ class DaemonServer:
         )
         if err:
             return {"error": err}
-        result = _cache_patch(path, old_string, new_string)
+        result = _cache_patch(
+            path,
+            old_string,
+            new_string,
+            ns=req.get("_ns", ""),
+            client=req.get("client", ""),
+        )
         # Track patch as dirty for context tracker
         if result and not result.get("error"):
             self._context.mark_dirty(path)

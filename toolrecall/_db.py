@@ -433,3 +433,14 @@ def _init(schema: str = ""):
         _add_column(conn, "terminal_cache", "hit_streak INTEGER DEFAULT 0")
         _add_column(conn, "mcp_cache", "hit_streak INTEGER DEFAULT 0")
         _add_column(conn, "api_cache", "hit_streak INTEGER DEFAULT 0")
+        # Migration: A6-7 (2026-09-13) — access_log.client: which identity
+        # performed the cached operation (NULL/'' = local/unknown). Remote
+        # requests stamp their token-id; enables "who wrote this entry"
+        # audit on shared network daemons (SECURITY.md §9.4).
+        _add_column(conn, "access_log", "client TEXT DEFAULT ''")
+        # A6-7: write provenance + namespacing on file_cache. `client` =
+        # last writer identity ('' = local); `ns` = scope-namespace hash
+        # ('' = global ns). Both default '' so legacy rows and local
+        # traffic keep their keys/hits untouched.
+        _add_column(conn, "file_cache", "client TEXT DEFAULT ''")
+        _add_column(conn, "file_cache", "ns TEXT DEFAULT ''")

@@ -248,7 +248,9 @@ CREATE TABLE IF NOT EXISTS file_cache (
     mtime REAL NOT NULL,
     size INTEGER NOT NULL,
     cached_at REAL NOT NULL,
-    hits INTEGER DEFAULT 1
+    hits INTEGER DEFAULT 1,
+    client TEXT DEFAULT '',
+    ns TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS skill_cache (
     skill_name TEXT PRIMARY KEY,
@@ -302,7 +304,8 @@ CREATE TABLE IF NOT EXISTS access_log (
     path TEXT,
     hit INTEGER NOT NULL,
     tokens INTEGER DEFAULT 0,
-    cached_at REAL NOT NULL
+    cached_at REAL NOT NULL,
+    client TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_time ON access_log(cached_at DESC);
 CREATE INDEX IF NOT EXISTS idx_file_mtime ON file_cache(mtime);
@@ -377,6 +380,7 @@ def _record(
     path: str = "",
     tokens_saved: int = 0,
     context_tokens: int = 0,
+    client: str = "",
 ):
     """Track cache statistics + access log.
 
@@ -438,8 +442,8 @@ def _record(
             if path:
                 conn.execute(
                     """
-                    INSERT INTO access_log (category, path, hit, tokens, cached_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO access_log (category, path, hit, tokens, cached_at, client)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """,
                     (
                         category,
@@ -447,6 +451,7 @@ def _record(
                         1 if hit else 0,
                         tokens_saved if hit else tokens_read,
                         time.time(),
+                        client,
                     ),
                 )
                 conn.execute(
@@ -506,28 +511,49 @@ def _record_tokens_read_from_disk(
 # ─── FILE CACHE (hybrid: in-memory LRU + SQLite) ────────────
 
 
-def _persist_file_to_sqlite(path: str, content: str, stat_result):
+def _persist_file_to_sqlite(path: str, content: str, stat_result, ns: str = "", client: str = ""):
     """Write file to SQLite for cross-session persistence.
 
     Files larger than ~10 MB are excluded from SQLite to keep the DB small.
     They remain in the in-memory LRU only, so they're cached per-session
     but not persisted across daemon restarts.
+
+    A6-7: ``ns`` is the scope-namespace ('' = global). A remote member's
+    write lands under its scope hash so it can never shadow the global
+    entry; ``client`` records write provenance.
     """
-    path_hash = _hash(path)
+    if ns:
+        path_hash = _hash(f"{ns}\x00{path}")
+    else:
+        path_hash = _hash(path)
     try:
         with _db() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO file_cache (path_hash, path, content, mtime, size, cached_at, ns, client)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (path_hash, path, content, stat_result.st_mtime, stat_result.st_size, time.time()),
+                (
+                    path_hash,
+                    path,
+                    content,
+                    stat_result.st_mtime,
+                    stat_result.st_size,
+                    time.time(),
+                    ns,
+                    client,
+                ),
             )
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite persist failed for {path}: {e}")
 
 
-def cached_read(path: str, source: str = "") -> dict:
+def cached_read(
+    path: str,
+    source: str = "",
+    ns: str = "",
+    client: str = "",
+) -> dict:
     """Read file with hybrid cache.
 
     Lookup order: in-memory LRU (fast) → SQLite (persistent) → disk.
@@ -583,7 +609,10 @@ def cached_read(path: str, source: str = "") -> dict:
     now_ts = time.time()
 
     # ── 1. In-memory cache (fast path) ──
-    entry = _file_cache.get(path)
+    # A6-7: memory is keyed by ns+path for namespaced (remote) callers so a
+    # scope-namespace entry never shadows the global one in the LRU.
+    mem_key = f"{ns}\x00{path}" if ns else path
+    entry = _file_cache.get(mem_key)
     if (
         entry
         and not never_cache
@@ -600,7 +629,12 @@ def cached_read(path: str, source: str = "") -> dict:
         tokens = _estimate_tokens(entry["content"])
         context_tokens = tokens if source == "agent_tool" else 0
         _record(
-            "file_cache", hit=True, path=path, tokens_saved=tokens, context_tokens=context_tokens
+            "file_cache",
+            hit=True,
+            path=path,
+            tokens_saved=tokens,
+            context_tokens=context_tokens,
+            client=client,
         )
         return {"cached": True, "content": entry["content"], "path": path}
 
@@ -608,13 +642,28 @@ def cached_read(path: str, source: str = "") -> dict:
     # (The disk-read section below honors never_cache by not persisting.)
 
     # ── 2. SQLite cache (warm from previous session) ──
-    path_hash = _hash(path)
+    # A6-7: two-step lookup for namespaced callers — own scope-ns first,
+    # then the global namespace. Global entries are warmed by local
+    # (operator) traffic and remain visible to everyone; a remote member's
+    # own writes are found first but can never shadow the global entry.
+    if ns:
+        path_hash_own = _hash(f"{ns}\x00{path}")
+        path_hash_global = _hash(path)
+    else:
+        path_hash_own = _hash(path)
+        path_hash_global = None
+    row = None
     try:
         with _db() as conn:
             row = conn.execute(
                 "SELECT content, mtime, size, cached_at FROM file_cache WHERE path_hash = ?",
-                (path_hash,),
+                (path_hash_own,),
             ).fetchone()
+            if row is None and path_hash_global is not None:
+                row = conn.execute(
+                    "SELECT content, mtime, size, cached_at FROM file_cache WHERE path_hash = ?",
+                    (path_hash_global,),
+                ).fetchone()
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None
@@ -629,7 +678,7 @@ def cached_read(path: str, source: str = "") -> dict:
         )
     ):
         _file_cache.put(
-            path,
+            mem_key,
             {
                 "content": row["content"],
                 "mtime": row["mtime"],
@@ -640,7 +689,12 @@ def cached_read(path: str, source: str = "") -> dict:
         tokens = _estimate_tokens(row["content"])
         context_tokens = tokens if source == "agent_tool" else 0
         _record(
-            "file_cache", hit=True, path=path, tokens_saved=tokens, context_tokens=context_tokens
+            "file_cache",
+            hit=True,
+            path=path,
+            tokens_saved=tokens,
+            context_tokens=context_tokens,
+            client=client,
         )
         return {"cached": True, "content": row["content"], "path": path}  # ── 2. SQLite hit ──
     # Miss accounting only applies to cacheable paths. A ttl=0 (never_cache)
@@ -649,7 +703,7 @@ def cached_read(path: str, source: str = "") -> dict:
     # stagnation: ~28% of all reads were never-cacheable session transcripts
     # recorded as misses, capping the global rate at ~71%).
     if not never_cache:
-        _record("file_cache", hit=False, path=path)
+        _record("file_cache", hit=False, path=path, client=client)
     # Count tokens_read_from_disk only for truly new content:
     # - brand new file (never in SQLite) → row is None
     # - file was modified (mtime changed) → row exists but stale
@@ -698,7 +752,7 @@ def cached_read(path: str, source: str = "") -> dict:
         return {"cached": False, "content": content, "path": path}
 
     _file_cache.put(
-        path,
+        mem_key,
         {"content": content, "mtime": stat.st_mtime, "size": stat.st_size, "cached_at": now_ts},
     )
     _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=_is_new_file)
@@ -707,7 +761,7 @@ def cached_read(path: str, source: str = "") -> dict:
     # Small files always persist for cross-session reuse
     # ttl=0 paths: serve-through only — nothing enters memory or SQLite.
     if not never_cache and stat.st_size <= _max_file_bytes():
-        _persist_file_to_sqlite(path, content, stat)
+        _persist_file_to_sqlite(path, content, stat, ns=ns, client=client)
 
     return {"cached": False, "content": content, "path": path}
 
@@ -1548,12 +1602,16 @@ def cached_exec(code: str, ttl: int = 0) -> dict:
 WRITE_CACHE_MAX_BYTES = 5 * 1024 * 1024  # 5MB — same as file cache limit
 
 
-def cached_write(path: str, content: str) -> dict:
+def cached_write(path: str, content: str, ns: str = "", client: str = "") -> dict:
     """Write a file, skipping if content is identical to disk.
 
     Args:
         path: File path to write.
         content: Content to write.
+        ns: A6-7 scope-namespace ('' = global). A namespaced write
+            invalidates only that namespace's cache entry.
+        client: A6-7 write provenance (token-id or ''). Recorded in
+            access_log.
 
     Returns:
         On content-match:  {"unchanged": True, "path": path}
@@ -1561,6 +1619,7 @@ def cached_write(path: str, content: str) -> dict:
         On error:          {"error": "...", "path": path}
     """
     path = os.path.expanduser(path)
+    mem_key = f"{ns}\x00{path}" if ns else path
 
     # Create parent directories if needed
     parent = os.path.dirname(path)
@@ -1572,8 +1631,8 @@ def cached_write(path: str, content: str) -> dict:
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
-            _file_cache.remove(path)
-            _record("write_cache", hit=False)
+            _file_cache.remove(mem_key)
+            _record("write_cache", hit=False, path=path, client=client)
             return {"cached": False, "path": path, "size": len(content)}
         except Exception as e:
             return {"error": str(e), "path": path}
@@ -1589,8 +1648,8 @@ def cached_write(path: str, content: str) -> dict:
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
-            _file_cache.remove(path)
-            _record("write_cache", hit=False)
+            _file_cache.remove(mem_key)
+            _record("write_cache", hit=False, path=path, client=client)
             return {"cached": False, "path": path, "size": len(content)}
         except Exception as e:
             return {"error": str(e), "path": path}
@@ -1603,7 +1662,7 @@ def cached_write(path: str, content: str) -> dict:
         return {"error": str(e), "path": path}
 
     if current == content:
-        _record("write_cache", hit=True)
+        _record("write_cache", hit=True, path=path, client=client)
         _record_tokens_read_from_disk("write_cache", _estimate_tokens(content))
         return {"unchanged": True, "path": path}
 
@@ -1612,16 +1671,18 @@ def cached_write(path: str, content: str) -> dict:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         _file_cache.remove(
-            path
+            mem_key
         )  # Invalidate stale cache entry (mtime may not change on fast writes)
-        invalidate_file(path)  # Also invalidate SQLite layer
-        _record("write_cache", hit=False)
+        invalidate_file(path, ns=ns)  # Also invalidate SQLite layer (this ns only)
+        _record("write_cache", hit=False, path=path, client=client)
         return {"cached": False, "path": path, "size": len(content)}
     except Exception as e:
         return {"error": str(e), "path": path}
 
 
-def cached_patch(path: str, old_string: str, new_string: str) -> dict:
+def cached_patch(
+    path: str, old_string: str, new_string: str, ns: str = "", client: str = ""
+) -> dict:
     """Apply a find-and-replace patch, skipping if already applied or missing.
 
     Three outcomes:
@@ -1631,6 +1692,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
 
     ⚠️  Same TOCTOU caveat as cached_write — comparison is read-time only.
     ⚠️  If old_string appears multiple times, only the first is checked.
+    A6-7: ns/client — see cached_write.
     """
     path = os.path.expanduser(path)
 
@@ -1672,10 +1734,10 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
         _file_cache.remove(
-            path
+            f"{ns}\x00{path}" if ns else path
         )  # Invalidate stale cache entry (mtime may not change on fast writes)
-        invalidate_file(path)  # Also invalidate SQLite layer
-        _record("patch_cache", hit=False)
+        invalidate_file(path, ns=ns)  # Also invalidate SQLite layer (this ns only)
+        _record("patch_cache", hit=False, client=client)
         return {"cached": False, "path": path, "changes": change_count}
     except Exception as e:
         return {"error": str(e), "path": path}
@@ -2062,12 +2124,20 @@ def invalidate_all():
         warnings.warn(f"ToolRecall: SQLite invalidate failed: {e}")
 
 
-def invalidate_file(path: str):
-    """Invalidate a specific file from cache (memory + SQLite)."""
-    path = os.path.expanduser(path)
-    _file_cache.remove(path)
+def invalidate_file(path: str, ns: str = ""):
+    """Invalidate a specific file from cache (memory + SQLite).
 
-    h = _hash(path)
+    A6-7: with a namespace, ONLY that scope's entry is removed — global
+    and other scopes' entries for the same path survive.
+    """
+    path = os.path.expanduser(path)
+    if ns:
+        _file_cache.remove(f"{ns}\x00{path}")
+        h = _hash(f"{ns}\x00{path}")
+    else:
+        _file_cache.remove(path)
+        h = _hash(path)
+
     try:
         with _db() as conn:
             conn.execute("DELETE FROM file_cache WHERE path_hash = ?", (h,))
