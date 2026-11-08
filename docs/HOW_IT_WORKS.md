@@ -120,6 +120,7 @@ This property matters because:
 ## Benchmark Caveats
 
 - Review workload (pure reads) is ToolRecall's best case. Real sessions with writes have higher per-turn growth (~910 vs ~580 tok/turn during read-only phases).
+- Real-session share (240 sessions, 48,125 turns): clean file content is **~11 % of per-turn input** (median; 11.7 % by bytes) and **decreases with session length** (<50 turns ≈ 22 %, ≥400 ≈ 9 %). The 140-turn result is the read-only best case.
 - The 140-turn exhaustion uses a 128K harness cap. DeepSeek V4 Flash supports 1.05M context — the harness, not the model, created the ceiling.
 - ToolRecall's total cost is higher than naive prefix caching because it completes more work. **Per turn, it is 16% cheaper.** The value proposition is feasibility (longer sessions, less session-switching), not absolute cost reduction.
 - Bugfix numbers confirmed across 3 seeds (42, 43, 44). Review numbers from seed=42.

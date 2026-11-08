@@ -25,7 +25,7 @@ Two capabilities are the reason to run it. Both are measured, both target the sa
 
 | Capability | What it does | Measured |
 |-----------|--------------|----------|
-| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (measured on real runs, prefix-caching model) — [Context Tracker](#context-tracker) |
+| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (read-only benchmark, prefix-caching model; real-session figure below) — [Context Tracker](#context-tracker) |
 | **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
 
 ---
@@ -88,7 +88,7 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. Since 
 | Feature | What it solves |
 |---------|---------------|
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
-| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions. |
+| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions (read-only benchmark; ~11 % per-turn reduction in real mixed sessions). |
 | **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI — 0.8.21 adds a fork tree (`replay tree` / `fork` / `at`): concurrent branches replay the shared tool-call prefix and re-execute only divergent calls, the substrate for the GEPA adapter |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
@@ -170,6 +170,8 @@ The Context Tracker records which files were **written** (made *dirty*) since a 
 **Available in the MCP Bridge as five tools** — `context_set_checkpoint`, `context_get_dirty`, `context_get_stats`, `context_reset`, `context_get_hint`. The bridge **auto-appends a drop hint to tool responses after the agent's first `context_set_checkpoint` call** (checkpoint opt-in), telling it which clean files to drop — agents that never checkpoint (e.g. Claude Code) see no hint text. No agent-side config is required beyond the pattern.
 
 **Measured, not modeled.** On real runs (Hermes agent, DeepSeek V4 Flash — a model with prefix caching already on), the tracker sent **9.5× fewer request tokens per turn** (8,077 vs 76,430 at turn 10) and the session ran **7.4× longer** (140 vs 19 turns) before hitting the context wall. Because it shrinks the context window itself — not just what the provider caches — the benefit holds for **prefix and non-prefix models alike**.
+
+**What that means in ordinary sessions.** The 9.5×/7.4× above is the **read-only best case** — 4 files re-read in a loop, no writes, no harness-side compaction. Across **240 real mixed sessions (48,125 turns)**, unchanged clean file content is **~11 % of the per-turn input** (median; 11.7 % by bytes), and the share **shrinks as sessions get longer** (<50 turns ≈ 22 %, ≥400 turns ≈ 9 %). So in real usage the tracker is a **~10–15 % per-turn context reduction that delays compaction**, not a 7× endurance multiplier.
 
 How far it goes depends on the workload: an agent that rewrites whole files every turn saves less than one that re-reads the same files. The table below is the **modeled ceiling** — it assumes an idealized re-read-heavy agent that drops every clean file each turn (~7 files/turn):
 

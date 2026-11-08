@@ -20,6 +20,8 @@ At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.
 > **Key insight:** ToolRecall and prefix caching are **additive**, not competing. TR sends fewer tokens (volume wins), prefix caches discounts the tokens you do send (rate wins). Both contribute to the final bill. TR saves money with **any** provider, with or without prefix caching. See [Cost Savings](COST_SAVINGS.md).
 
 > **⚠️ Scope of the 7.4× endurance figure:** This benchmark runs on **Hermes Agent**, which owns its message loop and drops clean files from context after each turn via the Context Tracker. **Append-only harnesses (Claude Code, Cursor) cannot do this** — the context tracker is inert in those environments, and this endurance figure does not transfer. See [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code) for details.
+>
+> **⚠️ Workload-composition scope:** the review arm re-reads 4 files each turn, so **~100 % of its per-turn growth is clean file content** — the tracker's ideal case. On **240 real mixed sessions (48,125 turns, Hermes-managed window)** the clean-file share of per-turn input is **median ~11 %** (bytes 11.7 %), falling to **~9 % past 400 turns**. Read the 7.4× as this benchmark's best case, not a general endurance figure.
 
 | Metric | naive | prefix | toolrecall | Advantage |
 |--------|-------|--------|------------|-----------|
