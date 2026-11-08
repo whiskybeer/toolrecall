@@ -51,7 +51,7 @@ CATEGORIES = [
 HELP_TEXT = [
     "toolrecall top — interactive dashboard (read-only)",
     "",
-    "1/2/3/4   switch view: stats / access log / context / help",
+    "1/2/3/4   switch view: saved (money+measured) / access log / trend / stats",
     "tab       cycle views",
     "up/down   scroll (log, context views); move selection",
     "enter     context view: refresh the selected stale file on disk",
@@ -458,14 +458,8 @@ def render_plain(snapshot: dict) -> str:
                 age_str(c.get("updated_at", 0)),
             )
         )
-    ctx = context_via_daemon()
-    if ctx:
-        lines.append("")
-        # "ctx dropped" ledger intentionally omitted from the end-user stats
-        # strip (2026-09-16 — same rationale as the ctx view: bank-once
-        # estimate, reads as stale noise). Available via `toolrecall stats`.
-        for e in ctx.get("stale", [])[:10]:
-            lines.append("  stale: %s (~%s tok)" % (e["path"], human_tokens(e["est_tokens"])))
+    # End-user ordering (2026-09-16): money truth + measured not-sent FIRST,
+    # IO table last (tech detail). Same contract as the curses view order.
     money = money_today()
     if money:
         lines.append("")
@@ -478,6 +472,8 @@ def render_plain(snapshot: dict) -> str:
                 money["replays"],
             )
         )
+        if money.get("cost_usd") is not None:
+            lines.append("  billed cost today: $%.4f (provider-reported)" % money["cost_usd"])
         if money["median"] and money["median"] > 100_000:
             lines.append(
                 "  median request %s tok — cost dominated by re-sent history"
@@ -486,6 +482,20 @@ def render_plain(snapshot: dict) -> str:
     elif not daemon:
         lines.append("")
         lines.append("money [billed]: no proxy traffic captured today")
+    _measured = sum(
+        c.get("tokens_not_sent_measured", 0) for c in st.values() if isinstance(c, dict)
+    )
+    if _measured:
+        lines.append("")
+        lines.append(
+            "  tokens never sent to the LLM: %s  (dedup stubs — wire-verified)"
+            % human_tokens(_measured)
+        )
+    ctx = context_via_daemon()
+    if ctx:
+        lines.append("")
+        for e in ctx.get("stale", [])[:10]:
+            lines.append("  stale: %s (~%s tok)" % (e["path"], human_tokens(e["est_tokens"])))
     log = snapshot.get("log") or []
     if log:
         lines.append("")
@@ -506,7 +516,7 @@ def render_plain(snapshot: dict) -> str:
 
 # ─── Curses UI ───────────────────────────────────────────────
 
-VIEW_NAMES = ["stats", "log", "trend", "context", "help"]
+VIEW_NAMES = ["context", "log", "trend", "stats", "help"]
 
 
 def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
@@ -529,7 +539,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
     A_BOLD = curses.A_BOLD
 
     state: dict[str, Any] = {
-        "view": "stats",
+        "view": "context",
         "sel": 0,
         "scroll": 0,
         "snap": None,
@@ -603,7 +613,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             ),
             A_BOLD,
         )
-        y = put(y, " 1 stats  2 log  3 trend  4 ctx  5 help  r refresh  q quit", A_DIM)
+        y = put(y, " 1 saved  2 log  3 trend  4 stats  5 help  r refresh  q quit", A_DIM)
         y = put(y, "", 0)  # gap between chrome and view body
 
         # wrong-user warning: own db missing but another user's exists
@@ -633,7 +643,101 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         if view == "help":
             for line in HELP_TEXT:
                 y = put(y, " " + line)
+        elif view == "context":
+            # ── VIEW 1: SAVED (end-user) — money truth + wire-verified ──
+            ctx = state["ctx"]
+            y = put(y, " saved today (end-user view — billed truth + measured):", A_BOLD)
+            money = state.get("money")
+            if money:
+                y = put(y + 1, "", 0)  # section gap
+                y = put(
+                    y,
+                    "  billed via proxy today: %d requests, %s prompt / %s completion tok"
+                    % (
+                        money["requests"],
+                        human_tokens(money["prompt"]),
+                        human_tokens(money["completion"]),
+                    ),
+                )
+                y = put(y, "  replays (identical prompt served from cache): %d" % money["replays"])
+                if money.get("cost_usd") is not None:
+                    y = put(
+                        y,
+                        "  billed cost today: $%.4f (provider-reported, rows carrying cost)"
+                        % money["cost_usd"],
+                        A_BOLD,
+                    )
+                if money["median"] and money["median"] > 100_000:
+                    y = put(
+                        y,
+                        "  median request %s tok — cost dominated by re-sent history"
+                        % human_tokens(money["median"]),
+                        A_MISS,
+                    )
+            else:
+                y = put(y + 1, "", 0)  # section gap
+                y = put(
+                    y,
+                    "  no billed-token data today (LLM traffic does not route"
+                    " through the proxy — attach: toolrecall proxy attach)",
+                    A_DIM,
+                )
+            # MEASURED tier: wire-verified not-sent tokens (bridge dedup
+            # stubs). The number an end user can take to the bank —
+            # content was REPLACED on the wire, never an estimate.
+            _measured = 0
+            for _cat in (state.get("stats") or {}).values():
+                if isinstance(_cat, dict) and _cat.get("tokens_not_sent_measured"):
+                    _measured += _cat["tokens_not_sent_measured"]
+            y = put(y + 1, "", 0)  # section gap
+            if _measured:
+                y = put(
+                    y,
+                    "  tokens never sent to the LLM: %s  (dedup stubs — wire-verified)"
+                    % human_tokens(_measured),
+                    A_BOLD,
+                )
+            else:
+                y = put(
+                    y,
+                    "  tokens never sent to the LLM: 0 so far today"
+                    " (grows when an unchanged file re-read is stubbed)",
+                    A_DIM,
+                )
+            # Blocked reads: security-gate refusals — also wire-verified
+            # never-sent (content never reached the LLM).
+            blocked = blocked_reads_today()
+            if blocked:
+                n_blocked = sum(b["count"] for b in blocked)
+                y = put(y + 1, "", 0)  # section gap
+                y = put(
+                    y,
+                    "  blocked reads (never sent to LLM): %d / %d paths"
+                    % (n_blocked, len(blocked)),
+                    A_BOLD,
+                )
+                for b in blocked[:4]:
+                    y = put(
+                        y,
+                        "    %4dx  %8s  %s"
+                        % (b["count"], b["size_str"], b["path"][: max(24, max_x - 40)]),
+                        A_DIM,
+                    )
+            # IO hint for the curious — one line, no table (view 4 has it)
+            _io_saved = 0
+            for _cat in ("file_cache", "skill_cache", "terminal_cache"):
+                c = (state.get("stats") or {}).get(_cat)
+                if isinstance(c, dict):
+                    _io_saved += c.get("tokens_served_from_cache", 0)
+            if _io_saved:
+                y = put(y + 1, "", 0)  # section gap
+                y = put(
+                    y,
+                    "  disk reads avoided (IO bonus, not money): %s" % human_tokens(_io_saved),
+                    A_DIM,
+                )
         elif view == "stats":
+            # ── VIEW 4: per-cache IO stats (tech view) ──
             narrow = max_x < 88
             if narrow:
                 # phone/narrow SSH: drop the last-act column (low value)
@@ -831,6 +935,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                             A_MISS if (c["hit_pct"] or 100) < 50 else A_DIM,
                         )
         elif view == "context":
+            # ── VIEW 1 (cont.): context tracker hygiene — stale + blocked ──
             ctx = state["ctx"]
             y = put(
                 y,
@@ -948,10 +1053,10 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         msg = state["toast"] if time.time() - state["toast_ts"] < 4 else ""
         if not msg:
             msg = {
-                "stats": "view: per-cache stats",
+                "context": "view: saved (billed + measured not-sent) — press 4 for cache IO",
+                "stats": "view: per-cache IO stats (tech)",
                 "log": "view: access log (up/down scroll)",
                 "trend": "view: daily hit-rate trend",
-                "context": "view: context tracker",
                 "help": "view: help",
             }.get(view, "")
         put(max_y - 1, " " + msg, A_DIM)
