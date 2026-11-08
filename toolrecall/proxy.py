@@ -1788,6 +1788,10 @@ class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
 
     allow_reuse_address = True
     daemon_threads = True
+    # socketserver's default listen backlog is 5: a burst of more connections
+    # (parallel agents starting together) leaves the extras waiting ~1 s for a
+    # SYN retransmit before they are even accepted.
+    request_queue_size = 128
 
 
 def _bind_proxy_server(bind: str, port: int, handler_cls):

@@ -379,6 +379,7 @@ class WarpEdgeHandler(http.server.BaseHTTPRequestHandler):
 class ThreadedEdgeServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 128  # default 5 stalls bursts ~1 s (see proxy.ThreadedHTTPServer)
 
 
 def make_edge_server(
