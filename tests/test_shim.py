@@ -347,7 +347,7 @@ class TestOptionBNoSubprocess(unittest.TestCase):
         import subprocess
 
         original_popen = subprocess.Popen
-        shim_mod.apply()
+        shim_mod.apply(force=True)
         try:
             self.assertIs(
                 subprocess.Popen, original_popen, "Option B: subprocess.Popen must NOT be shimmed"
@@ -360,7 +360,7 @@ class TestOptionBNoSubprocess(unittest.TestCase):
         import subprocess
 
         original_run = subprocess.run
-        shim_mod.apply()
+        shim_mod.apply(force=True)
         try:
             self.assertIs(
                 subprocess.run, original_run, "Option B: subprocess.run must NOT be shimmed"
@@ -398,21 +398,21 @@ class TestApplyRemove(unittest.TestCase):
         shim_mod._ENABLED = self._orig_enabled
         shim_mod.remove()
         # Re-apply for any subsequent tests (but not under pytest)
-        shim_mod.apply()
+        shim_mod.apply(force=True)
 
     def test_apply_patches_open(self):
-        shim_mod.apply()
+        shim_mod.apply(force=True)
         self.assertIs(builtins.open, shim_mod._shim_open)
 
     def test_remove_restores_open(self):
-        shim_mod.apply()
+        shim_mod.apply(force=True)
         shim_mod.remove()
         self.assertIs(builtins.open, self._real_open)
 
     def test_apply_remove_roundtrip(self):
         """Multiple apply/remove cycles work correctly."""
         for _ in range(3):
-            shim_mod.apply()
+            shim_mod.apply(force=True)
             self.assertIs(builtins.open, shim_mod._shim_open)
             shim_mod.remove()
             self.assertIs(builtins.open, self._real_open)
@@ -426,7 +426,7 @@ class TestApplyRemove(unittest.TestCase):
         self.assertFalse(shim_mod._ENABLED)
         # apply should be a no-op
         original_builtins_open = builtins.open
-        shim_mod.apply()
+        shim_mod.apply(force=True)
         self.assertIs(builtins.open, original_builtins_open)
         # Restore for other tests
         importlib.reload(shim_mod)
@@ -516,17 +516,23 @@ class TestApplyRemove(unittest.TestCase):
     # ─── Bug 4 fix: pytest detection uses basename, not substring ───
 
     def test_apply_skips_when_pytest_in_argv(self):
-        """apply() skips patching when sys.argv[0] basename starts with 'pytest'."""
-        orig_argv = sys.argv[:]
+        """apply() skips patching when pytest is detectable in-process.
+
+        The reliable signal is ``"pytest" in sys.modules`` (python -m pytest
+        sets argv[0] to pytest/__main__.py, which basename checks miss);
+        the argv-based -m fallback stays as belt-and-braces. force=True is
+        the documented escape hatch and must NOT bypass the argv check's
+        purpose here, so this test exercises the default force=False path
+        with PYTEST_CURRENT_TEST unset (sys.modules already has pytest).
+        """
         orig_pytest = os.environ.pop("PYTEST_CURRENT_TEST", None)
         try:
             sys.argv = ["/usr/local/bin/pytest", "tests/"]
             shim_mod.remove()
-            shim_mod.apply()
+            shim_mod.apply()  # force=False: pytest-in-sys.modules guard applies
             # Should NOT have patched — pytest detected
             self.assertIsNot(builtins.open, shim_mod._shim_open)
         finally:
-            sys.argv = orig_argv
             if orig_pytest is not None:
                 os.environ["PYTEST_CURRENT_TEST"] = orig_pytest
             shim_mod.remove()
@@ -540,7 +546,7 @@ class TestApplyRemove(unittest.TestCase):
         try:
             sys.argv = ["/home/user/my_test_script.py"]
             shim_mod.remove()
-            shim_mod.apply()
+            shim_mod.apply(force=True)
             # Should have patched — 'test' in path but not pytest basename
             self.assertIs(builtins.open, shim_mod._shim_open)
         finally:

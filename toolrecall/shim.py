@@ -429,6 +429,67 @@ def _open_cached_content(content, mode="r", *args, **kwargs):
         raise
 
 
+def _read_mode_kind(mode: str) -> str | None:
+    """Classify an ``open()`` mode for shim interception.
+
+    Returns "text" or "binary" for read-only modes the shim may serve from
+    cache; ``None`` for everything else (write/append/plus-modes, exotic
+    flags). ``open()`` accepts the b/t chars in any order ("rb" == "br").
+    """
+    if not isinstance(mode, str):
+        return None
+    if "+" in mode or "w" in mode or "a" in mode or "x" in mode:
+        return None
+    base = mode.replace("b", "").replace("t", "").strip()
+    if base != "r":
+        return None
+    return "binary" if "b" in mode else "text"
+
+
+# Suffix ALLOWLIST for binary-mode ("rb") serving. The cache stores decoded
+# UTF-8 text (errors="ignore"), so an "rb" hit round-trips bytes exactly only
+# for true-text files; a binary blob re-encoded from that text is corrupt.
+# Allowlist, not blocklist: extensionless/unknown suffixes are exactly where
+# binary blobs hide, so they must fall through to the real open(). Hermes'
+# native read_file opens "rb" (one chunked pass) — without this gate every
+# local agent read bypassed cache + context tracker (2026-09-15).
+_TEXT_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".pyw",
+        ".md",
+        ".txt",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".cfg",
+        ".ini",
+        ".conf",
+        ".html",
+        ".htm",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".css",
+        ".scss",
+        ".xml",
+        ".csv",
+        ".tsv",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".sql",
+        ".svg",
+        ".log",
+        ".lock",
+    }
+)
+
+
 def _shim_open(path, mode="r", *args, **kwargs):
     # Don't intercept non-file paths (integers = file descriptors,
     # None, or capture objects from test frameworks).
@@ -452,22 +513,41 @@ def _shim_open(path, mode="r", *args, **kwargs):
             return _original_open(path_str, mode, *args, **kwargs)
 
         tr = _get_tr()
-        if tr and mode in ("r", "rt"):
+        mode_kind = _read_mode_kind(mode)
+        # Binary-mode serving ("rb"): Hermes' native read_file fast path
+        # opens "rb" — without this branch every local agent read bypassed
+        # cache + tracker. Only known-text suffixes are served: the cache
+        # holds decoded UTF-8, so re-encoding binary blobs would corrupt them.
+        if tr and mode_kind == "binary" and not path_str.lower().endswith(tuple(_TEXT_SUFFIXES)):
+            mode_kind = None  # unknown/binary suffix → real open, untracked
+        if tr and mode_kind:
             try:
                 # Source tagging: a shim hit in an agent process IS the
                 # agent's file-read path — tag it agent_tool so the CONTEXT
                 # tier (tokens_not_sent_to_llm) counts it, but only when
                 # the conservative pre-call gate passes. The gate must run
                 # BEFORE the call (source is a cached_read argument, and
-                # the call itself records the hit): it uses path shape +
-                # one os.stat, never the content. stats stay exactly-once.
+                # the call itself records the hit): it uses path shape + one
+                # os.stat, never the content. stats stay exactly-once.
                 result = tr["read"](path_str, source=_tag_source_for(path_str))
                 # Only serve from shim if it was a cache HIT.
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly
                 # and records stats exactly once.
                 if result and result.get("cached", False) and "content" in result:
-                    return _open_cached_content(result["content"], mode, *args, **kwargs)
+                    if mode_kind == "binary":
+                        serve_mode = "rb"
+                        # encoding/errors/newline are invalid on a binary
+                        # handle; buffering is legal ("rb", 0 → raw IO) and
+                        # must pass through unchanged.
+                        kwargs = {
+                            k: v
+                            for k, v in kwargs.items()
+                            if k not in ("encoding", "errors", "newline")
+                        }
+                    else:
+                        serve_mode = mode
+                    return _open_cached_content(result["content"], serve_mode, *args, **kwargs)
             except Exception:
                 pass
         return _original_open(path_str, mode, *args, **kwargs)
@@ -475,24 +555,35 @@ def _shim_open(path, mode="r", *args, **kwargs):
         _exit_shim(prev)
 
 
-def apply():
+def apply(force: bool = False):
     """Apply the shim monkey-patch. Called once on .pth import.
 
     Patches ONLY builtins.open for read-mode caching. Intentionally does
     NOT touch subprocess.run/Popen — see module docstring (Option B).
-    Skips patching when running under pytest (interferes with capture).
+    Skips patching when running under pytest (interferes with capture):
+    ``force=True`` bypasses that guard for tests that exercise the
+    apply/remove mechanics directly.
     """
     if not _ENABLED:
         return
-    # Don't patch when running under pytest.
+    # Don't patch when running under pytest. sys.modules is the reliable
+    # signal: `python -m pytest` sets sys.argv[0] to pytest/__main__.py
+    # (basename "__main__.py"), so the old argv-prefix check silently
+    # missed that invocation and patched open() for the whole run —
+    # including pytest's own capture machinery (exposed 2026-09-15 by
+    # a shim regression test whose disk verification read came back
+    # from the cache stub).
+    if not force and "pytest" in sys.modules:
+        return
+    if not force and os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     _argv = sys.argv[:5] if sys.argv else []
-    if any(os.path.basename(str(a)).startswith("pytest") for a in _argv[:1]):
-        return
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return
     if _argv and _argv[0] == "-m" and any("pytest" in str(a) for a in _argv[1:]):
         return
-    builtins.open = _shim_open
+    # builtins.open is an overloaded stdlib function; the shim is a plain
+    # drop-in callable. (mypy only checks this body now that apply() is
+    # annotated — the assignment predates typing here.)
+    builtins.open = _shim_open  # type: ignore[assignment]
 
 
 def remove():

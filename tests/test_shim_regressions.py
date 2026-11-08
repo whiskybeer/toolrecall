@@ -19,6 +19,7 @@ never hands the caller a stale or fake file object:
 
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -171,6 +172,104 @@ class TestSizeAwareInvalidation(unittest.TestCase):
             os.unlink(tmp)
         except OSError:
             pass
+
+
+class TestBinaryModeServing(unittest.TestCase):
+    """Hermes' native read_file opens "rb" — the shim must serve it.
+
+    Before 2026-09-15 the shim intercepted only text modes ("r"/"rt"), so
+    every Hermes native read bypassed cache + context tracker: the file was
+    never counted, never cached, never drop-eligible. Known-text suffixes
+    are now served from the UTF-8 text cache as real binary handles;
+    unknown/binary suffixes fall through to the real open() (the cache
+    stores decoded text — re-encoding a binary blob would corrupt it).
+    """
+
+    def setUp(self):
+        self._tr = shim_mod._TR
+        self._sk = shim_mod._SKIP_PREFIXES
+        self._orig_open = builtins.open
+        shim_mod._thread_local.active = False
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shim_mod._TR = self._tr
+        shim_mod._SKIP_PREFIXES = self._sk
+        shim_mod._thread_local.active = False
+        builtins.open = self._orig_open
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_rb_hit_serves_real_binary_handle(self):
+        _force_hit(content="line\nline2\n")
+        fh = shim_mod._shim_open("/some/file.py", "rb")
+        self.assertNotIsInstance(fh, io.StringIO)
+        self.assertEqual(fh.read(), b"line\nline2\n")
+        # Real file object: fileno() must work (subprocess pipes rely on it)
+        self.assertGreaterEqual(fh.fileno(), 0)
+        fh.close()
+
+    def test_rb_hit_multibyte_utf8_lossless(self):
+        _force_hit(content="café ✓\n")
+        fh = shim_mod._shim_open("/some/notes.md", "rb")
+        self.assertEqual(fh.read(), "café ✓\n".encode("utf-8"))
+        fh.close()
+
+    def test_rb_hit_with_text_kwargs_still_serves_bytes(self):
+        # Callers pass encoding= on rb sometimes (defensive); the shim must
+        # strip it instead of crashing — bytes handles take no encoding.
+        _force_hit(content="x\n")
+        fh = shim_mod._shim_open("/some/file.py", "rb", encoding="utf-8")
+        self.assertEqual(fh.read(), b"x\n")
+        fh.close()
+
+    def test_rb_unknown_suffix_falls_through_to_real_open(self):
+        # Binary content on an unlisted suffix: the cached TEXT must NOT be
+        # served (re-encoding would corrupt); the real file wins.
+        real = os.path.join(self.tmpdir, "blob.bin")
+        with open(real, "wb") as f:
+            f.write(b"\x00\x01binary")
+        _force_hit(content="this text must never appear")
+        fh = shim_mod._shim_open(real, "rb")
+        self.assertEqual(fh.read(), b"\x00\x01binary")
+        fh.close()
+
+    def test_rb_no_cache_entry_reads_real_file(self):
+        # Miss (tr returns uncached): real open, real bytes, stats exactly-once.
+        real = os.path.join(self.tmpdir, "miss.py")
+        with open(real, "w") as f:
+            f.write("print(1)\n")
+        shim_mod._SKIP_PREFIXES = []
+        shim_mod._TR = {"read": lambda p, **kw: {"cached": False}}
+        fh = shim_mod._shim_open(real, "rb")
+        self.assertEqual(fh.read(), b"print(1)\n")
+        fh.close()
+
+    def test_write_mode_bypasses_cache(self):
+        # "w" must never be served from cache. Verify via _original_open —
+        # the saved real open is immune to any builtins patching (mechanics
+        # tests elsewhere patch builtins.open; a verification read through
+        # a patched shim would serve the stub cache and poison this assert).
+        real = os.path.join(self.tmpdir, "w.py")
+        _force_hit(content="stale cache content")
+        with shim_mod._shim_open(real, "w") as fh:
+            fh.write("fresh\n")
+        with shim_mod._original_open(real) as f:
+            self.assertEqual(f.read(), "fresh\n")
+
+    def test_mode_classifier(self):
+        k = shim_mod._read_mode_kind
+        self.assertEqual(k("r"), "text")
+        self.assertEqual(k("rt"), "text")
+        self.assertEqual(k("rb"), "binary")
+        self.assertEqual(k("br"), "binary")
+        self.assertIsNone(k("r+"))
+        self.assertIsNone(k("rb+"))
+        self.assertIsNone(k("w"))
+        self.assertIsNone(k("wb"))
+        self.assertIsNone(k("a"))
+        self.assertIsNone(k("x"))
+        self.assertIsNone(k("rU"))  # legacy universal-newline flag: not a plain read
+        self.assertIsNone(k(5))
 
 
 if __name__ == "__main__":
