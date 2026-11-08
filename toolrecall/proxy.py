@@ -186,7 +186,11 @@ def _maybe_dedup_body(body_bytes: bytes, profile: str | None = None) -> tuple[by
 
     normalizer = None
     protect_last_default = 2
-    if profile == "claude-code" or os.environ.get("TOOLRECALL_DEDUP_NORMALIZE") in ("1", "true", "yes"):
+    if profile == "claude-code" or os.environ.get("TOOLRECALL_DEDUP_NORMALIZE") in (
+        "1",
+        "true",
+        "yes",
+    ):
         from toolrecall.dedup import normalize_output
 
         normalizer = normalize_output
@@ -440,7 +444,9 @@ def _cc_canon_message(msg):
     if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
         return msg
     content = _cc_strip_cache_control(msg["content"])
-    slots = [i for i, b in enumerate(content) if isinstance(b, dict) and b.get("type") == "tool_result"]
+    slots = [
+        i for i, b in enumerate(content) if isinstance(b, dict) and b.get("type") == "tool_result"
+    ]
     if len(slots) > 1:
         ordered = sorted((content[i] for i in slots), key=lambda b: str(b.get("tool_use_id", "")))
         content = list(content)
@@ -1057,9 +1063,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # the same body the provider will receive. Per-request opt-out:
             # X-ToolRecall-No-Dedup (benchmark baseline arms use this).
             profile_hint = (
-                (self.headers.get("X-ToolRecall-Canonicalize") or "").strip().lower()
-                or _canonicalize_default()
-            )
+                self.headers.get("X-ToolRecall-Canonicalize") or ""
+            ).strip().lower() or _canonicalize_default()
             if (
                 method == "POST"
                 and body_bytes
@@ -1118,12 +1123,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Sampled requests (explicit temperature > 0) can bypass the cache if configured
         # or requested via header. Default is OFF (transparent caching).
         bypass_sampled_active = _bypass_sampled_enabled() or (
-            (self.headers.get("X-ToolRecall-Bypass-Sampled") or "").strip()
-            in ("1", "true", "yes")
+            (self.headers.get("X-ToolRecall-Bypass-Sampled") or "").strip() in ("1", "true", "yes")
         )
-        cache_sampled_opt_in = (
-            self.headers.get("X-ToolRecall-Cache-Sampled") or ""
-        ).strip() in ("1", "true", "yes")
+        cache_sampled_opt_in = (self.headers.get("X-ToolRecall-Cache-Sampled") or "").strip() in (
+            "1",
+            "true",
+            "yes",
+        )
 
         agent_id = (
             (self.headers.get("X-ToolRecall-Agent") or "").strip()

@@ -27,6 +27,34 @@ def _clean_agent_stats():
     yield
 
 
+@pytest.fixture
+def capsys(monkeypatch):
+    """Fallback fixture for environments where pytest runs with -p no:capture."""
+    import io
+
+    class _CaptureResult:
+        def __init__(self, out, err):
+            self.out = out
+            self.err = err
+
+    class _Capsys:
+        def __init__(self):
+            self.out_buf = io.StringIO()
+            self.err_buf = io.StringIO()
+            monkeypatch.setattr(sys, "stdout", self.out_buf)
+            monkeypatch.setattr(sys, "stderr", self.err_buf)
+
+        def readouterr(self):
+            res = _CaptureResult(self.out_buf.getvalue(), self.err_buf.getvalue())
+            self.out_buf.seek(0)
+            self.out_buf.truncate(0)
+            self.err_buf.seek(0)
+            self.err_buf.truncate(0)
+            return res
+
+    return _Capsys()
+
+
 # ─── Tests ───────────────────────────────────────────
 
 

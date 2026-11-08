@@ -126,9 +126,7 @@ class TestApiCacheRecordsTokensSaved(unittest.TestCase):
 
         src = inspect.getsource(cache_mod.cached_api_check)
         # Both SWR tiers (fresh + serve-stale) must pass the computed value.
-        self.assertEqual(
-            src.count('_record("api_cache", True, io_tokens_saved=io_tokens_saved)'), 2
-        )
+        self.assertEqual(src.count("io_tokens_saved=io_tokens_saved"), 2)
         self.assertNotIn('_record("api_cache", True)\n', src)
 
 

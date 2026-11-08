@@ -85,6 +85,7 @@ class TestBridgeUpdateHint(unittest.TestCase):
             client.send.side_effect = side_effects
             bridge = MCPBridge.__new__(MCPBridge)
             bridge.client = client
+            bridge._client_name = None
             bridge._start_time = 0.0
             bridge._update_hint_done = False
             bridge._emit_context_hints = False

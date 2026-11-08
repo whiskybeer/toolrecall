@@ -281,6 +281,7 @@ class TestWindowsAutostartSetup(unittest.TestCase):
             out_patch = patch.object(sys, "stdout", buf)
             expand_patch = _expand_to(home)
             plat_patch = patch.object(sys, "platform", "win32")
+            input_patch = patch("builtins.input", return_value="")
             guards = _no_daemon_touch()
             with (
                 argv_patch,
@@ -289,6 +290,7 @@ class TestWindowsAutostartSetup(unittest.TestCase):
                 out_patch,
                 expand_patch,
                 plat_patch,
+                input_patch,
                 guards[0],
                 guards[1],
                 guards[2],

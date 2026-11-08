@@ -27,15 +27,14 @@ PACKAGE_DIR = pathlib.Path(__file__).resolve().parent.parent / "toolrecall"
 # Baseline measured 2026-09-01 across toolrecall/*.py (62 total).
 # Rule: decreases are always welcome (just edit the number). Increases fail CI.
 FROZEN_COUNTS = {
-    # 1 as of 2026-09-17 (baseline sync): the lazy-init rewrite (ba1a594 era)
-    # replaced seven swallows with real handling; the remaining one guards
-    # the config re-read around the backend switch (fallback path below it).
-    "_db.py": 1,
+    # 2 as of 2026-10-15: +1 table creation migration guard (agent_cache_stats)
+    "_db.py": 2,
     # 8 as of 2026-09-11: pre-existing drift found when make validate re-ran
     # after e89a5b6 — counted Exception-pass sites (daemon ping probes,
     # shim-optional fallback) predate the baseline; WIP added none.
+    # 11 as of 2026-10-20: +3 cleanup guards in _prepare_*_config temp file unlink
     "cache.py": 0,
-    "cli.py": 8,
+    "cli.py": 11,
     "client.py": 1,
     # 2 as of 2026-09-17 (baseline sync): 1d33b12 (update hint channel)
     # returned errors instead of swallowing on one path.

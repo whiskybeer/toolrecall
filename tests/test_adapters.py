@@ -325,7 +325,9 @@ class TestLiteLLMAdapter:
 
         assert toolrecall.adapters.litellm is not None
         try:
-            from litellm.integrations.custom_logger import CustomLogger
+            from litellm.integrations.custom_logger import (  # noqa: F401
+                CustomLogger,
+            )
 
             litellm_available = True
         except Exception:
