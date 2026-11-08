@@ -141,9 +141,11 @@ def _check_stale_files(reads: Dict[str, Any], alerted: Dict[str, Any]) -> List[s
 def _check_daemon_stale() -> List[str]:
     """Query ToolRecall daemon for stale files if daemon is reachable."""
     try:
-        from toolrecall.client import context_get_stale, is_healthy
+        # (Before 2026-11 this imported a non-existent ``is_healthy``; the
+        # ImportError was swallowed, so the daemon list was never merged.)
+        from toolrecall.client import context_get_stale, daemon_running
 
-        if is_healthy(timeout=0.1):
+        if daemon_running():
             res = context_get_stale()
             return [e["path"] for e in res.get("stale", []) if "path" in e]
     except Exception:
@@ -245,9 +247,9 @@ def handle(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             # through ToolRecall's MCP tools, not this session's Read calls), so
             # merging it can surface files this session never saw. Opt-in only.
             if os.environ.get("TOOLRECALL_CC_DAEMON_STALE") in ("1", "true", "yes"):
-                for p in _check_daemon_stale():
-                    if p not in stale_files:
-                        stale_files.append(p)
+                for stale_path in _check_daemon_stale():
+                    if stale_path not in stale_files:
+                        stale_files.append(stale_path)
 
             if stale_files:
                 file_list = "\n".join(f"  - {f}" for f in stale_files[:5])
