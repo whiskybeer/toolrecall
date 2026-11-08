@@ -40,6 +40,7 @@ ENV_MAP = {
     "TOOLRECALL_MCP_ALLOWED_PATHS": ("mcp", "allowed_paths"),
     "TOOLRECALL_MCP_ALLOW_TERMINAL": ("mcp", "allow_terminal"),
     "TOOLRECALL_MCP_ALLOW_INVALIDATE": ("mcp", "allow_invalidate"),
+    "TOOLRECALL_MCP_REQUIRE_VALIDATOR": ("mcp", "require_validator"),
     "TOOLRECALL_MCP_EMIT_CONTEXT_HINTS": ("mcp", "emit_context_hints"),
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
@@ -858,6 +859,22 @@ class Config:
     def mcp_allow_invalidate(self) -> bool:
         """Allow cache_invalidate tool (default: False)."""
         return self.get("mcp", "allow_invalidate", default=False)
+
+    @property
+    def mcp_require_validator(self) -> bool:
+        """Refuse to serve MCP rows that carry no validator (default: False).
+
+        A row with no ETag can never be revalidated against its origin, so the
+        only remaining freshness policy is the clock. Measured on a mutating
+        origin (Phase C, 240 shared requests): clock-based serving delivered
+        ~29% wrong results including success<->error inversions, while
+        validate-before-serve delivered 0%. Enabling this makes such rows
+        report ``reason="unvalidated"`` instead of being served.
+
+        Off by default so single-agent local caches (where the agent itself
+        caused any change) keep working unchanged; on for shared caches.
+        """
+        return bool(self.get("mcp", "require_validator", default=False))
 
     @property
     def mcp_emit_context_hints(self) -> bool:

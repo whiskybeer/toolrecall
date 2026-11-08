@@ -82,6 +82,42 @@ daemon IPC surface (`cached_mcp_check` / `cached_mcp_store` with an `etag`
 field), so gateways and multiplexers can implement this policy without
 importing ToolRecall in-process.
 
+### Serving other agents: the shared tier
+
+An agent that shares results with *other* agents must additionally guarantee
+that the row it hands out can be revalidated by the receiver. Two mechanisms:
+
+**1. `[mcp] require_validator`** (default `False`; env
+`TOOLRECALL_MCP_REQUIRE_VALIDATOR`) — a row with no ETag is reported as a
+miss with `reason="unvalidated"` instead of being served. Off for
+single-agent local caches (the agent caused any change it would be served
+back); on for shared caches.
+
+**2. `cached_mcp_serve`** — the read-only shared tier, and the only MCP cache
+command on the remote allowlist. It:
+
+- **cannot write** — there is no write path, so cache poisoning is
+  structurally impossible (`cached_mcp_store` stays local-only for exactly
+  that reason);
+- **reaches only the shared namespace** — the key is derived with
+  `scope="shared"`, so a private/local row is unreachable; the same
+  server/tool/args cached privately and shared never collide;
+- **refuses rows without a validator** — `{"served": false, "reason":
+  "unvalidated"}` rather than a clock guess, and returns `etag` + `age_s`
+  so the caller performs the conditional request itself.
+
+Address a row by `key` (rows written through the generic IPC key-value
+facade) or by `server`/`tool`/`arguments`. Filling the shared namespace is
+the operator's job, over the local-only store path:
+
+```
+cached_mcp_store(..., etag=<origin validator>, scope="shared")   # local, operator
+cached_mcp_serve(server, tool, args)                             # remote, read-only
+```
+
+Rate limiting and per-token policy remain the transport layer's job; the
+commands above are policy enforcement inside the cache, not an edge defense.
+
 ## When TTL-only is acceptable
 
 - Single-agent, single-session caches where the agent itself caused any

@@ -27,6 +27,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 """
 
 import os
+import re
 import time
 import logging
 from typing import Any, Callable
@@ -1831,13 +1832,20 @@ MCP_DEFAULT_TTL = config.get("mcp", "default_ttl", default=60)
 _POSIX_MODE = os.name != "nt"  # shlex.split: posix=True on Unix, False on Windows
 
 
-def _mcp_request_key(server: str, tool: str, arguments: dict | None) -> str:
+def _mcp_request_key(server: str, tool: str, arguments: dict | None, scope: str = "local") -> str:
     """Canonical MCP cache key derivation — the ONE place that knows how.
 
     Honors ``[norm] enabled`` (semantic normalization) exactly as the
     transparent cache does. cached_mcp_check and get_mcp_etag both route
     through this so etag validation addresses the same row the check
     reads — never re-derive this formula at a call site.
+
+    ``scope`` selects the namespace. ``"local"`` (default) is the
+    historical key space and must stay byte-identical to previous
+    releases — existing rows keep hitting. Any other value (e.g.
+    ``"shared"``) prefixes the preimage, so a locally cached row and a
+    shared row of the SAME server/tool/args can never collide: a shared
+    row can never be served as if it were a private one, and vice versa.
     """
     import json as _json
 
@@ -1847,11 +1855,86 @@ def _mcp_request_key(server: str, tool: str, arguments: dict | None) -> str:
         args_json = normalize_tool_args(arguments)
     else:
         args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
-    return _hash(f"{server}://{tool}?{args_json}")
+    preimage = f"{server}://{tool}?{args_json}"
+    if scope and scope != "local":
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", scope):
+            raise ValueError(f"invalid mcp cache scope: {scope!r}")
+        preimage = f"{scope}:{preimage}"
+    return _hash(preimage)
+
+
+def _require_validator() -> bool:
+    """True when un-validatable MCP rows must not be served (default: False).
+
+    Implements the Phase C policy finding: a cache row with no validator can
+    never be revalidated, so serving it is a guess about freshness. Measured
+    on a mutating origin (240 shared requests, 3 agents): clock-based serving
+    delivered ~29% wrong results; validate-before-serve delivered 0%.
+    """
+    return bool(config.get("mcp", "require_validator", default=False))
+
+
+def cached_mcp_serve(
+    server: str | None = None,
+    tool: str | None = None,
+    arguments: dict | None = None,
+    scope: str = "shared",
+    key: str | None = None,
+) -> dict:
+    """Read-only shared-tier lookup — serves ONLY validator-bearing rows.
+
+    Never writes. Returns ``{"served": True, data, etag, key, age_s}`` when a
+    shared row exists AND carries a validator; otherwise
+    ``{"served": False, "reason": "miss" | "unvalidated", "key"}``.
+
+    Address the row either by ``key`` (exact row key, e.g. rows written
+    through the generic IPC key-value facade) or by ``server``/``tool``/
+    ``arguments`` (derived with ``scope``).
+
+    Rationale (Phase C, 2026-09-20): a caller that receives a row without an
+    ETag cannot check it against the origin, so the only remaining freshness
+    policy is the clock — which delivered ~29% wrong results on a mutating
+    origin, including success<->error inversions. Refusing loudly keeps the
+    unsafe path unreachable by construction; the caller falls back to its own
+    execution, which is always correct.
+    """
+    if key is not None:
+        request_hash = key
+    elif server is not None and tool is not None:
+        request_hash = _mcp_request_key(server, tool, arguments, scope=scope)
+    else:
+        return {"served": False, "reason": "bad_request", "key": ""}
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT data, etag, cached_at, expires_at FROM mcp_cache WHERE request_hash = ?",
+                (request_hash,),
+            ).fetchone()
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP shared serve failed: {e}")
+        return {"served": False, "reason": "error", "key": request_hash}
+
+    if row is None:
+        return {"served": False, "reason": "miss", "key": request_hash}
+    if not row["etag"]:
+        # loud, not silent: the caller must know it got nothing and why
+        return {"served": False, "reason": "unvalidated", "key": request_hash}
+    return {
+        "served": True,
+        "data": row["data"],
+        "etag": row["etag"],
+        "key": request_hash,
+        "age_s": max(0.0, time.time() - row["cached_at"]),
+        "expired": row["expires_at"] <= time.time(),
+    }
 
 
 def cached_mcp_check(
-    server: str, tool: str, arguments: dict | None = None, ttl: int | None = None
+    server: str,
+    tool: str,
+    arguments: dict | None = None,
+    ttl: int | None = None,
+    scope: str = "local",
 ) -> dict:
     """Check if an MCP tool call result is cached.
 
@@ -1859,6 +1942,12 @@ def cached_mcp_check(
     The caller makes the real MCP call on miss, then calls cached_mcp_store().
 
     Set ttl=0 to bypass the cache entirely.
+
+    ``scope`` selects the namespace (default ``"local"``, unchanged key space).
+
+    When ``[mcp] require_validator`` is on, a row with no ETag is reported as
+    a miss with ``reason="unvalidated"`` instead of being served — a row that
+    cannot be revalidated must not be delivered on a clock guess.
     """
     import json as _json
 
@@ -1879,7 +1968,7 @@ def cached_mcp_check(
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
 
     # Normalize MCP arguments for cache key when enabled
-    request_hash = _mcp_request_key(server, tool, arguments)
+    request_hash = _mcp_request_key(server, tool, arguments, scope=scope)
     now = time.time()
 
     try:
@@ -1889,6 +1978,17 @@ def cached_mcp_check(
                 (request_hash,),
             ).fetchone()
             if row is not None:
+                if not row["etag"] and _require_validator():
+                    # loud refusal: this row can never be revalidated, so
+                    # serving it would be a clock-based guess about freshness
+                    _record("mcp_cache", hit=False)
+                    return {
+                        "cached": False,
+                        "key": request_hash,
+                        "server": server,
+                        "tool": tool,
+                        "reason": "unvalidated",
+                    }
                 from toolrecall import ttl_policy
 
                 tier = ttl_policy.classify_expiry(row["expires_at"], now, _swr_window())
@@ -1973,14 +2073,15 @@ def cached_mcp_store(
     _record_tokens_read_from_disk("mcp_cache", _estimate_tokens(data))
 
 
-def get_mcp_etag(server: str, tool: str, arguments: dict) -> str | None:
+def get_mcp_etag(server: str, tool: str, arguments: dict, scope: str = "local") -> str | None:
     """Return the stored HTTP ETag for an mcp_cache row (None if absent).
 
     Key derivation is shared with cached_mcp_check (via _mcp_request_key),
     so validation always addresses the row the transparent cache reads —
-    including ``[norm]`` normalization when enabled.
+    including ``[norm]`` normalization when enabled. ``scope`` must match the
+    namespace the row was stored in.
     """
-    request_hash = _mcp_request_key(server, tool, arguments)
+    request_hash = _mcp_request_key(server, tool, arguments, scope=scope)
     try:
         with _db() as conn:
             row = conn.execute(

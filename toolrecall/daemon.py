@@ -52,6 +52,7 @@ from toolrecall.cache import (
     cached_write as _cache_write,
     cached_patch as _cache_patch,
     cached_mcp_check as _cache_mcp_check,
+    cached_mcp_serve as _cache_mcp_serve,
     cached_mcp_store as _cache_mcp_store,
     revalidate_mcp_entry as _revalidate_mcp_entry,
     cached_browser_check as _cache_browser_check,
@@ -1114,6 +1115,23 @@ REMOTE_ALLOWED_COMMANDS = frozenset(
         "cached_write",  # A6-1 fix: routed through the remote-aware gate
         "cached_patch",  # A6-1 fix: routed through the remote-aware gate
         "cache_refresh_file",
+        # Read-only, validator-gated MCP result serving (2026-09-20).
+        # Safe to expose where the store primitives are not, because the
+        # handler structurally cannot write and cannot reach private rows:
+        #   - read-only: no write path exists, so poisoning is impossible
+        #     (the store primitives stay local-only for exactly that reason);
+        #   - shared namespace ONLY: the command derives its key with
+        #     scope="shared", so a local/private row is unreachable;
+        #   - validator required: rows without an ETag are refused loudly
+        #     rather than served on a clock guess. Phase C measured ~29%
+        #     wrong deliveries for clock-based serving vs 0% for
+        #     validate-before-serve on a mutating origin, and a wrong result
+        #     handed to another agent is the failure mode this design exists
+        #     to prevent.
+        # Data disclosure is bounded by what the operator explicitly stored in
+        # the shared namespace. Rate limiting and per-token policy remain the
+        # transport layer's job (see docs/MCP_CACHE_POLICY.md).
+        "cached_mcp_serve",
     }
 )
 
@@ -1920,6 +1938,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_mcp_list_servers(request)
             elif cmd == "cached_mcp_check":
                 return self._handle_mcp_check(request)
+            elif cmd == "cached_mcp_serve":
+                return self._handle_mcp_serve(request)
             elif cmd == "cached_mcp_store":
                 return self._handle_mcp_store(request)
             elif cmd == "cached_browser_check":
@@ -2452,13 +2472,49 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
 
         Args in request:
             key (str): cache key to look up
+            scope (str, optional): namespace, default "local". Pass "shared"
+                to read the shared tier; the same scope must be used at
+                store time or the row lands in a different key space.
 
         Returns cached content or miss indicator.
         """
         key = req.get("key", "")
         if not key:
             return {"error": "Missing 'key' parameter"}
-        return _cache_mcp_check("_generic", "_lookup", {"key": key})
+        scope = req.get("scope") or "local"
+        return _cache_mcp_check("_generic", "_lookup", {"key": key}, scope=scope)
+
+    def _handle_mcp_serve(self, req: dict) -> dict:
+        """Read-only, validator-gated serve from the SHARED namespace.
+
+        Args in request:
+            key (str): exact row key (generic IPC key-value facade mode)
+            server (str): MCP server name (server/tool mode)
+            tool (str): tool name
+            arguments (dict, optional): tool arguments
+            scope (str, optional): namespace, default "shared"
+
+        The only MCP cache command reachable by remote callers. It is
+        read-only (no write primitive, so cache poisoning is structurally
+        impossible) and only addresses the shared namespace, so a caller can
+        never read a private/local row. Rows without a validator are refused
+        loudly (``reason="unvalidated"``) rather than served on a clock guess:
+        Phase C measured ~29% wrong deliveries for clock-based serving vs 0%
+        for validate-before-serve. Callers receive ``etag`` and are expected
+        to revalidate against the origin before using ``data``.
+        """
+        key = req.get("key") or None
+        server = req.get("server") or None
+        tool = req.get("tool") or None
+        if not key and not (server and tool):
+            return {"error": "Provide 'key', or both 'server' and 'tool'"}
+        arguments = req.get("arguments") or {}
+        scope = req.get("scope") or "shared"
+        if key:
+            # Row keys written through the generic IPC facade live in that
+            # facade's key space; re-derive it exactly as check/store do.
+            key = _cache_mcp_check("_generic", "_lookup", {"key": key}, scope=scope)["key"]
+        return _cache_mcp_serve(server=server, tool=tool, arguments=arguments, scope=scope, key=key)
 
     def _handle_mcp_store(self, req: dict) -> dict:
         """Generic MCP cache store by key.
@@ -2473,6 +2529,9 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 policies delivered ~29% wrong results; validate-before-serve
                 delivered 0%.
             ttl (int, optional): row TTL in seconds
+            scope (str, optional): namespace, default "local". Use "shared"
+                for rows that the read-only serve tier may hand to other
+                agents. The scope must match at check time.
             url (str, optional): source URL
             contentType (str, optional): content type
         """
@@ -2482,15 +2541,16 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             return {"error": "Missing 'key' parameter"}
         etag = req.get("etag") or None
         ttl = req.get("ttl")
+        scope = req.get("scope") or "local"
         # Address the row the CHECK reads: _handle_mcp_check looks up
-        # cached_mcp_check("_generic", "_lookup", {"key": <sent key>}), whose
-        # row key is _mcp_request_key of the WRAPPED dict — not the raw sent
-        # key. Storing under the raw key stranded every IPC store where the
-        # check could never reach it (found by the 2026-09-19 daemon-in-the-
-        # loop replay bench). Derivation lives in ONE place (cache.py) per
+        # cached_mcp_check("_generic", "_lookup", {"key": <sent key>}, scope=…),
+        # whose row key is _mcp_request_key of the WRAPPED dict — not the raw
+        # sent key. Storing under the raw key stranded every IPC store where
+        # the check could never reach it (found by the 2026-09-19 daemon-in-
+        # the-loop replay bench). Derivation lives in ONE place (cache.py) per
         # its contract; never re-derive this formula at a call site.
         _cache_mcp_store(
-            _cache_mcp_check("_generic", "_lookup", {"key": key})["key"],
+            _cache_mcp_check("_generic", "_lookup", {"key": key}, scope=scope)["key"],
             "_generic",
             "_store",
             {"key": key},
@@ -2498,7 +2558,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             ttl=ttl if isinstance(ttl, int) else None,
             etag=etag,
         )
-        return {"stored": True, "validated": etag is not None}
+        return {"stored": True, "validated": etag is not None, "scope": scope}
 
     # ─── Browser Cache IPCs ────────────────────────────────
 
