@@ -186,12 +186,13 @@ class TestShimStubWiring(unittest.TestCase):
             }
         }
 
-        h1 = shim_mod._shim_open(p, "rb")
-        d1 = h1.read()
-        h1.close()
-        h2 = shim_mod._shim_open(p, "rb")
-        d2 = h2.read()
-        h2.close()
+        with unittest.mock.patch.object(shim_mod, "_process_is_agent", return_value=True):
+            h1 = shim_mod._shim_open(p, "rb")
+            d1 = h1.read()
+            h1.close()
+            h2 = shim_mod._shim_open(p, "rb")
+            d2 = h2.read()
+            h2.close()
         self.assertEqual(d1, self.BODY.encode())
         self.assertIn(b"unchanged", d2.lower())
         self.assertLess(len(d2), len(d1))
