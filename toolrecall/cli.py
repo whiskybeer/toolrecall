@@ -15,6 +15,7 @@ Usage:
     toolrecall tool-usage      # Which ToolRecall tools agents actually call
     toolrecall index-remote    # Sync configured remote doc sources (opt-in)
     toolrecall docs-rejects    # What remote syncs skipped or flagged
+    toolrecall dedup-stats     # Which tools' outputs request-dedup stubbed
     toolrecall config-set      # Set a config value (section.key = value)
     toolrecall serve           # Start forward proxy (cache API responses)
     toolrecall debug           # Start debug/demo server (test cached_read via curl)
@@ -651,6 +652,37 @@ def cmd_docs_rejects():
             except ValueError:
                 print(f"  ignoring non-numeric --top value: {sys.argv[i + 1]!r}")
     print(format_rejection_stats(rejection_stats(source=source, top=top), source=source))
+
+
+def cmd_dedup_stats():
+    """Which tools' outputs the request dedup actually stubbed, and how much.
+
+    The usage CSV carries one dedup_tokens figure per request; this is the
+    per-tool breakdown (same chars//4 estimator, so the sums reconcile).
+    """
+    import time as _time
+
+    from toolrecall.dedup_stats import per_tool
+
+    rows = per_tool()
+    if not rows:
+        print("No request-dedup stubs recorded yet.")
+        print()
+        print("  Dedup only fires when a request contains the SAME large block twice")
+        print("  (>= 800 chars, byte-identical). Measured 2026-10-01 over 385 sessions:")
+        print("  that is rare — about 1 % of large tool outputs, 43 % for skills_list.")
+        print("  An empty table is NOT proof that dedup is broken.")
+        return
+    total = sum(r["tokens_saved"] for r in rows) or 1
+    print(f"{'tool':24} {'stubs':>7} {'tokens saved':>13} {'share':>7} {'requests':>9}  last")
+    for r in rows:
+        last = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(r["last_at"] or 0))
+        print(
+            f"{r['tool'][:24]:24} {r['blocks']:>7} {r['tokens_saved']:>13,} "
+            f"{100 * r['tokens_saved'] / total:>6.1f}% {r['requests']:>9}  {last}"
+        )
+    print()
+    print("  tokens = chars // 4, the same estimator as dedup_tokens in proxy_usage.csv")
 
 
 def cmd_index_memory():
@@ -3040,6 +3072,7 @@ def main():
         "tool-usage": cmd_tool_usage,
         "index-remote": cmd_index_remote,
         "docs-rejects": cmd_docs_rejects,
+        "dedup-stats": cmd_dedup_stats,
         "config-set": cmd_config_set,
         "serve": cmd_serve,
         "debug": cmd_debug,

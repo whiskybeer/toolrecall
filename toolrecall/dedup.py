@@ -97,7 +97,7 @@ def dedup_messages(
     protect_last: int = 2,
     stub_roles: Tuple[str, ...] = DEFAULT_STUB_ROLES,
     media: bool = False,
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Return (new_messages, stats). Input objects are never mutated.
 
     ``media=True`` (experimental, off by default) extends dedup to image
@@ -131,6 +131,33 @@ def dedup_messages(
     out = list(messages)
     blocks = 0
     chars_saved = 0
+    # Per-tool attribution of the savings. Without it the only signal is one
+    # number per request, and "is skills_list (or read_file, or …) being
+    # stubbed?" cannot be answered. OpenAI-format tool messages carry a
+    # tool_call_id that points at the assistant's tool_calls entry, which is
+    # where the function name lives.
+    call_names: Dict[str, str] = {}
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls") or ():
+                if isinstance(tc, dict) and isinstance(tc.get("id"), str):
+                    fn = tc.get("function") or {}
+                    if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+                        call_names[tc["id"]] = fn["name"]
+    by_tool: Dict[str, Dict[str, int]] = {}
+    current_label = "unknown"
+
+    def _attribute(msg: Dict[str, Any]) -> str:
+        role = msg.get("role")
+        if role in ("tool", "function"):
+            name = call_names.get(msg.get("tool_call_id") or "") or msg.get("name")
+            return name if isinstance(name, str) and name else "unknown-tool"
+        return str(role or "unknown")
+
+    def _count(saved: int) -> None:
+        slot = by_tool.setdefault(current_label, {"blocks": 0, "chars_saved": 0})
+        slot["blocks"] += 1
+        slot["chars_saved"] += saved
 
     def maybe_stub(text: Any, msg_index: int, can_stub: bool):
         nonlocal blocks, chars_saved
@@ -148,6 +175,7 @@ def dedup_messages(
             return None
         blocks += 1
         chars_saved += len(text) - len(stub)
+        _count(len(text) - len(stub))
         return stub
 
     def maybe_stub_media(url: str, msg_index: int, can_stub: bool) -> Optional[str]:
@@ -174,6 +202,7 @@ def dedup_messages(
             return None
         blocks += 1
         chars_saved += len(url) - len(stub)
+        _count(len(url) - len(stub))
         return stub
 
     def maybe_stub_image_data(source: dict, msg_index: int, can_stub: bool) -> Optional[str]:
@@ -287,6 +316,7 @@ def dedup_messages(
         role = msg.get("role")
         content = msg.get("content")
         can_stub = role in stub_roles and role != "system" and i < protect_from
+        current_label = _attribute(msg)
 
         if isinstance(content, (str, list)):
             new_content, changed = walk_content(content, i, can_stub)
@@ -302,4 +332,7 @@ def dedup_messages(
         # it OVERSTATES provider savings (image tokens are priced per image,
         # not per char); real multimodal figures come from the bench harness.
         "est_tokens_saved": chars_saved // 4,
+        # {tool_name|role: {"blocks", "chars_saved"}} — which tool produced the
+        # duplicate that was stubbed. Sums equal blocks / chars_saved above.
+        "by_tool": by_tool,
     }

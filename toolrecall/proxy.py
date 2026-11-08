@@ -889,6 +889,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._request_dedup_tokens = _dedup_tokens
                 if _dedup_stats and _dedup_tokens:
                     self._request_dedup_blocks = int(_dedup_stats["blocks"])
+                    # Which tool's output was stubbed — the usage CSV only
+                    # knows the per-request total. Best-effort, never raises.
+                    from toolrecall import dedup_stats
+
+                    dedup_stats.record(_dedup_stats.get("by_tool") or {})
 
             # Detect streaming requests — bypass cache, use chunked relay
             if body_bytes and _STREAM_RE.search(body_bytes):
