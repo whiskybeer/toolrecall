@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.22] — 2026-11-08
 
 ### Added
 - **`claude-code` profile: `Grep` result order no longer forks the replay key.**
@@ -126,6 +126,176 @@
   a start. Lock files are swept only when their `flock` can be taken — a lock
   with a live holder is never touched. `--json` now also reports the `cleanup`
   result. Tests: `tests/test_healthcheck_stale_pid.py` (27).
+- **Langfuse v4 framework adapter (`adapters/langfuse.py`).** Drop-in cached tool
+  wrapper with verdict recording in span metadata and a multi-rung truncation
+  ladder guarding against Langfuse's 9KB metadata ceiling to prevent metadata
+  loss. 34 tests in `tests/test_langfuse_adapter.py`.
+- **Request-dedup attribution by tool (`dedup_by_tool` + `toolrecall dedup-stats`).**
+  Attributes request body deduplication savings to the tool that produced them
+  (e.g., repeated `skills_list` calls). Tracks blocks, tokens saved, and shares.
+  Tests in `tests/test_dedup_by_tool.py`.
+- **`work_key` — Layer-0 identity for a unit of work (`keys.py`).** Answers
+  *"have we already paid for this unit?"* for a candidate artifact (plus
+  optional evaluation parameters) instead of for a request — the level at which
+  an evaluation is worth reusing across processes, runs, and workers. Two
+  deliberately separate spaces: the legacy-compatible form
+  (`content_digest(code)`, optional `":" + stage`) is byte-identical to the
+  evaluator memo keys that predate this function, so stores already on disk
+  keep hitting — pinned by a golden vector captured from a real OpenEvolve memo
+  store; the params form is versioned (`w/v1:`) over `jcs.canonicalize`
+  (RFC 8785) so dict order cannot fork a key. Purely additive: no existing
+  preimage changes, `tests/golden_keys.json` keeps its old vectors. 6 tests in
+  `tests/test_keys.py`.
+- **Work-unit ledger (`work_ledger` table + `work_store` / `work_lookup`).**
+  The persistence half of `work_key`: `work_store(key, metrics, eval_time, ttl)`
+  records one PAID evaluation — `attempts` advances on a re-roll while the first
+  known result is never overwritten — and `work_lookup(key)` recalls it (None
+  when unknown, TTL honored). Counters land in their own `work_cache` category,
+  so reuse is visible in `top` and the healthcheck instead of borrowing another
+  tier's label — the same visibility gap that proxy dedup still has. Daemon
+  commands `work_store` / `work_lookup`, thin client wrappers with a
+  direct-SQLite fallback, malformed requests fail closed. Unit tests plus a
+  socket E2E test (`tests/test_work_ledger.py`,
+  `tests/test_e2e_work_ledger.py`).
+- **OpenEvolve evaluator memo (`adapters/openevolve.py`).** Wraps an eval
+  script's `evaluate` / `evaluate_stageN` so a repeat of an already-paid
+  candidate is served from the work ledger. Opt-in via
+  `TOOLRECALL_OPENEVOLVE_MEMO=1` (pure pass-through without it); `reuse_after(K)`
+  makes the reuse boundary explicit so deliberate re-rolls stay paid;
+  `impure=True` refuses to memoize an evaluator that is not a pure function of
+  the candidate; hits count in the `work_cache` category. No framework import —
+  duck-typed over the eval namespace, wrapping `globals()` or a module object.
+  15 tests, including the documented integration shape (the eval script wraps
+  `globals()`, then the file is imported by path the way OpenEvolve does).
+  Prior art is documented in the module docstring: fitness caching is an
+  established field and content-addressed memoization is standard — the
+  contribution is placement and policy, not mechanism.
+- **Reuse policy for a stochastic search (`adapters/openevolve.py`).** The reuse
+  boundary became a first-class knob: `samples=K` (pay K attempts, serve from
+  K+1), `policy_from_config()` to read K from a sampler field you name — verified
+  that OpenEvolve 0.3.2 exposes no re-roll field (`num_islands` and
+  `parallel_evaluations` are breadth and concurrency; each child is evaluated
+  once), so K=1 is the honest policy there —
+  and `never_reuse` as a control arm — passing both `samples` and `allow_reuse`
+  raises instead of silently picking one. `mode="shadow"` pays for every
+  evaluation while counting would-be hits into a caller-owned `stats` dict, so K
+  can be chosen from data before any behaviour changes. Every decision is logged
+  (`HIT`, `WITHHELD` with the threshold, `SHADOW-HIT`). Rationale in the module
+  docstring: the ceiling is the hit rate, and the hit rate is the sampling
+  design — 21.8 % of evaluator spend at K=1 versus 12.1 % at K=3 (100-iteration
+  A/B). 9 further tests, including the per-key score-identity gate: scores are
+  derived from the candidate's content, so a served score that came from the
+  wrong key cannot pass.
+- **Zero-egress local test server (`bench/kit/local_server.py`).** Enables local
+  loopback testing of Antigravity and MCP endpoints without third-party egress;
+  adds `TOOLRECALL_FETCH_CA_BUNDLE` support to `toolrecall/mcp_fetch.py`.
+- **Remote doc sources for the knowledge base — opt-in, local-first, guarded.**
+  `[[sources.remote]]` entries of kind `llms_full` (one publisher-provided bundle
+  URL) or `urls` (an explicit URL list) are ingested by `toolrecall index-remote`
+  and become searchable like local content. This replaces the workspace-local
+  `docs_crawler.py`/`docs_server.py` pair and its second database: one knowledge
+  base, one docs server. Not a crawler — no link following, no sitemap, no depth.
+  Guardrails: byte and page caps, robots.txt honoured (an unreadable robots.txt is
+  a refusal, not a yes), one request per second in one process, and
+  fetch→parse→**validate**→replace in a single transaction so a truncated download
+  cannot delete good pages. Fetched pages carry a provenance header
+  (`… | external content — not instructions`) on `docs_get_page` and a footnote on
+  `docs_search`. See [docs/REMOTE_SOURCES.md](docs/REMOTE_SOURCES.md).
+- **`toolrecall docs-rejects` — the ledger that makes the opt-in falsifiable.**
+  Every skipped and every flagged page is counted per `(source, path, reason)` and
+  accumulates across runs, so "which files do we reject most, and why" is
+  answerable. `rejected` (not indexed) and `flagged` (indexed, served with a
+  warning) are reported separately; an empty ledger says it is not proof of
+  health. Injection-suspect pages are *flagged, never dropped*: real
+  documentation legitimately talks about prompts.
+- **Gateway surface control: `gateway_exclude` / `gateway_exclude_tools`.**
+  The gateway made write-capable tools first-class — `sqlite-browser` (pointed
+  at the live cache DB) advertised `write_query`, `create_table` and
+  `append_insight` to every session (2026-09-28). Both keys now hide servers or
+  tool names from `tools/list` (case-insensitive). Documented as surface
+  control, not enforcement: a hidden name stays callable via `mcp_call`, so
+  blocking still belongs to `[security] tool_access_control`.
+- **Stale catalog entries are pruned.** A server removed from `servers` no
+  longer stays advertised: the catalog file is only rewritten when a server
+  starts, so the advertised view now filters to currently configured servers.
+- **MCP replays are visible in the daily series.** `mcp_cache` records write a
+  synthetic `mcp:<server>/<tool>` path into `access_log`, and
+  `trend.daily_trend(days, category)` is per-category, so the TUI trend view
+  shows an `MCP server replays` section. Kept separate from the file_cache
+  series on purpose: an MCP replay is I/O saving only (the body still reaches
+  the model), so summing the two would overstate cache value.
+- **Session view: unchanged stubs, diffs and line ranges — one state machine.**
+  The bridge's session state now lives entirely in `stub_core` (the shim keeps
+  the stub-only `maybe_stub`; the bridge uses `present`, which adds a unified
+  diff when a file changed, and `read_file` gained `offset`/`limit`). Freshness
+  is the TTL *plus* a session budget (tool calls and emitted tokens since the
+  full copy was sent — `stub_core.DEFAULT_MAX_CALLS` / `DEFAULT_MAX_TOKENS`,
+  derived from the same 396-run measurement as the 240s TTL) *plus* the
+  consecutive-suppression armor; terminal stubs now expire on that budget
+  instead of never. A diff is always computed against the agent's last FULL
+  copy, never against a diff we previously sent: the bridge cannot know whether
+  a harness applied one, and a wrong assumption would compound silently.
+- **Compaction signal.** `context_compacted` (MCP tool, or
+  `toolrecall context compacted` from a PreCompact hook) bumps a daemon-wide
+  epoch; bridges pick it up on their next read and re-send full content. An
+  exact signal beats guessing at the compaction horizon.
+- **Request-body dedup now covers Anthropic-shaped `/v1/messages` bodies.**
+  The forward proxy's opt-in dedup (`[forward_proxy] dedup`) previously applied
+  only to `/v1/chat/completions`. The transport-neutral core now walks
+  messages-style blocks structurally and recurses into `tool_result` content
+  (where an agent loop's repeated payload actually lives), plus messages-style
+  `image` blocks behind `TOOLRECALL_DEDUP_MEDIA`. Blocks are shallow-copied
+  and only the text leaf is replaced, so `cache_control` / `tool_use_id`
+  survive byte-exact. Prefix stability across turns holds only with
+  `protect_last=0`; the shipped default (`2`) defers a duplicate that arrives
+  inside the protected tail by one turn, and stubbing it then rewrites
+  already-cached bytes — see `toolrecall/dedup.py` and
+  `tests/test_dedup_anthropic.py::TestProtectedTailVsCache`. New
+  path gate `_is_dedup_path`; new suite `tests/test_dedup_anthropic.py`
+  (Anthropic shape, cross-turn prefix stability, marker preservation,
+  `/v1/messages` proxy round trip). Mechanism-tested on this path; the
+  chat-completions path remains the only billing-verified one (−32.3% prompt
+  tokens / −30.0% billed).
+- **`docs` built-in MCP server (`toolrecall/mcp_docs.py`).** Exposes the
+  in-core FTS5 knowledge base (`docs_search`, `docs_get_page`) as a
+  standalone multiplexer server — the same tools the `toolrecall mcp`
+  bridge offers natively, now auto-resolvable via the registry. Zero
+  runtime dependencies (stdlib + SQLite FTS5).
+- **Session-replay tier in `toolrecall top` — the naive-world equivalent, measured not guessed.**
+  The umbrella counts removed tokens once per event; it structurally cannot see the
+  amplification that produces 7-9x session length (removed content rides along in EVERY
+  subsequent request of a naive conversation). New `session_replay_today()` reconstructs
+  the counterfactual deterministically from today's wire data: sessions split at >15 min
+  request gaps, each naive request = billed prompt + in-request dedup + all stub tokens
+  stubbed earlier in the session (HIT rows excluded; stubs attach via the same gap rule;
+  `tui_top._CONTEXT_WALL` = 200K marks requests the naive world cannot make). Every input
+  is measured (billed prompts, wire-verified stubs, logged timestamps) — the construction
+  is the replay, a disclosed segmentation choice, never a hidden multiplier. Rendered as
+  the REPLAY tier in view 1 + non-tty (`session replay (naive-world, today): X vs actual
+  Y — Z% saved (amp xN, S sessions)` + wall line). First prod day: 230.2M naive vs 61.4M
+  actual = 73.3% saved, amp x3.8, 297 naive wall-crossings vs 47 actual — the number that
+  reconciles a 2% umbrella with 7-9x session length. Tests:
+  `tests/test_session_replay.py` (replay arithmetic across 2 sessions with a dropped
+  stub, HIT exclusion, wall counts with a tunable constant, no-traffic None, render
+  contract via snapshot key).
+- **Provider prefix-cache visibility (CSV v4).** Post-mortem 2026-09-19: all 44k
+  `proxy_usage.csv` rows logged `cache_read_tokens=0` although the discount was
+  flowing — OpenRouter reports cache reads NESTED in
+  `usage.prompt_tokens_details.cached_tokens` (+ `usage.cache_discount` in
+  dollars), not in the flat OpenAI/Anthropic fields the v3 parser read. The
+  CSV grows a 12th column `cache_discount_usd` (header migrates in place;
+  pre-v4 rows read 0 via DictReader `.get() or 0`, same contract as
+  cost_usd/dedup_tokens); the writer now fills `cache_read_tokens` from the
+  nesting (flat fields still win). `toolrecall top` view 1 + non-tty render
+  gain a bill-side line — `provider prefix-cache: X tok re-served by provider — p% of sent [· discount $Y (provider-reported)]` — shown only when the
+  provider reports cache activity, and deliberately OUTSIDE the not-sent
+  umbrella (the discount discounts SENT tokens; umbrella = never-sent).
+  Dollars appear only when the provider reports them (0 = not reported,
+  never guessed). Tests: `tests/test_proxy_cache_usage.py` (nested parse,
+  flat precedence, zero state, pre-v4 row back-compat, render contract);
+  `tests/test_proxy_stream_usage.py` assertions updated to the v4 contract
+  (nested reads now land in the column — the old "nested is ignored" pin).
+- **`stats` carries a context_flow verdict + `[hermetic]` log tag.** `toolrecall stats` embeds the live tracker snapshot (armed/checkpoint state, banked totals, dirty/clean counts) as a `context_flow` block in its JSON — the 2026-09-15 cron reported an armed flow with 593k banked tokens as "inactive" because that state was invisible in the stats JSON; fail-soft when the daemon is down (explicit reason field, never a bare counter). Test daemons/pytest now tag every log line `[hermetic]` (`TOOLRECALL_HERMETIC=1`) so shared log files never let test-suite lines masquerade as production traffic ("tracker snapshot saved: 0 read paths" was twice misread as a dead production flow). Tests: `tests/test_cli.py` (context_flow block, fail-soft), `tests/test_logging_setup.py` (+2: tag present when env set, absent when unset), `tests/conftest.py` sets the env hermetically.
 
 ### Changed
 - **Claude Code positioning corrected to measured results.** Interactive
@@ -134,6 +304,113 @@
   Claude Code verdict changes from "verified, saves real cost" to "headless
   repeats only, with the `claude-code` profile". The Appendix cost model is now
   scoped to stateless agents.
+- **Savings counters split into two unmistakable names (`cache_stats`).**
+  `cache_stats.tokens_saved` had drifted into meaning "IO offload" while
+  reading like "tokens saved to the LLM" — the two are different claims
+  (the first is disk/subprocess work avoided, the second is tokens that
+  never entered the model's context), and a consumer quoting the wrong one
+  overstates savings. Columns are now `io_tokens_saved` and
+  `tokens_saved_to_llm`; the stats JSON emits the same canonical keys
+  (`io_tokens_saved`, `tokens_saved_to_llm`) alongside the long-standing
+  measured aliases (`tokens_served_from_cache`, `tokens_not_read_from_disk`,
+  `tokens_not_sent_to_llm`), and the ambiguous `context_tokens_saved` key is
+  gone. Migration is an in-place SQLite `RENAME COLUMN` (idempotent, values
+  preserved; applied on first open of an older DB). TUI labels follow:
+  the IO table column reads `IO saved`, the headline `SAVED TO LLM TODAY`
+  (never sent to the model).
+- **Default multiplexer server set:** `["time", "sequential-thinking",
+  "cache-fs"]` → `["docs", "fetch", "cache-fs"]` in the shipped
+  `config.toml` template. `fetch_revalidate = true` enabled by default.
+  `time` remains registered and opt-in; `github` remains opt-in
+  (write access). Docs examples updated accordingly.
+- **MCP bridge stub TTL 60s → 240s (measured).** The TTL guards the
+  AGENT-memory axis — "does the agent still hold the earlier content?" —
+  which mtime+size cannot answer (that proves only the DISK content is
+  current). It must therefore track the real compaction horizon, and 60s
+  did not. Measured over 396 conversation-growth runs in the billed usage
+  CSV (2 months, monotone prompt growth until reset): median 14 turns /
+  4.8 min before a context reset (p25 1.9 min, p75 19.1 min), median 18.5s
+  per request — so 60s covered only ~3.2 requests of a live conversation
+  and expired stubs whose content the agent provably still held. 240s sits
+  just under the median horizon (288s) and well below p75; `max_consecutive`
+  stays the hard armor. The shim already used 300s — only the bridge moved.
+  Explicitly NOT done: moving stub state into the daemon. Cross-process
+  state would make the stub's claim ("you already hold this") false for a
+  process that never read the file — the same class of failure that
+  corrupted a gateway YAML parse on 2026-09-18 and motivated the
+  `agent_tool` gate.
+- **Saved view: "not sent to the model" is the headline.** That is where
+  the saving is, so it leads. Below it: sent vs without-ToolRecall with the
+  multiple ("1.57x more for the model to read"), and the not-sent figure
+  translated into both a multiple of what was sent and whole context
+  windows. The bill passage and the today-footer were removed from the
+  user view (the billed numbers stay in the Details line).
+- **The context limit is MEASURED, not assumed.** The hard-coded 200K was
+  empirically wrong: a 245,947-token request was accepted and billed, so
+  the view counted real, accepted requests as "over the limit" (130 naive
+  vs 130 actual — a null statement). The limit is now
+  `max(floor, largest actually accepted request)`, exposed as
+  `replay["limit"]`, and the limit line renders only when the naive world
+  actually crosses it. Same for the biggest-message line: shown only when
+  `peak_naive > peak_actual`, with the explicit note that it is the same
+  removed content piled up again, not an extra saving.
+- **Saved view rewritten in plain words (2026-09-20): the headline is sent + avoided.**
+  User bar: "76M was sent and 168M was avoided, that's the headline — explain it
+  without stub/dedup/naive jargon; the 200K/304-vs-54 line needs a coherent
+  sentence." New TODAY-line (`sent + avoided = without ToolRecall`, always
+  reconciling — without replay data the floor is the counted-once removals),
+  a plain-words list (removed parts answered from memory / removed once = not
+  re-sent, with the measured `ride_slots` count instead of a request-1
+  approximation; the ride-along sentence only appears when later requests
+  actually carried removed content), the context-limit line with its
+  definition ("the largest context the model accepts at all"), the dollars
+  sentence ("avoided tokens never reached the provider — nothing on the bill
+  paid for them"), and one compact Details line. No jargon in the user view
+  (stub/dedup/naive/replay/amp/wall live in HELP_TEXT and the code only).
+  All labels English. Tests updated to the plain-word strings.
+  User finding (2026-09-20): "68.8% less context but only 1.6% held back —
+  how do these relate?" Answer rendered in `top` itself: section 1's header
+  says "(each removal counted once)", section 2 leads with an add-up line —
+  `actual X + avoided Y = naive Z (p% less context load)` — and a breakdown
+  (`avoided = D deduped blocks (once) + S stubbed content riding along in N
+  later requests (xM)`). The replay collector exposes the new fields
+  (avoided_total, dedup_sum, stub_attached_tokens, amp_stubs); naive =
+  actual + avoided is an identity of the construction, so the line always
+  reconciles exactly. HELP_TEXT documents the bridge (1 counts once at the
+  moment of removal; the naive world pays it again in every later request —
+  the difference IS the session effect).
+- **`toolrecall top` saved view: three sections, one question each (2026-09-19).**
+  The view had grown to ~10 numbers answering three different questions —
+  re-arranged as: `1 HELD BACK (measured)` (today's wire-held-back tokens =
+  stubbed re-reads + deduped blocks, once per event), `2 SESSION CAPACITY
+  (replay)` (naive-world equivalent for the same sessions, incl. the 200K
+  wall line), `3 BILLED (provider)` (billed tokens + cost + provider
+  prefix-cache line). Demoted OUT of the saved view: the cumulative stub
+  ledger ("logged days" line — available via `toolrecall stats`), the
+  median-request diagnostic (View 4 keeps it), the replays parenthetical
+  (folded into section 3). All labels in English. HELP_TEXT now documents
+  the three questions and the mixing rule (small 1 + large 2 is expected —
+  amplification is the session-length effect). No collector logic changed —
+  re-layout only; tests updated to the new strings.
+- **`toolrecall status`: the estimate label is now `context_estimate=`.** The
+  per-cache context column was printed as `tokens_not_sent_to_llm=` — the
+  same name the MEASURED tier uses (`tokens_not_sent_measured`), so the
+  estimate (per agent-tool-HIT counter) read as billed-truth. Human label
+  renamed; the underlying stats JSON keys are unchanged (script/cron
+  consumers unaffected).
+- **`uv.lock` re-tracked, anyio bumped 4.14.1 → 4.15.1.** The lockfile was removed
+  from tracking in `83e96ce` (June) but Dependabot kept alerting on the dead
+  manifest: GHSA-82r6-8w77-94w6 (critical, TLSStream IDNA host encoding → TLS
+  certificate spoofing) and GHSA-5p39-cfhj-2xmp (medium, process-pool stderr
+  deadlock) — both patched in anyio ≥ 4.14.2. The lock is re-tracked resolved at
+  4.15.1 so both alerts close when the stack pushes; lockfile-only change, anyio
+  stays transitive (httpx, starlette, mcp, langsmith, sse-starlette).
+- **`toolrecall top` view 1: the not-sent number is one umbrella total with a per-mechanism breakdown — and every number is day-scoped honestly.** Two different counters both read as "not sent today": `not sent (dedup)` (proxy usage CSV — byte-identical blocks removed within a request) and `tokens never sent to the LLM` (cumulative `cache_stats.tokens_not_sent_measured` — bridge stub events), the latter printed under a "today" header despite spanning all logged days (12.6M cumulative next to 15.9M billed-today read as if ~11M had been saved today). Now view 1 (and the non-tty `render_plain`) lead with `sent to LLM today` vs `not sent (measured): X tok — p% of would-have-been-billed`, where X = stubbed re-reads (today, summed from `access_log` category `mcp_dedup` via new `stubbed_today(db)`; read-only, `_open_ro`, day boundary UTC midnight matching `money_today()`) + deduped blocks (proxy CSV `dedup_tokens`) — disjoint, wire-verified sets (stubbed content never reaches the proxy, so the proxy can only dedup what was actually sent), with each mechanism on its own line; the cumulative counter appears only as `stubbed re-reads, logged days: Y (today: X)` — "logged days" because `access_log` is a rolling ~50k window, not since-forever history. Percentage base fixed: `removed / (billed + removed)` — the provider never billed the removed tokens, so "% of billed" was the wrong denominator. Zero-state names its reasons ("no stubbed re-reads, no duplicate blocks today"). HELP_TEXT CONTEXT tier states the two mechanisms and their disjointness. Tests: `tests/test_tui_top.py` (+4: day/window split across UTC midnight, empty-db `(0, 0)`, umbrella headline math (57K = 50K dedup + 7K stubs; 36.3% = 57/157 pre-removal base) with the old mislabeled forms asserted gone, zero-state reason line; render tests monkeypatch `money_today` — the prod `proxy_usage.csv` must never be read there). Docs: `docs/CLI.md` view list synced to the shipped view order.
+- **F2 completion: the auto-updater no longer installs silently — `[update] auto_apply`, default `false`, with an agent-facing notice channel.** The 2026-09 review's top finding: with install-on-detect, a compromised PyPI account meant silent code execution on every user's next CLI run. The CLI hook now only *announces* (`⬆️  X available — run toolrecall update`) and records the version; installing is an explicit `toolrecall update` (or `[update] auto_apply = true` / `TOOLRECALL_UPDATE_AUTO_APPLY=1` to restore the old behavior, index pinning still applies). Because agent-driven users never run the CLI — and a stdout notice dies with the command — the daemon serves `update_pending_hint` (updater state: `latest_seen`, never a request-path network call) and the MCP bridge appends it to the **first tool result of each session**: `[toolrecall] Update available: 0.8.21 → 0.8.22 (run: toolrecall update)`. Throttled once per version (`notified_for`) client- and daemon-side; a daemon-side hourly refresher thread keeps `latest_seen` current for setups that never touch the CLI (first pass 60s after boot, interval-gated by `check_interval_hours`). Escapes: `[update] enabled = false` kills the check entirely; multiplexer-only bridges stay quiet by design. Tests: `tests/test_update_hint.py` (6: hint content, once-per-version, re-notify on new version), `tests/test_update_hint_channel.py` (9: daemon handler + throttle + never-raises, bridge first-call emission, exactly-once per session, daemon-error fail-soft), `tests/test_updater.py` (+2: notify-only default pins `apply_update` NOT called, opt-in apply path). README, README-pypi, shipped `config.toml`, `toml_serializer.DEFAULT_CONFIG` synced.
+- **F1: the lexical symlink rescue is now OPT-IN (`[security] allow_symlink_escapes`, default `false`).** A stock install enforces strict realpath-only containment (Layer A) — no symlink inside an allowed directory can widen what is readable. Rationale (2026-09 review): the Layer-B rescue is the easiest attack surface on Windows (junction reparse points published by any writer inside an allowed dir), and the `/etc/os-release → /usr/lib/os-release` justification is POSIX-only. Layouts that legitimately need the rescue opt in with `allow_symlink_escapes = true` / `TOOLRECALL_ALLOW_SYMLINK_ESCAPES=1`. Flipped at every fallback surface (Config property, daemon/client `getattr` fallbacks, `path_utils.check_path_allowed` signature, `toml_serializer.DEFAULT_CONFIG`, shipped `config.toml` template) — pinned by `tests/test_symlink_default.py` (8). SECURITY.md, README, README-pypi synced.
+- **Malformed config files now warn loudly instead of degrading quietly.** `Config._load` could not load a file → single generic warning → every setting in it silently reverted to package defaults — fail-open for a file carrying `[mcp] allowed_paths` and `[network]` tokens. The warning now leads with `CONFIG IGNORED`, names the exact file and error, and states that allowed_paths/tokens are NOT active. Tests: `tests/test_audit_fixes.py::test_unreadable_config_warns_not_silent` updated.
+- **`[norm]` config now actually reaches the normalizer (dead-code audit B1).** `normalizer.configure()` had zero callers: `[norm].sort_lists` / `[norm].strip_strings` were plumbed through ENV_MAP (bool-coerced), the `_KNOWN` schema and the `Config.norm_*` properties, but every `normalize_tool_args()` call ran on the hard-coded module defaults — a user's TOML/env override changed nothing, cache keys stayed identical. `Config.__init__` now calls `normalizer.apply_config()` once per process (lazy import, no module-level consumer deps), so daemon, CLI, adapters and replay all honor the config; precedence is per-call args > programmatic `configure()` > config. **Behavior note:** MCP cache keys shift for users who had set these keys (previously ignored) — stale entries simply age out by TTL, no migration. Audit finding B2 (`recall.purge_expired` "prod-dead") needed no wiring: `garbage_collect()` already purges expired `recall_cache` rows inline (PRAGMA-guarded) on the daemon's 4h GC thread — the contract is now pinned so a refactor can't silently drop it. Tests: `tests/test_norm_config_wiring.py` (6: TOML + env → module default, precedence order, MCP-key end-to-end incl. the plain-JSON preimage when `[norm] enabled = false`) + `tests/test_gc_recall_purge.py` (2: expired-deleted/live-kept with exact rowcount, frozen-clock boundary pinning GC's strict `expires_at < now`).
+- **Dead-code audit follow-ups (2026-09-13 review, fc03f10 bundle).** `_safe_bind_host()` removed from `transport.py` — the wildcard→loopback coercion lives in `_parse_tcp()` since the CodeQL bind-sink work, so the helper was a second (unreached) copy of the invariant; its wildcard-coercion test coverage migrated to `test_parse_tcp_coerces_all_wildcards` (empty/whitespace/`0.0.0.0`/`::` via `tcp://` paths) + `test_parse_tcp_keeps_specific_interface` — the security regression coverage is re-pointed at the live boundary, not deleted. `invalidate_all()`'s docstring no longer recommends `invalidate_api_host()` as an IPC-reachable path: per-host api_cache invalidation is programmatic-only (the `cache_invalidate` scope enum is `agent`/`api` only); the function itself stays public API per the 0.8.21 scope-aware-invalidate entry. Bench cleanup: 12 one-off scripts from the 2026-07 A/B session deleted (`fix.sed`, `final_fix.py`, `fix_clean.py`, `fix_imports.py`, `fix_rename.py`, `canon_v7_proto.py`, `probe_image_accept*.py`, `check_dbs.py`, `overnight_claude_bench.py`, `watch_and_analyze.py` — the last two also carried the operator identity strings from the push-scrub alert), plus `scripts/update.py` (second updater; `toolrecall/updater.py` is the one code path, audit F2). Operator scripts `scripts/savings.py` / `proxy_usage_query.py` / `tr_warp_stats.py` kept.
 
 ### Documentation
 - **GEPA / fork-tree docs caught up with what shipped in 0.8.21.**
@@ -252,125 +529,6 @@
   `CODEX_`, …). Its setUp now strips every agent marker the shim knows.
   `.gitleaksignore` allowlists the Langfuse fixtures' cache-key hashes, which
   gitleaks flagged as API keys after 0.8.23.
-
-## [0.8.23] — 2026-10-21
-
-### Added
-- **Langfuse v4 framework adapter (`adapters/langfuse.py`).** Drop-in cached tool
-  wrapper with verdict recording in span metadata and a multi-rung truncation
-  ladder guarding against Langfuse's 9KB metadata ceiling to prevent metadata
-  loss. 34 tests in `tests/test_langfuse_adapter.py`.
-- **Request-dedup attribution by tool (`dedup_by_tool` + `toolrecall dedup-stats`).**
-  Attributes request body deduplication savings to the tool that produced them
-  (e.g., repeated `skills_list` calls). Tracks blocks, tokens saved, and shares.
-  Tests in `tests/test_dedup_by_tool.py`.
-- **`work_key` — Layer-0 identity for a unit of work (`keys.py`).** Answers
-  *"have we already paid for this unit?"* for a candidate artifact (plus
-  optional evaluation parameters) instead of for a request — the level at which
-  an evaluation is worth reusing across processes, runs, and workers. Two
-  deliberately separate spaces: the legacy-compatible form
-  (`content_digest(code)`, optional `":" + stage`) is byte-identical to the
-  evaluator memo keys that predate this function, so stores already on disk
-  keep hitting — pinned by a golden vector captured from a real OpenEvolve memo
-  store; the params form is versioned (`w/v1:`) over `jcs.canonicalize`
-  (RFC 8785) so dict order cannot fork a key. Purely additive: no existing
-  preimage changes, `tests/golden_keys.json` keeps its old vectors. 6 tests in
-  `tests/test_keys.py`.
-- **Work-unit ledger (`work_ledger` table + `work_store` / `work_lookup`).**
-  The persistence half of `work_key`: `work_store(key, metrics, eval_time, ttl)`
-  records one PAID evaluation — `attempts` advances on a re-roll while the first
-  known result is never overwritten — and `work_lookup(key)` recalls it (None
-  when unknown, TTL honored). Counters land in their own `work_cache` category,
-  so reuse is visible in `top` and the healthcheck instead of borrowing another
-  tier's label — the same visibility gap that proxy dedup still has. Daemon
-  commands `work_store` / `work_lookup`, thin client wrappers with a
-  direct-SQLite fallback, malformed requests fail closed. Unit tests plus a
-  socket E2E test (`tests/test_work_ledger.py`,
-  `tests/test_e2e_work_ledger.py`).
-- **OpenEvolve evaluator memo (`adapters/openevolve.py`).** Wraps an eval
-  script's `evaluate` / `evaluate_stageN` so a repeat of an already-paid
-  candidate is served from the work ledger. Opt-in via
-  `TOOLRECALL_OPENEVOLVE_MEMO=1` (pure pass-through without it); `reuse_after(K)`
-  makes the reuse boundary explicit so deliberate re-rolls stay paid;
-  `impure=True` refuses to memoize an evaluator that is not a pure function of
-  the candidate; hits count in the `work_cache` category. No framework import —
-  duck-typed over the eval namespace, wrapping `globals()` or a module object.
-  15 tests, including the documented integration shape (the eval script wraps
-  `globals()`, then the file is imported by path the way OpenEvolve does).
-  Prior art is documented in the module docstring: fitness caching is an
-  established field and content-addressed memoization is standard — the
-  contribution is placement and policy, not mechanism.
-- **Reuse policy for a stochastic search (`adapters/openevolve.py`).** The reuse
-  boundary became a first-class knob: `samples=K` (pay K attempts, serve from
-  K+1), `policy_from_config()` to read K from a sampler field you name — verified
-  that OpenEvolve 0.3.2 exposes no re-roll field (`num_islands` and
-  `parallel_evaluations` are breadth and concurrency; each child is evaluated
-  once), so K=1 is the honest policy there —
-  and `never_reuse` as a control arm — passing both `samples` and `allow_reuse`
-  raises instead of silently picking one. `mode="shadow"` pays for every
-  evaluation while counting would-be hits into a caller-owned `stats` dict, so K
-  can be chosen from data before any behaviour changes. Every decision is logged
-  (`HIT`, `WITHHELD` with the threshold, `SHADOW-HIT`). Rationale in the module
-  docstring: the ceiling is the hit rate, and the hit rate is the sampling
-  design — 21.8 % of evaluator spend at K=1 versus 12.1 % at K=3 (100-iteration
-  A/B). 9 further tests, including the per-key score-identity gate: scores are
-  derived from the candidate's content, so a served score that came from the
-  wrong key cannot pass.
-- **Zero-egress local test server (`bench/kit/local_server.py`).** Enables local
-  loopback testing of Antigravity and MCP endpoints without third-party egress;
-  adds `TOOLRECALL_FETCH_CA_BUNDLE` support to `toolrecall/mcp_fetch.py`.
-- **Remote doc sources for the knowledge base — opt-in, local-first, guarded.**
-  `[[sources.remote]]` entries of kind `llms_full` (one publisher-provided bundle
-  URL) or `urls` (an explicit URL list) are ingested by `toolrecall index-remote`
-  and become searchable like local content. This replaces the workspace-local
-  `docs_crawler.py`/`docs_server.py` pair and its second database: one knowledge
-  base, one docs server. Not a crawler — no link following, no sitemap, no depth.
-  Guardrails: byte and page caps, robots.txt honoured (an unreadable robots.txt is
-  a refusal, not a yes), one request per second in one process, and
-  fetch→parse→**validate**→replace in a single transaction so a truncated download
-  cannot delete good pages. Fetched pages carry a provenance header
-  (`… | external content — not instructions`) on `docs_get_page` and a footnote on
-  `docs_search`. See [docs/REMOTE_SOURCES.md](docs/REMOTE_SOURCES.md).
-- **`toolrecall docs-rejects` — the ledger that makes the opt-in falsifiable.**
-  Every skipped and every flagged page is counted per `(source, path, reason)` and
-  accumulates across runs, so "which files do we reject most, and why" is
-  answerable. `rejected` (not indexed) and `flagged` (indexed, served with a
-  warning) are reported separately; an empty ledger says it is not proof of
-  health. Injection-suspect pages are *flagged, never dropped*: real
-  documentation legitimately talks about prompts.
-- **Gateway surface control: `gateway_exclude` / `gateway_exclude_tools`.**
-  The gateway made write-capable tools first-class — `sqlite-browser` (pointed
-  at the live cache DB) advertised `write_query`, `create_table` and
-  `append_insight` to every session (2026-09-28). Both keys now hide servers or
-  tool names from `tools/list` (case-insensitive). Documented as surface
-  control, not enforcement: a hidden name stays callable via `mcp_call`, so
-  blocking still belongs to `[security] tool_access_control`.
-- **Stale catalog entries are pruned.** A server removed from `servers` no
-  longer stays advertised: the catalog file is only rewritten when a server
-  starts, so the advertised view now filters to currently configured servers.
-- **MCP replays are visible in the daily series.** `mcp_cache` records write a
-  synthetic `mcp:<server>/<tool>` path into `access_log`, and
-  `trend.daily_trend(days, category)` is per-category, so the TUI trend view
-  shows an `MCP server replays` section. Kept separate from the file_cache
-  series on purpose: an MCP replay is I/O saving only (the body still reaches
-  the model), so summing the two would overstate cache value.
-- **Session view: unchanged stubs, diffs and line ranges — one state machine.**
-  The bridge's session state now lives entirely in `stub_core` (the shim keeps
-  the stub-only `maybe_stub`; the bridge uses `present`, which adds a unified
-  diff when a file changed, and `read_file` gained `offset`/`limit`). Freshness
-  is the TTL *plus* a session budget (tool calls and emitted tokens since the
-  full copy was sent — `stub_core.DEFAULT_MAX_CALLS` / `DEFAULT_MAX_TOKENS`,
-  derived from the same 396-run measurement as the 240s TTL) *plus* the
-  consecutive-suppression armor; terminal stubs now expire on that budget
-  instead of never. A diff is always computed against the agent's last FULL
-  copy, never against a diff we previously sent: the bridge cannot know whether
-  a harness applied one, and a wrong assumption would compound silently.
-- **Compaction signal.** `context_compacted` (MCP tool, or
-  `toolrecall context compacted` from a PreCompact hook) bumps a daemon-wide
-  epoch; bridges pick it up on their next read and re-send full content. An
-  exact signal beats guessing at the compaction horizon.
-
-### Fixed
 - **`cached_patch` false `already_applied` and lossy patch/write byte translation.**
   `cached_patch` checked substring containment which falsely reported deletions
   (`new_string == ""`) and earlier occurrences of `new_string` as already applied,
@@ -451,24 +609,6 @@
   missing from the `[sources]` key list, so following the docs produced a
   false "unknown key (key ignored)" warning — the same false-positive class
   the file's own comments record fixing for `[network.clients]`.
-
-### Changed
-- **Savings counters split into two unmistakable names (`cache_stats`).**
-  `cache_stats.tokens_saved` had drifted into meaning "IO offload" while
-  reading like "tokens saved to the LLM" — the two are different claims
-  (the first is disk/subprocess work avoided, the second is tokens that
-  never entered the model's context), and a consumer quoting the wrong one
-  overstates savings. Columns are now `io_tokens_saved` and
-  `tokens_saved_to_llm`; the stats JSON emits the same canonical keys
-  (`io_tokens_saved`, `tokens_saved_to_llm`) alongside the long-standing
-  measured aliases (`tokens_served_from_cache`, `tokens_not_read_from_disk`,
-  `tokens_not_sent_to_llm`), and the ambiguous `context_tokens_saved` key is
-  gone. Migration is an in-place SQLite `RENAME COLUMN` (idempotent, values
-  preserved; applied on first open of an older DB). TUI labels follow:
-  the IO table column reads `IO saved`, the headline `SAVED TO LLM TODAY`
-  (never sent to the model).
-
-### Fixed
 - **Shim drift detection is content-based, not version-based (`venvs.py`).**
   `ensure_shim` compared `importlib.metadata` versions, which passes whenever
   the metadata agrees while the code differs — a hand-synced snapshot, an
@@ -489,7 +629,6 @@
   now returns False when the fingerprint still differs instead of reporting a
   false "verified"; `shim --status` prints the venv-vs-install version pair and
   a `DRIFT` line with the fix command. 7 new tests in `tests/test_venvs.py`.
-
 - **Billed-truth hygiene: two test harnesses were writing fake rows into the
   production usage log** (`tests/test_proxy_dedup.py`,
   `tests/test_proxy_resilience.py`, `tests/conftest.py`).
@@ -514,7 +653,6 @@
   usage log fails the guard, and the four pre-existing tests that tripped the
   new arm all pass. The pre-existing junk rows are **not**
   removed — that is production data and a separate decision.
-
 - **Guard coverage extended to the live *config* home** (`tests/conftest.py`,
   `tests/README.md`). `_PROD_PATTERNS` covered `~/.toolrecall`, the daemon
   socket dir and `:8569` — but not `~/.config/toolrecall`, so a test writing
@@ -527,41 +665,6 @@
   An earlier one-off warning naming the live config with an unknown `[x]`
   section did **not** reproduce in a full run and left no trace; most likely a
   concurrent external writer, not the suite.
-
-## [Unreleased] — 2026-09-24
-
-### Added
-- **Request-body dedup now covers Anthropic-shaped `/v1/messages` bodies.**
-  The forward proxy's opt-in dedup (`[forward_proxy] dedup`) previously applied
-  only to `/v1/chat/completions`. The transport-neutral core now walks
-  messages-style blocks structurally and recurses into `tool_result` content
-  (where an agent loop's repeated payload actually lives), plus messages-style
-  `image` blocks behind `TOOLRECALL_DEDUP_MEDIA`. Blocks are shallow-copied
-  and only the text leaf is replaced, so `cache_control` / `tool_use_id`
-  survive byte-exact. Prefix stability across turns holds only with
-  `protect_last=0`; the shipped default (`2`) defers a duplicate that arrives
-  inside the protected tail by one turn, and stubbing it then rewrites
-  already-cached bytes — see `toolrecall/dedup.py` and
-  `tests/test_dedup_anthropic.py::TestProtectedTailVsCache`. New
-  path gate `_is_dedup_path`; new suite `tests/test_dedup_anthropic.py`
-  (Anthropic shape, cross-turn prefix stability, marker preservation,
-  `/v1/messages` proxy round trip). Mechanism-tested on this path; the
-  chat-completions path remains the only billing-verified one (−32.3% prompt
-  tokens / −30.0% billed).
-- **`docs` built-in MCP server (`toolrecall/mcp_docs.py`).** Exposes the
-  in-core FTS5 knowledge base (`docs_search`, `docs_get_page`) as a
-  standalone multiplexer server — the same tools the `toolrecall mcp`
-  bridge offers natively, now auto-resolvable via the registry. Zero
-  runtime dependencies (stdlib + SQLite FTS5).
-
-### Changed
-- **Default multiplexer server set:** `["time", "sequential-thinking",
-  "cache-fs"]` → `["docs", "fetch", "cache-fs"]` in the shipped
-  `config.toml` template. `fetch_revalidate = true` enabled by default.
-  `time` remains registered and opt-in; `github` remains opt-in
-  (write access). Docs examples updated accordingly.
-
-### Fixed
 - **TMPDIR-nested agent-home hosts: 6 pre-existing test failures + 3 source
   defects.** On hosts where the tempdir lives under the agent home (Hermes
   scratch: `TMPDIR=~/.hermes/cache/scratch`), the shim's library-marker gate
@@ -590,154 +693,7 @@
   baseline +1 config.py (tempdir carve-out is fail-soft), +1 shim.py
   (relative-marker guard on the open() hot path). Full unit suite green:
   1657 passed.
-
-## [Unreleased] — 2026-09-20
-
-### Changed
-- **MCP bridge stub TTL 60s → 240s (measured).** The TTL guards the
-  AGENT-memory axis — "does the agent still hold the earlier content?" —
-  which mtime+size cannot answer (that proves only the DISK content is
-  current). It must therefore track the real compaction horizon, and 60s
-  did not. Measured over 396 conversation-growth runs in the billed usage
-  CSV (2 months, monotone prompt growth until reset): median 14 turns /
-  4.8 min before a context reset (p25 1.9 min, p75 19.1 min), median 18.5s
-  per request — so 60s covered only ~3.2 requests of a live conversation
-  and expired stubs whose content the agent provably still held. 240s sits
-  just under the median horizon (288s) and well below p75; `max_consecutive`
-  stays the hard armor. The shim already used 300s — only the bridge moved.
-  Explicitly NOT done: moving stub state into the daemon. Cross-process
-  state would make the stub's claim ("you already hold this") false for a
-  process that never read the file — the same class of failure that
-  corrupted a gateway YAML parse on 2026-09-18 and motivated the
-  `agent_tool` gate.
-- **Saved view: "not sent to the model" is the headline.** That is where
-  the saving is, so it leads. Below it: sent vs without-ToolRecall with the
-  multiple ("1.57x more for the model to read"), and the not-sent figure
-  translated into both a multiple of what was sent and whole context
-  windows. The bill passage and the today-footer were removed from the
-  user view (the billed numbers stay in the Details line).
-- **The context limit is MEASURED, not assumed.** The hard-coded 200K was
-  empirically wrong: a 245,947-token request was accepted and billed, so
-  the view counted real, accepted requests as "over the limit" (130 naive
-  vs 130 actual — a null statement). The limit is now
-  `max(floor, largest actually accepted request)`, exposed as
-  `replay["limit"]`, and the limit line renders only when the naive world
-  actually crosses it. Same for the biggest-message line: shown only when
-  `peak_naive > peak_actual`, with the explicit note that it is the same
-  removed content piled up again, not an extra saving.
-
-### Added
-- **Session-replay tier in `toolrecall top` — the naive-world equivalent, measured not guessed.**
-  The umbrella counts removed tokens once per event; it structurally cannot see the
-  amplification that produces 7-9x session length (removed content rides along in EVERY
-  subsequent request of a naive conversation). New `session_replay_today()` reconstructs
-  the counterfactual deterministically from today's wire data: sessions split at >15 min
-  request gaps, each naive request = billed prompt + in-request dedup + all stub tokens
-  stubbed earlier in the session (HIT rows excluded; stubs attach via the same gap rule;
-  `tui_top._CONTEXT_WALL` = 200K marks requests the naive world cannot make). Every input
-  is measured (billed prompts, wire-verified stubs, logged timestamps) — the construction
-  is the replay, a disclosed segmentation choice, never a hidden multiplier. Rendered as
-  the REPLAY tier in view 1 + non-tty (`session replay (naive-world, today): X vs actual
-  Y — Z% saved (amp xN, S sessions)` + wall line). First prod day: 230.2M naive vs 61.4M
-  actual = 73.3% saved, amp x3.8, 297 naive wall-crossings vs 47 actual — the number that
-  reconciles a 2% umbrella with 7-9x session length. Tests:
-  `tests/test_session_replay.py` (replay arithmetic across 2 sessions with a dropped
-  stub, HIT exclusion, wall counts with a tunable constant, no-traffic None, render
-  contract via snapshot key).
-
-### Changed
-- **Saved view rewritten in plain words (2026-09-20): the headline is sent + avoided.**
-  User bar: "76M was sent and 168M was avoided, that's the headline — explain it
-  without stub/dedup/naive jargon; the 200K/304-vs-54 line needs a coherent
-  sentence." New TODAY-line (`sent + avoided = without ToolRecall`, always
-  reconciling — without replay data the floor is the counted-once removals),
-  a plain-words list (removed parts answered from memory / removed once = not
-  re-sent, with the measured `ride_slots` count instead of a request-1
-  approximation; the ride-along sentence only appears when later requests
-  actually carried removed content), the context-limit line with its
-  definition ("the largest context the model accepts at all"), the dollars
-  sentence ("avoided tokens never reached the provider — nothing on the bill
-  paid for them"), and one compact Details line. No jargon in the user view
-  (stub/dedup/naive/replay/amp/wall live in HELP_TEXT and the code only).
-  All labels English. Tests updated to the plain-word strings.
-  User finding (2026-09-20): "68.8% less context but only 1.6% held back —
-  how do these relate?" Answer rendered in `top` itself: section 1's header
-  says "(each removal counted once)", section 2 leads with an add-up line —
-  `actual X + avoided Y = naive Z (p% less context load)` — and a breakdown
-  (`avoided = D deduped blocks (once) + S stubbed content riding along in N
-  later requests (xM)`). The replay collector exposes the new fields
-  (avoided_total, dedup_sum, stub_attached_tokens, amp_stubs); naive =
-  actual + avoided is an identity of the construction, so the line always
-  reconciles exactly. HELP_TEXT documents the bridge (1 counts once at the
-  moment of removal; the naive world pays it again in every later request —
-  the difference IS the session effect).
-- **`toolrecall top` saved view: three sections, one question each (2026-09-19).**
-  The view had grown to ~10 numbers answering three different questions —
-  re-arranged as: `1 HELD BACK (measured)` (today's wire-held-back tokens =
-  stubbed re-reads + deduped blocks, once per event), `2 SESSION CAPACITY
-  (replay)` (naive-world equivalent for the same sessions, incl. the 200K
-  wall line), `3 BILLED (provider)` (billed tokens + cost + provider
-  prefix-cache line). Demoted OUT of the saved view: the cumulative stub
-  ledger ("logged days" line — available via `toolrecall stats`), the
-  median-request diagnostic (View 4 keeps it), the replays parenthetical
-  (folded into section 3). All labels in English. HELP_TEXT now documents
-  the three questions and the mixing rule (small 1 + large 2 is expected —
-  amplification is the session-length effect). No collector logic changed —
-  re-layout only; tests updated to the new strings.
-- **`toolrecall status`: the estimate label is now `context_estimate=`.** The
-  per-cache context column was printed as `tokens_not_sent_to_llm=` — the
-  same name the MEASURED tier uses (`tokens_not_sent_measured`), so the
-  estimate (per agent-tool-HIT counter) read as billed-truth. Human label
-  renamed; the underlying stats JSON keys are unchanged (script/cron
-  consumers unaffected).
-
-### Added
-- **Provider prefix-cache visibility (CSV v4).** Post-mortem 2026-09-19: all 44k
-  `proxy_usage.csv` rows logged `cache_read_tokens=0` although the discount was
-  flowing — OpenRouter reports cache reads NESTED in
-  `usage.prompt_tokens_details.cached_tokens` (+ `usage.cache_discount` in
-  dollars), not in the flat OpenAI/Anthropic fields the v3 parser read. The
-  CSV grows a 12th column `cache_discount_usd` (header migrates in place;
-  pre-v4 rows read 0 via DictReader `.get() or 0`, same contract as
-  cost_usd/dedup_tokens); the writer now fills `cache_read_tokens` from the
-  nesting (flat fields still win). `toolrecall top` view 1 + non-tty render
-  gain a bill-side line — `provider prefix-cache: X tok re-served by provider — p% of sent [· discount $Y (provider-reported)]` — shown only when the
-  provider reports cache activity, and deliberately OUTSIDE the not-sent
-  umbrella (the discount discounts SENT tokens; umbrella = never-sent).
-  Dollars appear only when the provider reports them (0 = not reported,
-  never guessed). Tests: `tests/test_proxy_cache_usage.py` (nested parse,
-  flat precedence, zero state, pre-v4 row back-compat, render contract);
-  `tests/test_proxy_stream_usage.py` assertions updated to the v4 contract
-  (nested reads now land in the column — the old "nested is ignored" pin).
-
-## [Unreleased] — 2026-09-18
-
-### Fixed
 - **Daemon IPC `cached_mcp_store` now addresses the row `cached_mcp_check` reads (key-alignment bug) + `[cache].hash_algorithm` default is `sha256` (was `md5`).** Found by the 2026-09-19 daemon-in-the-loop replay bench (400-call sim↔daemon parity run): the store handler wrote the `mcp_cache` row under the raw IPC key while the check handler looked up the wrapped derivation `_mcp_request_key("_generic","_lookup",{"key": K})` — every IPC-stored row was unreachable by checks (zero hits at 0.0 s repeat gap; bench-DB row hash == raw key, check-derived ≠ raw). Fix: store derives its row key through the same single derivation cache.py owns (never re-derive at call sites). Hash default flip per identity-portability: daemon cache keys now match external sha256 derivations (SEP `mcp.tool.request_key` family); `md5` remains selectable as legacy opt-out (`TOOLRECALL_HASH_ALGORITHM=md5`, zero-rewarm rollback). One-time cost: existing rows miss once and re-warm; mtime invalidation unaffected; billed-truth proxy path (`api_request_hash`) decoupled. Tests: `tests/test_mcp_ipc_key_fix.py` (5 — default/opt-out pins via subprocess, unit row alignment, two E2E store→check round-trips through a real daemon). Pre-existing at base, unrelated: `test_canonical_e2e` (3), `test_swr_e2e` (12) — "no such table" ordering, outside validate's selection.
-
-### Changed
-- **`uv.lock` re-tracked, anyio bumped 4.14.1 → 4.15.1.** The lockfile was removed
-  from tracking in `83e96ce` (June) but Dependabot kept alerting on the dead
-  manifest: GHSA-82r6-8w77-94w6 (critical, TLSStream IDNA host encoding → TLS
-  certificate spoofing) and GHSA-5p39-cfhj-2xmp (medium, process-pool stderr
-  deadlock) — both patched in anyio ≥ 4.14.2. The lock is re-tracked resolved at
-  4.15.1 so both alerts close when the stack pushes; lockfile-only change, anyio
-  stays transitive (httpx, starlette, mcp, langsmith, sse-starlette).
-- **`toolrecall top` view 1: the not-sent number is one umbrella total with a per-mechanism breakdown — and every number is day-scoped honestly.** Two different counters both read as "not sent today": `not sent (dedup)` (proxy usage CSV — byte-identical blocks removed within a request) and `tokens never sent to the LLM` (cumulative `cache_stats.tokens_not_sent_measured` — bridge stub events), the latter printed under a "today" header despite spanning all logged days (12.6M cumulative next to 15.9M billed-today read as if ~11M had been saved today). Now view 1 (and the non-tty `render_plain`) lead with `sent to LLM today` vs `not sent (measured): X tok — p% of would-have-been-billed`, where X = stubbed re-reads (today, summed from `access_log` category `mcp_dedup` via new `stubbed_today(db)`; read-only, `_open_ro`, day boundary UTC midnight matching `money_today()`) + deduped blocks (proxy CSV `dedup_tokens`) — disjoint, wire-verified sets (stubbed content never reaches the proxy, so the proxy can only dedup what was actually sent), with each mechanism on its own line; the cumulative counter appears only as `stubbed re-reads, logged days: Y (today: X)` — "logged days" because `access_log` is a rolling ~50k window, not since-forever history. Percentage base fixed: `removed / (billed + removed)` — the provider never billed the removed tokens, so "% of billed" was the wrong denominator. Zero-state names its reasons ("no stubbed re-reads, no duplicate blocks today"). HELP_TEXT CONTEXT tier states the two mechanisms and their disjointness. Tests: `tests/test_tui_top.py` (+4: day/window split across UTC midnight, empty-db `(0, 0)`, umbrella headline math (57K = 50K dedup + 7K stubs; 36.3% = 57/157 pre-removal base) with the old mislabeled forms asserted gone, zero-state reason line; render tests monkeypatch `money_today` — the prod `proxy_usage.csv` must never be read there). Docs: `docs/CLI.md` view list synced to the shipped view order.
-
-## [0.8.22] — 2026-09-15
-
-### Added
-- **`stats` carries a context_flow verdict + `[hermetic]` log tag.** `toolrecall stats` embeds the live tracker snapshot (armed/checkpoint state, banked totals, dirty/clean counts) as a `context_flow` block in its JSON — the 2026-09-15 cron reported an armed flow with 593k banked tokens as "inactive" because that state was invisible in the stats JSON; fail-soft when the daemon is down (explicit reason field, never a bare counter). Test daemons/pytest now tag every log line `[hermetic]` (`TOOLRECALL_HERMETIC=1`) so shared log files never let test-suite lines masquerade as production traffic ("tracker snapshot saved: 0 read paths" was twice misread as a dead production flow). Tests: `tests/test_cli.py` (context_flow block, fail-soft), `tests/test_logging_setup.py` (+2: tag present when env set, absent when unset), `tests/conftest.py` sets the env hermetically.
-
-### Changed
-- **F2 completion: the auto-updater no longer installs silently — `[update] auto_apply`, default `false`, with an agent-facing notice channel.** The 2026-09 review's top finding: with install-on-detect, a compromised PyPI account meant silent code execution on every user's next CLI run. The CLI hook now only *announces* (`⬆️  X available — run toolrecall update`) and records the version; installing is an explicit `toolrecall update` (or `[update] auto_apply = true` / `TOOLRECALL_UPDATE_AUTO_APPLY=1` to restore the old behavior, index pinning still applies). Because agent-driven users never run the CLI — and a stdout notice dies with the command — the daemon serves `update_pending_hint` (updater state: `latest_seen`, never a request-path network call) and the MCP bridge appends it to the **first tool result of each session**: `[toolrecall] Update available: 0.8.21 → 0.8.22 (run: toolrecall update)`. Throttled once per version (`notified_for`) client- and daemon-side; a daemon-side hourly refresher thread keeps `latest_seen` current for setups that never touch the CLI (first pass 60s after boot, interval-gated by `check_interval_hours`). Escapes: `[update] enabled = false` kills the check entirely; multiplexer-only bridges stay quiet by design. Tests: `tests/test_update_hint.py` (6: hint content, once-per-version, re-notify on new version), `tests/test_update_hint_channel.py` (9: daemon handler + throttle + never-raises, bridge first-call emission, exactly-once per session, daemon-error fail-soft), `tests/test_updater.py` (+2: notify-only default pins `apply_update` NOT called, opt-in apply path). README, README-pypi, shipped `config.toml`, `toml_serializer.DEFAULT_CONFIG` synced.
-- **F1: the lexical symlink rescue is now OPT-IN (`[security] allow_symlink_escapes`, default `false`).** A stock install enforces strict realpath-only containment (Layer A) — no symlink inside an allowed directory can widen what is readable. Rationale (2026-09 review): the Layer-B rescue is the easiest attack surface on Windows (junction reparse points published by any writer inside an allowed dir), and the `/etc/os-release → /usr/lib/os-release` justification is POSIX-only. Layouts that legitimately need the rescue opt in with `allow_symlink_escapes = true` / `TOOLRECALL_ALLOW_SYMLINK_ESCAPES=1`. Flipped at every fallback surface (Config property, daemon/client `getattr` fallbacks, `path_utils.check_path_allowed` signature, `toml_serializer.DEFAULT_CONFIG`, shipped `config.toml` template) — pinned by `tests/test_symlink_default.py` (8). SECURITY.md, README, README-pypi synced.
-- **Malformed config files now warn loudly instead of degrading quietly.** `Config._load` could not load a file → single generic warning → every setting in it silently reverted to package defaults — fail-open for a file carrying `[mcp] allowed_paths` and `[network]` tokens. The warning now leads with `CONFIG IGNORED`, names the exact file and error, and states that allowed_paths/tokens are NOT active. Tests: `tests/test_audit_fixes.py::test_unreadable_config_warns_not_silent` updated.
-- **`[norm]` config now actually reaches the normalizer (dead-code audit B1).** `normalizer.configure()` had zero callers: `[norm].sort_lists` / `[norm].strip_strings` were plumbed through ENV_MAP (bool-coerced), the `_KNOWN` schema and the `Config.norm_*` properties, but every `normalize_tool_args()` call ran on the hard-coded module defaults — a user's TOML/env override changed nothing, cache keys stayed identical. `Config.__init__` now calls `normalizer.apply_config()` once per process (lazy import, no module-level consumer deps), so daemon, CLI, adapters and replay all honor the config; precedence is per-call args > programmatic `configure()` > config. **Behavior note:** MCP cache keys shift for users who had set these keys (previously ignored) — stale entries simply age out by TTL, no migration. Audit finding B2 (`recall.purge_expired` "prod-dead") needed no wiring: `garbage_collect()` already purges expired `recall_cache` rows inline (PRAGMA-guarded) on the daemon's 4h GC thread — the contract is now pinned so a refactor can't silently drop it. Tests: `tests/test_norm_config_wiring.py` (6: TOML + env → module default, precedence order, MCP-key end-to-end incl. the plain-JSON preimage when `[norm] enabled = false`) + `tests/test_gc_recall_purge.py` (2: expired-deleted/live-kept with exact rowcount, frozen-clock boundary pinning GC's strict `expires_at < now`).
-- **Dead-code audit follow-ups (2026-09-13 review, fc03f10 bundle).** `_safe_bind_host()` removed from `transport.py` — the wildcard→loopback coercion lives in `_parse_tcp()` since the CodeQL bind-sink work, so the helper was a second (unreached) copy of the invariant; its wildcard-coercion test coverage migrated to `test_parse_tcp_coerces_all_wildcards` (empty/whitespace/`0.0.0.0`/`::` via `tcp://` paths) + `test_parse_tcp_keeps_specific_interface` — the security regression coverage is re-pointed at the live boundary, not deleted. `invalidate_all()`'s docstring no longer recommends `invalidate_api_host()` as an IPC-reachable path: per-host api_cache invalidation is programmatic-only (the `cache_invalidate` scope enum is `agent`/`api` only); the function itself stays public API per the 0.8.21 scope-aware-invalidate entry. Bench cleanup: 12 one-off scripts from the 2026-07 A/B session deleted (`fix.sed`, `final_fix.py`, `fix_clean.py`, `fix_imports.py`, `fix_rename.py`, `canon_v7_proto.py`, `probe_image_accept*.py`, `check_dbs.py`, `overnight_claude_bench.py`, `watch_and_analyze.py` — the last two also carried the `hermesbot`/`/home/hermes` identity strings from the push-scrub alert), plus `scripts/update.py` (second updater; `toolrecall/updater.py` is the one code path, audit F2). Operator scripts `scripts/savings.py` / `proxy_usage_query.py` / `tr_warp_stats.py` kept.
-
-### Fixed
 - **a6/e2e test portability: fixture TOML paths are now escaped (`tests/toml_helpers.py`).** Three test files f-stringed `tmp_path` (on Windows `C:\Users\...`) raw into TOML — `\U` is an invalid escape, tomllib raised, `Config._load` warned-and-fell-back to package defaults, and every `[network.clients."id"]` entry silently vanished. The a6 namespacing tests passed on Windows for the vacuous reason that all members shared the default namespace; on Linux the same fixtures genuinely exercised the feature. `write_toml_config()` now JSON-escapes every path (`json.dumps` escape set ⊂ TOML basic-string escapes) and parse-asserts the file at setup, so a broken fixture fails loudly instead of passing on defaults. Migrated: `test_a6_namespacing.py`, `test_a6_review_fixes.py`, `test_e2e_network_daemon.py`; contract pinned by `tests/test_toml_helpers.py` (8, incl. the exact `C:\Users` round-trip).
 
 ## [0.8.21] — 2026-09-13
@@ -1250,7 +1206,7 @@
 - **Docs:** dead comment in cache.py fixed (`# ── 3. Cache miss ──` → `# 2. SQLite hit`)
 - **README:** rewritten — agent-agnostic, "1 Tick Instead of 4" hero, required vs optional marked, integration table (Hermes, Claude Code, Cursor, Cline), nginx labeled optional
 - **Fix:** XDG_RUNTIME_DIR vs real UID mismatch — `_default_socket_path()` validates against `os.getuid()`
-- **Fix:** cache blocked — `allowed_paths` package default changed from `~/.toolrecall` to `/home/hermes`
+- **Fix:** cache blocked — `allowed_paths` package default changed from `~/.toolrecall` to the operator's home directory
 - **Fix:** `proxy.py` — `run_server()` now binds to passed `bind` arg, not hardcoded `127.0.0.1`
 - **Fix:** `daemon.py` — hardcoded `v0.3.0` replaced with `from toolrecall import __version__`
 - **Fix:** config.toml — `[REDACTED]` IPs replaced with `127.0.0.1`

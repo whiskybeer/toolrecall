@@ -460,7 +460,7 @@ def _init(schema: str = ""):
         # SQLite RENAME COLUMN keeps the accumulated values in place.
         _rename_column(conn, "cache_stats", "tokens_saved", "io_tokens_saved")
         _rename_column(conn, "cache_stats", "context_tokens_saved", "tokens_saved_to_llm")
-        # Migration: v0.8.22 → v0.8.23 — MEASURED not-sent tokens (bridge
+        # Migration: v0.8.21 → v0.8.22 — MEASURED not-sent tokens (bridge
         # dedup stubs; wire-verified, never an estimate)
         _add_column(conn, "cache_stats", "tokens_not_sent_measured INTEGER DEFAULT 0")
         # Migration: v0.x → v0.y — add stderr column to terminal_cache

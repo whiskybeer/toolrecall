@@ -59,7 +59,7 @@ terminal_default_ttl = 300  # 5 minutes for unknown commands
 # ⚠️ Switching algorithm invalidates ALL existing cache entries
 #    (cache keys differ, old entries stay in DB as orphans).
 # Cache keys: sha256 (default since 2026-09-19). "md5" = legacy opt-out
-# (zero-rewarm rollback to pre-0.8.23 row keys).
+# (zero-rewarm rollback to pre-0.8.22 row keys).
 # hash_algorithm = "sha256"
 
 # ─── Recall Tier (opt-in, default OFF) ───────────────

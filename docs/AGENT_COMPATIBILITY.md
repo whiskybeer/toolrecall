@@ -354,7 +354,7 @@ FAIL_TO_PASS / PASS_TO_PASS tests. Costs are Claude Code's own
 The first run of this A/B also exposed a proxy bug: the streaming passthrough
 forwarded `Accept-Encoding`, so Claude Code received gzip bytes it could not
 parse and re-sent every turn non-streaming (billed twice, reported once).
-Fixed in the release after 0.8.23 — do not point `ANTHROPIC_BASE_URL` at an
+Fixed in v0.8.22 — do not point `ANTHROPIC_BASE_URL` at an
 older proxy.
 
 ### Config (multiplexer + proxy only, no file caching)

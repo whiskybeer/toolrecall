@@ -8,7 +8,7 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 
 **−36% on a 450-turn session — verified with separate billed API keys, not estimates.** Additive to any model's prefix caching. Under 1MB install. Python 3.11+ stdlib only.
 
-> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md).
+> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), expect no token saving in interactive sessions: the forward proxy pays off for **headless repeat runs** (Claude Code with the `claude-code` profile: −69% on short repeated tasks, −18% on long sessions), the MCP multiplexer shares server processes, and file caching through MCP may **increase** costs. See [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md).
 
 ```bash
 pipx install toolrecall
@@ -21,12 +21,13 @@ toolrecall setup          # One-shot: config -> systemd -> daemon start
 
 ## Why ToolRecall — stop paying for tokens you already saw
 
-Two capabilities are the reason to run it. Both are measured, both target the same waste: your agent re-encountering content that's already in its context.
+Three core capabilities are the reason to run it. They target the same waste: agents re-encountering content that has already been retrieved or generated on your machine.
 
 | Capability | What it does | Measured |
 |-----------|--------------|----------|
 | **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (read-only benchmark, prefix-caching model; real-session figure below) — [Context Tracker](#context-tracker) |
 | **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
+| **Multi-Agent Shared Cache & Attribution** | One shared daemon pools the cache across all your local agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; subsequent agents get instant 100% cache hits with $0 token cost. Per-agent telemetry (`toolrecall agent ls`) tracks exact ROI and tokens saved per agent identity without splitting cache keys. | **100% hit rate for subsequent agents / 0ms disk & API latency** — [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_TRACKING.md) |
 
 ---
 
@@ -83,10 +84,45 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. Since 
 
 ---
 
+### Option C — Multi-Agent Workspaces (Share Cache Across Agents)
+
+Running multiple coding agents simultaneously on the same project (e.g. Hermes in the terminal, Claude Code for edits, Antigravity in the IDE)? Set their identity before launch:
+
+```bash
+export TOOLRECALL_AGENT_ID=hermes        # in your Hermes terminal
+export TOOLRECALL_AGENT_ID=claude-code   # in your Claude Code session
+export TOOLRECALL_AGENT_ID=antigravity   # in your Antigravity IDE
+```
+
+All agents share one deterministic cache on your machine. When Agent A reads a file or command, subsequent agents get **100% cache hits** with zero token cost.
+
+View your cross-agent breakdown:
+```bash
+toolrecall agent ls
+```
+```text
+Known Agents
+========================================
+  antigravity           hits=2  misses=0  tokens_saved=4,369  tokens_read=0
+  claude-code           hits=2  misses=0  tokens_saved=4,369  tokens_read=0
+  hermes                hits=1  misses=1  tokens_saved=2,608  tokens_read=1,761
+```
+*Agent Hermes warmed the cache; Claude Code and Antigravity got instant 100% cache hits.*
+
+Inspect detailed per-category stats or export JSON for monitoring:
+```bash
+toolrecall agent show claude-code --json
+toolrecall status
+```
+See [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_TRACKING.md) for full telemetry, schema, and Turso cloud aggregation.
+
+---
+
 ## What ToolRecall Does
 
 | Feature | What it solves |
 |---------|---------------|
+| **Multi-Agent Shared Cache & Attribution** | Shared local cache across multiple agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; Agent B gets 100% hits with $0 token cost. Per-agent telemetry (`toolrecall agent ls`) tracks exact ROI per agent identity. |
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions (read-only benchmark; ~11 % per-turn reduction in real mixed sessions). |
 | **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
@@ -97,6 +133,27 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. Since 
 | **Framework Adapters** | Drop-in wrappers for ADK, LangChain, LangGraph, herdr, Odysseus, LiteLLM, GEPA, Warp |
 
 Full detail in [Architecture](https://github.com/whiskybeer/toolrecall/blob/main/docs/ARCHITECTURE.md).
+
+---
+
+## Live Measurement of Core Primitives
+
+ToolRecall's performance gains rest on three foundational primitives. You can run the hermetic benchmark suite locally without external APIs or live network connections:
+
+```bash
+python3 bench/run_3_local_tests.py
+```
+
+| # | Primitive & Metric | Baseline (Uncached / Live) | With ToolRecall | Measured Impact |
+|:--|:---|:---|:---|:---|
+| **1** | **Subprocess & Tool Latency**<br>*(30 iterations `git rev-parse HEAD`)* | **5.33 ms** / call<br>*(Live OS fork/exec)* | **0.014 ms** / call<br>*(Local SQLite cache hit)* | **~380× faster**<br>Spawning overhead eliminated |
+| **2** | **Prompt Input Deduplication**<br>*(Multi-turn file inspection re-reads)* | **1,829 tokens**<br>*(7,318 chars uncompressed)* | **749 tokens**<br>*(2,996 chars after hook)* | **−59.1% input tokens**<br>Stripped pre-billing |
+| **3** | **Deterministic Replay & Fork-Tree**<br>*(20 trunk calls branched across 5 forks)* | *N/A (Non-deterministic subprocesses)* | **3,200+ calls/sec**<br>*(100 calls in ~31 ms)* | **100% byte-exact**<br>Zero drift across parallel forks |
+
+### Why these three matter:
+1. **Tool Latency:** Eliminates the heavy cold-start cost of spawning repeated CLI tools and subprocesses across agent loops.
+2. **Context Window Savings:** Protects against context snowballing by deduplicating recurring tool and file outputs before provider billing.
+3. **Branching & CI Replay:** Enables concurrent agent hypothesis testing (fork-tree) and CI reproduction with guaranteed byte-identical observations.
 
 ---
 
@@ -384,7 +441,7 @@ toolrecall trend          Daily hit-rate trend + worst miss classes  [no daemon]
 toolrecall trend --json   Machine-readable trend (observer/CI)       [no daemon]
 toolrecall top            Interactive TUI dashboard: stats, access log, trend, tracker
 toolrecall invalidate     Clear agent caches (api_cache: scope=api)  [auto-starts]
-toolrecall reset-stats    Reset counters (hits, misses, tokens) without clearing entries
+toolrecall reset-stats    Reset the stats window (counters are banked, not deleted)
 toolrecall mcp            Start MCP Bridge                           [auto-starts]
 toolrecall serve          Forward proxy — daemon already owns :8569; standalone on another port:
 toolrecall serve --port 9090   Standalone forward proxy on :9090 (daemon must be stopped)
@@ -401,7 +458,7 @@ toolrecall index-memory   Index agent memory stores
 toolrecall index-dir      Index a directory for FTS5 search [not file cache pre-warm]
 toolrecall index-compact  Rebuild FTS index + VACUUM (reclaim knowledge-DB bloat)
 toolrecall proxy          Attach/detach Hermes' LLM traffic to the forward proxy (billed-savings path)
-toolrecall healthcheck    Daemon/cache healthcheck — exit 0 healthy, 1 down/abnormal, 2 hard failure
+toolrecall healthcheck    Daemon/cache healthcheck — 0 running, 1 down, 2 error; --clean-stale clears dead state
 toolrecall logs [--tail N] [--level X]   Inspect the rotating log rail
 toolrecall update         Self-update from a pinned package index ([update].index_url)
 toolrecall nginx          Generate nginx reverse-proxy config (~/.toolrecall/nginx-toolrecall.conf)
@@ -505,6 +562,7 @@ port = 8570
 - [Replay Mode](https://github.com/whiskybeer/toolrecall/blob/main/docs/REPLAY_MODE.md) — record/replay tool calls for deterministic CI
 - [Security Architecture](https://github.com/whiskybeer/toolrecall/blob/main/SECURITY.md) — policy gate, trust boundary
 - [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
+- [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_TRACKING.md) — per-agent cache stats, multi-agent attribution
 - [Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
 - [LiteLLM Dedup Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/bench/litellm_dedup/README.md) — gateway dedup hook: −32.3% prompt tokens / −30% cost, billing-verified
 - [LiteLLM Adapter](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/adapters/README.md) — `litellm_settings.callbacks` hook wiring and sample proxy config
