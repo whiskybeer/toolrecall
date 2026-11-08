@@ -371,6 +371,7 @@ def refresh_file(path: str) -> dict:
     Always returns a fresh result (cached: False).
     Respects the path allowlist when going through the daemon.
     """
+    path = _abs_path(path)
     client = _get_client()
     resp = client.send({"cmd": "cache_refresh_file", "path": path})
     if not _is_daemon_down(resp):

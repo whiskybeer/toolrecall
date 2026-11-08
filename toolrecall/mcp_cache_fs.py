@@ -114,6 +114,21 @@ def _daemon_send(cmd: dict) -> dict:
 # ─── MCP Tool Implementations ─────────────────────────────────────────
 
 
+def _abs(path: str) -> str:
+    """Resolve a caller-supplied path in THIS process.
+
+    The cache-fs server runs as the agent's own subprocess, so os.getcwd() here
+    is the agent's working directory — the same reasoning as _cached_terminal's
+    explicit cwd. The daemon opens paths against ITS OWN cwd and keys its cache
+    on the path string, so a relative path used to open whatever the daemon
+    happened to have, and every caller using the same relative name shared one
+    cache entry across projects (reading NOTES.md in project B returned project
+    A's content). See cache._resolve_cache_path, which refuses anything still
+    relative.
+    """
+    return os.path.abspath(os.path.expanduser(path))
+
+
 def _cached_read(path: str, max_tokens: int = 0) -> str:
     """Read a file through ToolRecall's cache.
 
@@ -124,8 +139,8 @@ def _cached_read(path: str, max_tokens: int = 0) -> str:
     Returns:
         File content (cached if available)
     """
-    # Expand ~
-    path = os.path.expanduser(path)
+    # Resolve in THIS process — the daemon opens the path against its own cwd.
+    path = _abs(path)
 
     # Check if file exists
     if not os.path.isfile(path):
@@ -194,6 +209,8 @@ def _cached_write(path: str, content: str) -> str:
     Returns:
         Success/error message
     """
+    path = _abs(path)
+
     # SECURITY: Route through daemon — it enforces the path allowlist
     # and sensitive-file blocklist. We must NOT write directly here.
     resp = _daemon_send(
@@ -232,6 +249,8 @@ def _cached_patch(path: str, old_string: str, new_string: str) -> str:
     Returns:
         Result message with diff info
     """
+    path = _abs(path)
+
     # SECURITY: Route through daemon — it enforces the path allowlist
     # and sensitive-file blocklist.
     resp = _daemon_send(

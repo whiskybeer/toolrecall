@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from typing import List, Optional
@@ -190,10 +191,18 @@ def discover_python_venvs() -> List[Venv]:
     out: List[Venv] = []
 
     raw = _python_from_running_procs() + _candidate_pythons_from_home()
+    # Never return the interpreter we are running as: shimming ourselves is
+    # pointless, and because entries are keyed on the interpreter realpath it
+    # would also stand in for every other venv sharing that interpreter.
+    # This matters for uv-managed pythons — a uv venv's ``python`` is a symlink
+    # to a SHARED base interpreter under ~/.local/share/uv, so it does not live
+    # "under the repo" and slips past _is_toolrecall_own(). (uv is what
+    # ``make sync`` uses, so this is the normal worktree setup, not an edge case.)
+    own_interpreter = _real(sys.executable)
 
     for py in raw:
         py = _real(py)
-        if not py or py in seen or _is_toolrecall_own(py):
+        if not py or py in seen or py == own_interpreter or _is_toolrecall_own(py):
             continue
         seen.add(py)
         sp = _site_packages_of(py)

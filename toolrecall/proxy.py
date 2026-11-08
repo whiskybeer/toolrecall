@@ -1974,7 +1974,16 @@ class DebugHandler(http.server.BaseHTTPRequestHandler):
                 if not p:
                     result = {"error": "Missing 'path' param"}
                 else:
-                    result = self._client.send({"cmd": "cached_read", "path": p})
+                    # Resolve against THIS server's cwd: the docs advertise a
+                    # relative argument (curl .../read?path=README.md), and the
+                    # daemon would otherwise open it against its OWN cwd and
+                    # serve whatever it happened to have there.
+                    result = self._client.send(
+                        {
+                            "cmd": "cached_read",
+                            "path": os.path.abspath(os.path.expanduser(p)),
+                        }
+                    )
 
             elif path == "/term":
                 c = q.get("cmd", "")

@@ -540,6 +540,35 @@ class TestAbsPath(unittest.TestCase):
         finally:
             os.chdir(original)
 
+    def test_refresh_file_hands_daemon_absolute_path(self):
+        """refresh_file was missed in the first pass — it sent the raw path.
+
+        refresh_file routes to the daemon's cache_refresh_file handler, which
+        opens the path against the DAEMON's cwd; a relative path there meant the
+        caller's working directory was silently ignored.
+        """
+        from unittest.mock import patch as mock_patch
+
+        import toolrecall.client as client_mod
+
+        captured = {}
+
+        class _FakeClient:
+            def send(self, payload):
+                captured.update(payload)
+                return {"cached": False, "content": "x", "path": payload["path"]}
+
+        original = os.getcwd()
+        tmpdir = tempfile.mkdtemp()
+        try:
+            os.chdir(tmpdir)
+            with mock_patch.object(client_mod, "_get_client", return_value=_FakeClient()):
+                client_mod.refresh_file("notes.md")
+        finally:
+            os.chdir(original)
+
+        self.assertEqual(captured.get("path"), os.path.join(tmpdir, "notes.md"), captured)
+
 
 if __name__ == "__main__":
     unittest.main()
