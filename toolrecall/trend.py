@@ -65,6 +65,112 @@ def _day_expr() -> str:
     return "date(cached_at, 'unixepoch')"
 
 
+def savings_trend(days: int | None = 30, usage_csv: str | None = None) -> list[dict]:
+    """Per-day LLM savings from the proxy usage CSV, oldest first.
+
+    A separate source from ``daily_trend`` on purpose. access_log is a
+    rolling 50k-row window that Hermes-style infrastructure polling fills
+    in ~2 days (2026-09-22: 47,931 of 50,000 rows were ~/.hermes config,
+    cron and plugin manifest reads), so it cannot carry history — and its
+    numbers are disk I/O, not tokens withheld from a model. The usage CSV
+    is append-only and already holds 50 days of per-request truth.
+
+    Returns [{date, calls, sent, not_sent, dedup, replay_calls,
+    replay_tokens, cost_usd}, ...] where:
+      sent          prompt tokens the model actually received
+      not_sent      dedup + replay_tokens (what ToolRecall withheld)
+      replay_tokens prompt tokens of calls answered wholly from cache
+      cost_usd      provider-billed dollars (HIT rows excluded: their cost
+                    column is the cached body's replayed price)
+    """
+    import csv as _csv
+    from datetime import datetime, timezone
+
+    path = usage_csv or os.path.join(os.path.expanduser("~"), ".toolrecall", "proxy_usage.csv")
+    if not os.path.isfile(path):
+        return []
+    agg: dict[str, dict] = {}
+    try:
+        with open(path, errors="replace") as f:
+            for row in _csv.DictReader(f):
+                try:
+                    ts = float(row.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    continue
+                target = (row.get("target_path") or "").strip()
+                # Model calls only — /models, /props are metadata traffic and
+                # would dilute a savings series with rows that cost nothing.
+                if "/chat/completions" not in target and "/messages" not in target:
+                    continue
+                day = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+                slot = agg.setdefault(
+                    day,
+                    {
+                        "date": day,
+                        "calls": 0,
+                        "sent": 0,
+                        "dedup": 0,
+                        "replay_calls": 0,
+                        "replay_tokens": 0,
+                        "cost_usd": 0.0,
+                    },
+                )
+                try:
+                    prompt = int(row.get("prompt_tokens") or 0)
+                except (TypeError, ValueError):
+                    prompt = 0
+                slot["calls"] += 1
+                if (row.get("cache_status") or "").strip().upper() == "HIT":
+                    # Answered from cache: never sent, never charged again.
+                    slot["replay_calls"] += 1
+                    slot["replay_tokens"] += prompt
+                    continue
+                slot["sent"] += prompt
+                try:
+                    slot["dedup"] += int(row.get("dedup_tokens") or 0)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    slot["cost_usd"] += float(row.get("cost_usd") or 0.0)
+                except (TypeError, ValueError):
+                    pass
+    except OSError:
+        return []
+    out = []
+    for day in sorted(agg):
+        slot = agg[day]
+        slot["not_sent"] = slot["dedup"] + slot["replay_tokens"]
+        base = slot["sent"] + slot["not_sent"]
+        slot["saved_pct"] = round(100.0 * slot["not_sent"] / base, 1) if base else None
+        out.append(slot)
+    return out[-days:] if days else out
+
+
+def _infra_filter_sql(column: str = "path") -> str:
+    """SQL predicate excluding agent-infrastructure reads from a trend.
+
+    Not a judgement about the cache — these reads are cached correctly and
+    their I/O saving is real (it stays in cache_stats). They are excluded
+    from the *trend* for two measured reasons (2026-09-22):
+
+      1. Volume. Gateway polling of its own config, cron jobs and plugin
+         manifests was 47,931 of the 50,000 access_log rows — it evicted
+         the user's real history in ~2 days, leaving a 2-day trend.
+      2. Meaning. These files never reach a model's context, so their hit
+         rate says nothing about the question a trend is asked: is my
+         agent's work getting cheaper?
+
+    Kept deliberately narrow: only the agent's own plumbing, matched by
+    location, never by file type — a user's YAML under their own project
+    is real work and must stay in.
+    """
+    return (
+        f"({column} NOT LIKE '%/.hermes/%' "
+        f"AND {column} NOT LIKE '%/plugin.yaml' "
+        f"AND {column} NOT LIKE '%/.toolrecall/%')"
+    )
+
+
 def daily_trend(days: int | None = None) -> list[dict]:
     """Per-day file_cache hit/miss stats from access_log, oldest first.
 
@@ -84,6 +190,7 @@ def daily_trend(days: int | None = None) -> list[dict]:
                    SUM(1 - hit)                AS misses
             FROM access_log
             WHERE category = 'file_cache'
+              AND {_infra_filter_sql()}
             GROUP BY d
             ORDER BY d
             """
@@ -121,10 +228,11 @@ def miss_classes(min_reads: int = _MIN_CLASS_READS, top: int = 5) -> list[dict]:
     conn = _connect_readonly()
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT path, COUNT(*) AS reads, SUM(hit) AS hits
             FROM access_log
             WHERE category = 'file_cache' AND path IS NOT NULL AND path != ''
+              AND {_infra_filter_sql()}
             GROUP BY path
             """
         ).fetchall()
@@ -169,8 +277,10 @@ def coverage() -> dict:
     conn = _connect_readonly()
     try:
         row = conn.execute(
-            "SELECT MIN(cached_at), MAX(cached_at), COUNT(*) FROM access_log"
+            f"SELECT MIN(cached_at), MAX(cached_at), COUNT(*) FROM access_log "
+            f"WHERE {_infra_filter_sql()}"
         ).fetchone()
+        total = conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0]
     finally:
         conn.close()
     from datetime import datetime, timezone
@@ -182,6 +292,9 @@ def coverage() -> dict:
     return {
         "window_entries": int(n or 0),
         "window_max": _ACCESS_LOG_WINDOW,
+        # How much of the rolling window is agent plumbing rather than work.
+        # High values explain a short trend: infra polling evicts history.
+        "infra_entries": max(0, int(total or 0) - int(n or 0)),
         "oldest": fmt(lo),
         "newest": fmt(hi),
     }
@@ -192,11 +305,44 @@ def trend_report(days: int | None = 7, as_json: bool = False) -> str:
     trend = daily_trend(days)
     classes = miss_classes()
     cov = coverage()
+    savings = savings_trend(days if days else 30)
     if as_json:
-        return json.dumps({"trend": trend, "miss_classes": classes, "coverage": cov}, indent=2)
+        return json.dumps(
+            {
+                "savings_trend": savings,
+                "trend": trend,
+                "miss_classes": classes,
+                "coverage": cov,
+            },
+            indent=2,
+        )
 
     lines = []
-    lines.append("  ToolRecall Hit-Rate Trend (daily, from access_log)")
+    # ── LLM savings (usage CSV: append-only, carries real history) ──
+    lines.append("  Tokens NOT sent to the model (daily, from the usage log)")
+    lines.append("  " + "=" * 54)
+    if savings:
+        lines.append("  date          calls          sent      not sent   saved     cost")
+        lines.append("  " + "-" * 66)
+        for s in savings:
+            pct = f"{s['saved_pct']:.1f}%" if s["saved_pct"] is not None else "    -"
+            lines.append(
+                f"  {s['date']}  {s['calls']:>7,}  {s['sent']:>12,}  {s['not_sent']:>12,}"
+                f"  {pct:>6}  ${s['cost_usd']:>7.2f}"
+            )
+        _ns = sum(s["not_sent"] for s in savings)
+        _rc = sum(s["replay_calls"] for s in savings)
+        lines.append("")
+        lines.append(
+            f"  {_ns:,} tok withheld over {len(savings)} days"
+            f" — {_rc:,} calls answered from cache, the rest repeated text removed."
+        )
+    else:
+        lines.append("  No model calls logged yet — this fills in as your agent works.")
+    lines.append("")
+
+    # ── Disk I/O hit rate (access_log: rolling window, short history) ──
+    lines.append("  Disk reads served from cache (I/O, not tokens)")
     lines.append("  " + "=" * 54)
     if not trend:
         lines.append("  No access_log data yet — the trend fills in as reads happen.")
@@ -206,6 +352,11 @@ def trend_report(days: int | None = 7, as_json: bool = False) -> str:
         f"  coverage: {cov['oldest']} → {cov['newest']} "
         f"({cov['window_entries']}/{cov['window_max']} window entries)"
     )
+    if cov.get("infra_entries"):
+        lines.append(
+            f"  ({cov['infra_entries']:,} agent-infrastructure reads excluded —"
+            f" config/cron/plugin polling, never sent to a model)"
+        )
     lines.append("")
     lines.append("  date        reads   hits  misses  hit%")
     lines.append("  " + "-" * 42)

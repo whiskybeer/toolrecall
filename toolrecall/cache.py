@@ -2723,7 +2723,11 @@ def cached_api_check(request_hash: str) -> dict:
                         "WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    _record("api_cache", True)
+                    # tokens_saved was computed but never passed (2026-09-21):
+                    # api_cache showed 122 hits with tokens_saved=0, hiding a
+                    # whole-call saving — the strongest one there is, since the
+                    # model is not called at all.
+                    _record("api_cache", True, tokens_saved=tokens_saved)
                     return {
                         "cached": True,
                         "status": row["response_status"],
@@ -2739,7 +2743,7 @@ def cached_api_check(request_hash: str) -> dict:
                         "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    _record("api_cache", True)
+                    _record("api_cache", True, tokens_saved=tokens_saved)
                     return {
                         "cached": True,
                         "status": row["response_status"],

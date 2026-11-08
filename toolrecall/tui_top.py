@@ -277,6 +277,7 @@ def money_today(usage_csv: str | None = None) -> dict | None:
     cache_discount = 0.0
     cost = 0.0
     cost_rows = 0
+    replay_tokens = 0
     day_start = (
         datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     )
@@ -291,10 +292,20 @@ def money_today(usage_csv: str | None = None) -> dict | None:
                 if ts < day_start:
                     continue
                 requests += 1
-                prompt += p
-                completion += int(row.get("completion_tokens") or 0)
+                # A HIT is a call ToolRecall answered from cache — the model
+                # never saw it. Its prompt tokens are NOT sent; counting them
+                # in `prompt` put ToolRecall's single largest saving on the
+                # cost side of the ledger (2026-09-21: 7,289 lifetime HITs,
+                # 39.1M tokens, all mis-signed). Split before summing.
                 if (row.get("cache_status") or "").strip().upper() == "HIT":
                     replays += 1
+                    replay_tokens += p
+                    # Cost on a HIT row is the cached body's ORIGINAL price
+                    # replayed, not money charged again — the provider was
+                    # never called. Skipping it keeps `cost_usd` billed-truth.
+                    continue
+                prompt += p
+                completion += int(row.get("completion_tokens") or 0)
                 if p > 0:
                     sizes.append(p)
                 try:
@@ -330,6 +341,9 @@ def money_today(usage_csv: str | None = None) -> dict | None:
         "replays": replays,
         "median": median,
         "dedup_tokens": dedup_tokens,
+        # Prompt tokens of calls answered entirely from cache — the model was
+        # never asked, so these are NOT sent (see the HIT split above).
+        "replay_tokens": replay_tokens,
         # Provider prefix-cache reads (cache_read_tokens column; v4 rows carry
         # the OpenAI prompt_tokens_details.cached_tokens nesting) and the
         # provider-reported cache discount in dollars (v4; 0 = not reported —

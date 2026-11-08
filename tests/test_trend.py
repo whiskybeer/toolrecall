@@ -119,15 +119,17 @@ class TestDailyTrend(_TrendEnv):
 class TestMissClasses(_TrendEnv):
     def test_worst_class_first_with_share(self):
         base = self._day(0.05)
-        # session transcripts: mostly misses, big share
+        # session transcripts: mostly misses, big share. NOT under ~/.hermes —
+        # agent plumbing is excluded from the trend by design (it polls its own
+        # config and would evict the user's history from the 50k window).
         for i in range(120):
-            self._seed(base, f"/home/u/.hermes/webui/sessions/s{i}.json", hits=1, misses=4)
+            self._seed(base, f"/home/u/app/sessions/s{i}.json", hits=1, misses=4)
         # stable docs: mostly hits
         for i in range(150):
             self._seed(base, f"/home/u/docs/doc{i}.md", hits=9, misses=1)
         classes = trend_mod.miss_classes(min_reads=100)
         assert classes, "expected at least one class above min_reads"
-        assert classes[0]["path_class"].endswith("webui")
+        assert classes[0]["path_class"].endswith("sessions")
         assert classes[0]["hit_pct"] == 20.0
         doc_classes = [c for c in classes if c["path_class"].endswith("docs")]
         assert doc_classes and doc_classes[0]["hit_pct"] == 90.0
@@ -153,7 +155,7 @@ class TestReport(_TrendEnv):
     def test_human_report_contains_trend_and_hint(self):
         base = self._day(0.05)
         for i in range(120):
-            self._seed(base, f"/home/u/.hermes/webui/sessions/s{i}.json", hits=1, misses=3)
+            self._seed(base, f"/home/u/app/sessions/s{i}.json", hits=1, misses=3)
         buf = io.StringIO()
         with redirect_stdout(buf):
             from toolrecall.trend import trend_report
@@ -161,7 +163,9 @@ class TestReport(_TrendEnv):
             out = trend_report(days=7)
         buf.write(out)
         text = out
-        assert "Hit-Rate Trend" in text
+        # Savings lead the report; the I/O hit-rate table follows.
+        assert "Tokens NOT sent to the model" in text
+        assert "Disk reads served from cache" in text
         assert "hit%" in text
         assert "file_ttls" in text, "the actionable remedy hint must be present"
 
@@ -171,7 +175,7 @@ class TestReport(_TrendEnv):
         from toolrecall.trend import trend_report
 
         data = json.loads(trend_report(days=7, as_json=True))
-        assert {"trend", "miss_classes", "coverage"} <= set(data)
+        assert {"savings_trend", "trend", "miss_classes", "coverage"} <= set(data)
         assert data["trend"][0]["hits"] == 5
         assert data["coverage"]["window_entries"] >= 7
 
@@ -189,7 +193,7 @@ class TestCliWiring(_TrendEnv):
         buf = io.StringIO()
         with redirect_stdout(buf), mock.patch.object(sys, "argv", ["toolrecall", "trend"]):
             cli_mod.cmd_trend()
-        assert "Hit-Rate Trend" in buf.getvalue()
+        assert "Tokens NOT sent to the model" in buf.getvalue()
 
     def test_cli_trend_json_flag(self):
         base = self._day(0.05)
