@@ -33,7 +33,17 @@ class TestGCPurgesRecall(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.mkdtemp(prefix="tr_gc_recall_")
-        os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(cls._tmp, "gc.db")
+        cls._db_path = os.path.join(cls._tmp, "gc.db")
+        os.environ["TOOLRECALL_CACHE_DB"] = cls._db_path  # standalone-mode pin
+
+    def setUp(self):
+        # conftest's autouse fixture force-pins a FRESH per-test DB AFTER
+        # setUpClass ran (8c4db91); re-assert the class pin so the
+        # one-DB-per-class design — and _init()'s schema — live in the SAME
+        # file the tests query. Standalone runs skip conftest and already
+        # hold the class path. Singleton must be closed so it reopens
+        # against the class path; _init() is idempotent.
+        os.environ["TOOLRECALL_CACHE_DB"] = self._db_path
         import toolrecall._db as _db
 
         with _db._db_lock:
@@ -46,8 +56,8 @@ class TestGCPurgesRecall(unittest.TestCase):
 
         _init()
 
-    @classmethod
-    def tearDownClass(cls):
+    def tearDown(self):
+        # Close the singleton so the next test's env pin takes effect.
         import toolrecall._db as _db
 
         with _db._db_lock:
@@ -56,6 +66,9 @@ class TestGCPurgesRecall(unittest.TestCase):
             _db._db_real = None
             _db._db_path_cached = None
             _db._cached_config = None
+
+    @classmethod
+    def tearDownClass(cls):
         os.environ.pop("TOOLRECALL_CACHE_DB", None)
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
