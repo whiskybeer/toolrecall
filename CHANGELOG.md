@@ -2,6 +2,31 @@
 
 ## [Unreleased] — 2026-09-26
 
+### Added
+- **Gateway surface control: `gateway_exclude` / `gateway_exclude_tools`.**
+  The gateway made write-capable tools first-class — `sqlite-browser` (pointed
+  at the live cache DB) advertised `write_query`, `create_table` and
+  `append_insight` to every session (2026-09-28). Both keys now hide servers or
+  tool names from `tools/list` (case-insensitive). Documented as surface
+  control, not enforcement: a hidden name stays callable via `mcp_call`, so
+  blocking still belongs to `[security] tool_access_control`.
+- **Stale catalog entries are pruned.** A server removed from `servers` no
+  longer stays advertised: the catalog file is only rewritten when a server
+  starts, so the advertised view now filters to currently configured servers.
+- **MCP replays are visible in the daily series.** `mcp_cache` records write a
+  synthetic `mcp:<server>/<tool>` path into `access_log`, and
+  `trend.daily_trend(days, category)` is per-category, so the TUI trend view
+  shows an `MCP server replays` section. Kept separate from the file_cache
+  series on purpose: an MCP replay is I/O saving only (the body still reaches
+  the model), so summing the two would overstate cache value.
+
+### Fixed
+- **`test_ast_performance` is no longer load-flaky.** The single 1000-call mean
+  measured 1.18ms inside a full-suite run while the same check costs 0.08ms
+  standalone (2026-09-28, 14x swing from the suite's own interpreter state) and
+  failed unrelated merges. It now measures best-of-5 batches with GC disabled —
+  a real regression raises every batch.
+
 ### Changed
 - **Savings counters split into two unmistakable names (`cache_stats`).**
   `cache_stats.tokens_saved` had drifted into meaning "IO offload" while

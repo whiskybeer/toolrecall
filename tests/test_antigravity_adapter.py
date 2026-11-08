@@ -444,6 +444,34 @@ class TestAntigravitySDKBinding:
         assert search_web in cfg.tools
 
 
+def test_mcp_cache_hit_logs_synthetic_path(daemon_up):
+    """A cached MCP replay must appear in access_log as `mcp:<server>/<tool>`.
+
+    Why: the daily series reads access_log by path and MCP has no path, so MCP
+    traffic stayed invisible in the trend (0 rows on 2026-09-28) while
+    cache_stats counted it. The synthetic path makes it visible without
+    pretending it is a disk read — the body still reaches the model, so the row
+    counts as I/O saving only.
+    """
+    import toolrecall.cache as cache_mod
+    from toolrecall.cache import cached_mcp_check
+
+    @antigravity.cached_tool(ttl=300)
+    def probe(q: str) -> str:
+        return f"r:{q}"
+
+    probe("synthetic-path")
+    hit = cached_mcp_check(antigravity.ADAPTER_SERVER, "probe", {"q": "synthetic-path"}, ttl=300)
+    assert hit.get("cached") is True
+
+    with cache_mod._db() as conn:
+        rows = conn.execute(
+            "SELECT category, path, hit FROM access_log WHERE category = 'mcp_cache'"
+        ).fetchall()
+    expected = ("mcp_cache", f"mcp:{antigravity.ADAPTER_SERVER}/probe", 1)
+    assert expected in [tuple(r) for r in rows], f"synthetic mcp path missing: {rows}"
+
+
 def real_runner_execute(runner, tool_name, **kwargs):
     import asyncio
 

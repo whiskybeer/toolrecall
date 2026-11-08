@@ -1021,7 +1021,17 @@ class MCPMultiplexer:
                 )
                 continue
             mcp_catalog.store(self._catalog_path, self._configs[name_lower]["name"], tools)
-        return mcp_catalog.load(self._catalog_path)
+        return mcp_catalog.visible(
+            mcp_catalog.load(self._catalog_path),
+            exclude_servers=self.cfg.mcp_multiplex_gateway_exclude,
+            exclude_tools=self.cfg.mcp_multiplex_gateway_exclude_tools,
+            # A server dropped from the config must stop being advertised: the
+            # catalog file is only rewritten when a server STARTS, so a removed
+            # server's entry would linger forever and offer tools that cannot
+            # route anywhere (e.g. `hermes-docs` after the switch to the
+            # in-repo `docs` server).
+            only_servers={e["name"] for e in self._configs.values()},
+        )
 
     # ─── Idle Timeout (Reaper) ────────────────────────
 

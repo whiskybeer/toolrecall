@@ -55,13 +55,15 @@ class _TrendEnv:
         self._env_patcher.stop()
         self._tmp.cleanup()
 
-    def _seed(self, day_epoch: float, path: str, hits: int, misses: int):
+    def _seed(
+        self, day_epoch: float, path: str, hits: int, misses: int, category: str = "file_cache"
+    ):
         """Write access_log rows the way cache._record does."""
         import sqlite3
 
         rows = []
         for hit in [1] * hits + [0] * misses:
-            rows.append(("file_cache", path, hit, 0, day_epoch))
+            rows.append((category, path, hit, 0, day_epoch))
         conn = sqlite3.connect(self._db_path)
         conn.executemany(
             "INSERT INTO access_log (category, path, hit, tokens, cached_at)"
@@ -73,6 +75,40 @@ class _TrendEnv:
 
     def _day(self, offset_days: float) -> float:
         return time.time() - offset_days * 86400
+
+
+class TestDailyTrendCategories(_TrendEnv):
+    """The trend is per-category: file reads and MCP replays are never summed.
+
+    MCP replays (synthetic `mcp:<server>/<tool>` paths) are I/O saving only —
+    the response body still reaches the model — so mixing them into the
+    file_cache series would inflate a number a user reads as real cache value.
+    """
+
+    def test_mcp_series_is_separate_from_file_series(self):
+        d = self._day(0.1)
+        self._seed(d, "/tmp/a.txt", hits=3, misses=1)
+        self._seed(d, "mcp:hermes-docs/search_docs", hits=5, misses=0, category="mcp_cache")
+        file_trend = trend_mod.daily_trend(7)
+        mcp_trend = trend_mod.daily_trend(7, "mcp_cache")
+        assert sum(t["reads"] for t in file_trend) == 4
+        assert sum(t["reads"] for t in mcp_trend) == 5
+        assert sum(t["hits"] for t in mcp_trend) == 5
+        assert sum(t["hits"] for t in file_trend) == 3
+
+    def test_default_category_excludes_mcp_rows(self):
+        d = self._day(0.1)
+        self._seed(d, "mcp:fetch/fetch_url", hits=2, misses=0, category="mcp_cache")
+        assert trend_mod.daily_trend(7) == []
+
+    def test_synthetic_mcp_path_survives_the_infra_filter(self):
+        """`mcp:<server>/<tool>` must not be dropped as infrastructure noise."""
+        d = self._day(0.1)
+        self._seed(d, "mcp:sqlite-browser/read_query", hits=1, misses=1, category="mcp_cache")
+        rows = trend_mod.daily_trend(7, "mcp_cache")
+        assert len(rows) == 1
+        assert rows[0]["reads"] == 2
+        assert rows[0]["hit_pct"] == 50.0
 
 
 class TestDailyTrend(_TrendEnv):

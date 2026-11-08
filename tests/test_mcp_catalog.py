@@ -144,6 +144,8 @@ class _FakeMultiplexCfg:
         )
         self.mcp_multiplex_enabled = multiplex
         self.mcp_multiplex_gateway = gateway
+        self.mcp_multiplex_gateway_exclude = []
+        self.mcp_multiplex_gateway_exclude_tools = []
 
 
 class TestMultiplexerCatalog(unittest.TestCase):
@@ -272,6 +274,130 @@ class TestGatewayWarmUp(unittest.TestCase):
         _warm_gateway_catalog(_Boom(), _Log())
         self.assertTrue(logged)
         self.assertIn("kaboom", logged[0])
+
+
+class TestGatewayExclusions(unittest.TestCase):
+    """gateway_exclude / gateway_exclude_tools — surface control, not security.
+
+    The gateway made write-capable tools first-class: `sqlite-browser` (pointed
+    at the live cache DB) advertised write_query/create_table/append_insight to
+    every session (2026-09-28). These tests pin the hiding behaviour; the docs
+    and the function docstring state plainly that a hidden name is still
+    callable, so nobody mistakes this for an enforcement boundary.
+    """
+
+    def _catalog(self) -> dict:
+        return {
+            "fetch": {"tools": [{"name": "fetch_url"}, {"name": "fetch_head"}]},
+            "sqlite-browser": {
+                "tools": [
+                    {"name": "read_query"},
+                    {"name": "write_query"},
+                    {"name": "create_table"},
+                ]
+            },
+        }
+
+    def test_no_exclusions_returns_the_catalog_untouched(self):
+        catalog = self._catalog()
+        self.assertIs(cat.visible(catalog), catalog)
+
+    def test_server_exclusion_drops_the_whole_server(self):
+        out = cat.visible(self._catalog(), exclude_servers=["sqlite-browser"])
+        self.assertNotIn("sqlite-browser", out)
+        self.assertIn("fetch", out)
+
+    def test_tool_exclusion_hides_that_name_everywhere(self):
+        out = cat.visible(self._catalog(), exclude_tools=["write_query", "create_table"])
+        names = [t["name"] for t in out["sqlite-browser"]["tools"]]
+        self.assertEqual(names, ["read_query"])
+        self.assertEqual(len(out["fetch"]["tools"]), 2)
+
+    def test_exclusions_are_case_insensitive(self):
+        out = cat.visible(
+            self._catalog(),
+            exclude_servers=["SQLite-Browser"],
+            exclude_tools=["WRITE_QUERY", "Create_Table"],
+        )
+        self.assertNotIn("sqlite-browser", out)
+
+    def test_unknown_names_are_a_noop(self):
+        out = cat.visible(self._catalog(), exclude_servers=["nope"], exclude_tools=["nope"])
+        self.assertEqual(sorted(out), ["fetch", "sqlite-browser"])
+        self.assertEqual(len(out["sqlite-browser"]["tools"]), 3)
+
+    def test_entry_metadata_survives_filtering(self):
+        catalog = {"fetch": {"tools": [{"name": "fetch_url"}], "updated_at": 123.0}}
+        out = cat.visible(catalog, exclude_tools=["nothing"])
+        self.assertEqual(out["fetch"]["updated_at"], 123.0)
+
+    def test_multiplexer_catalog_applies_configured_exclusions(self):
+        """Integration: MCPMultiplexer.catalog() must honour the cfg lists.
+
+        The server is explicitly configured here on purpose: an unconfigured
+        server is dropped by the stale-entry filter, which would let this test
+        pass for the wrong reason.
+        """
+        from toolrecall.daemon import MCPMultiplexer
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = _FakeMultiplexCfg(
+                os.path.join(td, "cache.db"),
+                servers_config={"sqlite-browser": {"command": "python3", "args": [], "env": {}}},
+                allow=["sqlite-browser"],
+            )
+            cfg.mcp_multiplex_gateway_exclude_tools = ["write_query"]
+            mux = MCPMultiplexer(cfg)
+            cat.store(
+                cat.catalog_path(cfg),
+                "sqlite-browser",
+                [{"name": "read_query"}, {"name": "write_query"}],
+            )
+            out = mux.catalog()
+            names = [t["name"] for t in out["sqlite-browser"]["tools"]]
+            self.assertEqual(names, ["read_query"])
+
+    def test_multiplexer_catalog_honours_server_exclusion(self):
+        from toolrecall.daemon import MCPMultiplexer
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = _FakeMultiplexCfg(
+                os.path.join(td, "cache.db"),
+                servers_config={"sqlite-browser": {"command": "python3", "args": [], "env": {}}},
+                allow=["sqlite-browser"],
+            )
+            cfg.mcp_multiplex_gateway_exclude = ["sqlite-browser"]
+            mux = MCPMultiplexer(cfg)
+            cat.store(cat.catalog_path(cfg), "sqlite-browser", [{"name": "read_query"}])
+            self.assertNotIn("sqlite-browser", mux.catalog())
+
+    def test_only_servers_drops_unconfigured_entries(self):
+        """A server removed from the config must stop being advertised.
+
+        The catalog file is only rewritten when a server STARTS — so a stale
+        entry (e.g. `hermes-docs` after switching to the in-repo `docs` server)
+        would otherwise be advertised forever, with no route behind it.
+        """
+        out = cat.visible(self._catalog(), only_servers=["fetch"])
+        self.assertEqual(sorted(out), ["fetch"])
+        self.assertEqual(len(out["fetch"]["tools"]), 2)
+
+    def test_only_servers_is_case_insensitive(self):
+        out = cat.visible(self._catalog(), only_servers=["SQLITE-BROWSER"])
+        self.assertEqual(sorted(out), ["sqlite-browser"])
+
+    def test_multiplexer_catalog_drops_servers_no_longer_configured(self):
+        from toolrecall.daemon import MCPMultiplexer
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = _FakeMultiplexCfg(os.path.join(td, "cache.db"))
+            mux = MCPMultiplexer(cfg)
+            path = cat.catalog_path(cfg)
+            cat.store(path, "hermes-docs", [{"name": "search_docs"}])
+            cat.store(path, "hermes-docs-stale", [{"name": "old_tool"}])
+            out = mux.catalog()
+            self.assertIn("hermes-docs", out)
+            self.assertNotIn("hermes-docs-stale", out)
 
 
 if __name__ == "__main__":

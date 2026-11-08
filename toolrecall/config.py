@@ -49,6 +49,11 @@ ENV_MAP = {
     "TOOLRECALL_MCP_EMIT_CONTEXT_HINTS": ("mcp", "emit_context_hints"),
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_GATEWAY": ("mcp_multiplex", "gateway"),
+    "TOOLRECALL_MCP_MULTIPLEX_GATEWAY_EXCLUDE": ("mcp_multiplex", "gateway_exclude"),
+    "TOOLRECALL_MCP_MULTIPLEX_GATEWAY_EXCLUDE_TOOLS": (
+        "mcp_multiplex",
+        "gateway_exclude_tools",
+    ),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
     "TOOLRECALL_MCP_MULTIPLEX_FETCH_REVALIDATE": ("mcp_multiplex", "fetch_revalidate"),
@@ -340,6 +345,8 @@ class Config:
             {
                 "enabled",
                 "gateway",
+                "gateway_exclude",
+                "gateway_exclude_tools",
                 "servers",
                 "servers_config",
                 "transparent_cache",
@@ -1055,6 +1062,26 @@ class Config:
         then take two indirections; nothing does that spontaneously.
         """
         return bool(self.get("mcp_multiplex", "gateway", default=False))
+
+    @property
+    def mcp_multiplex_gateway_exclude(self) -> list:
+        """Server names the gateway must NOT advertise (default: none).
+
+        Surface control, not enforcement: a hidden server's tools stay callable
+        through ``mcp_call`` (and by an agent that already knows the name).
+        Use ``security.tool_access_control`` when the goal is to BLOCK.
+        """
+        return self.get("mcp_multiplex", "gateway_exclude", default=[])
+
+    @property
+    def mcp_multiplex_gateway_exclude_tools(self) -> list:
+        """Tool names the gateway must NOT advertise, across all servers.
+
+        Matched case-insensitively, so ``["write_query", "create_table"]``
+        hides those names everywhere while the read tools stay visible — the
+        usual intent when a server points at a live database.
+        """
+        return self.get("mcp_multiplex", "gateway_exclude_tools", default=[])
 
     @property
     def mcp_multiplex_fetch_revalidate(self) -> bool:

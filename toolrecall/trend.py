@@ -171,11 +171,16 @@ def _infra_filter_sql(column: str = "path") -> str:
     )
 
 
-def daily_trend(days: int | None = None) -> list[dict]:
-    """Per-day file_cache hit/miss stats from access_log, oldest first.
+def daily_trend(days: int | None = None, category: str = "file_cache") -> list[dict]:
+    """Per-day cache hit/miss stats from access_log, oldest first.
 
     Args:
         days: Limit to the most recent N days (None = all in window).
+        category: access_log category to aggregate. Default ``file_cache``;
+            ``mcp_cache`` is the other series worth showing (MCP replays write a
+            synthetic ``mcp:<server>/<tool>`` path — see cache._record). Kept as
+            a parameter rather than a union so the two series are never summed:
+            a file read and an MCP replay are different kinds of saving.
 
     Returns:
         List of dicts: {date, reads, hits, misses, hit_pct}.
@@ -189,11 +194,12 @@ def daily_trend(days: int | None = None) -> list[dict]:
                    SUM(hit)                    AS hits,
                    SUM(1 - hit)                AS misses
             FROM access_log
-            WHERE category = 'file_cache'
+            WHERE category = ?
               AND {_infra_filter_sql()}
             GROUP BY d
             ORDER BY d
-            """
+            """,
+            (category,),
         ).fetchall()
     finally:
         conn.close()

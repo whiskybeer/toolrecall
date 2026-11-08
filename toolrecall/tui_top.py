@@ -915,6 +915,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
 
             state["trend"] = {
                 "days": daily_trend(7),
+                "mcp": daily_trend(7, "mcp_cache"),
                 "classes": miss_classes(min_reads=10),
                 "coverage": coverage(),
                 "savings": savings_trend(7),
@@ -1339,6 +1340,24 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                         if (d["hit_pct"] or 0) >= 70
                         else (A_MISS if (d["hit_pct"] or 0) < 50 else 0),
                     )
+                # ── MCP replays (mcp_cache) ────────────────────────────────
+                # Its own section on purpose: these replay MCP server responses
+                # (synthetic mcp:<server>/<tool> paths), they are not disk
+                # reads, and their saving is I/O only — the body still reaches
+                # the model, so folding them into the file table above would
+                # claim a token saving that does not exist.
+                mcp_days = t.get("mcp") or []
+                if mcp_days:
+                    y = put(y + 1, "", 0)  # section gap
+                    y = put(y, "  MCP server replays (I/O, not tokens):", A_BOLD)
+                    y = put(y, "  date       replays   hits   hit%", A_DIM)
+                    for d in mcp_days:
+                        hp = "-" if d["hit_pct"] is None else "%5.1f" % d["hit_pct"]
+                        y = put(
+                            y,
+                            "  %s  %7d  %6d  %s" % (d["date"], d["reads"], d["hits"], hp),
+                            A_HIT if (d["hit_pct"] or 0) >= 70 else 0,
+                        )
                 classes = t["classes"]
                 if classes:
                     y = put(y + 1, "", 0)  # section gap

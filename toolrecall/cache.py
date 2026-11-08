@@ -2013,7 +2013,11 @@ def cached_mcp_check(
 
     # ttl=0 means bypass cache
     if ttl is not None and ttl <= 0:
-        _record("mcp_cache", hit=False)
+        # Synthetic path: MCP has no filesystem path, but the daily series reads
+        # access_log by path — without one, MCP traffic stayed invisible there
+        # (0 rows) while cache_stats counted it. `mcp:<server>/<tool>` is
+        # stable, greppable, and passes the infra filter (no /.hermes/).
+        _record("mcp_cache", hit=False, path=f"mcp:{server}/{tool}")
         args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
         request_str = f"{server}://{tool}?{args_json}"
         request_hash = _hash(request_str)
@@ -2041,7 +2045,7 @@ def cached_mcp_check(
                 if not row["etag"] and _require_validator():
                     # loud refusal: this row can never be revalidated, so
                     # serving it would be a clock-based guess about freshness
-                    _record("mcp_cache", hit=False)
+                    _record("mcp_cache", hit=False, path=f"mcp:{server}/{tool}")
                     return {
                         "cached": False,
                         "key": request_hash,
@@ -2068,7 +2072,12 @@ def cached_mcp_check(
                     # same class as the api_cache fix. A cached MCP replay
                     # skips the subprocess round-trip entirely: the response
                     # body is what the server would have produced.
-                    _record("mcp_cache", hit=True, io_tokens_saved=io_tokens_saved)
+                    _record(
+                        "mcp_cache",
+                        hit=True,
+                        io_tokens_saved=io_tokens_saved,
+                        path=f"mcp:{server}/{tool}",
+                    )
                     return {
                         "cached": True,
                         "data": row["data"],
@@ -2082,7 +2091,12 @@ def cached_mcp_check(
                     # SWR: serve stale; revalidation is the CALLER's job
                     # (check has no fetch capability — cached_mcp() handles
                     # it via fetch_fn; daemon-routed callers re-invoke).
-                    _record("mcp_cache", hit=True, io_tokens_saved=io_tokens_saved)
+                    _record(
+                        "mcp_cache",
+                        hit=True,
+                        io_tokens_saved=io_tokens_saved,
+                        path=f"mcp:{server}/{tool}",
+                    )
                     return {
                         "cached": True,
                         "data": row["data"],

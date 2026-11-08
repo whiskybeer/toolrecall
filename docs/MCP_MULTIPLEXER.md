@@ -96,14 +96,35 @@ cache-provenance marker apply unchanged.
   advertised yet (its server has not started) still runs — it is simply not
   listed until that server has started once.
 - **Default `false`**: enabling it changes every client's tool surface.
-- Works together with `toolrecall mcp --multiplexer-only`, where the gateway
+- **Works together with `toolrecall mcp --multiplexer-only`**, where the gateway
   is the *only* way to reach a multiplexed server.
+- **Hiding tools: `gateway_exclude` / `gateway_exclude_tools`.** The gateway
+  makes write-capable tools first-class — a `sqlite-browser` server pointed at
+  the live cache DB advertised `write_query`, `create_table` and
+  `append_insight` to every session (measured 2026-09-28). Both keys control
+  what is advertised:
+  ```toml
+  [mcp_multiplex]
+  gateway_exclude = ["sqlite-browser"]                     # hide whole servers
+  gateway_exclude_tools = ["write_query", "create_table"]  # hide names everywhere
+  ```
+  This is **surface control, not enforcement**: a hidden name is still callable
+  by an agent that knows it, and `mcp_call` reaches any allowed server/tool. Use
+  `[security] tool_access_control` + `dangerous_tool_keywords` when the goal is
+  to *block*.
+  Prefer the server-level exclude when a tool merely *looks* read-only: the
+  community `mcp-server-sqlite` `read_query` opens the DB writable and can
+  execute a write statement.
+- **Stale entries are pruned.** The catalog file is only rewritten when a
+  server *starts*, so a server removed from `servers` would otherwise be
+  advertised forever with no route behind it. Entries for servers that are no
+  longer configured are dropped from the advertised view.
 
 ```toml
 [mcp_multiplex]
 enabled = true
 gateway = true              # expose mcp__<server>__<tool> in tools/list
-servers = ["time", "fetch", "hermes-docs"]
+servers = ["time", "fetch", "docs"]
 ```
 
 ## Configuration

@@ -107,6 +107,53 @@ def store(path: str, server: str, tools: list) -> None:
         log.debug("mcp catalog write failed (%s): %s", path, e)
 
 
+def visible(
+    catalog: dict,
+    exclude_servers=(),
+    exclude_tools=(),
+    only_servers=None,
+) -> dict:
+    """Catalog with the configured gateway exclusions applied.
+
+    ``gateway_exclude`` hides whole servers; ``gateway_exclude_tools`` hides
+    tool names across all servers (case-insensitive); ``only_servers`` drops
+    entries for servers that are no longer configured. All three control what
+    the gateway ADVERTISES — routing by name is unaffected, so this is a
+    surface control, not an enforcement boundary. Enforcement belongs to the
+    security gate (``security.tool_access_control`` + dangerous-tool keywords),
+    and saying so matters: a hidden name can still be called by an agent that
+    already knows it, or reached through ``mcp_call``.
+
+    Why it exists: the gateway made write-capable tools first-class. Measured
+    2026-09-28: ``sqlite-browser`` (pointed at the live cache DB) advertised
+    ``write_query``, ``create_table`` and ``append_insight`` to every session —
+    a surface a user wants hidden while keeping the read tools.
+
+    ``only_servers`` exists because the catalog file is only rewritten when a
+    server STARTS: without it, a server removed from the config would keep being
+    advertised forever, offering tools whose calls can no longer route anywhere.
+    """
+    servers = {str(s).lower() for s in (exclude_servers or ())}
+    tools = {str(t).lower() for t in (exclude_tools or ())}
+    allowed = None if only_servers is None else {str(s).lower() for s in only_servers}
+    if not servers and not tools and allowed is None:
+        return catalog
+    out: dict = {}
+    for server, entry in catalog.items():
+        key = str(server).lower()
+        if key in servers:
+            continue
+        if allowed is not None and key not in allowed:
+            continue
+        kept = [
+            t
+            for t in ((entry or {}).get("tools") or [])
+            if str(t.get("name", "")).lower() not in tools
+        ]
+        out[server] = {**(entry or {}), "tools": kept}
+    return out
+
+
 def defs(catalog: dict) -> list[dict]:
     """Build MCP tool definitions from the catalog.
 
