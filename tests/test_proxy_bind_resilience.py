@@ -25,12 +25,13 @@ import toolrecall.healthcheck as hc  # noqa: E402
 import toolrecall.proxy as proxy_mod  # noqa: E402
 
 
-def _hold_port() -> tuple[socket.socket, int]:
+def _hold_port(listen: bool = True) -> tuple[socket.socket, int]:
     """Occupy an ephemeral port and return (socket, port)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("127.0.0.1", 0))
-    s.listen(1)
+    if listen:
+        s.listen(1)
     return s, s.getsockname()[1]
 
 
@@ -105,7 +106,7 @@ class TestBindRetry(unittest.TestCase):
         # thread, release after a beat — the retry must win. Uses its own
         # (longer) retry budget than setUp's fast default, since the holder is
         # only released after 0.1s.
-        holder, port = _hold_port()
+        holder, port = _hold_port(listen=False)
         result = {}
 
         def _bind():
@@ -140,7 +141,7 @@ class TestHealthcheckProxySignal(unittest.TestCase):
         self.assertFalse(hc.proxy_listening(port_free, timeout=0.5))
 
     def test_proxy_listening_true_when_port_bound(self):
-        holder, port = _hold_port()
+        holder, port = _hold_port(listen=True)
         try:
             self.assertTrue(hc.proxy_listening(port, timeout=0.5))
         finally:
