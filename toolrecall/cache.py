@@ -2214,11 +2214,13 @@ def _heal_poisoned_mcp_row(request_hash: str) -> None:
                        WHERE category = 'mcp_cache' AND hits > 0""",
                     (time.time(),),
                 )
-    except Exception as e:
+    except sqlite3.OperationalError as e:
         # No table (fresh DB) is a legitimate state — nothing to heal.
         # A real failure (locked/corrupt) still deserves its warning.
         if "no such table" not in str(e):
             warnings.warn(f"ToolRecall: mcp_cache poison heal failed: {e}")
+    except Exception as e:  # pragma: no cover — heal is best-effort
+        warnings.warn(f"ToolRecall: mcp_cache poison clean failed: {e}")
 
 
 def invalidate_mcp_url(server: str, tool: str, url_substring: str) -> int:

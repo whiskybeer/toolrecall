@@ -84,11 +84,6 @@ FROZEN_COUNTS = {
     # 5 as of 2026-09-17 (baseline sync): +1 in the extra_hosts loader
     # (3fc2ca0) — config unavailable (tests/embedding) must degrade to the
     # hardcoded list; the fallback is the documented behavior.
-    # 2 as of 2026-09-24 (baseline sync): e26e4cd/d904cc7 (trend view) —
-    # per-row CSV field guards (timestamp/prompt/dedup/cost) tolerate a
-    # malformed usage row by skipping it; a trend must never die on one
-    # bad CSV line, and OSError leaves the view empty rather than crash.
-    "trend.py": 2,
     "proxy.py": 5,
     "shim.py": 4,
     # 4 as of 2026-09-21 (TMPDIR-nesting fixes): +1 in _looks_like_library_path —
