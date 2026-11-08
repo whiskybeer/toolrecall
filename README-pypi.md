@@ -74,7 +74,7 @@ If your agent uses MCP, register one server:
 ```toml
 # ~/.config/toolrecall/toolrecall.toml
 [mcp_multiplex]
-servers = ["time", "github", "sequential-thinking"]
+servers = ["time", "sequential-thinking", "cache-fs"]
 ```
 
 Now every MCP-capable agent shares one warm pool of servers. No more N×M cold Node processes.
@@ -92,7 +92,7 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. Since 
 | **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI — 0.8.21 adds a fork tree (`replay tree` / `fork` / `at`): concurrent branches replay the shared tool-call prefix and re-execute only divergent calls, the substrate for the GEPA adapter |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
-| **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session |
+| **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session — pays off with multiple agent sessions or agents without native MCP config; [when to skip](https://github.com/whiskybeer/toolrecall/blob/main/docs/MCP_MULTIPLEXER.md#when-the-multiplexer-is-and-isnt-worth-enabling) |
 | **File / Terminal Cache** | Reduce redundant reads within a turn; bounded context growth for stateless agents without built-in context management |
 | **Framework Adapters** | Drop-in wrappers for ADK, LangChain, LangGraph, herdr, Odysseus, LiteLLM, GEPA, Warp |
 
@@ -298,7 +298,7 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 | Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents — bounded context growth. **Not** for agents with built-in context management (Claude Code, Cursor, Codex CLI) |
 | Deterministic CI tests for agent behavior | Replay Mode | Any agent |
 | Guardrails between agents and your machine | Security Gate | Any agent |
-| Warm MCP servers across sessions | MCP Multiplexer | Any agent |
+| Warm MCP servers across sessions | MCP Multiplexer | Multi-session hosts; agents without native MCP config |
 | One warm cache for a whole team | Network Daemon (A6) | Any agent over TCP+TLS |
 | All of the above | `toolrecall setup` then add the MCP bridge | See per-agent notes |
 

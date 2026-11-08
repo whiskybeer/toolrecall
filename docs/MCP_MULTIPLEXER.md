@@ -6,6 +6,38 @@
 > instead of every server individually.  
 > Server names auto-resolve via the built-in registry — no need to write `command`/`args` for common servers.
 
+## When the multiplexer is (and isn't) worth enabling
+
+The multiplexer is a shared-process optimization, not a default win for
+every setup:
+
+**Enable it when:**
+- **Several agent sessions share one machine** — the daemon keeps one warm
+  subprocess pool per server and shares it across all sessions (see
+  [Agent Compatibility](AGENT_COMPATIBILITY.md)). With a single session,
+  per-agent MCP config is simpler and equivalent.
+- **Your agent has no native multi-server MCP config** — configure exactly
+  one MCP entry (`toolrecall mcp`) instead of N servers in every client.
+- **You want transparent response caching on MCP tool calls** (RFC 8785
+  request keys since 0.8.21). Caution: with `default_ttl` > 0,
+  identical-args *write* calls can return cached responses — set
+  `ttl = 0` on any server that exposes write tools.
+
+**Skip it when:**
+- **Your agent natively manages MCP servers per session** (Hermes
+  `mcp_servers` in `config.yaml`, Claude Code `.mcp.json`, Cursor
+  `mcp.json`). You already get per-session lifecycle and direct config;
+  the multiplexer then only adds an extra hop (`mcp_call` indirection)
+  and a merged tool surface.
+- **You run few agents and call MCP tools rarely** — check the `mcp_cache`
+  table in the stats DB: if it stays empty, the multiplexer is dead weight.
+  Disable with `[mcp_multiplex] enabled = false` — the daemon skips the
+  multiplexer entirely (no registry, no lazy processes). The transparent
+  file cache, the `cache-fs` server, and the forward proxy are unaffected.
+
+Enabled-but-unused costs nothing (lazy start + idle reaper); skipping is
+about keeping the tool surface lean, not about RAM.
+
 ## Architecture
 
 ```mermaid
@@ -48,9 +80,9 @@ enabled = true
 transparent_cache = true
 default_ttl = 60
 # Server names: auto-resolved via built-in registry.
-# Built-in (stdlib, no deps): time, github, sequential-thinking, fetch
+# Built-in (stdlib, no deps): time, github, sequential-thinking, fetch, cache-fs
 # External (needs uvx): filesystem, git, memory, brave-search, playwright, slack
-servers = ["time", "github", "sequential-thinking"]
+servers = ["time", "sequential-thinking", "cache-fs"]
 idle_minutes = 15
 ```
 
@@ -58,7 +90,7 @@ Server names are auto-resolved:
 
 | Type | Source | Example |
 |------|--------|---------|
-| **Built-in** | Ships with ToolRecall (stdlib, zero deps) | `time`, `github`, `sequential-thinking`, `fetch` |
+| **Built-in** | Ships with ToolRecall (stdlib, zero deps) | `time`, `github`, `sequential-thinking`, `fetch`, `cache-fs` |
 | **External (registry)** | Auto-resolved via `uvx <package>` | `filesystem`, `git`, `memory` |
 | **Custom** | Explicit `servers_config` override | Any user-defined command |
 
@@ -104,6 +136,7 @@ Shipped with ToolRecall, no external dependencies:
 | `github` | `create_repository`, `create_or_update_file`, `push_files`, `list_commits` | GitHub API via stdlib `urllib`. Needs `GITHUB_TOKEN` in `.env`. |
 | `sequential-thinking` | `think_step`, `analyze`, `validate_reasoning` | Reasoning step validation, contradiction detection. No network. |
 | `fetch` | `fetch_url`, `fetch_head`, `fetch_headers` | Fetch URLs — stdlib only (`urllib.request`). 500KB limit configurable via `TOOLRECALL_FETCH_MAX_BYTES` env var. |
+| `cache-fs` | `read_file`, `write_file`, `patch`, `terminal` | File/terminal tools backed by the daemon cache. Most useful as a standalone MCP tool set for agents without the OS-level shim — the bridge server (`toolrecall mcp`) already provides these tools natively. |
 
 ### External Servers
 
@@ -122,7 +155,7 @@ Auto-resolved via `uvx` when listed in `servers`:
 > **Note:** External servers require `uvx` (part of `uv`, installable via `curl -LsSf https://astral.sh/uv/install.sh | sh`). Built-in servers need no extra dependencies.
 
 The registry is defined in [`toolrecall/mcp_registry.py`](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/mcp_registry.py) — extend it by sending a PR.  
-The built-in servers (`toolrecall/mcp_time.py`, `toolrecall/mcp_github.py`, `toolrecall/mcp_seqthink.py`, `toolrecall/mcp_fetch.py`) are all pure Python stdlib — no external packages needed.
+The built-in servers (`toolrecall/mcp_time.py`, `toolrecall/mcp_github.py`, `toolrecall/mcp_seqthink.py`, `toolrecall/mcp_fetch.py`, `toolrecall/mcp_cache_fs.py`) are all pure Python stdlib — no external packages needed.
 
 ## Secrets: `~/.toolrecall/.env`
 
