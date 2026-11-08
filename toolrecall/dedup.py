@@ -58,6 +58,17 @@ STUB_TEMPLATE = (
     "The byte-identical content already appears in message {index} of this request."
 )
 
+# Used when a normalizer matched the block: the text is NOT byte-identical to
+# the first copy, so the stub must not say so. It keeps this output's own last
+# line (usually the runner summary, e.g. "1 failed in 0.91s") so the model gets
+# the result without the repeat. Measured on Claude Code: the hash-style stub
+# above made the model reason about the omission (output tokens 2x baseline).
+NORMALIZED_STUB_TEMPLATE = (
+    "[toolrecall-dedup] Same output as the tool result in message {index} "
+    "(differs only in timings, timestamps, temp paths or addresses); "
+    "{chars} chars not repeated. Last line of this output: {last_line}"
+)
+
 IMAGE_STUB_TEMPLATE = (
     "[toolrecall-dedup] Duplicate image omitted ({nbytes} bytes, sha256:{digest}). "
     "The byte-identical image already appears in message {index} of this request."
@@ -211,7 +222,11 @@ def dedup_messages(
             return None
         if not can_stub:
             return None
-        stub = STUB_TEMPLATE.format(chars=len(text), digest=h, index=first)
+        if normalizer is not None:
+            last_line = next((ln.strip() for ln in reversed(text.splitlines()) if ln.strip()), "")
+            stub = NORMALIZED_STUB_TEMPLATE.format(chars=len(text), index=first, last_line=last_line[:200])
+        else:
+            stub = STUB_TEMPLATE.format(chars=len(text), digest=h, index=first)
         if len(stub) >= len(text):
             return None
         blocks += 1

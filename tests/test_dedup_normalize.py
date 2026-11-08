@@ -79,6 +79,22 @@ class TestDedupWithNormalization(unittest.TestCase):
         self.assertIn("[toolrecall-dedup]", out[3]["content"])
         self.assertIn("message 1", out[3]["content"])
         self.assertTrue(stats["chars_saved"] > 700)
+        # Not byte-identical, so the stub must not claim it; it keeps this
+        # output's own last line verbatim (here the traceback tail).
+        self.assertNotIn("byte-identical", out[3]["content"])
+        self.assertTrue(out[3]["content"].endswith("traceback line in module.py"))
+
+    def test_normalized_stub_keeps_own_summary_line(self):
+        out1 = self.output_turn1 + "=== 1 failed, 49 passed in 1.25s ==="
+        out2 = self.output_turn2 + "=== 1 failed, 49 passed in 1.48s ==="
+        msgs = [
+            {"role": "user", "content": "run tests"},
+            {"role": "tool", "name": "bash", "content": out1},
+            {"role": "assistant", "content": "again"},
+            {"role": "tool", "name": "bash", "content": out2},
+        ]
+        out, _ = dedup_messages(msgs, min_chars=800, protect_last=0, normalizer=normalize_output)
+        self.assertIn("Last line of this output: === 1 failed, 49 passed in 1.48s ===", out[3]["content"])
 
     def test_anthropic_messages_shape_nested_tool_result(self):
         # Anthropic messages shape with tool_result
