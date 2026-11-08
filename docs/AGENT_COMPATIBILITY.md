@@ -470,6 +470,19 @@ MCP file caching: Antigravity manages its own context (stateful, edit-heavy)
 
 [Full docs →](antigravity.md)
 
+---
+
+## Multi-Agent Workspaces & Fleet Attribution — ✅ Universal
+
+When running multiple agents on the same machine (for example, Hermes in a terminal, Claude Code for edits, and Antigravity in the IDE), all agents can safely share the same running ToolRecall daemon.
+
+**How it works:**
+- **Shared Cache:** Cache keys are pure content hashes (`keys.py`), independent of agent identity. When Agent A reads a file or warms an API response, Agent B immediately gets a 100% cache hit.
+- **Per-Agent Attribution:** Set `TOOLRECALL_AGENT_ID=<slug>` in each agent's environment before launch. ToolRecall records hits, misses, and token savings in `agent_cache_stats` without splitting cache keys.
+- **Monitoring & Auditing:** Run `toolrecall agent ls` or `toolrecall stats --by-agent` to see the exact token savings and hit rates broken down per agent framework.
+
+See [Agent Tracking](AGENT_TRACKING.md) for full setup, schema details, and cross-machine Turso sync.
+
 ## Integration Layer Reference
 
 | Layer | What it does | Requires | Best for |

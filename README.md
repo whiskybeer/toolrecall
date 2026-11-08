@@ -21,12 +21,13 @@ toolrecall setup          # One-shot: config -> systemd -> daemon start
 
 ## Why ToolRecall — stop paying for tokens you already saw
 
-Two capabilities are the reason to run it. Both are measured, both target the same waste: your agent re-encountering content that's already in its context.
+Three core capabilities are the reason to run it. They target the same waste: agents re-encountering content that has already been retrieved or generated on your machine.
 
 | Capability | What it does | Measured |
 |-----------|--------------|----------|
 | **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (read-only benchmark, prefix-caching model; real-session figure below) — [Context Tracker](#context-tracker) |
 | **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
+| **Multi-Agent Shared Cache & Attribution** | One shared daemon pools the cache across all your local agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; subsequent agents get instant 100% cache hits with $0 token cost. Per-agent telemetry (`toolrecall agent ls`) tracks exact ROI and tokens saved per agent identity without splitting cache keys. | **100% hit rate for subsequent agents / 0ms disk & API latency** — [Agent Tracking](docs/AGENT_TRACKING.md) |
 
 ---
 
@@ -83,10 +84,45 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. Since 
 
 ---
 
+### Option C — Multi-Agent Workspaces (Share Cache Across Agents)
+
+Running multiple coding agents simultaneously on the same project (e.g. Hermes in the terminal, Claude Code for edits, Antigravity in the IDE)? Set their identity before launch:
+
+```bash
+export TOOLRECALL_AGENT_ID=hermes        # in your Hermes terminal
+export TOOLRECALL_AGENT_ID=claude-code   # in your Claude Code session
+export TOOLRECALL_AGENT_ID=antigravity   # in your Antigravity IDE
+```
+
+All agents share one deterministic cache on your machine. When Agent A reads a file or command, subsequent agents get **100% cache hits** with zero token cost.
+
+View your cross-agent breakdown:
+```bash
+toolrecall agent ls
+```
+```text
+Known Agents
+========================================
+  antigravity           hits=2  misses=0  tokens_saved=4,369  tokens_read=0
+  claude-code           hits=2  misses=0  tokens_saved=4,369  tokens_read=0
+  hermes                hits=1  misses=1  tokens_saved=2,608  tokens_read=1,761
+```
+*Agent Hermes warmed the cache; Claude Code and Antigravity got instant 100% cache hits.*
+
+Inspect detailed per-category stats or export JSON for monitoring:
+```bash
+toolrecall agent show claude-code --json
+toolrecall status
+```
+See [Agent Tracking](docs/AGENT_TRACKING.md) for full telemetry, schema, and Turso cloud aggregation.
+
+---
+
 ## What ToolRecall Does
 
 | Feature | What it solves |
 |---------|---------------|
+| **Multi-Agent Shared Cache & Attribution** | Shared local cache across multiple agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; Agent B gets 100% hits with $0 token cost. Per-agent telemetry (`toolrecall agent ls`) tracks exact ROI per agent identity. |
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions (read-only benchmark; ~11 % per-turn reduction in real mixed sessions). |
 | **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
