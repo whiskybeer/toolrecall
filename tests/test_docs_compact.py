@@ -124,7 +124,7 @@ def test_auto_compact_thresholds(tmp_path, fresh_db, monkeypatch):
     # Simulate bloat: monkeypatch get_index_bloat to report big FTS
     calls = {}
 
-    def fake_compact():
+    def fake_compact(vacuum=True):
         calls["ran"] = True
         return {"before": 100, "after": 10, "reclaimed": 90}
 
@@ -150,3 +150,125 @@ def test_compact_idempotent(fresh_db, tmp_path):
     r1 = compact_knowledge_db()
     r2 = compact_knowledge_db()
     assert abs(r1["after"] - r2["after"]) < 0.05 * max(r1["after"], 1)
+
+
+# ── Configurable auto-compact ([docs] keys + env plumbing) ──────────────────
+
+
+class _DictConfig:
+    """Config stand-in backed by a dict of (section, key) → value."""
+
+    def __init__(self, values=None):
+        self._values = dict(values or {})
+
+    def get(self, section, key, default=None):
+        return self._values.get((section, key), default)
+
+    @property
+    def agent_home(self) -> str:
+        return "/nonexistent-agent-home"  # deterministic, like _StubConfig
+
+
+def test_compact_disabled_via_config(fresh_db, monkeypatch):
+    """[docs].compact = false → auto-compact never fires, even past thresholds."""
+    monkeypatch.setattr(docs_mod, "_get_config", lambda: _DictConfig({("docs", "compact"): False}))
+    monkeypatch.setattr(docs_mod, "_COMPACT_RATIO", 0.0001)
+    monkeypatch.setattr(docs_mod, "_COMPACT_MIN_FTS_MB", 0.0001)
+    calls = {}
+    monkeypatch.setattr(
+        docs_mod,
+        "compact_knowledge_db",
+        lambda vacuum=True: (
+            calls.setdefault("ran", True) or {"before": 1, "after": 1, "reclaimed": 0}
+        ),
+    )
+    _maybe_compact_index()
+    assert calls.get("ran") is None
+
+
+def test_compact_thresholds_via_config(fresh_db, tmp_path, monkeypatch):
+    """Configured compact_ratio / compact_min_fts_mb / compact_vacuum win."""
+    vault = _seed_vault(str(tmp_path))
+    index_directory(vault, source="v")
+
+    calls = {}
+    monkeypatch.setattr(
+        docs_mod,
+        "compact_knowledge_db",
+        lambda vacuum=True: (
+            calls.setdefault("ran", vacuum) or {"before": 1, "after": 1, "reclaimed": 0}
+        ),
+    )
+
+    # Default thresholds (50 MB / ×5) → the tiny vault never fires.
+    _maybe_compact_index()
+    assert calls.get("ran") is None
+
+    # Config lowers both thresholds → fires; vacuum=False is threaded through.
+    cfg = _DictConfig(
+        {
+            ("docs", "compact_ratio"): 0.0001,
+            ("docs", "compact_min_fts_mb"): 0.0001,
+            ("docs", "compact_vacuum"): False,
+        }
+    )
+    monkeypatch.setattr(docs_mod, "_get_config", lambda: cfg)
+    _maybe_compact_index()
+    assert calls.get("ran") is False
+
+
+def test_cfg_float_fails_soft(fresh_db):
+    """Unparseable configured thresholds fall back to the default."""
+    bad = _DictConfig({("docs", "compact_ratio"): "garbage", ("docs", "compact_min_fts_mb"): None})
+    assert docs_mod._cfg_float(bad, "compact_ratio", 5.0) == 5.0
+    assert docs_mod._cfg_float(bad, "compact_min_fts_mb", 50.0) == 50.0
+    good = _DictConfig({("docs", "compact_ratio"): 2.5})
+    assert docs_mod._cfg_float(good, "compact_ratio", 5.0) == 2.5
+
+
+def test_compact_rebuild_without_vacuum(fresh_db, tmp_path):
+    """vacuum=False: FTS rebuilt (orphaned terms reclaimed), content intact,
+    the DB file itself is not rewritten."""
+    vault = _seed_vault(str(tmp_path))
+    index_directory(vault, source="v")
+    for gen in range(5):
+        for i in range(5):
+            p = os.path.join(vault, f"note{i}.md")
+            with open(p, "w") as f:
+                f.write(f"# Note {i} v{gen}\nGeneration{gen} token{i} replacement text.\n" * 20)
+        index_directory(vault, source="v")
+
+    fts_before, _ = get_index_bloat()
+    compact_knowledge_db(vacuum=False)
+    fts_after, _ = get_index_bloat()
+    assert fts_after <= fts_before
+    # Content intact after rebuild-only compact
+    assert "Generation4" in docs_search("Generation4", source="v")
+    assert docs_search("Generation0", source="v").startswith("No results")
+
+
+def test_env_map_wiring(monkeypatch, tmp_path):
+    """The four [docs] compaction keys are ENV-plumbed with correct types."""
+    from toolrecall.config import ENV_MAP, load_config
+
+    assert ENV_MAP.get("TOOLRECALL_DOCS_COMPACT") == ("docs", "compact")
+    assert ENV_MAP.get("TOOLRECALL_DOCS_COMPACT_RATIO") == ("docs", "compact_ratio")
+    assert ENV_MAP.get("TOOLRECALL_DOCS_COMPACT_MIN_FTS_MB") == (
+        "docs",
+        "compact_min_fts_mb",
+    )
+    assert ENV_MAP.get("TOOLRECALL_DOCS_COMPACT_VACUUM") == ("docs", "compact_vacuum")
+
+    empty = tmp_path / "empty.toml"
+    empty.write_text("")
+    monkeypatch.setenv("TOOLRECALL_CONFIG", str(empty))
+    monkeypatch.setenv("TOOLRECALL_DOCS_COMPACT", "0")
+    monkeypatch.setenv("TOOLRECALL_DOCS_COMPACT_RATIO", "2.5")
+    monkeypatch.setenv("TOOLRECALL_DOCS_COMPACT_MIN_FTS_MB", "abc")  # invalid → ignored
+    monkeypatch.setenv("TOOLRECALL_DOCS_COMPACT_VACUUM", "false")
+
+    cfg = load_config()
+    assert cfg.get("docs", "compact") is False
+    assert cfg.get("docs", "compact_ratio") == 2.5
+    assert "compact_min_fts_mb" not in (cfg._data.get("docs") or {})
+    assert cfg.get("docs", "compact_vacuum") is False

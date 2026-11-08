@@ -79,6 +79,11 @@ ENV_MAP = {
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
     "TOOLRECALL_RECALL_TTL": ("recall", "ttl"),
     "TOOLRECALL_DOCS_INDEX_TTL": ("docs", "index_ttl"),
+    # Knowledge-index compaction (see toolrecall.docs _maybe_compact_index)
+    "TOOLRECALL_DOCS_COMPACT": ("docs", "compact"),
+    "TOOLRECALL_DOCS_COMPACT_RATIO": ("docs", "compact_ratio"),
+    "TOOLRECALL_DOCS_COMPACT_MIN_FTS_MB": ("docs", "compact_min_fts_mb"),
+    "TOOLRECALL_DOCS_COMPACT_VACUUM": ("docs", "compact_vacuum"),
     # TTL policy: stale-while-revalidate + adaptive TTL (see toolrecall.ttl_policy)
     "TOOLRECALL_STALE_WHILE_REVALIDATE": ("cache", "stale_while_revalidate"),
     "TOOLRECALL_ADAPTIVE_TTL": ("cache", "adaptive_ttl"),
@@ -144,6 +149,8 @@ def _apply_env_overrides(config: dict) -> dict:
             "dedup",
             "enabled",
             "allow_symlink_escapes",
+            "compact",
+            "compact_vacuum",
         }
     )
     # Float-typed keys (fail-soft override): an unparseable env value must
@@ -152,7 +159,7 @@ def _apply_env_overrides(config: dict) -> dict:
     # TOOLRECALL_SHIM_STUB_TTL masked a valid [shim].stub_ttl=123 with the
     # 300 default — invalid env now falls back to CONFIG per the documented
     # contract, and only to the default when the config lacks the key too.
-    _FLOAT_KEYS = frozenset({"stub_ttl", "persist_ttl"})
+    _FLOAT_KEYS = frozenset({"stub_ttl", "persist_ttl", "compact_ratio", "compact_min_fts_mb"})
     # List-typed keys: an env value without a comma is still a one-element
     # list, not a bare string. Without this branch a single-value override
     # was stored as str, and the property's isinstance(raw, list) silently

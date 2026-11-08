@@ -185,7 +185,10 @@ def _refresh_worker() -> None:
 # (lossless, content='pages' is the source of truth) + VACUUM.
 
 # Auto-compact fires in the refresh worker when the FTS shadow table exceeds
-# both thresholds relative to the content it indexes.
+# both thresholds relative to the content it indexes. All knobs are
+# configurable under [docs] — compact (master switch, default true),
+# compact_ratio, compact_min_fts_mb, compact_vacuum (default true). The
+# constants below are the defaults; a configured value always wins.
 _COMPACT_RATIO = 5.0  # fts bytes must exceed content bytes × 5
 _COMPACT_MIN_FTS_MB = 50  # …and exceed 50 MB absolute (skip small DBs)
 
@@ -212,13 +215,18 @@ def get_index_bloat() -> tuple[int, int]:
         return (0, 0)
 
 
-def compact_knowledge_db() -> dict:
+def compact_knowledge_db(vacuum: bool = True) -> dict:
     """Rebuild the FTS index from the content table and VACUUM the DB.
 
     Lossless: the external-content table ('content=pages') is regenerated
     purely from `pages`; no document text is touched. Blocks the DB for the
     duration (rebuild re-tokenizes; VACUUM rewrites the file), so callers
     should run it off the query path — the refresh worker does.
+
+    vacuum=False skips the final VACUUM: the rebuild reclaims orphaned FTS
+    term pages to the freelist (search stays fast, DB stops growing), but the
+    file only shrinks after a later VACUUM. Useful when the file must not be
+    rewritten (space, mmap'd readers).
 
     Returns {"before", "after", "reclaimed"} in bytes.
     """
@@ -233,25 +241,47 @@ def compact_knowledge_db() -> dict:
     finally:
         conn.close()
 
-    # VACUUM cannot run inside a transaction.
-    conn = sqlite3.connect(db_path, isolation_level=None, timeout=60.0)
-    try:
-        conn.execute("VACUUM")
-    finally:
-        conn.close()
+    # VACUUM cannot run inside a transaction. Skippable via vacuum=False —
+    # the freelist absorbs the rebuilt pages, the file shrinks later.
+    if vacuum:
+        conn = sqlite3.connect(db_path, isolation_level=None, timeout=60.0)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
 
     after = os.path.getsize(db_path)
     return {"before": before, "after": after, "reclaimed": before - after}
 
 
-def _maybe_compact_index() -> None:
-    """Best-effort auto-compaction after a background re-index. Never raises."""
+def _cfg_float(cfg, key: str, default: float) -> float:
+    """Read a [docs] float key, failing soft to `default` (never raises)."""
     try:
+        return float(cfg.get("docs", key, default=default))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _maybe_compact_index() -> None:
+    """Best-effort auto-compaction after a background re-index. Never raises.
+
+    Configurable via [docs]: compact (default true), compact_ratio,
+    compact_min_fts_mb, compact_vacuum. The module constants are the
+    defaults, read as globals AT CALL TIME so tests can monkeypatch them;
+    a configured value always wins.
+    """
+    try:
+        cfg = _get_config()
+        if not bool(cfg.get("docs", "compact", default=True)):
+            return
         fts, content = get_index_bloat()
         if fts <= 0 or content <= 0:
             return
-        if fts > _COMPACT_MIN_FTS_MB * 1024 * 1024 and fts > _COMPACT_RATIO * content:
-            result = compact_knowledge_db()
+        ratio = _cfg_float(cfg, "compact_ratio", _COMPACT_RATIO)
+        min_mb = _cfg_float(cfg, "compact_min_fts_mb", _COMPACT_MIN_FTS_MB)
+        if fts > min_mb * 1024 * 1024 and fts > ratio * content:
+            vacuum = bool(cfg.get("docs", "compact_vacuum", default=True))
+            result = compact_knowledge_db(vacuum=vacuum)
             print(
                 f"✅ docs index compacted: {result['before'] / 1e6:.0f} MB → "
                 f"{result['after'] / 1e6:.0f} MB"

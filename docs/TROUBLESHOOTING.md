@@ -266,7 +266,9 @@ toolrecall index-compact    # FTS rebuild + VACUUM; lossless
 ```
 
 Since v0.8.20 this also runs automatically after a background re-index when
-the FTS shadow exceeds 50 MB **and** 5× the indexed content size. The one-off
+the FTS shadow exceeds the configured thresholds (default 50 MB **and** 5×
+the indexed content size; see `[docs]` in CONFIG_REFERENCE — `compact`,
+`compact_ratio`, `compact_min_fts_mb`, `compact_vacuum`). The one-off
 rebuild of a multi-GB DB can take several minutes; queries briefly block
 during the rebuild phase.
 
