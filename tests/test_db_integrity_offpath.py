@@ -87,6 +87,13 @@ def test_holds_no_db_lock_while_checking(gate, monkeypatch):
         cache._INTEGRITY_CHECK_IN_PROGRESS = False
 
     monkeypatch.setattr(cache, "_run_integrity_check", fake_worker)
+
+    # Warm the path first: this test measures "not blocked by the check", not the
+    # one-time schema init / first-open cost (which can exceed the budget when a
+    # previous test file in the same session has just churned the DB).
+    with cache._db() as conn:
+        conn.execute("SELECT 1").fetchone()
+
     cache._ensure_db_integrity()
     time.sleep(0.05)  # let the worker start
 

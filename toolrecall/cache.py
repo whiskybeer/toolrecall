@@ -2666,6 +2666,25 @@ def garbage_collect() -> int:
                     (now,),
                 ).rowcount
             ONE_DAY = 86400
+            # api_cache rows DO expire (API_CACHE_TTL, default 300 s) but nothing
+            # ever reclaimed them — measured on the live DB: 12,281 of 12,385 rows
+            # were expired and held 1,103 MB of a 1,190 MB file. Reclaiming them
+            # (this purge + the VACUUM below) took the DB to 86 MB (13.9x smaller).
+            # NB the first run after this change pays that backlog once — measured
+            # 65.8 s purge + 14.2 s VACUUM, all under the DB lock — so on a busy
+            # instance do the initial reclaim during a maintenance window rather
+            # than letting a live GC thread hold the lock for a minute. Steady
+            # state is trivial (a few hundred rows per 4 h cadence).
+            # Same guard style as recall_cache: a pre-migration DB may lack the
+            # column, and a missing column must never abort the whole GC (which
+            # would also skip the VACUUM that actually returns the space).
+            api_cols = {row[1] for row in conn.execute("PRAGMA table_info(api_cache)")}
+            c5 = 0
+            if "expires_at" in api_cols:
+                c5 = conn.execute(
+                    "DELETE FROM api_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now,),
+                ).rowcount
             c3 = conn.execute(
                 """
                 UPDATE cache_stats SET
@@ -2681,7 +2700,7 @@ def garbage_collect() -> int:
         # VACUUM must run in its own connection (auto-commits, can't be in a transaction)
         with _db() as conn:
             conn.execute("VACUUM")
-        return c1 + c2 + c3 + c4
+        return c1 + c2 + c3 + c4 + c5
     except Exception as e:
         warnings.warn(f"ToolRecall GC failed: {e}")
         return -1
@@ -2788,6 +2807,11 @@ def invalidate_browser_url(url: str):
 # ─── API CACHE (forward-proxy responses, keyed by request hash) ─────
 
 API_CACHE_TTL = 300  # 5 minutes default for API responses
+
+# Bodies larger than this are NOT stored (see config.api_cache_max_body_mb):
+# a truncated body could be replayed as a hit and hand the caller a corrupt
+# response, so oversize bodies are skipped whole rather than shortened.
+API_CACHE_MAX_BODY_MB = 2.0
 
 
 def cached_api_check(request_hash: str) -> dict:
@@ -2898,6 +2922,29 @@ def cached_api_store(
 
     ttl = ttl if ttl is not None else API_CACHE_TTL
     now = time.time()
+
+    # Skip oversize bodies outright (never truncate — a truncated body would be
+    # served as a hit and would be a corrupt response to the caller).
+    # Callers pass both str and bytes bodies, so size the raw payload as-is.
+    try:
+        max_bytes = int(
+            float(config.get("cache", "api_cache_max_body_mb", default=API_CACHE_MAX_BODY_MB))
+            * 1048576
+        )
+    except (TypeError, ValueError):
+        max_bytes = int(API_CACHE_MAX_BODY_MB * 1048576)
+    n_bytes = (
+        len(response_body)
+        if isinstance(response_body, (bytes, bytearray))
+        else len(response_body.encode("utf-8", "replace"))
+    )
+    if n_bytes > max_bytes:
+        return {
+            "stored": False,
+            "reason": "body_too_large",
+            "bytes": n_bytes,
+            "max_bytes": max_bytes,
+        }
 
     try:
         with _db() as conn:

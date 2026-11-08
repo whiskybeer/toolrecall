@@ -28,6 +28,11 @@ DEFAULT_PATHS = [
     Path("/etc/toolrecall/toolrecall.toml"),
 ]
 
+# Default cap on a single cached API response body. Kept in sync with
+# cache.API_CACHE_MAX_BODY_MB (cache.py can't import from here at module load
+# without a cycle, so both carry the same default and a cross-reference).
+API_CACHE_MAX_BODY_MB_DEFAULT = 2.0
+
 ENV_MAP = {
     "TOOLRECALL_CACHE_DB": ("paths", "cache_db"),
     "TOOLRECALL_KNOWLEDGE_DB": ("paths", "knowledge_db"),
@@ -300,6 +305,7 @@ class Config:
                 "max_file_mb",
                 "access_log_keep",
                 "access_log_prune_interval",
+                "api_cache_max_body_mb",
             }
         ),
         "norm": frozenset({"enabled", "sort_lists", "strip_strings", "canonical_commands"}),
@@ -784,6 +790,33 @@ class Config:
         # values would OOM) — fall back to the documented default.
         if val <= 0 or val > 2048:
             return 5.0
+        return val
+
+    def api_cache_max_body_mb(self) -> float:
+        """Maximum API response body the forward proxy will store, in MB.
+
+        Default: 2 MB. The proxy tees *billed* LLM responses into api_cache; a
+        body above this is skipped whole, never truncated — a truncated body
+        would be replayed as a hit and hand the caller a corrupt response.
+
+        Two separate problems, two separate levers: this cap bounds what one
+        row can add, while the GC purge in cache.garbage_collect reclaims rows
+        that expired (measured on the live DB: 12,281 of 12,385 rows were
+        expired and held 1,103 MB of a 1,190 MB file, because api_cache was
+        missing from the GC's table list; reclaiming them left an 86 MB DB).
+
+        Configured via [cache].api_cache_max_body_mb; raise deliberately, never
+        as a blanket default change.
+        """
+        raw = self.get("cache", "api_cache_max_body_mb", default=API_CACHE_MAX_BODY_MB_DEFAULT)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return API_CACHE_MAX_BODY_MB_DEFAULT
+        # Reject nonsense (<=0 disables API caching entirely; absurd values
+        # would let one row blow up the DB) — fall back to the documented default.
+        if val <= 0 or val > 1024:
+            return API_CACHE_MAX_BODY_MB_DEFAULT
         return val
 
     @property
