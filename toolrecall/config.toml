@@ -369,6 +369,12 @@ enabled = true
 # (60s) deliberately — append-only harnesses compact aggressively.
 # Kill switch: TOOLRECALL_SHIM_STUB=0 (per process, at call time).
 # stub_ttl = 300
+#
+# Max consecutive stubs per path before forcing a full send (compaction armor).
+# Bounds stranding risk in tight read loops where TTL has not elapsed.
+# Default: 5 (empirically derived sweet spot, capturing 95.4% of repetition episodes).
+# 0 disables the consecutive cap (relies on TTL/compaction signals alone).
+# stub_max_consecutive = 5
 # ─── Per-Path File TTLs (trust windows) ──────────────
 # Override the global file_ttl for specific files, folders, or file types.
 # Pattern semantics (fnmatch globs, matched against the absolute path):

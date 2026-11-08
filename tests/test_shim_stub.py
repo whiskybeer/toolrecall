@@ -68,11 +68,22 @@ class TestShimStubWiring(unittest.TestCase):
             f.write("[shim]\nexclude_prefixes = []\n")
         os.environ["TOOLRECALL_CONFIG"] = cfg
         inst = stub_mod.instance()
-        self.assertEqual(inst.max_consecutive, 2)  # compaction armor
+        self.assertEqual(inst.max_consecutive, 5)  # compaction armor
         self.assertEqual(inst.min_chars, 800)  # request-dedup floor
         self.assertEqual(inst.ttl_s, 300.0)  # documented default
         note = inst._note_fn(0)
         self.assertIn("cache_refresh_file", note)  # shim note, not bypass_cache
+
+    def test_env_max_consecutive_wins_over_config(self):
+        os.environ["TOOLRECALL_SHIM_STUB_MAX_CONSECUTIVE"] = "8"
+        self.assertEqual(stub_mod.instance().max_consecutive, 8)
+
+    def test_config_max_consecutive_used_when_env_unset(self):
+        cfg = os.path.join(self.tmpdir, "tr.toml")
+        with open(cfg, "w") as f:
+            f.write("[shim]\nstub_max_consecutive = 7\n")
+        os.environ["TOOLRECALL_CONFIG"] = cfg
+        self.assertEqual(stub_mod.instance().max_consecutive, 7)
 
     def test_disable_env_yields_permanent_noop(self):
         os.environ["TOOLRECALL_SHIM_STUB"] = "0"

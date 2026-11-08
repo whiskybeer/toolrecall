@@ -186,8 +186,9 @@ Agent harnesses compact old tool results out of the context window; after
 compaction the stub references content the agent no longer has, which
 strands it for a recovery turn. The TTL bounds that risk: after `stub_ttl`
 seconds since the last full send, full content is re-sent instead of a
-stub (and the consecutive-streak restarts). The consecutive cap (2 stubs,
-then a forced full send) is the second, independent piece of compaction
+stub (and the consecutive-streak restarts). The consecutive cap (5 stubs by
+default, then a forced full send; configurable via `[shim].stub_max_consecutive`
+or `TOOLRECALL_SHIM_STUB_MAX_CONSECUTIVE`) is the second, independent piece of compaction
 armor — the TTL covers *lapsed* re-reads, the cap covers hot loops.
 
 In short: **mtime+size proves the disk is current; the TTL bounds how much

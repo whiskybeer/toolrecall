@@ -54,7 +54,7 @@ caller's ``counter_fn``. Safety rails:
     (see ``DEFAULT_MAX_CALLS``).
   - consecutive cap (``max_consecutive``): after N consecutive SUPPRESSIONS
     (a stub or a diff), one full send (compaction armor — bounds any
-    stranding inside a hot loop)
+    stranding inside a hot loop). Default: 5.
   - changed digest (file content differs) → a diff against the agent's last
     FULL copy when that diff is small enough, else a full send
   - ``reset_path`` / ``reset_key`` on write/invalidation, ``reset_all`` on a
@@ -164,6 +164,9 @@ def slice_lines(content: str, offset: int | None, limit: int | None) -> dict:
     }
 
 
+DEFAULT_MAX_CONSECUTIVE: int = 5
+
+
 class FileStubSession:
     """Session-scoped suppression state: key → (digest, last full send, streak).
 
@@ -177,7 +180,7 @@ class FileStubSession:
         self,
         *,
         ttl_s: float = 300.0,
-        max_consecutive: int = 2,
+        max_consecutive: int = DEFAULT_MAX_CONSECUTIVE,
         min_chars: int = 800,
         note_fn=None,
         counter_fn=None,

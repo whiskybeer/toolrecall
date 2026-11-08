@@ -56,6 +56,15 @@ class TestFileStubSession(StubSessionTestCase):
         # 3rd consecutive read: full content (compaction armor)
         self.assertIsNone(s.maybe_stub(p, self.BODY))
 
+    def test_default_consecutive_armor_is_five(self):
+        s = self._session(min_chars=0)
+        p = self._path()
+        s.maybe_stub(p, self.BODY)  # register
+        for _ in range(5):
+            self.assertIsNotNone(s.maybe_stub(p, self.BODY))  # stubs 1..5
+        # 6th read: full content (compaction armor)
+        self.assertIsNone(s.maybe_stub(p, self.BODY))
+
     def test_cap_is_configurable_bridge_policy_three(self):
         s = self._session(max_consecutive=3, min_chars=0)
         p = self._path()

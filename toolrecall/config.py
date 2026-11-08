@@ -74,6 +74,7 @@ ENV_MAP = {
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
     "TOOLRECALL_SHIM_TAG_SOURCE": ("shim", "tag_source"),
     "TOOLRECALL_SHIM_STUB_TTL": ("shim", "stub_ttl"),
+    "TOOLRECALL_SHIM_STUB_MAX_CONSECUTIVE": ("shim", "stub_max_consecutive"),
     "TOOLRECALL_TRACKER_IGNORE_PREFIXES": ("tracker", "ignore_read_prefixes"),
     "TOOLRECALL_TRACKER_PERSIST_TTL": ("tracker", "persist_ttl"),
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
@@ -339,7 +340,7 @@ class Config:
                 "cb_open_seconds",
             }
         ),
-        "shim": frozenset({"exclude_prefixes", "tag_source", "stub_ttl"}),
+        "shim": frozenset({"exclude_prefixes", "tag_source", "stub_ttl", "stub_max_consecutive"}),
         "mcp": frozenset(
             {
                 "allowed_paths",
@@ -1306,6 +1307,20 @@ class Config:
             return v if v >= 0 else 300.0
         except (TypeError, ValueError):
             return 300.0
+
+    @property
+    def shim_stub_max_consecutive(self) -> int:
+        """Max consecutive stubs per path before forcing a full send (compaction armor). Default: 5.
+
+        Configured via [shim].stub_max_consecutive in toolrecall.toml, or
+        TOOLRECALL_SHIM_STUB_MAX_CONSECUTIVE env var.
+        """
+        val = self.get("shim", "stub_max_consecutive", default=5)
+        try:
+            v = int(val)
+            return max(0, v)
+        except (TypeError, ValueError):
+            return 5
 
     # ─── Context Tracker Properties ─────────────────────
 

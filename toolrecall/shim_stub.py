@@ -58,7 +58,7 @@ _DISABLE_VALUES = ("0", "false", "no", "off")
 _ENABLED = os.environ.get("TOOLRECALL_SHIM_STUB", "1") not in _DISABLE_VALUES
 
 _DEFAULT_TTL_S = 300.0
-_MAX_CONSECUTIVE = 2  # 3rd read in a row gets full content (compaction armor)
+_DEFAULT_MAX_CONSECUTIVE = 5  # 6th read in a row gets full content (compaction armor)
 _MIN_CHARS = 800  # same floor as request-dedup min_chars
 
 _lock = threading.Lock()
@@ -100,6 +100,27 @@ def _resolve_ttl() -> float:
     return _DEFAULT_TTL_S
 
 
+def _resolve_max_consecutive() -> int:
+    """env > [shim].stub_max_consecutive config > default. Invalid values fall back."""
+    raw = (os.environ.get("TOOLRECALL_SHIM_STUB_MAX_CONSECUTIVE") or "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            log.debug("TOOLRECALL_SHIM_STUB_MAX_CONSECUTIVE=%r is not a number", raw)
+    try:
+        from toolrecall.config import load_config
+
+        v = int(load_config().shim_stub_max_consecutive)
+        if v >= 0:
+            return v
+    except Exception:
+        log.debug("stub max_consecutive config resolution failed", exc_info=True)
+    return _DEFAULT_MAX_CONSECUTIVE
+
+
 # Re-entrancy kill-switch (per-thread, mirroring shim.py's own guard): True
 # while this thread is inside a stub decision. A stub decision must NEVER run
 # code that calls open() again — if builtins.open is shim-patched, that open
@@ -136,7 +157,7 @@ def instance() -> FileStubSession:
         if _instance is None:
             _instance = FileStubSession(
                 ttl_s=0.0 if not _ENABLED else _DEFAULT_TTL_S,
-                max_consecutive=_MAX_CONSECUTIVE,
+                max_consecutive=_DEFAULT_MAX_CONSECUTIVE,
                 min_chars=_MIN_CHARS,
                 note_fn=note_agent,
                 counter_fn=_counter,
@@ -150,12 +171,13 @@ def instance() -> FileStubSession:
     # 300.0 != 111.0). Last-writer-wins is safe: racing outers resolve the
     # same config, and the placeholder holds no armed state.
     resolved = 0.0 if not _ENABLED else _resolve_ttl()
+    resolved_max_consecutive = _resolve_max_consecutive()
     with _lock:
         _instance = FileStubSession(
             # TOOLRECALL_SHIM_STUB=0 → ttl 0 → core no-op (belt);
             # maybe_stub's call-time check is the braces.
             ttl_s=resolved,
-            max_consecutive=_MAX_CONSECUTIVE,
+            max_consecutive=resolved_max_consecutive,
             min_chars=_MIN_CHARS,
             note_fn=note_agent,
             counter_fn=_counter,

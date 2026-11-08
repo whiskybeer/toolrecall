@@ -395,6 +395,7 @@ class MCPBridge:
         # while max_consecutive stays the hard armor.
         from toolrecall.stub_core import (
             DEFAULT_MAX_CALLS,
+            DEFAULT_MAX_CONSECUTIVE,
             DEFAULT_MAX_TOKENS,
             FileStubSession,
             note_mcp,
@@ -402,7 +403,7 @@ class MCPBridge:
 
         self._stubs = FileStubSession(
             ttl_s=240.0,
-            max_consecutive=2,
+            max_consecutive=DEFAULT_MAX_CONSECUTIVE,
             min_chars=0,
             note_fn=note_mcp,
             counter_fn=self._count_measured,

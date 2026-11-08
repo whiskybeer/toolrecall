@@ -30,8 +30,8 @@ A second+ read of a **byte-identical** file within `[shim].stub_ttl` (default
 HH:MM:SS; agent holds it from the earlier read". This is a *measured* context
 saving (the content provably never reaches the LLM; counted in the same
 `mcp_dedup` tier as the bridge stub). Safety rails: agent-process gate, cache
-hits only, 800-char floor, max 2 consecutive stubs before a forced full send
-(compaction armor), mtime+size re-validation upstream of every candidate, and
+hits only, 800-char floor, max 5 consecutive stubs before a forced full send
+(compaction armor; configurable via [shim].stub_max_consecutive), mtime+size re-validation upstream of every candidate, and
 kill switch `TOOLRECALL_SHIM_STUB=0` (call-time, per process). What the TTL
 does and does not guard is documented in
 [CONFIG_REFERENCE](CONFIG_REFERENCE.md#unchanged-file-stub-ttl-shimstub_ttl);
