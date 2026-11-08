@@ -429,14 +429,20 @@ CREATE TABLE IF NOT EXISTS cache_stats (
 -- (so the status view is not dominated by dead categories); it used to do that
 -- by DELETING the totals, which destroyed 2.02 B io_tokens_saved on the live DB
 -- (found 2026-10-03). Totals are now banked here and stay readable as
--- live + banked (get_stats lifetime_*). Only the four reset columns are banked,
--- so a lifetime sum can never double-count.
+-- live + banked (get_stats lifetime_*). Exactly the columns the GC resets are
+-- banked, so a lifetime sum can never double-count.
+-- tokens_saved_to_llm joined the banked set on 2026-10-22: it is reset by the
+-- same statement as io_tokens_saved, so leaving it out made the display claim
+-- MORE context savings than IO offload after every reset — ctx > io, which is
+-- impossible (context savings are a subset of IO offload; seen live at
+-- ctx 74.2M vs io 65.0M).
 CREATE TABLE IF NOT EXISTS cache_stats_banked (
     category              TEXT PRIMARY KEY,
     hits                  INTEGER NOT NULL DEFAULT 0,
     misses                INTEGER NOT NULL DEFAULT 0,
     tokens_read_from_disk INTEGER NOT NULL DEFAULT 0,
     io_tokens_saved       INTEGER NOT NULL DEFAULT 0,
+    tokens_saved_to_llm   INTEGER NOT NULL DEFAULT 0,
     banked_at             REAL,
     bank_count            INTEGER NOT NULL DEFAULT 0
 );
@@ -2808,16 +2814,22 @@ def get_stats() -> dict:
             if conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cache_stats_banked'"
             ).fetchone():
+                bank_cols = {r[1] for r in conn.execute("PRAGMA table_info(cache_stats_banked)")}
+                # "0" keeps this readable on a bank table from an older build
+                # that has no ctx column yet (the migration adds it, but a
+                # read-only or not-yet-migrated DB must not break the view).
+                _ctx_col = "tokens_saved_to_llm" if "tokens_saved_to_llm" in bank_cols else "0"
                 banked = {
-                    r[0]: (r[1], r[2], r[3], r[4], r[5], r[6])
+                    r[0]: (r[1], r[2], r[3], r[4], r[5], r[6], r[7])
                     for r in conn.execute(
                         "SELECT category, hits, misses, tokens_read_from_disk,"
-                        " io_tokens_saved, banked_at, bank_count FROM cache_stats_banked"
+                        " io_tokens_saved, " + _ctx_col + ","
+                        " banked_at, bank_count FROM cache_stats_banked"
                     )
                 }
             for row in conn.execute("SELECT * FROM cache_stats"):
                 total = row["hits"] + row["misses"]
-                b = banked.get(row["category"], (0, 0, 0, 0, None, 0))
+                b = banked.get(row["category"], (0, 0, 0, 0, 0, None, 0))
                 measured = (
                     row["tokens_not_sent_measured"]
                     if "tokens_not_sent_measured" in row.keys()
@@ -2858,8 +2870,14 @@ def get_stats() -> dict:
                     "lifetime_tokens_read_from_disk": row["tokens_read_from_disk"] + b[2],
                     "lifetime_io_tokens_saved": row["io_tokens_saved"] + b[3],
                     "banked_io_tokens_saved": b[3],
-                    "banked_at": b[4],
-                    "bank_count": b[5],
+                    # Same banking guarantee for the ctx axis. It used to be
+                    # reset without being banked, so the lifetime view could
+                    # report MORE context savings than IO offload — impossible,
+                    # since ctx savings are a subset of IO offload.
+                    "lifetime_tokens_saved_to_llm": row["tokens_saved_to_llm"] + b[4],
+                    "banked_tokens_saved_to_llm": b[4],
+                    "banked_at": b[5],
+                    "bank_count": b[6],
                     # MEASURED tier — wire-verified (bridge replaced the
                     # content with a stub). Never an estimate; independent
                     # of any checkpoint/hint state.
@@ -3151,9 +3169,10 @@ def garbage_collect() -> int:
             # the display ended up claiming more context savings than IO
             # offload (impossible: ctx ⊆ io). Statement dates from 36d27d0
             # (2026-07-04); found and reproduced 2026-10-03.
-            # Bank the four reset columns, then reset the live row.
+            # Bank the five reset columns, then reset the live row.
             idle = conn.execute(
-                "SELECT category, hits, misses, tokens_read_from_disk, io_tokens_saved"
+                "SELECT category, hits, misses, tokens_read_from_disk, io_tokens_saved,"
+                " tokens_saved_to_llm"
                 " FROM cache_stats WHERE updated_at > 0 AND updated_at < ?",
                 (now - ONE_DAY,),
             ).fetchall()
@@ -3173,19 +3192,32 @@ def garbage_collect() -> int:
                     " banked_at REAL,"
                     " bank_count INTEGER NOT NULL DEFAULT 0)"
                 )
+                # CREATE TABLE IF NOT EXISTS is a no-op on a bank table created
+                # by an older build, so add the column explicitly. Missing it
+                # would make every banked ctx total silently vanish from the
+                # lifetime view — the same "impossible totals" class of bug the
+                # comment above documents.
+                _bank_cols = {r[1] for r in conn.execute("PRAGMA table_info(cache_stats_banked)")}
+                if "tokens_saved_to_llm" not in _bank_cols:
+                    conn.execute(
+                        "ALTER TABLE cache_stats_banked ADD COLUMN"
+                        " tokens_saved_to_llm INTEGER NOT NULL DEFAULT 0"
+                    )
                 for row in idle:
                     conn.execute(
                         """
                         INSERT INTO cache_stats_banked
                             (category, hits, misses, tokens_read_from_disk,
-                             io_tokens_saved, banked_at, bank_count)
-                        VALUES (?, ?, ?, ?, ?, ?, 1)
+                             io_tokens_saved, tokens_saved_to_llm, banked_at, bank_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                         ON CONFLICT(category) DO UPDATE SET
                             hits = hits + excluded.hits,
                             misses = misses + excluded.misses,
                             tokens_read_from_disk =
                                 tokens_read_from_disk + excluded.tokens_read_from_disk,
                             io_tokens_saved = io_tokens_saved + excluded.io_tokens_saved,
+                            tokens_saved_to_llm =
+                                tokens_saved_to_llm + excluded.tokens_saved_to_llm,
                             banked_at = excluded.banked_at,
                             bank_count = bank_count + 1
                     """,
@@ -3198,6 +3230,7 @@ def garbage_collect() -> int:
                         misses = 0,
                         tokens_read_from_disk = 0,
                         io_tokens_saved = 0,
+                        tokens_saved_to_llm = 0,
                         updated_at = ?
                     WHERE updated_at > 0 AND updated_at < ?
                 """,

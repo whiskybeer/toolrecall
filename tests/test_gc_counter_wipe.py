@@ -108,10 +108,17 @@ def _banked(category: str = "file_cache") -> dict:
     with cache._db() as conn:
         r = conn.execute(
             "SELECT hits, misses, tokens_read_from_disk, io_tokens_saved,"
-            " bank_count FROM cache_stats_banked WHERE category = ?",
+            " tokens_saved_to_llm, bank_count FROM cache_stats_banked WHERE category = ?",
             (category,),
         ).fetchone()
-    keys = ("hits", "misses", "tokens_read_from_disk", "io_tokens_saved", "bank_count")
+    keys = (
+        "hits",
+        "misses",
+        "tokens_read_from_disk",
+        "io_tokens_saved",
+        "tokens_saved_to_llm",
+        "bank_count",
+    )
     return dict(zip(keys, r)) if r else {}
 
 
@@ -127,6 +134,11 @@ def test_gc_banks_the_totals_it_resets():
     assert bank["misses"] == SEED["misses"]
     assert bank["io_tokens_saved"] == SEED["io_tokens_saved"]
     assert bank["tokens_read_from_disk"] == SEED["tokens_read_from_disk"]
+    # The ctx axis is reset by the same statement, so it must be banked too.
+    # Leaving it out made the lifetime view report MORE context savings than IO
+    # offload — impossible, since ctx savings are a subset of IO offload.
+    assert live["tokens_saved_to_llm"] == 0, "live ctx row is reset too"
+    assert bank["tokens_saved_to_llm"] == SEED["tokens_saved_to_llm"]
     assert bank["bank_count"] == 1
 
 
@@ -140,6 +152,8 @@ def test_lifetime_view_survives_the_reset():
     assert fc["lifetime_hits"] == SEED["hits"]
     assert fc["lifetime_io_tokens_saved"] == SEED["io_tokens_saved"]
     assert fc["banked_io_tokens_saved"] == SEED["io_tokens_saved"]
+    assert fc["lifetime_tokens_saved_to_llm"] == SEED["tokens_saved_to_llm"]
+    assert fc["banked_tokens_saved_to_llm"] == SEED["tokens_saved_to_llm"]
     assert fc["bank_count"] == 1
 
 
@@ -180,6 +194,50 @@ def test_savings_axes_stay_consistent():
     cache.garbage_collect()
     fc = cache.get_stats()["file_cache"]
     assert fc["tokens_saved_to_llm"] <= fc["lifetime_io_tokens_saved"]
+    # The invariant has to survive the reset on BOTH axes: if the GC zeroes io
+    # but not ctx, lifetime ctx outgrows lifetime io (the 2026-10-22 live bug:
+    # ctx 74.2M vs io 65.0M).
+    assert fc["lifetime_tokens_saved_to_llm"] <= fc["lifetime_io_tokens_saved"], (
+        "lifetime ctx savings can never exceed lifetime IO offload"
+    )
+
+
+def test_bank_table_gains_ctx_column_on_legacy_db():
+    """A bank table created before the ctx column existed must be upgraded.
+
+    CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so the column
+    has to be added explicitly — otherwise banked ctx totals would silently
+    vanish from the lifetime view on every upgraded database.
+    """
+    import toolrecall._db as dbmod
+    from toolrecall.cache import SCHEMA
+
+    # Rebuild the bank table in its pre-2026-10-22 shape (no ctx column).
+    with dbmod._db() as conn:
+        conn.execute("DROP TABLE IF EXISTS cache_stats_banked")
+        conn.execute(
+            "CREATE TABLE cache_stats_banked ("
+            " category TEXT PRIMARY KEY,"
+            " hits INTEGER NOT NULL DEFAULT 0,"
+            " misses INTEGER NOT NULL DEFAULT 0,"
+            " tokens_read_from_disk INTEGER NOT NULL DEFAULT 0,"
+            " io_tokens_saved INTEGER NOT NULL DEFAULT 0,"
+            " banked_at REAL,"
+            " bank_count INTEGER NOT NULL DEFAULT 0)"
+        )
+
+    dbmod._init(SCHEMA)
+
+    with dbmod._db() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(cache_stats_banked)")}
+    assert "tokens_saved_to_llm" in cols, "legacy bank table must gain the ctx column"
+
+    # And the GC must be able to bank into it without raising.
+    _seed_idle_row()
+    from toolrecall import cache as cache_mod
+
+    cache_mod.garbage_collect()
+    assert _banked()["tokens_saved_to_llm"] == SEED["tokens_saved_to_llm"]
 
 
 def test_active_categories_are_untouched():

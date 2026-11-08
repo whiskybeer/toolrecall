@@ -41,6 +41,17 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **Context-savings totals can no longer exceed IO-offload totals after a GC pass.**
+  The housekeeping reset zeroes five `cache_stats` columns for idle categories, but
+  `cache_stats_banked` only had four of them, so `tokens_saved_to_llm` was reset in
+  place while `io_tokens_saved` was banked: the lifetime view then claimed *more*
+  context savings than IO offload — impossible, since context savings are a subset
+  of IO offload. Seen live on 2026-10-22 (`file_cache`: ctx 74,264,365 vs io
+  65,033,600). The ctx axis is now banked and reset like the others, with an
+  `ALTER TABLE` guard so bank tables from older builds gain the column instead of
+  silently dropping banked ctx totals. Note: the *historical* residue on the live
+  DB stays visible and is unrecoverable — the missing IO was never banked. Tests:
+  `tests/test_gc_counter_wipe.py` (+2: ctx banking, legacy bank-table upgrade).
 - **`make validate` is green again.** `test_shim_tagging` stripped only
   `HERMES_*` env vars, so it failed in any other agent session (`CLAUDECODE`,
   `CODEX_`, …). Its setUp now strips every agent marker the shim knows.

@@ -491,3 +491,15 @@ def _init(schema: str = ""):
         # traffic keep their keys/hits untouched.
         _add_column(conn, "file_cache", "client TEXT DEFAULT ''")
         _add_column(conn, "file_cache", "ns TEXT DEFAULT ''")
+        # Migration: 2026-10-22 — bank tokens_saved_to_llm alongside
+        # io_tokens_saved. The GC resets both columns for idle categories, but
+        # only four of them had a bank column, so every reset dropped io to 0
+        # while tokens_saved_to_llm kept accumulating: the display then showed
+        # MORE context savings than IO offload (ctx > io), which is impossible
+        # because context savings are a subset of IO offload. Reproduced live
+        # (ctx 74.2M vs io 65.0M). Guarded on the table's existence because
+        # _init(schema="") can run before any table exists.
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cache_stats_banked'"
+        ).fetchone():
+            _add_column(conn, "cache_stats_banked", "tokens_saved_to_llm INTEGER DEFAULT 0")
