@@ -428,10 +428,17 @@ _USAGE_LOG_PATH = os.path.expanduser("~/.toolrecall/proxy_usage.csv")
 # cost_usd is the PROVIDER-BILLED dollar amount (OpenRouter `usage.cost`,
 # including prompt+completion+cache discount). 0 = not reported (estimate-
 # fallback rows, or providers without a cost field) — never guess it here.
+# Header v4 (2026-09-19): +cache_discount_usd — provider-reported savings from
+# prefix-cache HITS (OpenRouter `usage.cache_discount`; nested in usage when a
+# provider reports it inside cost_details). 0 = not reported. cache READS
+# already have a column (cache_read_tokens — flat OpenAI/Anthropic fields);
+# since v4 the writer also fills it from the OpenAI `prompt_tokens_details.
+# cached_tokens` nesting (OpenRouter reports there; flat fields stayed 0 for
+# 44k rows while the cache discount was already inside usage.cost).
 _USAGE_LOG_HEADER = (
     "timestamp,cache_status,target_host,target_path,request_hash,"
     "prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens,cost_usd,"
-    "dedup_tokens\n"
+    "dedup_tokens,cache_discount_usd\n"
 )
 _USAGE_LOG_LOCK = threading.Lock()
 
@@ -554,8 +561,34 @@ def _log_proxy_usage(
         else (usage.get("prompt_tokens", 0) or 0)
     )
     ct = usage.get("completion_tokens", 0) or 0
-    crt = usage.get("cache_read_input_tokens", 0) or usage.get("cache_read_tokens", 0) or 0
-    cwt = usage.get("cache_creation_input_tokens", 0) or usage.get("cache_write_tokens", 0) or 0
+    # Cache reads/writes: OpenAI/Anthropic flat fields first, then the
+    # OpenAI-compatible nesting (OpenRouter reports prompt_tokens_details.
+    # cached_tokens; its flat cache_read_* fields stay absent → all rows
+    # logged 0 while the discount was billed inside usage.cost).
+    _ptd = usage.get("prompt_tokens_details") or {}
+    crt = (
+        usage.get("cache_read_input_tokens", 0)
+        or usage.get("cache_read_tokens", 0)
+        or _ptd.get("cached_tokens", 0)
+        or 0
+    )
+    cwt = (
+        usage.get("cache_creation_input_tokens", 0)
+        or usage.get("cache_write_tokens", 0)
+        or _ptd.get("cache_write_tokens", 0)
+        or 0
+    )
+    # Provider-reported prefix-cache discount in dollars (OpenRouter
+    # usage.cache_discount; null when the upstream didn't discount — write 0,
+    # consumers treat 0 as "no discount reported", same convention as cost).
+    try:
+        cache_discount_usd = float(
+            usage.get("cache_discount")
+            or (usage.get("cost_details") or {}).get("prompts_cache_discount")
+            or 0.0
+        )
+    except (TypeError, ValueError):
+        cache_discount_usd = 0.0
     # Provider-billed dollars (OpenRouter usage.cost). Empty when the provider
     # didn't report cost — honesty: absent ≠ 0, but the column is numeric, so
     # write 0 and let consumers treat 0 as "no provider cost reported".
@@ -570,7 +603,8 @@ def _log_proxy_usage(
                 f.write(
                     f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
                     f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
-                    f",{pt},{ct},{crt},{cwt},{cost_usd:.6f},{dedup_tokens}\n"
+                    f",{pt},{ct},{crt},{cwt},{cost_usd:.6f},{dedup_tokens},"
+                    f"{cache_discount_usd:.6f}\n"
                 )
         except OSError:
             pass  # best-effort — never break the proxy over a log write

@@ -1,5 +1,124 @@
 # Changelog
 
+## [Unreleased] — 2026-09-20
+
+### Changed
+- **MCP bridge stub TTL 60s → 240s (measured).** The TTL guards the
+  AGENT-memory axis — "does the agent still hold the earlier content?" —
+  which mtime+size cannot answer (that proves only the DISK content is
+  current). It must therefore track the real compaction horizon, and 60s
+  did not. Measured over 396 conversation-growth runs in the billed usage
+  CSV (2 months, monotone prompt growth until reset): median 14 turns /
+  4.8 min before a context reset (p25 1.9 min, p75 19.1 min), median 18.5s
+  per request — so 60s covered only ~3.2 requests of a live conversation
+  and expired stubs whose content the agent provably still held. 240s sits
+  just under the median horizon (288s) and well below p75; `max_consecutive`
+  stays the hard armor. The shim already used 300s — only the bridge moved.
+  Explicitly NOT done: moving stub state into the daemon. Cross-process
+  state would make the stub's claim ("you already hold this") false for a
+  process that never read the file — the same class of failure that
+  corrupted a gateway YAML parse on 2026-09-18 and motivated the
+  `agent_tool` gate.
+- **Saved view: "not sent to the model" is the headline.** That is where
+  the saving is, so it leads. Below it: sent vs without-ToolRecall with the
+  multiple ("1.57x more for the model to read"), and the not-sent figure
+  translated into both a multiple of what was sent and whole context
+  windows. The bill passage and the today-footer were removed from the
+  user view (the billed numbers stay in the Details line).
+- **The context limit is MEASURED, not assumed.** The hard-coded 200K was
+  empirically wrong: a 245,947-token request was accepted and billed, so
+  the view counted real, accepted requests as "over the limit" (130 naive
+  vs 130 actual — a null statement). The limit is now
+  `max(floor, largest actually accepted request)`, exposed as
+  `replay["limit"]`, and the limit line renders only when the naive world
+  actually crosses it. Same for the biggest-message line: shown only when
+  `peak_naive > peak_actual`, with the explicit note that it is the same
+  removed content piled up again, not an extra saving.
+
+### Added
+- **Session-replay tier in `toolrecall top` — the naive-world equivalent, measured not guessed.**
+  The umbrella counts removed tokens once per event; it structurally cannot see the
+  amplification that produces 7-9x session length (removed content rides along in EVERY
+  subsequent request of a naive conversation). New `session_replay_today()` reconstructs
+  the counterfactual deterministically from today's wire data: sessions split at >15 min
+  request gaps, each naive request = billed prompt + in-request dedup + all stub tokens
+  stubbed earlier in the session (HIT rows excluded; stubs attach via the same gap rule;
+  `tui_top._CONTEXT_WALL` = 200K marks requests the naive world cannot make). Every input
+  is measured (billed prompts, wire-verified stubs, logged timestamps) — the construction
+  is the replay, a disclosed segmentation choice, never a hidden multiplier. Rendered as
+  the REPLAY tier in view 1 + non-tty (`session replay (naive-world, today): X vs actual
+  Y — Z% saved (amp xN, S sessions)` + wall line). First prod day: 230.2M naive vs 61.4M
+  actual = 73.3% saved, amp x3.8, 297 naive wall-crossings vs 47 actual — the number that
+  reconciles a 2% umbrella with 7-9x session length. Tests:
+  `tests/test_session_replay.py` (replay arithmetic across 2 sessions with a dropped
+  stub, HIT exclusion, wall counts with a tunable constant, no-traffic None, render
+  contract via snapshot key).
+
+### Changed
+- **Saved view rewritten in plain words (2026-09-20): the headline is sent + avoided.**
+  User bar: "76M was sent and 168M was avoided, that's the headline — explain it
+  without stub/dedup/naive jargon; the 200K/304-vs-54 line needs a coherent
+  sentence." New TODAY-line (`sent + avoided = without ToolRecall`, always
+  reconciling — without replay data the floor is the counted-once removals),
+  a plain-words list (removed parts answered from memory / removed once = not
+  re-sent, with the measured `ride_slots` count instead of a request-1
+  approximation; the ride-along sentence only appears when later requests
+  actually carried removed content), the context-limit line with its
+  definition ("the largest context the model accepts at all"), the dollars
+  sentence ("avoided tokens never reached the provider — nothing on the bill
+  paid for them"), and one compact Details line. No jargon in the user view
+  (stub/dedup/naive/replay/amp/wall live in HELP_TEXT and the code only).
+  All labels English. Tests updated to the plain-word strings.
+  User finding (2026-09-20): "68.8% less context but only 1.6% held back —
+  how do these relate?" Answer rendered in `top` itself: section 1's header
+  says "(each removal counted once)", section 2 leads with an add-up line —
+  `actual X + avoided Y = naive Z (p% less context load)` — and a breakdown
+  (`avoided = D deduped blocks (once) + S stubbed content riding along in N
+  later requests (xM)`). The replay collector exposes the new fields
+  (avoided_total, dedup_sum, stub_attached_tokens, amp_stubs); naive =
+  actual + avoided is an identity of the construction, so the line always
+  reconciles exactly. HELP_TEXT documents the bridge (1 counts once at the
+  moment of removal; the naive world pays it again in every later request —
+  the difference IS the session effect).
+- **`toolrecall top` saved view: three sections, one question each (2026-09-19).**
+  The view had grown to ~10 numbers answering three different questions —
+  re-arranged as: `1 HELD BACK (measured)` (today's wire-held-back tokens =
+  stubbed re-reads + deduped blocks, once per event), `2 SESSION CAPACITY
+  (replay)` (naive-world equivalent for the same sessions, incl. the 200K
+  wall line), `3 BILLED (provider)` (billed tokens + cost + provider
+  prefix-cache line). Demoted OUT of the saved view: the cumulative stub
+  ledger ("logged days" line — available via `toolrecall stats`), the
+  median-request diagnostic (View 4 keeps it), the replays parenthetical
+  (folded into section 3). All labels in English. HELP_TEXT now documents
+  the three questions and the mixing rule (small 1 + large 2 is expected —
+  amplification is the session-length effect). No collector logic changed —
+  re-layout only; tests updated to the new strings.
+- **`toolrecall status`: the estimate label is now `context_estimate=`.** The
+  per-cache context column was printed as `tokens_not_sent_to_llm=` — the
+  same name the MEASURED tier uses (`tokens_not_sent_measured`), so the
+  estimate (per agent-tool-HIT counter) read as billed-truth. Human label
+  renamed; the underlying stats JSON keys are unchanged (script/cron
+  consumers unaffected).
+
+### Added
+- **Provider prefix-cache visibility (CSV v4).** Post-mortem 2026-09-19: all 44k
+  `proxy_usage.csv` rows logged `cache_read_tokens=0` although the discount was
+  flowing — OpenRouter reports cache reads NESTED in
+  `usage.prompt_tokens_details.cached_tokens` (+ `usage.cache_discount` in
+  dollars), not in the flat OpenAI/Anthropic fields the v3 parser read. The
+  CSV grows a 12th column `cache_discount_usd` (header migrates in place;
+  pre-v4 rows read 0 via DictReader `.get() or 0`, same contract as
+  cost_usd/dedup_tokens); the writer now fills `cache_read_tokens` from the
+  nesting (flat fields still win). `toolrecall top` view 1 + non-tty render
+  gain a bill-side line — `provider prefix-cache: X tok re-served by provider — p% of sent [· discount $Y (provider-reported)]` — shown only when the
+  provider reports cache activity, and deliberately OUTSIDE the not-sent
+  umbrella (the discount discounts SENT tokens; umbrella = never-sent).
+  Dollars appear only when the provider reports them (0 = not reported,
+  never guessed). Tests: `tests/test_proxy_cache_usage.py` (nested parse,
+  flat precedence, zero state, pre-v4 row back-compat, render contract);
+  `tests/test_proxy_stream_usage.py` assertions updated to the v4 contract
+  (nested reads now land in the column — the old "nested is ignored" pin).
+
 ## [Unreleased] — 2026-09-18
 
 ### Fixed

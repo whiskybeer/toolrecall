@@ -324,16 +324,28 @@ class MCPBridge:
         self.client = TransportClient(socket_path or DEFAULT_PATH)
         self._start_time = time.time()
         # Session-scoped stub state (Lever 1) — delegates to the SHARED
-        # stub_core.FileStubSession. Policy: ttl 60s / cap 2 / floor 0 —
-        # the bridge's own contract (Claude Code paces compaction faster;
-        # any tool result may be referenced). cap 2 = the pre-core EFFECTIVE
-        # behavior (old code incremented before checking >= 3). The instance
-        # lifetime is the bridge process = the MCP session = exactly the
-        # scope in which "the agent already holds this content" is true.
+        # stub_core.FileStubSession. Policy: ttl 240s / cap 2 / floor 0 —
+        # the bridge's own contract (any tool result may be referenced).
+        # cap 2 = the pre-core EFFECTIVE behavior (old code incremented
+        # before checking >= 3). The instance lifetime is the bridge
+        # process = the MCP session = exactly the scope in which "the agent
+        # already holds this content" is true.
+        #
+        # TTL 60 -> 240 (2026-09-20, measured): the TTL guards the AGENT-
+        # memory axis (is the earlier content still in the transcript?), so
+        # it must track the real compaction horizon. Measured over 396
+        # conversation-growth runs in the billed usage CSV (2 months,
+        # monotone prompt growth until reset): median 14 turns / 4.8 min
+        # before a context reset, p25 1.9 min, p75 19.1 min; median 18.5s
+        # per request. A 60s TTL therefore covered only ~3.2 requests of a
+        # live conversation and expired stubs whose content the agent
+        # provably still held. 240s sits just under the median horizon
+        # (288s) and well below p75 — conservative on the stranding risk,
+        # while max_consecutive stays the hard armor.
         from toolrecall.stub_core import FileStubSession, note_mcp
 
         self._stubs = FileStubSession(
-            ttl_s=60.0,
+            ttl_s=240.0,
             max_consecutive=2,
             min_chars=0,
             note_fn=note_mcp,

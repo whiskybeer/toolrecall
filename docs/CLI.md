@@ -308,9 +308,15 @@ Most commands accept `--help` / `-h` for per-command usage and options
     mechanisms are wire-verified and disjoint (stubbed content never
     reaches the proxy), so the sum is exact; the percentage uses the
     pre-removal base (`removed / (billed + removed)`). Below it: billed
-    prompt/completion, replays, provider-reported cost, the median-request
-    diagnostic, the cumulative stub ledger (explicitly "logged days" —
-    `access_log` is a rolling window), and blocked reads.
+    prompt/completion, replays, the provider prefix-cache line (`X tok
+ re-served by provider — p% of sent [· discount $Y]` — bill-side
+ discount on sent tokens, outside the umbrella; dollars only when the
+ provider reports them), provider-reported cost, the median-request
+ diagnostic, the cumulative stub ledger (explicitly "logged days" —
+ `access_log` is a rolling window), and blocked reads. The REPLAY
+ tier below it reconstructs the naive-world equivalent for the same
+ sessions (15-min gap rule, stubs/dedup switched off, 200K wall) —
+ inputs measured, counterfactual constructed.
   - `2` **log** — scrollable access-log tail (`↑`/`↓`, `PgUp`/`PgDn`)
   - `3` **trend** — daily file_cache hit-rate from `access_log` (7-day view
     with bar visual) + worst hit-rate path classes (the plateau diagnostic,

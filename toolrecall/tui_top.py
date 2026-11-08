@@ -49,10 +49,18 @@ CATEGORIES = [
     "browser_cache",
 ]
 
+# Context wall for the session-replay tier: naive requests above this many
+# tokens cannot exist (the provider rejects/overflows them — a real-world
+# run hits compaction or a fresh session instead). NOT the UI's model limit;
+# the constant that separates "re-sent history the provider would refuse"
+# from "expensive but billable". Disclosed in HELP_TEXT; tuning it changes
+# only the wall-crossing count, never the measured token sums.
+_CONTEXT_WALL = 200_000
+
 HELP_TEXT = [
     "toolrecall top — interactive dashboard (read-only)",
     "",
-    "1/2/3/4   switch view: saved (money+measured) / access log / trend / stats",
+    "1/2/3/4   switch view: saved (savings) / access log / trend / stats",
     "tab       cycle views",
     "up/down   scroll (log, context views); move selection",
     "enter     context view: refresh the selected stale file on disk",
@@ -60,15 +68,17 @@ HELP_TEXT = [
     "r         force refresh now",
     "q / esc   quit",
     "",
-    "METRIC TIERS (don't conflate):",
-    "  IO      — hits/rate, tokens served cache vs disk: latency only,",
-    "            NOT money. Content reaches the LLM either way.",
-    "  CONTEXT — measured not-sent: wire-verified tokens that never",
-    "            reached the LLM — stubbed re-reads + within-request",
-    "            dedup (disjoint sets; the saved view sums both).",
-    "            Estimates: `toolrecall stats`.",
-    "  MONEY   — billed input/output tokens: only from provider usage",
-    "            via the API proxy. No proxy traffic = no data.",
+    "SAVED VIEW (press 1): how much was NOT sent to the model?",
+    "  headline      tokens never sent, as a multiple of what was sent",
+    "                and in whole context windows.",
+    "  comparison    sent vs what the model would have received without",
+    "                ToolRecall (same sessions, recalculated from today's",
+    "                actual requests).",
+    "  big message   the largest single message, and how big it would",
+    "                have been — the same removed content piled up, not",
+    "                an extra saving. Shown only when it differs.",
+    "  the limit is MEASURED: the largest request the provider actually",
+    "  accepted (a hard-coded 200K was empirically wrong).",
     "",
     "Data: daemon UDS when up, read-only SQLite fallback when down.",
     "Actions need the daemon; they are safe (no cache-wide invalidation).",
@@ -248,7 +258,11 @@ def money_today(usage_csv: str | None = None) -> dict | None:
       requests, prompt, completion, replays (cache_status=HIT),
       median (prompt-token median — the re-sent-history diagnostic),
       dedup_tokens (wire-verified tokens removed from requests pre-billing
-      — the per-request Y in "sent X, not sent Y").
+      — the per-request Y in "sent X, not sent Y"),
+      cache_read_tokens (provider prefix-cache reads — v4 rows carry the
+      OpenAI prompt_tokens_details.cached_tokens nesting; 0 on pre-v4 rows),
+      cache_discount_usd (provider-reported cache discount in dollars —
+      0 = not reported, never guessed).
     """
     path = usage_csv or os.path.join(os.path.expanduser("~"), ".toolrecall", "proxy_usage.csv")
     if not os.path.isfile(path):
@@ -259,6 +273,8 @@ def money_today(usage_csv: str | None = None) -> dict | None:
     requests = prompt = completion = replays = 0
     sizes = []
     dedup_tokens = 0
+    cache_read = 0
+    cache_discount = 0.0
     cost = 0.0
     cost_rows = 0
     day_start = (
@@ -286,6 +302,14 @@ def money_today(usage_csv: str | None = None) -> dict | None:
                 except (TypeError, ValueError):
                     pass
                 try:
+                    cache_read += int(row.get("cache_read_tokens") or 0)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    cache_discount += float(row.get("cache_discount_usd") or 0.0)
+                except (TypeError, ValueError):
+                    pass
+                try:
                     c = float(row.get("cost_usd") or 0.0)
                 except (TypeError, ValueError):
                     c = 0.0
@@ -306,6 +330,12 @@ def money_today(usage_csv: str | None = None) -> dict | None:
         "replays": replays,
         "median": median,
         "dedup_tokens": dedup_tokens,
+        # Provider prefix-cache reads (cache_read_tokens column; v4 rows carry
+        # the OpenAI prompt_tokens_details.cached_tokens nesting) and the
+        # provider-reported cache discount in dollars (v4; 0 = not reported —
+        # never claim a dollar saving the provider didn't report).
+        "cache_read_tokens": cache_read,
+        "cache_discount_usd": cache_discount,
         # Provider-reported dollars summed over rows that carried a cost.
         # cost_rows == 0 means the column held no provider cost at all
         # (pre-v2 rows, estimate fallbacks) — report None, not $0.00.
@@ -354,6 +384,181 @@ def stubbed_today(db: str) -> tuple[int, int]:
         if (ts or 0) >= day_start:
             today += tokens
     return today, window
+
+
+def session_replay_today(usage_csv: str | None = None, db: str | None = None) -> dict | None:
+    """Naive-equivalent context load via REPLAY (deterministic, wire-measured).
+
+    The umbrella counts tokens REMOVED at the stub event once — but in a
+    naive world (no ToolRecall) that removed content would ride along in
+    EVERY subsequent request of the conversation (prompt = full history).
+    The session-length claim (7-9x) lives in that amplification, which no
+    per-event counter can see. This collector reconstructs it:
+
+      - Sessions: CSV requests (non-HIT) split at >15 min gaps — the same
+        gap rule attaches a stub to the next request in its session.
+      - Actual request size  = billed prompt p (what the provider saw).
+      - Naive request size   = p + dedup_tokens (blocks TR removed within
+        the request) + Σ stub tokens stubbed earlier in the session (the
+        content a naive world would re-send every turn).
+      - Wall = _CONTEXT_WALL tokens: naive requests above it are requests
+        the naive world CANNOT make (context overflow → compaction or a
+        new session). That count IS the session-capacity story.
+
+    Every input is measured (billed prompts, wire-verified stubs, logged
+    timestamps); the construction is the replay: one deterministic
+    re-computation with the stubs/dedup switched off. Estimates here are
+    the segmentation choices (15-min gap, wall constant), disclosed in
+    HELP_TEXT — never a hidden multiplier.
+
+    Returns None when there is no traffic today. HIT rows are excluded
+    from the request stream (their prompt column carries the synthesized
+    response size, not a request prompt).
+    """
+    path = usage_csv or os.path.join(os.path.expanduser("~"), ".toolrecall", "proxy_usage.csv")
+    if not os.path.isfile(path):
+        return None
+    import bisect
+    import csv as _csv
+    from datetime import datetime, timezone
+
+    day_start = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
+    reqs: list[tuple[float, int, int]] = []
+    try:
+        with open(path, errors="replace") as f:
+            for row in _csv.DictReader(f):
+                try:
+                    ts = float(row.get("timestamp") or 0)
+                except ValueError:
+                    continue
+                if ts < day_start:
+                    continue
+                if (row.get("cache_status") or "").strip().upper() == "HIT":
+                    continue  # replay rows carry no request prompt
+                try:
+                    p = int(float(row.get("prompt_tokens") or 0))
+                    d = int(float(row.get("dedup_tokens") or 0))
+                except (TypeError, ValueError):
+                    continue
+                reqs.append((ts, p, d))
+    except OSError:
+        return None
+    if not reqs:
+        return None
+    reqs.sort()
+
+    # Wire-verified stub events (tokens, timestamp) from access_log.
+    stubs: list[tuple[float, int]] = []
+    con = _open_ro(db) if db else None
+    if con is not None:
+        try:
+            for ts, tokens in con.execute(
+                "SELECT cached_at, tokens FROM access_log"
+                " WHERE category = 'mcp_dedup' AND cached_at >= ? AND tokens > 0",
+                (day_start,),
+            ):
+                stubs.append((float(ts), int(tokens or 0)))
+        except sqlite3.Error:
+            stubs = []  # unreadable log → replay tier degrades to None downstream
+        finally:
+            con.close()
+    stubs.sort()
+
+    # Attach each stub to its session: the next request within GAP seconds.
+    GAP = 900  # 15 min idle = session boundary (same rule for both uses)
+    rts = [t for t, _, _ in reqs]
+    attached: list[tuple[float, int]] = []
+    for ts, tk in stubs:
+        i = bisect.bisect_right(rts, ts)
+        if i < len(rts) and rts[i] - ts < GAP:
+            attached.append((ts, tk))
+    attached.sort()
+
+    # Split sessions at the same gap.
+    sessions: list[list[tuple[float, int, int]]] = []
+    cur = [reqs[0]]
+    for prev, nxt in zip(reqs, reqs[1:]):
+        if nxt[0] - prev[0] > GAP:
+            sessions.append(cur)
+            cur = []
+        cur.append(nxt)
+    sessions.append(cur)
+
+    act_total = naive_total = act_peak = naive_peak = 0
+    dedup_sum = 0
+    ride_slots = 0  # measured: requests that carry at least one removed part
+    # Pass 1: totals and peaks (the limit is only knowable after the peak).
+    for s in sessions:
+        s_first, s_last = s[0][0], s[-1][0]
+        s_stubs = [t for t in attached if s_first <= t[0] <= s_last]
+        out = 0
+        si = 0
+        for ts, p, d in s:
+            while si < len(s_stubs) and s_stubs[si][0] <= ts:
+                out += s_stubs[si][1]
+                si += 1
+            a = p
+            n = p + d + out
+            dedup_sum += d
+            if out:
+                ride_slots += 1
+            act_total += a
+            naive_total += n
+            act_peak = max(act_peak, a)
+            naive_peak = max(naive_peak, n)
+    if naive_total <= 0:
+        return None
+    # MEASURED context limit (2026-09-20): the old hard-coded 200K was
+    # empirically wrong — a 245,947-token request was accepted and billed,
+    # so the view claimed "over the limit" for requests the provider took.
+    # The largest ACTUAL request proves the model accepts at least that
+    # much; the floor keeps a sane value on tiny days. Only naive requests
+    # above this proven-acceptable size count as impossible.
+    limit = max(_CONTEXT_WALL, act_peak)
+    # Pass 2: limit crossings against the measured limit.
+    wall_naive = wall_act = 0
+    for s in sessions:
+        s_first, s_last = s[0][0], s[-1][0]
+        s_stubs = [t for t in attached if s_first <= t[0] <= s_last]
+        out = 0
+        si = 0
+        for ts, p, d in s:
+            while si < len(s_stubs) and s_stubs[si][0] <= ts:
+                out += s_stubs[si][1]
+                si += 1
+            if p + d + out > limit:
+                wall_naive += 1
+            if p > limit:
+                wall_act += 1
+    attached_tokens = sum(tk for _, tk in attached)
+    # Bridge arithmetic (what the saved view explains): naive = actual +
+    # avoided. avoided splits into the request's own deduped blocks (counted
+    # once — conservative: a naive client would re-send duplicates in later
+    # turns too, so this UNDERcounts) and the attached stub tokens riding
+    # along in every later request of their session (the amplification).
+    amplified_stubs = naive_total - act_total - dedup_sum
+    return {
+        "requests": len(reqs),
+        "sessions": len(sessions),
+        "stubs_attached": len(attached),
+        "stubs_dropped": len(stubs) - len(attached),
+        "actual_total": act_total,
+        "naive_total": naive_total,
+        "avoided_total": naive_total - act_total,
+        "dedup_sum": dedup_sum,
+        "stub_attached_tokens": attached_tokens,
+        "amp_stubs": (amplified_stubs / attached_tokens) if attached_tokens else 0.0,
+        "ride_slots": ride_slots,
+        "savings_pct": 100.0 * (1.0 - act_total / naive_total),
+        "amp": naive_total / max(1, act_total),
+        "peak_actual": act_peak,
+        "peak_naive": naive_peak,
+        "wall_naive": wall_naive,
+        "wall_act": wall_act,
+        "limit": limit,
+    }
 
 
 def blocked_reads_today(log_path: str | None = None) -> list[dict]:
@@ -514,71 +719,88 @@ def render_plain(snapshot: dict) -> str:
         )
     # End-user ordering (2026-09-16): money truth + measured not-sent FIRST,
     # IO table last (tech detail). Same contract as the curses view order.
+    # 2026-09-19 layout: the saved view = three sections, one question each
+    # (1 held back / 2 session capacity / 3 billed) — HELP_TEXT documents it.
     money = money_today()
     stubs_today, stubs_window = stubbed_today(snapshot.get("db_path") or snapshot.get("db", ""))
-    if money:
-        lines.append("")
-        # ── THE headline: sent X, not sent Y (end-user order, 2026-09-16) ──
-        # 2026-09-18: Y is the UMBRELLA — stubbed re-reads + within-request
-        # dedup, both wire-verified, disjoint sets (stubbed content never
-        # reaches the proxy, so the proxy can only dedup what was sent).
-        # Percentage base = pre-removal prompt total (billed + removed) —
-        # the provider never saw the removed tokens, so "of billed" was
-        # the wrong denominator.
-        _dy = money.get("dedup_tokens", 0)
-        _notsent = _dy + stubs_today
-        if _notsent:
-            _base = money["prompt"] + _notsent
-            _pct = (100.0 * _notsent / _base) if _base else 0.0
-            lines.append(
-                "sent to LLM today: %s tok  (%d requests)"
-                % (human_tokens(money["prompt"]), money["requests"])
-            )
-            lines.append(
-                "not sent (measured): %s tok  —  %.1f%% of would-have-been-billed"
-                % (human_tokens(_notsent), _pct)
-            )
-            lines.append(
-                "  · stubbed re-reads: %s tok  (unchanged file re-read → one-line stub)"
-                % human_tokens(stubs_today)
-            )
-            lines.append(
-                "  · deduped blocks:   %s tok  (identical blocks within a request)"
-                % human_tokens(_dy)
-            )
-        else:
-            lines.append(
-                "sent to LLM today: %s tok  (%d requests)  —  no stubbed re-reads,"
-                " no duplicate blocks today" % (human_tokens(money["prompt"]), money["requests"])
-            )
+    _dy = (money or {}).get("dedup_tokens", 0)
+    _notsent = _dy + stubs_today
+
+    lines.append("")
+    # ── HEADLINE: not sent to the model (2026-09-20: this is where the
+    # saving is — Robin's call). Bill passage and today-footer removed.
+    _rp = snapshot.get("replay") or {}
+    _avoided = _rp.get("avoided_total", _notsent)
+    _naive = _rp.get("naive_total", (money or {}).get("prompt", 0) + _notsent)
+    _sent = (money or {}).get("prompt", 0)
+    lines.append("NOT SENT TO THE MODEL TODAY:  %s tok" % human_tokens(_avoided))
+    if _sent and _avoided:
+        _ratio = _avoided / _sent
+        _windows = _avoided / float(_rp.get("limit") or _CONTEXT_WALL)
         lines.append(
-            "money [billed via proxy, today]: %s prompt / %s completion tok  replays %d"
+            "    %.2fx everything that was sent  ·  ~ %.1f full context windows"
+            % (_ratio, _windows)
+        )
+    lines.append("")
+    if money:
+        lines.append("  Sent to the model:   %s tok" % human_tokens(_sent))
+        _more = (_naive / _sent) if _sent else 0.0
+        lines.append(
+            "  Without ToolRecall:  %s tok   —  %.2fx more for the model to read"
+            % (human_tokens(_naive), _more)
+        )
+    # Biggest single message: only when the removed content actually piled
+    # up again (peak_naive > peak_actual); otherwise the line says nothing.
+    if _rp.get("peak_naive", 0) > _rp.get("peak_actual", 0):
+        _pa, _pn = _rp["peak_actual"], _rp["peak_naive"]
+        lines.append("")
+        lines.append(
+            "  Biggest single message:  %s tok  ->  without ToolRecall %s tok  (%.1fx)"
+            % (human_tokens(_pa), human_tokens(_pn), _pn / max(1, _pa))
+        )
+        lines.append("    same removed content piled up again in one message — not an extra saving")
+    if _rp.get("wall_naive", 0) > _rp.get("wall_act", 0):
+        lines.append(
+            "    %d of %d messages would not have fit at all"
+            " (largest accepted: %s tok)"
+            % (_rp["wall_naive"], _rp["requests"], human_tokens(_rp.get("limit", 0)))
+        )
+    lines.append("")
+    if _notsent:
+        lines.append("  Why: your agent reads the same files again, and every message repeats")
+        lines.append("  the whole conversation. ToolRecall answers a re-read from memory, so")
+        lines.append("  that content is sent once instead of in every later message.")
+    else:
+        lines.append("  Nothing was held back today (no repeated file reads, no repeated text).")
+    lines.append("")
+    if money:
+        _cost = ""
+        if money.get("cost_usd") is not None:
+            _cost = "  $%.4f" % money["cost_usd"]
+        lines.append(
+            "Details: %s prompt / %s completion tok billed%s  ·  replays %d"
             % (
                 human_tokens(money["prompt"]),
                 human_tokens(money["completion"]),
+                _cost,
                 money["replays"],
             )
         )
-        if money.get("cost_usd") is not None:
-            lines.append("  billed cost today: $%.4f (provider-reported)" % money["cost_usd"])
-        if money["median"] and money["median"] > 100_000:
-            lines.append(
-                "  median request %s tok — cost dominated by re-sent history"
-                % human_tokens(money["median"])
+        _cr = money.get("cache_read_tokens") or 0
+        _cd = money.get("cache_discount_usd") or 0.0
+        if _cr or _cd:
+            # Provider prefix-cache: a BILL-side discount on SENT tokens —
+            # deliberately NOT in the not-sent math.
+            _cpct = (100.0 * _cr / money["prompt"]) if money["prompt"] else 0.0
+            _line = "  provider prefix-cache: %s tok re-served by provider  —  %.1f%% of sent" % (
+                human_tokens(_cr),
+                _cpct,
             )
-    elif not daemon:
-        lines.append("")
-        lines.append("money [billed]: no proxy traffic captured today")
-    if stubs_window:
-        lines.append("")
-        # Today/cumulative split — the old line printed the cumulative
-        # counter under a "today" header (scope mismatch the 2026-09-18
-        # umbrella change fixes). "logged days" because access_log is a
-        # rolling window, not since-forever history.
-        lines.append(
-            "  stubbed re-reads, logged days: %s  (today: %s — dedup stubs, wire-verified)"
-            % (human_tokens(stubs_window), human_tokens(stubs_today))
-        )
+            if _cd:
+                _line += "  ·  discount $%.4f (provider-reported)" % _cd
+            lines.append(_line)
+    else:
+        lines.append("  no proxy traffic captured today")
     ctx = context_via_daemon()
     if ctx:
         lines.append("")
@@ -637,6 +859,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         "trend": None,
         "stubs_today": 0,
         "stubs_window": 0,
+        "replay": None,
         "toast": "",
         "toast_ts": 0.0,
         "last": 0.0,
@@ -667,6 +890,11 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             )
         except Exception:  # noqa: BLE001 — stub block must never break the TUI
             state["stubs_today"] = state["stubs_window"] = 0
+        # session-replay tier (naive-world reconstruction) — same cadence
+        try:
+            state["replay"] = session_replay_today(db=(state["snap"] or {}).get("db_path", ""))
+        except Exception:  # noqa: BLE001 — replay block must never break the TUI
+            state["replay"] = None
         # trend reads the db directly (like log_fn); cheap + daemon-independent
         try:
             from toolrecall.trend import coverage, daily_trend, miss_classes
@@ -741,102 +969,110 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             for line in HELP_TEXT:
                 y = put(y, " " + line)
         elif view == "context":
-            # ── VIEW 1: SAVED (end-user) — money truth + wire-verified ──
+            # ── VIEW 1: SAVED — not-sent headline, plain words ──
             ctx = state["ctx"]
-            y = put(y, " saved today (end-user view — billed truth + measured):", A_BOLD)
             money = state.get("money")
-            if money:
-                y = put(y + 1, "", 0)  # section gap
-                # ── THE headline: sent X, not sent Y (Robin's ask) ──
-                # 2026-09-18: Y = umbrella — stubbed re-reads + within-request
-                # dedup, both wire-verified and disjoint (stubbed content never
-                # reaches the proxy). Pct base = pre-removal prompt total;
-                # rationale in render_plain().
-                _dy = money.get("dedup_tokens", 0)
-                _st = state.get("stubs_today", 0) or 0
-                _notsent = _dy + _st
+            _dy = (money or {}).get("dedup_tokens", 0)
+            _st = state.get("stubs_today", 0) or 0
+            _notsent = _dy + _st
+            _rp = state.get("replay") or {}
+            _avoided = _rp.get("avoided_total", _notsent)
+            _naive = _rp.get("naive_total", (money or {}).get("prompt", 0) + _notsent)
+            _sent = (money or {}).get("prompt", 0)
+
+            y = put(y, "", 0)
+            y = put(
+                y,
+                " NOT SENT TO THE MODEL TODAY:  %s tok" % human_tokens(_avoided),
+                A_BOLD,
+            )
+            if _sent and _avoided:
                 y = put(
                     y,
-                    "  sent to LLM today:      %s tok  (%d requests)"
-                    % (human_tokens(money["prompt"]), money["requests"]),
-                    A_BOLD,
+                    "     %.2fx everything that was sent  ·  ~ %.1f full context windows"
+                    % (_avoided / _sent, _avoided / float(_rp.get("limit") or _CONTEXT_WALL)),
+                    A_HIT,
                 )
-                if _notsent:
-                    _base = money["prompt"] + _notsent
-                    _pct = (100.0 * _notsent / _base) if _base else 0.0
-                    y = put(
-                        y,
-                        "  not sent (measured):    %s tok  —  %.1f%% of would-have-been-billed"
-                        % (human_tokens(_notsent), _pct),
-                        A_HIT,
-                    )
-                    y = put(
-                        y,
-                        "  · stubbed re-reads:     %s tok  (unchanged file re-read → one-line stub)"
-                        % human_tokens(_st),
-                    )
-                    y = put(
-                        y,
-                        "  · deduped blocks:       %s tok  (identical blocks within a request)"
-                        % human_tokens(_dy),
-                    )
-                else:
-                    y = put(
-                        y,
-                        "  not sent (measured):    0 tok  (no stubbed re-reads,"
-                        " no duplicate blocks today)",
-                        A_DIM,
-                    )
+            y = put(y, "", 0)
+            if money:
+                y = put(y, "   Sent to the model:   %s tok" % human_tokens(_sent))
+                y = put(
+                    y,
+                    "   Without ToolRecall:  %s tok   —  %.2fx more for the model to read"
+                    % (human_tokens(_naive), (_naive / _sent) if _sent else 0.0),
+                )
+            if _rp.get("peak_naive", 0) > _rp.get("peak_actual", 0):
+                _pa, _pn = _rp["peak_actual"], _rp["peak_naive"]
                 y = put(y, "", 0)
                 y = put(
                     y,
-                    "  billed via proxy today: %s prompt / %s completion tok"
-                    % (human_tokens(money["prompt"]), human_tokens(money["completion"])),
+                    "   Biggest single message:  %s tok  ->  without ToolRecall %s tok  (%.1fx)"
+                    % (human_tokens(_pa), human_tokens(_pn), _pn / max(1, _pa)),
+                    A_BOLD,
                 )
-                y = put(y, "  replays (identical prompt served from cache): %d" % money["replays"])
-                if money.get("cost_usd") is not None:
-                    y = put(
-                        y,
-                        "  billed cost today: $%.4f (provider-reported, rows carrying cost)"
-                        % money["cost_usd"],
-                        A_BOLD,
-                    )
-                if money["median"] and money["median"] > 100_000:
-                    y = put(
-                        y,
-                        "  median request %s tok — cost dominated by re-sent history"
-                        % human_tokens(money["median"]),
-                        A_MISS,
-                    )
-            else:
-                y = put(y + 1, "", 0)  # section gap
                 y = put(
                     y,
-                    "  no billed-token data today (LLM traffic does not route"
-                    " through the proxy — attach: toolrecall proxy attach)",
+                    "     same removed content piled up again in one message — not an extra saving",
+                )
+            if _rp.get("wall_naive", 0) > _rp.get("wall_act", 0):
+                y = put(
+                    y,
+                    "     %d of %d messages would not have fit at all (largest accepted: %s tok)"
+                    % (
+                        _rp["wall_naive"],
+                        _rp["requests"],
+                        human_tokens(_rp.get("limit", 0)),
+                    ),
+                    A_HIT,
+                )
+            y = put(y, "", 0)
+            if _notsent:
+                y = put(
+                    y,
+                    "   Why: your agent reads the same files again, and every message",
+                )
+                y = put(
+                    y,
+                    "   repeats the whole conversation. ToolRecall answers a re-read from",
+                )
+                y = put(
+                    y,
+                    "   memory, so that content is sent once instead of in every later one.",
+                )
+            else:
+                y = put(
+                    y,
+                    "   Nothing was held back today (no repeated file reads, no repeated text).",
                     A_DIM,
                 )
-            # Cumulative stub ledger, explicitly scoped (2026-09-18): the
-            # cache_stats counter is all-days; today's share lives in the
-            # umbrella headline above. Printing the cumulative number under
-            # a "today" header was the scope mismatch this replaces.
-            y = put(y + 1, "", 0)  # section gap
-            if state.get("stubs_window"):
+            y = put(y, "", 0)
+            if money:
+                _cost = ""
+                if money.get("cost_usd") is not None:
+                    _cost = "  $%.4f" % money["cost_usd"]
                 y = put(
                     y,
-                    "  stubbed re-reads, logged days: %s  (today: %s — dedup stubs,"
-                    " wire-verified)"
+                    " Details: %s prompt / %s completion tok billed%s  ·  replays %d"
                     % (
-                        human_tokens(state["stubs_window"]),
-                        human_tokens(state["stubs_today"]),
+                        human_tokens(money["prompt"]),
+                        human_tokens(money["completion"]),
+                        _cost,
+                        money["replays"],
                     ),
                 )
+                _cr = money.get("cache_read_tokens") or 0
+                _cd = money.get("cache_discount_usd") or 0.0
+                if _cr or _cd:
+                    _cpct = (100.0 * _cr / money["prompt"]) if money["prompt"] else 0.0
+                    _line = (
+                        "  provider prefix-cache: %s tok re-served by provider  —  %.1f%% of sent"
+                        % (human_tokens(_cr), _cpct)
+                    )
+                    if _cd:
+                        _line += "  ·  discount $%.4f (provider-reported)" % _cd
+                    y = put(y, _line, A_HIT)
             else:
-                y = put(
-                    y,
-                    "  stubbed re-reads: none yet (grows when an unchanged file re-read is stubbed)",
-                    A_DIM,
-                )
+                y = put(y, " Details: no proxy traffic captured today", A_DIM)
             # Blocked reads: security-gate refusals — also wire-verified
             # never-sent (content never reached the LLM).
             blocked = blocked_reads_today()
@@ -1283,6 +1519,10 @@ def main(argv: list | None = None) -> int:
     if args.once or not sys.stdout.isatty():
         snap = snapshot()
         snap["db"] = db
+        try:
+            snap["replay"] = session_replay_today(db=db)
+        except Exception:  # noqa: BLE001 — replay must never break the snapshot
+            snap["replay"] = None
         print(render_plain(snap))
         return 0
 

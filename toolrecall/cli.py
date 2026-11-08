@@ -249,7 +249,12 @@ def cmd_status():
             saved_str = f", tokens_served_from_cache={saved:,}" if saved else ""
             adjusted_str = f", adjusted={adjusted:,}" if adjusted and adjusted != saved else ""
             read_str = f", tokens_served_from_disk={read:,}" if read else ""
-            context_str = f", tokens_not_sent_to_llm={context:,}" if context else ""
+            # 2026-09-19 rename: this column is the CONTEXT-tier ESTIMATE
+            # (per-HIT counter); the MEASURED not-sent tier lives in
+            # tokens_not_sent_measured (mcp_dedup). The old human label
+            # ("tokens_not_sent_to_llm=") collided with the measured tier's
+            # name and read as billed-truth.
+            context_str = f", context_estimate={context:,}" if context else ""
             content_str = f", cached_content_tokens={content_tokens:,}" if content_tokens else ""
             print(
                 f"  {k}: {v['hits']} hits, {v['misses']} misses, "
@@ -292,7 +297,7 @@ def _context_flow_snapshot() -> dict:
 
     Fetched from the daemon over IPC so every reporter (CLI JSON, cron
     script, dashboards) sees the same state the TUI shows, including the
-    ``armed`` flag that the bare ``tokens_not_sent_to_llm`` counter cannot
+    ``armed`` flag that the bare ``context_estimate`` counter cannot
     convey. Fail-soft: any error degrades to ``{"available": False,
     "reason": ...}`` — a reporter must print WHY state is missing instead
     of implying a dead flow (2026-09-15 cron misread: an armed flow with
@@ -300,7 +305,9 @@ def _context_flow_snapshot() -> dict:
     was invisible in the stats JSON).
 
     Two tiers, both correct, never merge:
-      - cache tier (``tokens_not_sent_to_llm``): per agent-tool HIT.
+      - cache tier (``context_estimate`` / stats key
+        ``tokens_not_sent_to_llm``): per agent-tool HIT. ESTIMATE tier —
+        the measured not-sent tier is ``tokens_not_sent_measured``.
       - tracker ledger (``banked_tokens``): per file, once per checkpoint
         epoch (banked-once). Smaller by design.
     """

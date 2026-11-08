@@ -78,8 +78,10 @@ FROZEN_COUNTS = {
     # 0 as of 2026-09-17: env-TTL parse + config resolution failures are
     # logged at debug (shim never owns a log file; lastResort carries them).
     "shim_stub.py": 0,
-    # 5 as of 2026-09-17 (baseline sync): c1237bb headline render dropped one.
-    "tui_top.py": 5,
+    # 7 as of 2026-09-19 (cache-instrument): +2 — cache_read/cache_discount
+    # CSV column sums in money_today() (typed (TypeError, ValueError), same
+    # shape as the existing dedup sum; column-absent rows → 0 back-compat).
+    "tui_top.py": 7,
     "transport.py": 0,
     # 1 as of 2026-09-17 (baseline sync): 71ebf9f SAST pass fixed one.
     "updater.py": 1,

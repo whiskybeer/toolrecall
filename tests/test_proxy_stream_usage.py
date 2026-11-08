@@ -204,12 +204,14 @@ class TestStreamBilledTruth(unittest.TestCase):
         self.assertIn(b"[DONE]", data)
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(len(rows), 1)
-        _ts, status, host, path, _h, pt, ct, crt, _cwt, cost, _dd = rows[0]
+        _ts, status, host, path, _h, pt, ct, crt, _cwt, cost, _dd, _cd = rows[0]
         self.assertEqual(status, "STREAM")
         self.assertEqual(host, "api.testretry.invalid:80")
         self.assertEqual(pt, "66992")  # real, not len(body)//4 (~30)
         self.assertEqual(ct, "454")  # was always 0 before this fix
-        self.assertEqual(crt, "0")
+        # v4 contract: the nested prompt_tokens_details.cached_tokens flows
+        # into cache_read_tokens (OpenRouter's actual reporting shape).
+        self.assertEqual(crt, "3210304")
         # Provider-billed dollars land in the row (OpenRouter usage.cost),
         # written with 6-decimal precision
         self.assertAlmostEqual(float(cost), 0.0051379, places=6)
@@ -223,7 +225,7 @@ class TestStreamBilledTruth(unittest.TestCase):
         self._forward()
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(len(rows), 1)
-        _ts, status, _h, _p, _h2, pt, ct, _crt, _cwt, cost, _dd = rows[0]
+        _ts, status, _h, _p, _h2, pt, ct, _crt, _cwt, cost, _dd, _cd = rows[0]
         self.assertEqual(status, "STREAM")
         self.assertEqual(ct, "0")
         self.assertGreater(int(pt), 0)  # len(body)//4 estimate still logged
@@ -248,10 +250,11 @@ class TestStreamBilledTruth(unittest.TestCase):
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(rows[0][5], "100000")
         self.assertEqual(rows[0][6], "200")
-        self.assertEqual(
-            rows[0][7], "0"
-        )  # prompt_tokens_details.cached_tokens is nested OpenRouter-style
-        self.assertEqual(rows[0][8], "0")
+        # v4 contract: nested prompt_tokens_details.cached_tokens IS read
+        # (flat OpenAI/Anthropic fields first, nesting as fallback).
+        self.assertEqual(rows[0][7], "95000")
+        self.assertEqual(rows[0][8], "500")
+        self.assertEqual(rows[0][11], "0.000000")  # no discount in usage → 0
 
     def test_cost_usd_column_v2_header_and_legacy_rows(self):
         # The writer emits 10 columns with the v2 header; legacy 9-column rows

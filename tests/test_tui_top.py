@@ -143,17 +143,18 @@ def test_render_plain_umbrella_headline(seeded_db, monkeypatch):
     monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
     snap = tui_top.snapshot_factory(seeded_db)
     out = tui_top.render_plain(snap)
-    # Umbrella total = dedup (50K) + stubs (7K); pct base = billed 100K + 57K
-    # = 157K → 57/157 = 36.3% (pre-removal base, NOT "of billed").
-    assert "not sent (measured): 57.0K tok  —  36.3% of would-have-been-billed" in out
-    assert "· stubbed re-reads: 7.0K tok" in out
-    assert "· deduped blocks:   50.0K tok" in out
+    # Headline: not sent. This test seeds one stub event (7K today)
+    # + dedup 50K → 57K not sent; without ToolRecall = 100K + 57K = 157K.
+    assert "NOT SENT TO THE MODEL TODAY:  57.0K tok" in out
+    assert "0.57x everything that was sent" in out
+    assert "Sent to the model:   100.0K tok" in out
+    assert "Without ToolRecall:  157.0K tok" in out
+    assert "1.57x more for the model to read" in out
     # Old mislabeled forms must be gone.
     assert "not sent (dedup)" not in out
     assert "% of billed" not in out
-    # Cumulative ledger is explicitly day-scoped now.
-    assert "logged days" in out and "today: 7.0K" in out
-    # The old cumulative-only line must not reappear.
+    assert "held back:" not in out
+    assert "not sent (measured)" not in out
     assert "tokens never sent to the LLM" not in out
 
 
@@ -162,8 +163,8 @@ def test_render_plain_zero_notsent_has_reason(seeded_db, monkeypatch):
     _stub_money(monkeypatch, prompt=80_000, dedup=0)
     monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
     out = tui_top.render_plain(tui_top.snapshot_factory(seeded_db))
-    assert "no stubbed re-reads, no duplicate blocks today" in out
-    assert "not sent (measured)" not in out
+    assert "NOT SENT TO THE MODEL TODAY:  0 tok" in out
+    assert "Nothing was held back today" in out
 
 
 def test_render_plain_contains_tables_and_tail(seeded_db, monkeypatch):
