@@ -135,11 +135,19 @@ def _instance_lock_path(socket_path: str) -> str:
     *different* sockets (e.g. e2e tests using a temp socket) each get
     their own lock, while multiple attempts to start a daemon on the
     *same* socket serialize and only one wins.
+
+    Hermetic daemons bound under temp directories keep their lock file
+    in their own temp directory (next to the socket) rather than polluting
+    ~/.toolrecall (which may be read-only or owned by production).
     """
     import hashlib
 
     # nosemgrep: insecure-hash-algorithm-md5 — non-crypto lockfile name, socket path only
     digest = hashlib.md5(socket_path.encode("utf-8")).hexdigest()[:16]  # nosemgrep
+    if not _should_manage_pid_file(socket_path) and os.path.isabs(socket_path):
+        # Hermetic test daemon: place lock file sibling to test socket or in tempdir
+        lock_dir = os.path.dirname(os.path.realpath(socket_path))
+        return os.path.join(lock_dir, f"daemon-{digest}.lck")
     return os.path.join(os.path.dirname(PID_FILE), f"daemon-{digest}.lck")
 
 

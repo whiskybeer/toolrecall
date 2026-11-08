@@ -28,6 +28,14 @@
     kept as `--design arms` and documented as superseded.
   The synthetic fork A/B was repeated 5× on two models: 82–83%, with and
   without provider prefix caching.
+- **Configurable bypass for sampled requests (`[forward_proxy] bypass_sampled`).**
+  Opt-in policy for best-of-N and self-consistency workflows where requests with
+  explicit `temperature > 0` require fresh random draws. Transparent caching
+  remains the default; bypass can be enabled globally via `bypass_sampled = true`
+  (or `TOOLRECALL_FORWARD_BYPASS_SAMPLED=1`), or per-request via
+  `X-ToolRecall-Bypass-Sampled: 1`. When active, `X-ToolRecall-Cache-Sampled: 1`
+  allows re-enabling cache for exact replay. Documented in `docs/FORWARD_PROXY.md`
+  and `docs/CONFIG_REFERENCE.md`. Tests: `tests/test_proxy_sampling_no_cache.py` (16).
 
 ### Documentation
 - **GEPA / fork-tree docs caught up with what shipped in 0.8.21.**

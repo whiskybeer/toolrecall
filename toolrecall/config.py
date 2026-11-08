@@ -120,6 +120,9 @@ ENV_MAP = {
     # _canonicalize_default). '' = header opt-in only; e.g. "hermes" applies
     # the profile to headerless requests (session-wide default).
     "TOOLRECALL_CANONICALIZE_DEFAULT": ("forward_proxy", "canonicalize_default"),
+    # Forward-proxy bypass cache for sampled requests (explicit temperature > 0).
+    # Default OFF: cache all byte-identical requests transparently.
+    "TOOLRECALL_FORWARD_BYPASS_SAMPLED": ("forward_proxy", "bypass_sampled"),
     # SecurityGate symlink policy (path_utils Layer B, F1): lexical
     # in-allowed-dir symlinks permitted (default false — strict
     # realpath-only containment; true opts INTO Layer-B rescue).
@@ -414,7 +417,9 @@ class Config:
         "nginx": frozenset({"domain", "site_name", "ssl", "ssl_cert", "ssl_key", "github"}),
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
         # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
-        "forward_proxy": frozenset({"port", "extra_hosts", "dedup", "canonicalize_default"}),
+        "forward_proxy": frozenset(
+            {"port", "extra_hosts", "dedup", "canonicalize_default", "bypass_sampled"}
+        ),
         "update": frozenset({"enabled", "check_interval_hours", "index_url", "auto_apply"}),
     }
     # Sub-tables whose keys are user-defined names (per-client policies,

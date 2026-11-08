@@ -89,6 +89,47 @@ def _dedup_env_num(key: str, default: int) -> int:
         return default
 
 
+def _explicit_sampling(body: bytes) -> bool:
+    """True when the request body sets temperature > 0 explicitly.
+
+    A cached response to a sampled request is one draw served as every
+    later draw: best-of-N / self-consistency through the proxy would get N
+    copies of the first sample and bill $0 for the "independent" ones. Such
+    requests skip the cache (lookup and store) when bypass_sampled is enabled
+    (or via X-ToolRecall-Bypass-Sampled: 1 header), unless the caller opts in
+    with X-ToolRecall-Cache-Sampled: 1.
+
+    Only an EXPLICIT temperature counts. Providers default to temperature 1
+    when it is absent, but most agent traffic omits it and relies on the
+    cache; treating absence as sampling would switch caching off for them.
+    """
+    if b'"temperature"' not in body:
+        return False
+    try:
+        data = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    t = data.get("temperature") if isinstance(data, dict) else None
+    return isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
+
+
+def _bypass_sampled_enabled() -> bool:
+    """Read [forward_proxy] bypass_sampled (default OFF — cache transparently).
+
+    When enabled, requests with an explicit temperature > 0 bypass the cache
+    (lookup and store) to preserve independent draws in sampling workflows.
+    """
+    try:
+        from toolrecall.config import load_config
+
+        val = load_config().get("forward_proxy", "bypass_sampled", default=False)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+    except Exception:
+        return False
+
+
 def _canonicalize_default() -> str:
     """Read [forward_proxy] canonicalize_default (default '' — header opt-in only).
 
@@ -929,6 +970,24 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             "true",
             "yes",
         )
+        # Sampled requests (explicit temperature > 0) can bypass the cache if configured
+        # or requested via header. Default is OFF (transparent caching).
+        bypass_sampled_active = _bypass_sampled_enabled() or (
+            (self.headers.get("X-ToolRecall-Bypass-Sampled") or "").strip()
+            in ("1", "true", "yes")
+        )
+        cache_sampled_opt_in = (
+            self.headers.get("X-ToolRecall-Cache-Sampled") or ""
+        ).strip() in ("1", "true", "yes")
+
+        sampled = (
+            method == "POST"
+            and bypass_sampled_active
+            and not cache_sampled_opt_in
+            and _explicit_sampling(body_bytes)
+        )
+        if sampled:
+            no_cache = True
 
         canonical_profile = (self.headers.get("X-ToolRecall-Canonicalize") or "").strip().lower()
         if not canonical_profile and not no_cache:
@@ -936,6 +995,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # = "hermes"): apply the configured profile to headerless requests.
             # Explicit header wins; no-cache requests stay byte-hashed.
             canonical_profile = _canonicalize_default()
+        if sampled:
+            canonical_profile = ""  # no stream cache either
         hash_body = body_bytes
         if canonical_profile and body_bytes:
             canonical = _canonicalize_body(canonical_profile, body_bytes)
@@ -1018,10 +1079,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
         if no_cache:
             log.info(
-                "NO-CACHE: %s %s%s — opt-out header, forwarding directly",
+                "NO-CACHE: %s %s%s — %s, forwarding directly",
                 method,
                 target_host,
                 target_path,
+                "temperature > 0 (bypass_sampled)" if sampled else "opt-out header",
             )
             resp_status, resp_headers, resp_body = self._forward(
                 method,

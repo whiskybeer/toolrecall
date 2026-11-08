@@ -132,6 +132,7 @@ Compare with file/terminal caching, which only saves input tokens (the output st
 | `TOOLRECALL_FORWARD_TIMEOUT` | `30` | Upstream request timeout (seconds) |
 | `TOOLRECALL_FORWARD_STREAM_TIMEOUT` | `300` | Streaming request timeout |
 | `TOOLRECALL_FORWARD_DEDUP` (or `[forward_proxy] dedup` in `toolrecall.toml`) | `false` | Request-body dedup — see below |
+| `TOOLRECALL_FORWARD_BYPASS_SAMPLED` (or `[forward_proxy] bypass_sampled`) | `false` | Bypass cache for explicit `temperature > 0` |
 | N/A | 5 MB | Maximum POST body size |
 
 ## Request-Body Dedup (opt-in)
@@ -160,6 +161,22 @@ provider just never bills for the copies after the first.
 - **Per-tool attribution:** Run `toolrecall dedup-stats` to view which tools'
   outputs are being stubbed and the breakdown of saved tokens per tool. See
   [CLI Reference](CLI.md#toolrecall-dedup-stats).
+
+## Stochastic Sampling Policy (opt-in)
+
+By default, ToolRecall caches all byte-identical requests transparently, regardless
+of `temperature`. For evaluation loops, self-consistency benchmarks, or best-of-N
+sampling where repeated requests with explicit `temperature > 0` require fresh,
+independent random draws from the provider:
+
+- **Enable globally:** Set `bypass_sampled = true` in `[forward_proxy]` (or env
+  `TOOLRECALL_FORWARD_BYPASS_SAMPLED=1`).
+- **Per-request opt-in to bypass:** Send `X-ToolRecall-Bypass-Sampled: 1` header.
+- **Per-request opt-in to cache:** When bypass is globally enabled, send
+  `X-ToolRecall-Cache-Sampled: 1` to force caching a sampled request (e.g. for exact
+  eval replay).
+- Requests with greedy temperature (`temperature == 0`) or omitted temperature
+  continue to be cached transparently.
 
 ## Starting
 
