@@ -38,6 +38,15 @@ class _StubConfig:
     """
 
     def get(self, section, key, default=None):
+        # docs.index_ttl must resolve to 0, NOT to the caller's default:
+        # get_index_ttl() calls .get("docs", "index_ttl", default=86400), so
+        # returning `default` made the TTL gate PASS — the auto-refresh fired
+        # and its worker (running after this test's env was torn down) resolved
+        # the knowledge-DB path to the shipped default, i.e. PRODUCTION.
+        # The class docstring has always claimed "index_ttl=0 double-gates it";
+        # this makes that true.
+        if (section, key) == ("docs", "index_ttl"):
+            return 0
         return default
 
     @property
@@ -307,6 +316,68 @@ class TestMemoryIndex(unittest.TestCase):
         )
         r2 = docs_search("Brand new rule", source="agent-memory")
         self.assertIn("Brand new rule one", r2)
+
+
+class TestRefreshWorkerPathPin(unittest.TestCase):
+    """The auto-refresh worker must use the SPAWNER's DB path.
+
+    The worker outlives the context that spawned it (test teardown, config
+    reload). Re-resolving the path inside the thread found the env var gone and
+    fell back to the shipped default — ~/.toolrecall/knowledge.db, i.e.
+    PRODUCTION — which is how a test's background refresh connected to live
+    state (caught by tests/conftest.py's production-path guard).
+    """
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self._orig = {
+            name: getattr(docs_mod, name)
+            for name in (
+                "get_index_ttl",
+                "_auto_refresh_sources_configured",
+                "get_last_index_time",
+                "index_all",
+                "_maybe_compact_index",
+            )
+        }
+        docs_mod._refreshing = False
+        os.environ["TOOLRECALL_KNOWLEDGE_DB"] = os.path.join(self.test_dir, "spawn.db")
+
+    def tearDown(self):
+        for name, value in self._orig.items():
+            setattr(docs_mod, name, value)
+        docs_mod._refreshing = False
+        os.environ.pop("TOOLRECALL_KNOWLEDGE_DB", None)
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_worker_sees_spawn_time_path_after_env_changes(self):
+        import threading
+
+        seen: dict = {}
+        done = threading.Event()
+
+        def _fake_index_all(*_args, **_kwargs):
+            seen["db_path"] = docs_mod._get_db_path()
+            done.set()
+
+        docs_mod.get_index_ttl = lambda: 86400.0  # gate open
+        docs_mod._auto_refresh_sources_configured = lambda: True
+        docs_mod.get_last_index_time = lambda: None  # index is stale
+        docs_mod.index_all = _fake_index_all
+        docs_mod._maybe_compact_index = lambda: None
+
+        spawn_path = os.environ["TOOLRECALL_KNOWLEDGE_DB"]
+        docs_mod._maybe_refresh_index_async()
+
+        # Simulate the spawning context's environment disappearing (teardown).
+        os.environ.pop("TOOLRECALL_KNOWLEDGE_DB", None)
+
+        self.assertTrue(done.wait(5), "refresh worker never ran")
+        self.assertEqual(
+            seen.get("db_path"),
+            spawn_path,
+            "worker re-resolved the DB path instead of using the spawn-time pin",
+        )
 
 
 if __name__ == "__main__":

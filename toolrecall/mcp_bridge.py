@@ -735,6 +735,16 @@ class MCPBridge:
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
 
+        # Resolve file paths in THIS process — the bridge runs as the agent's
+        # stdio subprocess, so os.getcwd() here is the agent's working
+        # directory (same reasoning as the cwd-scoped terminal cache below).
+        # The daemon resolves against ITS OWN cwd, so a relative path used to
+        # open whatever the daemon happened to have and share a single cache
+        # entry across projects — reading NOTES.md in project B returned
+        # project A's content. The daemon rejects anything still relative.
+        if isinstance(arguments.get("path"), str) and arguments["path"]:
+            arguments["path"] = os.path.abspath(os.path.expanduser(arguments["path"]))
+
         # Gateway names (mcp__<server>__<tool>) route through the same daemon
         # mcp_call path, so the security scans, the transparent cache and the
         # cache-provenance marker apply unchanged — the gateway only removes

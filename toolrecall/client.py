@@ -21,6 +21,19 @@ _direct_cache = None
 _direct_docs = None
 
 
+def _abs_path(path: str) -> str:
+    """Resolve a caller-supplied path against THIS process's working directory.
+
+    The daemon cannot do this for us — it opens paths against its OWN cwd, so a
+    relative path was resolved to whatever the daemon happened to have and every
+    caller using the same relative name shared one cache entry (reading
+    NOTES.md in project B returned project A's content). Resolving here, in the
+    caller's own process, is the only place the caller's cwd is known; the
+    daemon rejects anything that is still relative rather than guess.
+    """
+    return os.path.abspath(os.path.expanduser(path))
+
+
 def _get_direct_cache():
     """Lazy import toolrecall.cache for daemon-fallback operations."""
     global _direct_cache
@@ -155,6 +168,7 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
                 infrastructure/interception reads. Controls whether
                 tokens count toward tokens_saved_to_llm.
     """
+    path = _abs_path(path)
     client = _get_client()
     resp = client.send({"cmd": "cached_read", "path": path, "source": source})
     if not _is_daemon_down(resp):
@@ -242,6 +256,7 @@ def cached_write(path: str, content: str) -> dict:
     When daemon is unavailable, returns an error (fail-closed) — the daemon
     is the single source of truth for the path allowlist.
     """
+    path = _abs_path(path)
     client = _get_client()
     resp = client.send({"cmd": "cached_write", "path": path, "content": content})
     if not _is_daemon_down(resp):
@@ -262,6 +277,7 @@ def cached_patch(path: str, old_string: str, new_string: str) -> dict:
     When daemon is unavailable, returns an error (fail-closed) — the daemon
     is the single source of truth for the path allowlist.
     """
+    path = _abs_path(path)
     client = _get_client()
     resp = client.send(
         {"cmd": "cached_patch", "path": path, "old_string": old_string, "new_string": new_string}

@@ -445,5 +445,101 @@ class TestClientFallbackDirect(unittest.TestCase):
         self.assertIn("fallback content", result.get("content", ""))
 
 
+class TestAbsPath(unittest.TestCase):
+    """_abs_path resolves relative paths against THIS process's cwd.
+
+    The daemon cannot do this for us — it opens paths against its own working
+    directory, so a relative path was resolved to whatever the daemon happened
+    to have, and every caller using the same relative name shared one cache
+    entry across projects (reading NOTES.md in project B returned project A's
+    content). See _resolve_cache_path in cache.py.
+    """
+
+    def test_relative_path_resolves_against_caller_cwd(self):
+        from toolrecall.client import _abs_path
+
+        original = os.getcwd()
+        tmpdir = tempfile.mkdtemp()
+        try:
+            os.chdir(tmpdir)
+            resolved = _abs_path("notes.md")
+        finally:
+            os.chdir(original)
+
+        self.assertTrue(os.path.isabs(resolved), resolved)
+        self.assertEqual(resolved, os.path.join(tmpdir, "notes.md"))
+
+    def test_absolute_path_is_preserved(self):
+        from toolrecall.client import _abs_path
+
+        absolute = "/tmp/already-absolute.txt"
+        self.assertEqual(_abs_path(absolute), absolute)
+
+    def test_tilde_is_expanded(self):
+        from toolrecall.client import _abs_path
+
+        resolved = _abs_path("~/notes.md")
+        self.assertTrue(os.path.isabs(resolved), resolved)
+        self.assertNotIn("~", resolved)
+        self.assertEqual(resolved, os.path.join(os.path.expanduser("~"), "notes.md"))
+
+    def test_cached_read_hands_daemon_an_absolute_path(self):
+        """A relative path must never reach the daemon — it resolves against its own cwd."""
+        from unittest.mock import patch as mock_patch
+
+        import toolrecall.client as client_mod
+
+        captured = {}
+
+        class _FakeClient:
+            def send(self, payload):
+                captured.update(payload)
+                return {"cached": False, "content": "x", "path": payload["path"]}
+
+        original = os.getcwd()
+        tmpdir = tempfile.mkdtemp()
+        try:
+            os.chdir(tmpdir)
+            with mock_patch.object(client_mod, "_get_client", return_value=_FakeClient()):
+                client_mod.cached_read("notes.md")
+        finally:
+            os.chdir(original)
+
+        self.assertTrue(captured["path"].startswith(os.sep), captured)
+        self.assertEqual(captured["path"], os.path.join(tmpdir, "notes.md"))
+
+    def test_cached_write_and_patch_hand_daemon_absolute_paths(self):
+        """Same contract for the write and patch paths."""
+        from unittest.mock import patch as mock_patch
+
+        import toolrecall.client as client_mod
+
+        original = os.getcwd()
+        tmpdir = tempfile.mkdtemp()
+        try:
+            os.chdir(tmpdir)
+            for fn, args in (
+                (client_mod.cached_write, ("notes.md", "content")),
+                (client_mod.cached_patch, ("notes.md", "a", "b")),
+            ):
+                captured = {}
+
+                class _FakeClient:
+                    def send(self, payload):
+                        captured.update(payload)
+                        return {"cached": False, "path": payload["path"]}
+
+                with mock_patch.object(client_mod, "_get_client", return_value=_FakeClient()):
+                    fn(*args)
+
+                self.assertEqual(
+                    captured["path"],
+                    os.path.join(tmpdir, "notes.md"),
+                    f"{fn.__name__} sent {captured.get('path')!r}",
+                )
+        finally:
+            os.chdir(original)
+
+
 if __name__ == "__main__":
     unittest.main()

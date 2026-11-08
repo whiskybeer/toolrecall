@@ -40,7 +40,7 @@ Each test file covers a distinct module or feature:
 | File | Module Under Test | What It Tests |
 |------|------------------|---------------|
 | `tests/test_cache.py` | `toolrecall/cache.py` | LRU eviction, SQLite persistence, mtime invalidation, `get_stats()`, `invalidate_all()`, path expansion, hash algorithm switching (MD5 → SHA256) |
-| `tests/test_write_cache.py` | `toolrecall/cache.py` (write/patch) | `cached_write` (skip identical content, large file bypass), `cached_patch` (apply, skip applied, skip not-found, write-then-patch integration) |
+| `tests/test_write_cache.py` | `toolrecall/cache.py` (write/patch) | `cached_write` (skip identical content, large file bypass, byte-exact compare so a CRLF file is not mistaken for unchanged), `cached_patch` (apply, skip applied, skip not-found, write-then-patch integration, deletion patches apply, pre-existing new text does not suppress a patch, CRLF endings preserved, non-UTF-8 refused rather than corrupted), relative paths rejected by the cache layer |
 
 ### Daemon & IPC
 
@@ -54,7 +54,7 @@ Each test file covers a distinct module or feature:
 
 | File | Module Under Test | What It Tests |
 |------|------------------|---------------|
-| `tests/test_client.py` | `toolrecall/client.py` | Daemon IPC (ping, send, receive), fallback to direct SQLite, error handling |
+| `tests/test_client.py` | `toolrecall/client.py` | Daemon IPC (ping, send, receive), fallback to direct SQLite, error handling, `_abs_path` resolves caller-relative paths before they reach the daemon |
 | `tests/test_proxy.py` | `toolrecall/proxy.py` | HTTP proxy caching by body hash, cache hit/miss responses, header passthrough, error handling |
 
 ### MCP Layer

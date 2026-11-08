@@ -723,6 +723,37 @@ def _persist_file_to_sqlite(path: str, content: str, stat_result, ns: str = "", 
         warnings.warn(f"ToolRecall: SQLite persist failed for {path}: {e}")
 
 
+def _resolve_cache_path(path: str) -> str:
+    """Absolutize and normalize a caller-supplied path for cache identity.
+
+    Cache keys are derived from the path *string* (mem_key, ``_hash(path)``)
+    while the file itself is opened against the process's working directory.
+    A relative path therefore had two failure modes at once:
+
+      - it resolved against the DAEMON's cwd, not the caller's, so the bytes
+        served were whatever the daemon happened to have; and
+      - every caller using the same relative name shared one cache entry and
+        one file — reading ``NOTES.md`` in project B returned project A's
+        content.
+
+    ``normpath`` (not ``realpath``) keeps the lexical identity stable — two
+    spellings of the same path share a key, symlinked paths stay distinct, and
+    the security layer's own realpath containment check is unaffected.
+
+    Raises:
+        ValueError: the path is relative; the daemon cannot know the caller's
+            working directory, so guessing would be wrong in both directions.
+    """
+    expanded = os.path.expanduser(path)
+    if not os.path.isabs(expanded):
+        raise ValueError(
+            f"Path must be absolute (got {path!r}). Cache entries are keyed on the "
+            "path string and the daemon resolves relative paths against its own "
+            "working directory, not the caller's."
+        )
+    return os.path.normpath(expanded)
+
+
 def cached_read(
     path: str,
     source: str = "",
@@ -740,7 +771,10 @@ def cached_read(
             in addition to the general io_tokens_saved (disk-read avoidance).
             Empty string or "internal" = only counts disk-read avoidance.
     """
-    path = os.path.expanduser(path)
+    try:
+        path = _resolve_cache_path(path)
+    except ValueError as e:
+        return {"error": str(e)}
 
     # Reject null bytes — prevents path traversal tricks on some systems
     if "\x00" in path:
@@ -1838,7 +1872,10 @@ def cached_write(path: str, content: str, ns: str = "", client: str = "") -> dic
         On new write:      {"cached": False, "path": path, "size": N}
         On error:          {"error": "...", "path": path}
     """
-    path = os.path.expanduser(path)
+    try:
+        path = _resolve_cache_path(path)
+    except ValueError as e:
+        return {"error": str(e), "path": path}
     mem_key = f"{ns}\x00{path}" if ns else path
 
     # Create parent directories if needed
@@ -1849,7 +1886,7 @@ def cached_write(path: str, content: str, ns: str = "", client: str = "") -> dic
     # File doesn't exist yet — always write
     if not os.path.exists(path):
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             _file_cache.remove(mem_key)
             _record("write_cache", hit=False, path=path, client=client)
@@ -1866,7 +1903,7 @@ def cached_write(path: str, content: str, ns: str = "", client: str = "") -> dic
     if stat.st_size > WRITE_CACHE_MAX_BYTES:
         # Skip dedup for large files — read would cost more than write
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             _file_cache.remove(mem_key)
             _record("write_cache", hit=False, path=path, client=client)
@@ -1884,20 +1921,26 @@ def cached_write(path: str, content: str, ns: str = "", client: str = "") -> dic
         from toolrecall.shim import _original_open as _real_open
     except ImportError:
         _real_open = open
+    # Compare BYTES, not decoded text. A text read applies universal-newline
+    # translation, so a CRLF file compared equal to the caller's LF string and
+    # the write was silently skipped — the file kept endings nobody wrote. A
+    # byte compare also never decodes the file, so a non-UTF-8 file cannot be
+    # mis-compared (decoding it with errors="ignore" would hide the difference).
     try:
-        with _real_open(path, "r", encoding="utf-8", errors="ignore") as f:
-            current = f.read()
+        with _real_open(path, "rb") as f:
+            current_bytes = f.read()
+        content_bytes = content.encode("utf-8")
     except Exception as e:
         return {"error": str(e), "path": path}
 
-    if current == content:
+    if current_bytes == content_bytes:
         _record("write_cache", hit=True, path=path, client=client)
         _record_tokens_read_from_disk("write_cache", _estimate_tokens(content))
         return {"unchanged": True, "path": path}
 
     # Content differs — write
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         _file_cache.remove(
             mem_key
@@ -1915,15 +1958,22 @@ def cached_patch(
     """Apply a find-and-replace patch, skipping if already applied or missing.
 
     Three outcomes:
-      - new_string already in place → {"unchanged": True, "reason": "already_applied"}
-      - old_string not found        → {"unchanged": True, "reason": "not_found"}
-      - patch applied               → {"cached": False, "path": path, "changes": N}
+      - old_string gone, new_string present → {"unchanged": True, "reason": "already_applied"}
+      - old_string not found                → {"unchanged": True, "reason": "not_found"}
+      - patch applied                       → {"cached": False, "path": path, "changes": N}
+
+    "Already applied" requires the target text to be ABSENT and the replacement
+    PRESENT — never mere substring containment (a deletion has an empty
+    new_string, which is contained in every string).
 
     ⚠️  Same TOCTOU caveat as cached_write — comparison is read-time only.
     ⚠️  If old_string appears multiple times, only the first is checked.
     A6-7: ns/client — see cached_write.
     """
-    path = os.path.expanduser(path)
+    try:
+        path = _resolve_cache_path(path)
+    except ValueError as e:
+        return {"error": str(e), "path": path}
 
     if not os.path.exists(path):
         return {"error": f"File not found: {path}", "path": path}
@@ -1936,27 +1986,37 @@ def cached_patch(
         from toolrecall.shim import _original_open as _real_open
     except ImportError:
         _real_open = open
+    # Strict UTF-8 with newline="" — both are required for a lossless patch:
+    #   - errors="ignore" silently dropped undecodable bytes, and the UTF-8
+    #     rewrite then deleted them from disk (latin-1 "café" came back "caf");
+    #   - universal-newline translation turned every \r\n into \n, so the
+    #     whole-file rewrite converted a CRLF file to LF.
+    # A file we cannot decode exactly is REFUSED, never rewritten.
     try:
-        with _real_open(path, "r", encoding="utf-8", errors="ignore") as f:
+        with _real_open(path, "r", encoding="utf-8", errors="strict", newline="") as f:
             content = f.read()
+    except UnicodeDecodeError:
+        return {
+            "error": (
+                "File is not valid UTF-8; refusing to patch — rewriting it would "
+                "silently drop or corrupt bytes. path=" + path
+            ),
+            "path": path,
+        }
     except Exception as e:
         return {"error": str(e), "path": path}
 
-    # Check: is new_string already in place (regardless of old_string)?
-    if new_string in content:
-        if old_string not in content:
-            # new_string is there, old_string isn't → likely already applied
-            _record("patch_cache", hit=True)
-            _record_tokens_read_from_disk("patch_cache", _estimate_tokens(new_string))
-            return {"unchanged": True, "reason": "already_applied", "path": path}
-        # Both present — check position
-        idx_old = content.find(old_string)
-        idx_new = content.find(new_string)
-        if idx_new <= idx_old:
-            # new_string appears at or before old_string — already applied
-            _record("patch_cache", hit=True)
-            _record_tokens_read_from_disk("patch_cache", _estimate_tokens(new_string))
-            return {"unchanged": True, "reason": "already_applied", "path": path}
+    # "Already applied" is only provable when the target text is GONE and the
+    # replacement is present. Substring/position checks are unsound:
+    #   - a deletion (new_string == "") makes ``new_string in content`` always
+    #     true, so every deletion reported already_applied and silently left the
+    #     file untouched;
+    #   - new_string may legitimately occur EARLIER in the file (boilerplate, a
+    #     sibling function), which suppressed a real patch.
+    if new_string and old_string not in content and new_string in content:
+        _record("patch_cache", hit=True)
+        _record_tokens_read_from_disk("patch_cache", _estimate_tokens(new_string))
+        return {"unchanged": True, "reason": "already_applied", "path": path}
 
     # Check: is old_string present at all?
     if old_string not in content:
@@ -1968,7 +2028,7 @@ def cached_patch(
     new_content = content.replace(old_string, new_string, 1)  # match Hermes' single-replace
 
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(new_content)
         _file_cache.remove(
             f"{ns}\x00{path}" if ns else path

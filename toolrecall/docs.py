@@ -22,7 +22,19 @@ def _get_config():
     return load_config()
 
 
+# DB path pinned at refresh-spawn time. A background worker must NEVER resolve
+# the path itself: it runs after the spawning context's environment is gone
+# (test teardown, config reload), where the env var no longer answers and the
+# lookup falls back to the shipped default — ~/.toolrecall/knowledge.db, i.e.
+# PRODUCTION. That is exactly how a test's auto-refresh connected to the live
+# knowledge DB (caught by tests/conftest.py's production-path guard).
+_refresh_pin = threading.local()
+
+
 def _get_db_path():
+    pinned = getattr(_refresh_pin, "db_path", None)
+    if pinned:
+        return pinned
     # Environment variable takes priority — allows per-test isolation
     env_path = os.environ.get("TOOLRECALL_KNOWLEDGE_DB")
     if env_path:
@@ -206,12 +218,20 @@ def _maybe_refresh_index_async() -> None:
         if _refreshing:
             return  # a refresh is already in flight
         _refreshing = True
-    t = threading.Thread(target=_refresh_worker, daemon=True, name="docs-index-refresh")
+    # Resolve the DB path HERE, in the spawning context, and hand it to the
+    # worker: the worker outlives this environment and must not re-resolve it
+    # (see _refresh_pin).
+    pinned_db_path = _get_db_path()
+    t = threading.Thread(
+        target=_refresh_worker, args=(pinned_db_path,), daemon=True, name="docs-index-refresh"
+    )
     t.start()
 
 
-def _refresh_worker() -> None:
+def _refresh_worker(db_path: str | None = None) -> None:
     global _refreshing
+    if db_path:
+        _refresh_pin.db_path = db_path
     try:
         index_all()
         _maybe_compact_index()
