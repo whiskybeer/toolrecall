@@ -132,6 +132,11 @@
   from non-streaming fallback retries. Streams with an `error` event are never cached; the tee logs
   "stored" only when the daemon accepted the entry. Measured: identical warm reruns −96% vs cold
   (short task, n=8).
+- **`claude-code` profile: per-session tool-schema defaults and parallel tool-result order no
+  longer fork the cache key.** Claude Code's `Bash` schema states its background-timeout default as
+  600000 or 1800000 ms per session, and parallel tool results arrive in completion order; both broke
+  replay of identical reruns. Measured on SWE-bench Lite django tasks (Sonnet): reruns −58.8% vs
+  native Claude Code with the schema fix (n=10 per arm).
 - **`healthcheck` no longer starts the daemon it is diagnosing.** The
   `stats` helper subprocess inherited an autostart-enabled environment, so a
   check against a stopped daemon spawned one, which rewrote `daemon.pid` and
