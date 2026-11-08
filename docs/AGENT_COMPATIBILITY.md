@@ -134,16 +134,17 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 
 <a id="claude-code"></a>
 
-## Claude Code — ✅ Hook alerts + Normalized Proxy Dedup + Multiplexer
+## Claude Code — ⚠️ Headless repeats only; no saving in interactive sessions
 
 | Feature | Verdict | Evidence |
 |---------|---------|----------|
-| **Forward Proxy replay** | ⚠️ Headless repeats only — needs the `claude-code` profile | Claude Code always streams; without a canonical profile its requests bypass the cache (**0 hits**). With it: −69% on short real tasks, −18% on a long multi-issue session. See [Measured](#measured-where-toolrecall-can-and-cannot-save) |
-| **Request-body dedup** (proxy) | ✅ Verified (with `normalize_output`) | Test runner runtimes normalized; stubs repetitive test outputs across turns (**−58% prompt tokens** on iterative test loops) |
-| **Context Tracker (Drift Alerts)** | ✅ Verified (via `PostToolUse` hook) | Detects out-of-band file drift after shell/codegen commands; injects `<system-reminder>` alert in 65ms (**−33% turns**, 0 failed edits) |
+| **Forward Proxy replay** | ✅ Headless repeats only — needs the `claude-code` profile | Identical warm reruns **−96%** vs cold (short task, n=8, 7/8 fully replayed). Requires the Anthropic stream-cache fix (`message_stop`); see the correction under [Measured](#measured-where-toolrecall-can-and-cannot-save). Setup: `toolrecall hook claude ci-env`; misses explained by `toolrecall keytrace` |
+| **Request-body dedup** (proxy, with `normalize_output`) | ⚠️ Cost-neutral — nothing to stub on real workloads | 0 stubs in 3,015 tool results from 193 local sessions; +0.7% (noise) on a task built to repeat pytest output |
+| **Staleness hook** (`PostToolUse`, `toolrecall hook claude`) | ⚠️ Small correctness aid | −10% cost when a build step silently rewrites a read file (saves the rejected-edit round trip); neutral otherwise (n=6/arm) |
 | **Read gate / unchanged re-read stub** | ❌ Redundant | Claude Code returns a native `file_unchanged` result for unchanged re-reads |
-| **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Use `--multiplexer-only` to pool MCP servers host-wide |
-| **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | **Do not route file tools through MCP!** Numbers and methodology in "The Numbers" below |
+| **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
+| **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | Numbers and methodology in "The Numbers" and "Root causes" below |
+| **Context tracker** | ❌ No benefit — but now silent by default (see below) | Same report; opt-in mechanism in `c66b16c` |
 
 ### The Numbers
 
@@ -173,24 +174,50 @@ This means:
 - **The 7.4× endurance figure does NOT transfer.** Context grows unboundedly — same as baseline.
 - Adding ToolRecall's MCP file-caching tools means **your sessions cost 2.4× more and run 3.1× slower.**
 
-### Why Claude Code Was Previously Incompatible vs How It Works Now
+### Context hints are now silent by default
 
-Earlier benchmarks concluded that ToolRecall provided no interactive savings for Claude Code. It is crucial to understand **why the old approach failed** and **why the new approach succeeds**:
+Since `c66b16c` (per-client context-hint policy + checkpoint opt-in), the
+bridge only appends 🧹 drop-clean hints **after the client has called
+`context_set_checkpoint` once**. Claude Code never calls the checkpoint
+tools, so:
 
-#### 1. The Old Approach (Destructive / Incompatible):
-- **Forced MCP File Caching:** Routing file reads through ToolRecall's MCP server (`cached_read`, `cached_patch`) stripped Claude Code's native batch-editing (`replace_all`), required dozens of extra tool turns, and fought Anthropic prompt caching, resulting in the measured **2.4× cost increase**.
-- **Retroactive Pruning:** The Context Tracker's `clean` list tells agents to drop unmodified files. But Claude Code's transcript is append-only from the model's side; external hooks cannot prune previous turns retroactively.
-- **Rigid Byte-Dedup:** Dedup on raw bash output produced 0 hits because test runners (`pytest`) vary in their timing lines (`in 0.25s` vs `in 0.35s`), so exact sha256 hashing missed duplicates.
+- **No hint text is ever appended** to Claude Code tool results — the old
+  default emitted ~60 B + a stale-file block after every non-context call,
+  which append-only transcripts re-billed at full token cost. That overhead
+  is gone with zero configuration.
+- The per-client table (`[mcp.clients."claude-code"] emit_context_hints = false`)
+  makes the silence explicit in mixed-agent daemons (e.g. Warp hosting
+  Claude Code alongside Hermes), but it is **not required** — the default
+  behavior is already silent for any client that never checkpoints.
 
-#### 2. The New Approach (Non-Destructive & Verified):
-- **Leave Native File Reads Alone:** Claude Code already stubs unchanged file reads natively via `file_unchanged`. We do not touch native `Read`/`Edit`.
-- **Forward Staleness & Drift Alerts (`PostToolUse` Hook):**
-  While `PostToolUse` cannot delete context, injecting `additionalContext` is **the exact right direction for staleness**. When an agent runs shell commands (`Bash` running `npm run build`, `git checkout`, codegen scripts), files in context become out-of-date on disk. ToolRecall's hook (`toolrecall.adapters.claude_code`) detects the drift and injects a native `<system-reminder>` alert in **65ms**. The model immediately re-reads the fresh file, preventing broken patch attempts (**−33% turns**, 0 failed edits).
-- **Normalized Bash Deduplication (`toolrecall.dedup`):**
-  `normalize_output` scrubs volatile durations, timestamps, and tempdirs. In iterative test-driven development (TDD), repeated `pytest` tracebacks match and are stubbed on the wire before hitting Anthropic with `protect_last=0` (keep-first), cutting test prompt tokens by **58%** without invalidating prompt cache prefixes.
-- **Multiplexer-Only Base:** `toolrecall setup` registers `~/.claude.json` with `--multiplexer-only`, pooling MCP server subprocesses host-wide without injecting file-caching tools.
+The tracker still provides **no benefit** to Claude Code: an append-only
+harness cannot act on drop-clean instructions, so hints would be inert even
+if emitted. The gain here is removal of overhead, not a new capability.
 
-See [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md) and [bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md](../bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md) for full empirical benchmarks.
+### Why there is no fix from ToolRecall's side (verified against the platform docs)
+
+The tracker's clean/dirty decision engine is sound; the blocker is that no
+external surface can act on it in Claude Code:
+
+- **Hooks cannot prune retroactively.** Every Claude Code hook is
+  forward-looking or observational: `PreToolUse` can modify a tool *input*,
+  `PostToolUse` can only *add* context via `additionalContext` (the wrong
+  direction). No hook can remove or rewrite a `tool_result` from an earlier
+  turn.
+- **API context editing is harness-owned.** Anthropic's `clear_tool_uses_20250919`
+  (context-management beta) does clear old tool results server-side — but only
+  the API caller (Claude Code itself) can set it, and selection is
+  threshold / keep-N (`trigger`, `keep`, `clear_at_least`, `exclude_tools`);
+  it deliberately accepts no per-file clean/dirty signal.
+
+So the only layer that can cut the token bill in an append-only harness —
+retroactive transcript pruning — belongs to the harness/API and takes no
+external input. **If you want this class of savings in Claude Code, turn on
+Anthropic's context editing / let Claude Code compact** — that is the native
+version of what the tracker provides, and it is the better tool there. The
+tracker's value stays in harnesses where the agent prunes its own context
+(e.g. Hermes). See also [CONTEXT_STALE.md](CONTEXT_STALE.md) for the
+file-level stale signal ToolRecall exposes to harnesses that *can* use it.
 
 ### Measured: where ToolRecall can and cannot save
 
@@ -202,7 +229,8 @@ context and only ~15% came from tool results at all. There were 0 unchanged
 re-reads (Claude Code answers those natively with a ~90-char `file_unchanged`
 result), 0 identical large Bash outputs, and 1 compaction. The largest fixed
 cost is the session baseline (system prompt + tools + instruction files, 30% of
-all context tokens) — that is trimmed in your own config, not by a cache.
+all context tokens; 13.7% of weighted cost per `toolrecall audit claude-code`) —
+that is trimmed in your own config, not by a cache.
 
 **Headless repeats — replay works with the `claude-code` profile.** Same task,
 8 runs through a hermetic proxy:
@@ -220,6 +248,16 @@ session length:
 | Short task, agent only reads and edits (3–4 calls) | −100% |
 | Short task, agent runs tests (5–8 calls) | −69% |
 | 5-issue backlog in one session (33–38 calls) | **−18%** |
+
+> **Correction (stream cache).** The replay figures in this section were served from
+> Claude Code's *non-streaming fallback* retries: the proxy's stream tee only accepted
+> OpenAI-style `[DONE]` streams and discarded every Anthropic stream, which ends with
+> `message_stop`. After the fix, streamed calls are cached and replayed directly:
+> identical warm reruns of a short task cost −96% vs the cold run (n=8, 7 of 8 fully
+> replayed, 0 first-call misses; the partial run broke on an `ls -l` minute rollover,
+> found with `toolrecall keytrace`). The longer-session figures above have not been
+> re-measured on the stream path. Details:
+> [bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md](../bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md).
 
 Every request carries the whole conversation, so the first non-deterministic
 tool output (pytest temp-dir numbers, `grep -r` order, Python `set` order) ends
@@ -307,15 +345,7 @@ FAIL_TO_PASS / PASS_TO_PASS tests. Costs are Claude Code's own
 - **Backlog sessions** (one resumed session fixes five django/db/migrations
   issues in a row, 34–50 turns, 2 sessions per arm): native $0.54, proxy +
   dedup only $0.54, `docs_search` MCP + CLAUDE.md $0.65, the same with
-  built-in search blocked $0.67. In that October run, unnormalized dedup removed
-  0 tokens because test output differed in its timing line (`in 0.25s` vs `in 0.35s`).
-  
-  **Update (2026-11):** With `normalize_output` now active in `toolrecall.dedup`
-  (under `profile=claude-code` or `TOOLRECALL_DEDUP_NORMALIZE=1`), durations,
-  timestamps, and tempdirs are stripped before digest calculation. Iterative
-  test loops with keep-first (`protect_last=0`) now successfully stub subsequent
-  test runs, cutting test prompt tokens by **58.0%** across multi-turn sessions
-  (see [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md)).
+  built-in search blocked $0.67. Dedup again removed 0 tokens: test output
   differs in its timing line and file reads differ in range. Claude Code called
   `docs_search` 1–6 times per session even when told to and with grep blocked,
   switching to `sed`/`cat`/`python -c` instead; the extra tool schemas and

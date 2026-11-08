@@ -1,5 +1,16 @@
 # Claude Code — what ToolRecall can and cannot save (measured)
 
+> **Correction (added later).** These replays were served from Claude Code's
+> non-streaming fallback retries, not from the stream cache: the proxy's stream tee
+> accepted only OpenAI-style `[DONE]` streams and discarded every Anthropic stream
+> (`message_stop`), and the streamed attempts in these rigs were cut short, so Claude
+> Code retried without streaming. The rig logs show every streamed call discarded and
+> all HITs on non-streaming requests. With the stream tee fixed, streamed calls replay
+> directly (short task: −96% on identical warm reruns, n=8). Conclusions about *when*
+> replay pays off (same commit, deterministic output) still hold; the long-session
+> figures have not been re-measured. See
+> [../results/CLAUDE_CODE_INTEGRATIONS_REPORT.md](../results/CLAUDE_CODE_INTEGRATIONS_REPORT.md).
+
 > **Verdict.** ToolRecall saves money in Claude Code only when **the same headless
 > task is run again**. The condition is repetition, not session length: a one-off
 > session — short or long — saves 0%, and interactive use saves nothing (Claude

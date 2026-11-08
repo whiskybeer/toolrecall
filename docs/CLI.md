@@ -44,6 +44,9 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall top` | `cmd_top()` → `toolrecall/tui_top.py` | `toolrecall/cli.py` |
 | `toolrecall proxy` | `cmd_proxy()` → dispatches subcommands | `toolrecall/cli.py` |
 | `toolrecall healthcheck` | `cmd_healthcheck()` | `toolrecall/cli.py` |
+| `toolrecall hook` | `cmd_hook()` → `toolrecall/adapters/claude_code.py` | `toolrecall/cli.py` |
+| `toolrecall audit` | `cmd_audit()` → `toolrecall/adapters/claude_code_audit.py` | `toolrecall/cli.py` |
+| `toolrecall keytrace` | `cmd_keytrace()` → `toolrecall/keytrace.py` | `toolrecall/cli.py` |
 
 Each function imports its dependencies lazily — running `toolrecall status` does not load `daemon.py` or `proxy.py`.
 
@@ -327,6 +330,34 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - Options for `stale`: `--format json|table`, `--quiet` (pipeable paths)
   - Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error
 - **Full reference:** [Context Stale](CONTEXT_STALE.md), [Context Tracker](CONTEXT_TRACKER.md)
+
+### `toolrecall hook claude`
+
+- **File:** `cli.py : cmd_hook()` → `adapters/claude_code.py : main()`
+- **Purpose:** Claude Code lifecycle hooks and setup snippets.
+  - `toolrecall hook claude print-config [command]` — `settings.json` hooks block
+    (staleness alert, optional WAF gate). Without a subcommand the adapter reads
+    one hook event as JSON on stdin.
+  - `toolrecall hook claude ci-env [--port N]` — shell snippet for repeated headless
+    runs through the forward proxy (canonicalize header, `PYTHONHASHSEED=0`, pinned MCP).
+- See [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md).
+
+### `toolrecall audit claude-code`
+
+- **File:** `cli.py : cmd_audit()` → `adapters/claude_code_audit.py : main()`
+- **Purpose:** read-only report of where Claude Code session tokens go: exact fixed
+  starting context per session, its share of list-price-weighted cost, and the
+  controllable parts (instruction files, skill/MCP/agent listings) ranked by cost share.
+- **Options:** `--days N`, `--projects DIR` (default `~/.claude/projects`),
+  `--include-tmp` (sessions whose workdir is under `/tmp`), `--json`.
+
+### `toolrecall keytrace`
+
+- **File:** `cli.py : cmd_keytrace()` → `keytrace.py : main()`
+- **Purpose:** explain forward-proxy replay misses. Start the proxy with
+  `TOOLRECALL_KEY_TRACE_DIR=<dir>`, run the workload, then `toolrecall keytrace <dir>
+  [--json]`: each MISS shows the first field that differs from the closest earlier
+  request (or "first request" / "new step" / "identical body seen before").
 
 ### `toolrecall proxy`
 

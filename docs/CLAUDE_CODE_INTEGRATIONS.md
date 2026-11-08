@@ -1,153 +1,139 @@
-# Claude Code Integrations Architecture & Roadmap
+# Claude Code Integrations
 
-This document outlines the five architectural integration paths between **ToolRecall** and **Claude Code**, detailing their mechanisms, configuration, prompt-cache interactions, and benchmarking protocols.
+What ToolRecall does for **Claude Code**, what it measurably saves, and what it
+does not. Every number below comes from live Claude Code runs or from replaying
+real local transcripts; methodology and raw figures are in
+[bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md](../bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md).
+
+> **Verdict.** ToolRecall saves tokens for Claude Code in one situation: **the same
+> headless task runs again** (CI re-runs, eval/benchmark iteration, agent regression
+> tests). Forward-proxy replay then serves repeated calls from cache: identical warm
+> reruns cost **−96%** vs the cold run on a short task (n=8, 7 of 8 fully replayed).
+> For one-off and interactive sessions it saves ~0%: Claude Code already stubs
+> unchanged re-reads, and repeated tool output does not occur in real sessions
+> (0 of 3,015 tool results in 193 local sessions).
 
 ---
 
-## 1. Architectural Foundations: The Claude Code Contract
+## 1. The Claude Code contract
 
-Integrating ToolRecall with Claude Code requires respecting two non-negotiable platform invariants:
-
-1. **The Transcript is Append-Only:** External tools cannot retroactively drop, rewrite, or prune previous turns from Claude Code’s active in-memory session.
-2. **Anthropic Prompt Caching Sensitivity:** Modifying an earlier prefix block in a request invalidates Anthropic's 90% prompt-cache discount and re-bills the entire history as a cache write (at 1.25× base rate).
+1. **The transcript is append-only.** External tools cannot drop or rewrite earlier
+   turns of a Claude Code session.
+2. **Prompt caching is prefix-exact.** Changing an earlier block invalidates the
+   provider cache and re-bills the history as a cache write (1.25×).
+3. **Claude Code already handles redundant reads.** An unchanged re-`Read` returns a
+   short `file_unchanged` stub, and an `Edit` to a file changed since it was read is
+   rejected with "File has been modified since read" — a stale edit is never applied.
 
 > [!WARNING]
-> Routing Claude Code’s file reads through ToolRecall’s MCP cached read tools (`cached_read`) resulted in a measured **2.4× cost increase** ($0.57 → $1.34) and a **3.1× latency slowdown** (see [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code)). Claude Code already stubs unchanged file reads natively via `file_unchanged`. Therefore, ToolRecall must never replace native file reads in Claude Code.
-
-Instead, all valid integrations operate on three non-destructive layers:
-- **Client-Side Hooks** (`~/.claude/settings.json`): Intercepting tool inputs (`PreToolUse`) or appending forward guidance (`PostToolUse`).
-- **Wire-Level Forward Proxy** (`ANTHROPIC_BASE_URL`): Transparent request dedup and response caching.
-- **Additive MCP Tools** (`~/.claude.json`): Exposing search, multiplexing, and inspection without overriding native file primitives.
+> Routing Claude Code's file reads through ToolRecall's MCP cached-read tools
+> (`cached_read`) measured a **2.4× cost increase** and a 3.1× slowdown (see
+> [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code)). ToolRecall must never
+> replace native file tools in Claude Code; `toolrecall setup` therefore registers
+> Claude Code as multiplexer-only.
 
 ---
 
-## 2. The 5 Improvements: Detailed Analysis
+## 2. Repeated headless runs — forward-proxy replay (the saving)
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│ Claude Code Execution Stack                                            │
-│                                                                        │
-│  [Hook System]                        [MCP Gateway]                    │
-│   • PreToolUse (WAF Security)          • FTS5 Knowledge Search         │
-│   • PostToolUse (Staleness Alert)      • Multiplexer-Only Bridge       │
-│        │                                    │                          │
-└────────┼────────────────────────────────────┼──────────────────────────┘
-         ▼                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ ToolRecall Daemon (:8569 / UDS)                                        │
-│  - context_tracker (read_seq < write_seq monotonic staleness)          │
-│  - waf (Layer-4 path allowlist & command blackhole)                    │
-│  - mcp_bridge (--multiplexer-only subprocess pooling)                  │
-└────────────────────────────────┬───────────────────────────────────────┘
-                                 │ Forward Proxy
-                                 ▼ (ANTHROPIC_BASE_URL)
-┌────────────────────────────────────────────────────────────────────────┐
-│ Upstream Provider                                                      │
-│  - Replay Cache (claude-code canonical profile for headless runs)      │
-│  - Request-Body Dedup (keep-first bash/test output stubbing)           │
-└────────────────────────────────────────────────────────────────────────┘
+Claude Code streams every request. With the `claude-code` canonicalization profile
+the proxy keys requests without per-run identifiers (session metadata, test-runner
+durations) and stores each completed stream; an identical later request is replayed
+from cache and never reaches the provider.
+
+```bash
+toolrecall hook claude ci-env > tr-ci.sh   # proxy URL, profile header, PYTHONHASHSEED=0, pinned MCP
+source tr-ci.sh
+claude -p "<task>" "${TR_CLAUDE_FLAGS[@]}"
 ```
 
----
+Replay holds only while the requests stay identical:
 
-### Improvement 1: Context Tracker Drift & Staleness Alerts (`PostToolUse` Hook)
+- **Same commit.** Claude Code sends recent commits and git status with the first
+  request; a new commit changes call 1 and nothing replays.
+- **Deterministic tool output.** The first output that differs (an `ls -l` mtime, a
+  random port, unordered set printing) ends replay for the rest of the session.
+- **Not for evals that sample the model:** a replayed call returns the earlier answer.
 
-* **The Problem:** When Claude Code runs shell commands (`Bash` running `git checkout`, `git stash`, `npm run build`, `make`, or code-generators) or modifies code via external scripts, files previously read into Claude's context are modified on disk. Claude continues reasoning on its outdated in-context memory, causing hallucinated patch locations, broken edits, and extra debugging turns.
-* **The Mechanism:**
-  ToolRecall’s Context Tracker maintains a monotonic sequence clock per file:
-  $$\text{stale} \iff \text{read\_seq}[\text{path}] < \text{write\_seq}[\text{path}]$$
-  A lightweight Claude Code `PostToolUse` hook triggers after `Bash`, `Edit`, or `Write` tools. It queries `context_get_stale` via Unix Domain Socket and, if any in-context file was overwritten, emits structured `additionalContext`:
-  ```json
-  {
-    "hookSpecificOutput": {
-      "additionalContext": "⚠️ TOOLRECALL DRIFT ALERT: [src/app.py] was modified on disk after your previous read. Your in-context content is stale. Re-read the file before applying further edits."
-    }
-  }
-  ```
-* **Prompt Cache Impact:** **Zero.** The alert is purely forward-looking; it appends to the current turn without altering earlier prompt prefixes.
-* **Implementation Path:**
-  1. Add `toolrecall context stale --hook-json` command returning Claude Code hook JSON output.
-  2. Configure `PostToolUse` in `.claude/settings.json`.
+**Why did replay stop?** Start the proxy with `TOOLRECALL_KEY_TRACE_DIR=<dir>` and run
+`toolrecall keytrace <dir>`. For each miss it prints the first differing field against
+the closest earlier request, e.g.:
 
----
+```
+#10   MISS msgs=4    first difference at .messages[3].content[0].content
+        earlier: … 4096 Jan  1 10:00 .\ndrwxr-xr-x 3 …
+        now:     … 4096 Jan  1 10:01 .\ndrwxr-xr-x 3 …
+```
 
-### Improvement 2: Terminal / Bash Output Deduplication & Log Truncation
+The trace holds prompts and tool output: it is local, opt-in and never changes keys.
 
-* **The Problem:** Iterative test-driven loops (`pytest`, `npm test`, `cargo test`) repeatedly output large, redundant tracebacks or build logs into Claude Code’s append-only transcript, rapidly swelling context costs.
-* **The Mechanism:**
-  - **Option A (Proxy Dedup):** ToolRecall's Forward Proxy (`[forward_proxy] dedup = true`) normalizes stdout blocks (stripping dynamic test runtimes, timestamps, and PIDs) and replaces subsequent byte-identical occurrences with short stubs pointing to the first occurrence.
-  - **Rule for Prefix Stability:** Must operate with `TOOLRECALL_DEDUP_PROTECT_LAST=0` (keep-first): the first output is sent in full to establish the provider prompt cache breakpoint, and identical future repeats are stubbed immediately.
-  - **Option B (PostToolUse Hook):** A hook inspects `tool_response` from `Bash` calls; if stdout exceeds 2,000 characters and matches a previous command output, it collapses the output with a reference pointer before it enters the transcript.
-* **Prompt Cache Impact:** Neutral if using keep-first; harmful if using delayed tail protection (which rewrites cached prefixes).
+> **Correction.** Stream caching for Anthropic (Claude Code) traffic only works since
+> the `message_stop` fix: the stream tee used to accept only OpenAI-style `[DONE]`
+> streams and discarded every Claude Code stream. The earlier replay results in
+> [bench/claude_code_replay/RESULTS.md](../bench/claude_code_replay/RESULTS.md) were
+> served from non-streaming fallback retries, not from the stream cache.
 
 ---
 
-### Improvement 3: Workstation Security & WAF Gate (`PreToolUse` Hook)
+## 3. Where interactive-session tokens go — `toolrecall audit claude-code`
 
-* **The Problem:** Unattended Claude Code execution (`claude -p` or permissions auto-granted) risks accidental data exfiltration (reading `.env`, `.aws/credentials`, SSH keys) or destructive filesystem modification (`rm -rf`, unexpected curl-to-bash pipelines).
-* **The Mechanism:**
-  A `PreToolUse` hook intercepts `Bash`, `Write`, and `Edit` commands, evaluating the target paths and shell tokens against ToolRecall’s Layer-4 security engine:
-  - Path allowlist enforcement.
-  - `.env` and secret key air-gapping.
-  - Command blackholing (`rm -rf /`, piping unverified URLs to sh).
-  If a rule is violated, the hook exits with non-zero status or outputs:
-  ```json
-  {
-    "hookSpecificOutput": {
-      "permissionDecision": "deny",
-      "permissionDecisionReason": "ToolRecall WAF: Attempted access to sensitive path (.env) blocked by local security policy."
-    }
-  }
-  ```
-* **Prompt Cache Impact:** **Zero.** The command is blocked before execution and Claude receives a compact refusal message.
+```bash
+toolrecall audit claude-code --days 30
+```
+
+Read-only report from `~/.claude/projects/*/*.jsonl`: the exact fixed starting context
+per session (system prompt, tool definitions, instruction files, skill/MCP/agent
+listings), its share of list-price-weighted cost, and the parts you control ranked by
+cost share. On the reference machine (25 sessions, 2,428 calls) the starting context
+was 13.7% of cost; the controllable parts (skill listing, instruction files, MCP
+instructions) were ~2.3%, and each 1,000 always-loaded tokens cost ~0.3%. The audit
+shows what trimming would buy before anyone spends effort on it.
 
 ---
 
-### Improvement 4: Codebase Knowledge & Fast FTS5 Search (MCP Tool)
+## 4. Hook adapter (`toolrecall.adapters.claude_code`)
 
-* **The Problem:** Navigating large or unfamiliar codebases via broad `grep` or `find` commands requires multiple round-trips and bloats context with raw directory listings.
-* **The Mechanism:**
-  Expose ToolRecall’s local SQLite FTS5 full-text search index as an MCP tool (`search_knowledge` / `codebase_fts`) registered in `~/.claude.json`.
-  Instruct Claude via `CLAUDE.md`:
-  > *"For wide codebase searches or finding definitions across unfamiliar repos, use `search_knowledge` first to locate exact file and line offsets."*
-* **Prompt Cache Impact:** **Zero.** Standard MCP tool request/response.
+```bash
+toolrecall hook claude print-config   # settings.json snippet
+```
 
----
+### Staleness alert (`PostToolUse`)
 
-### Improvement 5: Multiplexer-Only Integration via `toolrecall setup`
+Records each file Claude reads or edits. After a `Bash` call it checks those files
+and, if a shell command changed one on disk, adds `additionalContext` telling Claude
+to re-read it. The agent's own `Edit`/`Write` never counts as drift. The daemon's
+global stale list (shared across agents) is merged only with
+`TOOLRECALL_CC_DAEMON_STALE=1`.
 
-* **The Problem:** Running `toolrecall setup` or adding ToolRecall to Claude Code without flags registers file-caching tools (`cached_read`, `cached_patch`), which triggers the measured 2.4× cost disaster.
-* **The Mechanism:**
-  Update `toolrecall/cli.py` and `_write_claude_json_config()` to default `multiplexer_only=True` for Claude Code.
-  This allows Claude Code to share a single daemon and process pool across multiple MCP servers (Postgres, GitHub, Puppeteer, custom servers) with 15-minute idle timeouts, slashing memory overhead without touching file tools.
-* **Prompt Cache Impact:** **Zero.**
+Measured (Haiku, n=6 per arm): when a build step silently rewrites a file Claude has
+read, the hook saves the rejected-edit round trip (**−10% cost**, 6 vs 8 turns);
+when the prompt already tells Claude to inspect the file, it is neutral (−1.2%, within
+noise). It is a small correctness aid, not a general token saver.
 
----
+### WAF gate (`PreToolUse`, opt-in `TOOLRECALL_CC_WAF=1`)
 
-## 3. Evaluation & Suitability Matrix
-
-| Feature | Primary Benefit | Harness Fit | Prompt Cache Risk | Benchmark Suitability | Rank |
-|---|---|---|---|---|:---:|
-| **1. Staleness Alerts** | Prevents drift bugs & hallucinated edits | Native (`PostToolUse` `additionalContext`) | **Zero** | **Highest** (Turns, Accuracy, Cost) | **#1** |
-| **2. Bash Output Dedup** | Cuts redundant test log tokens | Proxy / `PostToolUse` | Medium (Requires keep-first) | High (Token volume on test loops) | **#2** |
-| **3. WAF Security Gate** | Workstation protection & air-gapping | Native (`PreToolUse` deny) | **Zero** | Low (Pass/Fail security audit) | **#3** |
-| **4. FTS5 Search MCP** | Fast cross-repo search | Additive MCP tool | **Zero** | Medium (Tool selection variance) | **#4** |
-| **5. Multiplexer Setup** | Eliminates MCP process bloat | `~/.claude.json` config | **Zero** | Low (System RAM benchmark) | **#5** |
+Denies `Bash`/`Write`/`Edit` calls touching `.env` files or SSH keys and a few
+destructive command patterns (`rm -rf /`, `curl … | sh`, fork bomb). Not cost-related;
+not benchmarked.
 
 ---
 
-## 4. Empirical Benchmark Results
+## 5. Request-body dedup with output normalization (not recommended for Claude Code)
 
-Full methodology and raw receipts in [bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md](../bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md).
+`[forward_proxy] dedup = true` plus the `claude-code` profile (or
+`TOOLRECALL_DEDUP_NORMALIZE=1`) stubs tool outputs that repeat an earlier one apart from
+timings, timestamps, temp paths or addresses (keep-first, so cached prefixes stay
+stable). The stub keeps the output's own last line.
 
-### Track 1: Context Staleness & Out-of-Band Drift Protection
-Evaluates multi-turn refactoring where an intermediate build step mutates source files out-of-band:
-- **Baseline Claude Code:** 6 turns, 1 failed patch attempt, 15,200 prompt tokens ($0.0310).
-- **Claude Code + ToolRecall Stale Hook:** 4 turns, 0 failed patch attempts, 9,400 prompt tokens ($0.0188).
-- **Delta:** **−33.3% turns**, **−38.2% prompt tokens**, 100% elimination of failed patch attempts.
+Measured: on a task built to repeat identical pytest output three times it is
+**cost-neutral** (+0.7%, n=6; the model writes more output about the collapsed runs),
+and replaying 193 real sessions found **nothing to stub**. Leave it off for Claude Code.
 
-### Track 2: Bash & Test Output Normalization and Deduplication
-Evaluates a 10-turn iterative TDD debugging loop with 5 test executions (~2.4 KB each):
-- **Native Claude Code:** 21,640 cumulative prompt tokens ($0.0065).
-- **ToolRecall Normalized Dedup (`protect_last=0`):** 9,094 cumulative prompt tokens ($0.0027) with 4 duplicate output blocks stubbed.
-- **Delta:** **−58.0% prompt token reduction** across the session without breaking Anthropic prompt-cache prefix stability.
+---
+
+## 6. MCP: multiplexer only
+
+`toolrecall setup` registers Claude Code with `--multiplexer-only`: Claude Code shares
+one daemon and process pool across MCP servers without ToolRecall's file tools.
+`docs_search` is available for indexed documentation corpora. Neither is a token
+saving; not benchmarked here.

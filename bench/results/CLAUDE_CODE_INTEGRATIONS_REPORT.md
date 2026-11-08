@@ -1,93 +1,132 @@
-# ToolRecall Claude Code Integrations: Empirical Benchmark Report
+# ToolRecall × Claude Code — measured
 
-**Date:** 2026-11-07  
-**Branch:** `feat/claude-code-integrations`  
-**Test Hardware:** Linux x86_64 workstation (Python 3.11 stdlib)  
-**Evaluated Systems:** Claude Code CLI (v2.1.306) with ToolRecall Hook Adapter & Forward Proxy  
+Claude Code 2.1.306, `claude -p`, Haiku, Linux. Costs are Claude Code's own
+`total_cost_usd` (API-equivalent list price, not invoice-verified) unless stated;
+"units" are list-price-weighted tokens (input 1, cache write 1.25, cache read 0.1,
+output 5). Harnesses: [`bench/claude_code_integrations/`](../claude_code_integrations/).
+Every live run used an isolated daemon, proxy, DB and HOME; the live instance was
+never touched.
 
----
+> **Verdict.** ToolRecall saves tokens for Claude Code when **the same headless task
+> runs again**: identical warm reruns cost **−96%** vs the cold run (short task, n=8).
+> That only works since the Anthropic stream-cache fix in this branch: before it, the
+> proxy discarded every Claude Code stream. For one-off and interactive sessions the
+> saving is ~0%: there is no repeated tool output to remove (0 of 3,015 tool results in
+> 193 local sessions), and Claude Code already handles unchanged re-reads and stale
+> edits itself.
 
-## Executive Summary
+This report replaces an earlier version whose headline figures (−33% turns, −38% and
+−58% prompt tokens) were constants in the benchmark script and a synthetic message
+list priced without prompt caching; the one real run of that version showed the hook
+arm costing +88% (n=1).
 
-Previous audits in [AGENT_COMPATIBILITY.md](file:///home/hermes/toolrecall/docs/AGENT_COMPATIBILITY.md#claude-code) demonstrated that routing Claude Code’s file reads through ToolRecall's MCP file-caching tools caused a **2.4× cost increase** due to fighting Anthropic's prompt cache and losing native batch edits.
+## 1. Forward-proxy replay of repeated runs
 
-To bring ToolRecall's core value into Claude Code without degrading performance, two non-intrusive integration mechanisms were implemented on branch `feat/claude-code-integrations`:
+**Bug found.** The stream tee and stream replay only accepted OpenAI-style streams
+(`data: [DONE]`). Anthropic streams end with a `message_stop` event, so every Claude
+Code stream was discarded as "truncated": 0 of 9 streamed calls stored, 0 replays.
+The October replay results ([../claude_code_replay/RESULTS.md](../claude_code_replay/RESULTS.md))
+came from non-streaming fallback retries after cut-short streams in those rigs: their
+logs show every streamed call discarded and every HIT on a non-streaming request.
 
-1. **Context Staleness & Drift Alerts (`toolrecall.adapters.claude_code`):**
-   A forward-looking `PostToolUse` hook that tracks in-context file reads and alerts the model via `additionalContext` when files are modified on disk out-of-band by shell tools (`npm run build`, `git checkout`, codegen).
-2. **Normalized Bash & Test Output Deduplication (`toolrecall.dedup` + Proxy):**
-   Deterministic regex normalization (`normalize_output`) that scrubs volatile runtimes (`1.25s` vs `1.48s`), timestamps, and tempdirs, enabling request-body deduplication with keep-first prefix stability (`protect_last=0`).
+**After the fix** (`_sse_complete()`, Anthropic deltas in the empty-stream guard,
+error events never cached), using the `toolrecall hook claude ci-env` settings:
 
-Both mechanisms were empirically tested and benchmarked against real Claude Code execution.
+| Run (same commit, same fixture) | Calls | Replayed | Billed units | vs cold |
+|---|---:|---:|---:|---:|
+| Cold | 3 | 0 | 21,427 | — |
+| 8 identical warm reruns (mean) | 3 | 2.75 | 833 | **−96.1%** |
 
----
+- 7 of 8 warm reruns replayed fully (0 upstream calls), **0 of 8 missed at call 1**.
+  The October data had ~13% call-1 misses; 16 captured first requests of identical
+  runs all produced the same canonical key, so that miss rate did not reproduce.
+- The partial run broke at an `ls -l` mtime crossing a minute boundary. `toolrecall
+  keytrace` (new, opt-in `TOOLRECALL_KEY_TRACE_DIR`) names the first differing field
+  of every miss; a changed source file was pinpointed the same way (file size 47 vs
+  76 bytes in the tool output).
+- Billed units come from transcript usage with replayed calls (message id already
+  seen in an earlier run) counted as 0; the proxy usage log agrees (HIT rows only for
+  fully replayed runs). Claude Code's `total_cost_usd` counts replayed calls as billed.
+- Not re-measured on the stream path: the long multi-issue session (−18% / −65% with
+  `PYTHONHASHSEED=0` in October). Expect it to stay bounded by the first
+  non-deterministic tool output.
 
-## 1. Track 1: Context Staleness & Out-of-Band Drift Protection
+## 2. Staleness hook (`PostToolUse`)
 
-### Scenario
-An autonomous agent works on a project. In Turn 1, the agent reads a module (`calculator.py`). In Turn 2, a background command or shell tool modifies `calculator.py` on disk (e.g. updating method signatures). In Turn 3, the agent attempts to apply edits and verify with pytest.
+Task: Read `calculator.py`, run a build script that rewrites it, change `compute()`,
+run pytest. Two prompts: *guided* (the branch's original prompt, which says "inspect
+the state") and *neutral* (no hint the build step touches the file). n=6 per arm,
+arm order alternated.
 
-### Live End-to-End Execution (Claude Code 2.1.306 on localhost)
-Executed via `bench/claude_code_integrations/run_real_claude_bench.py` against real Claude Code instances:
+| Hook version | Prompt | Base cost | Hook cost | Δ cost | Turns base → hook |
+|---|---|---:|---:|---:|---|
+| as shipped | guided | $0.00410 | $0.00450 | **+9.8%** | 7.7 → 7.8 |
+| as shipped | neutral | $0.00378 | $0.00349 | −7.6% | 8.0 → 6.0 |
+| fixed | guided | $0.00383 | $0.00378 | −1.2% (noise) | 7.3 → 6.5 |
+| fixed | neutral | $0.00377 | $0.00340 | **−10.0%** | 8.0 → 6.0 |
 
-| Metric | Arm A (Native Claude Code 2.1.306) | Arm B (Claude Code + ToolRecall Stale Hook) | Difference (Δ) |
-|---|---:|---:|:---:|
-| **Claude Version** | `2.1.306` | `2.1.306` | Identical |
-| **Hook Status** | No hook | **`hook_success` (65ms)** | Passed schema validation |
-| **Staleness Alert** | None | **Rendered as `<system-reminder>`** | Injected via API blob |
-| **Wall Clock Execution** | 16.88s | **13.65s** | **−19.1% faster** |
-| **API Turn Duration** | 9,575 ms | **9,017 ms** | **−5.8% API duration** |
-| **Outcome** | Green tests (after drift recovery) | **Green tests (guided by hook)** | Verified correct |
+- **Bug found:** the shipped hook raised a "STALENESS ALERT: re-read" after every
+  agent `Edit`/`Write` to a file it had read (it never refreshed its record), which
+  triggered an extra `Read`. Fixed: reads and agent edits both record the current
+  content; drift is checked only after `Bash`.
+- Where the neutral-prompt saving comes from: without the hook, Claude Code's own
+  guard rejects the stale `Edit` ("File has been modified since read") and Claude
+  re-reads — the wrong edit is never applied. The hook saves that one round trip.
+- The daemon's stale list is global across agents; merging it could surface files
+  this session never read. Now opt-in (`TOOLRECALL_CC_DAEMON_STALE=1`).
+- Hook latency on the test machine: 100–130 ms per tool call.
 
-### Measured Transcript Schema Discovery
-Running live Claude Code revealed that Claude Code 2.1.306 strictly validates the JSON schema returned by hooks:
-- For `PostToolUse`, it requires `"hookEventName": "PostToolUse"` inside `hookSpecificOutput`.
-- For `PreToolUse`, it requires `"hookEventName": "PreToolUse"`.
-When formatted correctly, Claude Code transforms the hook's output into a native `<system-reminder>` block on the next turn, delivering the drift warning directly into the model's active turn prompt:
-```xml
-<system-reminder>
-PostToolUse:Bash hook additional context: ⚠️ TOOLRECALL STALENESS ALERT: 1 file(s) in your conversation context were modified on disk and are now out of date:
-  - /tmp/tr_real_claude_bench/arm_b_treatment/calculator.py
-Your in-context memory for these files is obsolete. Re-read them before making further edits to prevent failed patches or syntax errors.
-</system-reminder>
+## 3. Request-body dedup with `normalize_output`
+
+**Real workloads — nothing to stub.** The branch's dedup (min 800 chars, keep-first)
+replayed over real transcripts, with and without the normalizer:
+
+| Corpus | Sessions | API calls | Tool results | Blocks stubbed |
+|---|---:|---:|---:|---:|
+| Interactive sessions | 25 | 2,384 | 1,786 | 0 |
+| All sessions incl. benchmarks | 193 | 3,777 | 3,015 | 0 |
+
+(A first pass reported 85 stubs in one session; all came from duplicated transcript
+lines left by a resume, which are never re-sent on the wire.)
+
+**Best case — a task built to repeat output.** Claude runs a failing pytest suite
+three times (~1.35 KB output each, only timings differ); dedup on vs per-request
+opt-out through the same proxy, n=6 per arm after a warm-up pair:
+
+| Stub text | No dedup | Dedup | Δ cost | Output tokens |
+|---|---:|---:|---:|---|
+| "Duplicate content omitted (sha256…)… byte-identical" | $0.001258 | $0.001473 | **+17.1%** | 427 → 964 |
+| "Same output as message N (differs only in timings…); last line: …" | $0.001386 | $0.001396 | +0.7% (noise) | 491 → 886 |
+
+The old stub also claimed "byte-identical" for normalized matches, which was false;
+the model repeated the claim and once answered "Not confirmed". The new stub states
+what differs and keeps the output's own last line. Dedup removes ~300 tokens per
+repeat, roughly what the model then spends writing about the collapsed runs.
+**Recommendation: leave dedup off for Claude Code.**
+
+## 4. Where interactive-session cost goes — `toolrecall audit claude-code`
+
+25 local interactive sessions, 2,428 API calls:
+
+| | Share of cost |
+|---|---:|
+| Fixed starting context (median 39,199 tokens), re-read on every call | 13.7% |
+| — of which controllable: skill listing, instruction files, MCP/agent listings | ~2.3% |
+| — rest: Claude Code system prompt + tool definitions | ~11.4% |
+| Output tokens | 16.3% |
+| Each 1,000 always-loaded tokens | ~0.32% |
+
+Trimming instruction files is worth doing only at scale: the largest controllable
+item (skill listing, ~4.3k tokens) was 1.2% of cost.
+
+## Reproduce
+
+```bash
+cd bench/claude_code_integrations
+BENCH_DIR=/tmp/tr-cc-bench bash repeat_replay.sh 8          # section 1
+python3 hook_ab.py 0 6                                       # section 2
+python3 offline_dedup.py ../.. ~/.claude/projects            # section 3, real corpus
+bash dedup_live.sh 7                                         # section 3, live A/B
+python3 first_call_capture.py ../.. 16                       # call-1 key stability (no API calls)
+toolrecall audit claude-code                                 # section 4
 ```
-
----
-
-## 2. Track 2: Bash & Test Output Normalization and Deduplication
-
-### Scenario
-A 10-turn iterative test-driven development (TDD) loop where an agent runs test suites (`pytest`) 5 times interspersed with code inspection and patch attempts. Each test run generates ~2,400 characters (~600 tokens) of tracebacks and summaries with minor elapsed duration variations (`0.82s` vs `0.95s`).
-
-### Measured Results
-
-| Metric | Arm A (Native Messages) | Arm B (ToolRecall Normalized Dedup) | Improvement (Δ) |
-|---|---:|---:|:---:|
-| **Test Output Volume** | 12,050 chars | **2,820 chars** | **−76.6%** |
-| **Blocks Stubbed** | 0 blocks | **4 duplicate blocks** | 4 stubs applied |
-| **Cumulative Prompt Tokens** | 21,640 tokens | **9,094 tokens** | **−58.0%** |
-| **Billed Prompt Cost (Sonnet)** | $0.0065 | **$0.0027** | **−58.0%** |
-
-### Mechanism & Root Cause
-In an append-only harness, sending un-deduplicated 2.4 KB test outputs on Turns 2, 4, 6, 8, and 10 compounds quadratically across the session.
-- **Why raw dedup failed previously:** Elapsed test runtimes (`passed in 0.82s`) caused whole-string sha256 hashes to diverge, yielding 0 hits.
-- **The Fix:** `normalize_output` replaces volatile durations (`\b(in|took) \d+(\.\d+)?s\b`), timestamps, tempdirs, and PIDs with canonical tokens (`<duration>`, `<timestamp>`, `<pytest-tempdir>`).
-- **Prompt Cache Protection:** With `protect_last=0` (keep-first), Turn 2's full output establishes the Anthropic prompt-cache prefix. Turns 4, 6, 8, and 10 are stubbed immediately on arrival (`[toolrecall-dedup] Duplicate content omitted...`), shrinking prompt token volume by **58.0%** while preserving byte-exact prefix caching for the rest of the conversation.
-
----
-
-## 3. Which Feature Makes the Most Sense?
-
-Both improvements address distinct, complementary axes:
-
-1. **Context Staleness Alerts (`PostToolUse` Hook):**
-   - **Value:** **Agent Correctness and Autonomy**.
-   - **Verdict:** Essential for real-world projects where build scripts, formatters, code-generators, or git checkouts alter files in the background. It prevents broken edits and failed patch loops.
-2. **Normalized Bash Deduplication (Forward Proxy):**
-   - **Value:** **Token Economy on Test-Heavy Loops**.
-   - **Verdict:** Cuts prompt context bloat by **58%** during iterative TDD debugging without breaking Anthropic prompt caching.
-
-### Recommendation
-Enable **both**:
-- Install the hook via `python3 -m toolrecall hook claude print-config` into `~/.claude/settings.json`.
-- Route Claude Code API traffic through ToolRecall's Forward Proxy (`http://127.0.0.1:8569`) with `[forward_proxy] dedup = true` and profile `claude-code`.

@@ -134,6 +134,11 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_SHIM_DISABLE` | (not in config.toml) | `TOOLRECALL_SHIM_DISABLE=1` (disable OS-level shim per-process) |
 | `TOOLRECALL_SHIM_STUB` | (not in config.toml) | `TOOLRECALL_SHIM_STUB=0` (kill switch for the shim's unchanged-file stub) |
 | `TOOLRECALL_SHIM_STUB_TTL` | `shim.stub_ttl` | `TOOLRECALL_SHIM_STUB_TTL=600` |
+| `TOOLRECALL_DEDUP_NORMALIZE` | (not in config.toml) | `TOOLRECALL_DEDUP_NORMALIZE=1` (normalized dedup keys; see FORWARD_PROXY.md) |
+| `TOOLRECALL_KEY_TRACE_DIR` | (not in config.toml) | `TOOLRECALL_KEY_TRACE_DIR=/tmp/tr-trace` (proxy replay diagnostics for `toolrecall keytrace`) |
+| `TOOLRECALL_CC_HOOK_DIR` | (not in config.toml) | `TOOLRECALL_CC_HOOK_DIR=~/.toolrecall/claude-code` (Claude Code hook session state) |
+| `TOOLRECALL_CC_WAF` | (not in config.toml) | `TOOLRECALL_CC_WAF=1` (Claude Code `PreToolUse` WAF gate) |
+| `TOOLRECALL_CC_DAEMON_STALE` | (not in config.toml) | `TOOLRECALL_CC_DAEMON_STALE=1` (merge the daemon's cross-agent stale list into hook alerts) |
 | `AGENT_HOME` | `paths.agent_home` (resolution) | `AGENT_HOME=~/.hermes` |
 | `TOOLRECALL_AGENT_HOME` | `paths.agent_home` (resolution) | |
 

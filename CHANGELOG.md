@@ -4,20 +4,25 @@
 
 ### Added
 - **Claude Code hook adapter (`toolrecall.adapters.claude_code`, `tr-cc-hook`, `toolrecall hook claude`).**
-  Provides forward-looking context staleness and out-of-band file drift alerts via Claude Code's native
-  `PostToolUse` lifecycle hook. When background shell commands, codegen, or git operations modify files
-  on disk that were read into active context, the adapter detects the drift and injects `additionalContext`
-  (rendered natively by Claude Code 2.1+ as `<system-reminder>`) in ~65ms, instructing the model to re-read
-  before applying edits. Live verified on Claude Code 2.1.306: −33% turns, 100% elimination of failed patch
-  attempts. Includes optional `PreToolUse` workstation WAF guard (`TOOLRECALL_CC_WAF=1`) to block sensitive
-  `.env` access and destructive command patterns. Documented in `docs/CLAUDE_CODE_INTEGRATIONS.md`.
-- **Normalized Bash & test output deduplication (`toolrecall.dedup.normalize_output`).**
-  Adds volatile field normalization (durations `\b(in|took) \d+(\.\d+)?s\b`, ISO timestamps, tempdirs,
-  PIDs, memory addresses) to request-body deduplication. Enabled automatically under `profile="claude-code"`
-  (with `protect_last=0` keep-first for Anthropic prompt-cache prefix stability) or via
-  `TOOLRECALL_DEDUP_NORMALIZE=1`. Resolves the previous 0-hit limitation on repetitive test runner output,
-  reducing cumulative prompt tokens by 58.0% across multi-turn TDD loops without corrupting provider
-  prompt-cache prefixes.
+  `PostToolUse` staleness alert: records files Claude reads or edits and, after a `Bash` call changes
+  one on disk, adds `additionalContext` asking Claude to re-read it. The agent's own edits never count
+  as drift; the daemon's cross-agent stale list is merged only with `TOOLRECALL_CC_DAEMON_STALE=1`.
+  Measured (Haiku, n=6/arm): −10% cost when a build step silently rewrites a read file, neutral
+  otherwise — a small correctness aid, not a general token saver. Optional `PreToolUse` WAF gate
+  (`TOOLRECALL_CC_WAF=1`). `toolrecall hook claude ci-env` prints the shell setup for repeated
+  headless runs. Documented in `docs/CLAUDE_CODE_INTEGRATIONS.md`.
+- **`toolrecall audit claude-code`.** Read-only report from local Claude Code transcripts: exact
+  fixed starting context per session, its share of list-price-weighted cost, and the controllable
+  parts (instruction files, skill/MCP/agent listings) ranked by cost share.
+- **`toolrecall keytrace` + opt-in `TOOLRECALL_KEY_TRACE_DIR`.** The forward proxy can record the
+  canonical body and HIT/MISS of each canonical-profile streaming request; `toolrecall keytrace <dir>`
+  explains every miss by the first field that differs from the closest earlier request.
+- **Normalized request-body dedup (`toolrecall.dedup.normalize_output`).** Durations, ISO timestamps,
+  pytest temp dirs, PIDs and memory addresses are normalized before hashing, under
+  `profile="claude-code"` (keep-first, `protect_last=0`) or `TOOLRECALL_DEDUP_NORMALIZE=1`. Normalized
+  matches get their own stub that states what differs and keeps the output's last line. Measured on
+  Claude Code: cost-neutral on a task built to repeat test output, and 0 stubs across 3,015 tool
+  results from 193 real sessions — not recommended for Claude Code.
 - **Lazy loading for framework adapters (`toolrecall.adapters`).**
   Implements PEP 562 lazy module loading in `toolrecall/adapters/__init__.py`, cutting adapter import
   cold-starts from ~500ms down to ~43ms to prevent Claude Code hook execution timeouts (`hook_cancelled`).
@@ -121,6 +126,12 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **Forward proxy: Anthropic streams are cached and replayed.** The stream tee and replay accepted
+  only OpenAI-style `data: [DONE]` streams and discarded every Anthropic (`message_stop`) stream as
+  truncated, so Claude Code's streamed calls were never cached. Earlier Claude Code replay results came
+  from non-streaming fallback retries. Streams with an `error` event are never cached; the tee logs
+  "stored" only when the daemon accepted the entry. Measured: identical warm reruns −96% vs cold
+  (short task, n=8).
 - **`healthcheck` no longer starts the daemon it is diagnosing.** The
   `stats` helper subprocess inherited an autostart-enabled environment, so a
   check against a stopped daemon spawned one, which rewrote `daemon.pid` and

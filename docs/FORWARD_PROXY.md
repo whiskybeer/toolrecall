@@ -82,8 +82,13 @@ canonicalization profile. Without it you get relay and usage logging, but 0 hits
 export ANTHROPIC_BASE_URL=http://localhost:8569
 export ANTHROPIC_CUSTOM_HEADERS="X-ToolRecall-Canonicalize: claude-code"
 ```
-Pin MCP servers (`--strict-mcp-config`) for stable keys. Scope and measured
-limits: [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code).
+Pin MCP servers (`--strict-mcp-config`) for stable keys; `toolrecall hook claude
+ci-env` prints the full snippet. Anthropic streams (ending in `message_stop`, no
+`[DONE]`) are stored and replayed verbatim like OpenAI-style streams; streams carrying
+an `error` event are never cached. To see why a rerun stopped replaying, set
+`TOOLRECALL_KEY_TRACE_DIR` on the proxy and run `toolrecall keytrace <dir>`. Scope and
+measured limits: [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md),
+[AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code).
 
 ### Direct HTTP
 ```bash
@@ -120,7 +125,7 @@ Requests to hosts not in this list are forwarded uncached (no caching).
 
 Proxy responses now include `Content-Length`. Previously, `resp.read()` consumed the upstream body (handling chunked transfer encoding), but the response was sent without `Content-Length` and with `Connection: keep-alive`. HTTP/1.0 clients (Python `http.client`, some SDKs) hung indefinitely waiting for the body boundary. Now every non-streaming response includes `Content-Length`.
 
-Note: Streaming responses (SSE for LLM chat completions) bypass caching entirely and are relayed chunk-by-chunk — they do not get `Content-Length`.
+Note: Streaming responses (SSE) are relayed chunk-by-chunk and do not get `Content-Length`. They are cached only under a canonicalization profile (`X-ToolRecall-Canonicalize`): the completed stream is stored verbatim and replayed as SSE.
 
 ## Cache Key
 
@@ -143,6 +148,8 @@ Compare with file/terminal caching, which only saves input tokens (the output st
 | `TOOLRECALL_FORWARD_STREAM_TIMEOUT` | `300` | Streaming request timeout |
 | `TOOLRECALL_FORWARD_DEDUP` (or `[forward_proxy] dedup` in `toolrecall.toml`) | `false` | Request-body dedup — see below |
 | `TOOLRECALL_FORWARD_BYPASS_SAMPLED` (or `[forward_proxy] bypass_sampled`) | `false` | Bypass cache for explicit `temperature > 0` |
+| `TOOLRECALL_DEDUP_NORMALIZE` | unset | Normalize timings/timestamps/temp paths/addresses before dedup hashing (automatic under the `claude-code` profile, which also sets keep-first `protect_last=0`) |
+| `TOOLRECALL_KEY_TRACE_DIR` | unset | Write canonical bodies + HIT/MISS of canonical-profile streaming requests for `toolrecall keytrace` (holds prompts; local only) |
 | N/A | 5 MB | Maximum POST body size |
 
 ## Request-Body Dedup (opt-in)
