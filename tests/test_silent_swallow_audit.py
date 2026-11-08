@@ -52,7 +52,11 @@ FROZEN_COUNTS = {
     # 5 as of 2026-09-15 (auto_apply=false hint channel): +1 around the
     # update_pending_hint daemon round-trip — a notice must never break the
     # tool call it rides on (same contract as the context-hint appends).
-    "mcp_bridge.py": 5,
+    # 6 as of 2026-09-16 (measured dedup tier): +1 in _count_measured —
+    # fire-and-forget daemon counter for wire-verified not-sent tokens; a
+    # counter must never break a tool call and the daemon may be restarting
+    # mid-session. The stub itself is already returned to the harness.
+    "mcp_bridge.py": 6,
     "mcp_cache_fs.py": 3,
     "normalizer.py": 1,
     # 4 as of 2026-09-10 (stream usage truth): +1 in _parse_sse_usage_tail —

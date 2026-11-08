@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     tokens_read_uncacheable INTEGER DEFAULT 0,
     tokens_saved INTEGER DEFAULT 0,
     context_tokens_saved INTEGER DEFAULT 0,
+    tokens_not_sent_measured INTEGER DEFAULT 0,
     updated_at REAL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS access_log (
@@ -381,6 +382,7 @@ def _record(
     tokens_saved: int = 0,
     context_tokens: int = 0,
     client: str = "",
+    tokens_not_sent_measured: int = 0,
 ):
     """Track cache statistics + access log.
 
@@ -402,6 +404,26 @@ def _record(
     _ensure_db_integrity()
     try:
         with _db() as conn:
+            if tokens_not_sent_measured:
+                # MEASURED context savings (bridge dedup stubs): wire-level
+                # verified — the content was REPLACED by a stub, so these
+                # tokens provably never reached the LLM. Separate category
+                # so the estimate tiers can never contaminate it.
+                conn.execute(
+                    """
+                    INSERT INTO cache_stats (category, hits, misses, tokens_not_sent_measured, updated_at)
+                    VALUES ('mcp_dedup', 0, 0, ?, ?)
+                    ON CONFLICT(category) DO UPDATE SET
+                        tokens_not_sent_measured = tokens_not_sent_measured + ?,
+                        updated_at = ?
+                """,
+                    (
+                        tokens_not_sent_measured,
+                        time.time(),
+                        tokens_not_sent_measured,
+                        time.time(),
+                    ),
+                )
             if hit:
                 conn.execute(
                     """
@@ -449,7 +471,13 @@ def _record(
                         category,
                         path,
                         1 if hit else 0,
-                        tokens_saved if hit else tokens_read,
+                        # Stub events (tokens_not_sent_measured) are miss-row
+                        # entries whose token count must NOT touch the
+                        # disk-read counter — surface them in access_log for
+                        # per-day trend only.
+                        tokens_saved
+                        if hit
+                        else (tokens_read if tokens_read else tokens_not_sent_measured),
                         time.time(),
                         client,
                     ),
@@ -1988,6 +2016,11 @@ def get_stats() -> dict:
         with _db() as conn:
             for row in conn.execute("SELECT * FROM cache_stats"):
                 total = row["hits"] + row["misses"]
+                measured = (
+                    row["tokens_not_sent_measured"]
+                    if "tokens_not_sent_measured" in row.keys()
+                    else 0
+                )
                 stats[row["category"]] = {
                     "hits": row["hits"],
                     "misses": row["misses"],
@@ -2010,6 +2043,10 @@ def get_stats() -> dict:
                     "tokens_served_from_cache": row["tokens_saved"],
                     "tokens_served_from_cache_cumulative": row["tokens_saved"],
                     "tokens_not_sent_to_llm": row["context_tokens_saved"],
+                    # MEASURED tier — wire-verified (bridge replaced the
+                    # content with a stub). Never an estimate; independent
+                    # of any checkpoint/hint state.
+                    "tokens_not_sent_measured": measured,
                     # Back-compat aliases (v0.10.x → v0.11+).
                     "tokens_read_from_disk": row["tokens_read_from_disk"],
                     "tokens_not_read_from_disk": row["tokens_saved"],

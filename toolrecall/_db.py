@@ -430,6 +430,9 @@ def _init(schema: str = ""):
         _add_column(conn, "cache_stats", "updated_at REAL DEFAULT 0")
         # Migration: v0.9.4 → v0.10.0 — add context_tokens_saved column
         _add_column(conn, "cache_stats", "context_tokens_saved INTEGER DEFAULT 0")
+        # Migration: v0.8.22 → v0.8.23 — MEASURED not-sent tokens (bridge
+        # dedup stubs; wire-verified, never an estimate)
+        _add_column(conn, "cache_stats", "tokens_not_sent_measured INTEGER DEFAULT 0")
         # Migration: v0.x → v0.y — add stderr column to terminal_cache
         _add_column(conn, "terminal_cache", "stderr TEXT NOT NULL DEFAULT ''")
         # Migration: v0.8.x → v0.9.0 — add cwd column to terminal_cache

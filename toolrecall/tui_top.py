@@ -551,6 +551,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         "snap": None,
         "log": [],
         "ctx": None,
+        "stats": None,
         "trend": None,
         "toast": "",
         "toast_ts": 0.0,
@@ -569,6 +570,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         state["snap"] = snapshot_fn()
         state["log"] = log_fn()
         state["ctx"] = context_via_daemon()
+        state["stats"] = state["snap"].get("stats") if isinstance(state["snap"], dict) else None
         # billed-truth aggregation (usage CSV) — cheap file read, once/interval
         try:
             state["money"] = money_today()
@@ -878,6 +880,19 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     y,
                     "  ctx dropped: %s tok  (%s)" % (human_tokens(dropped), _drop_state),
                 )
+                # MEASURED tier: wire-verified not-sent tokens (bridge dedup
+                # stubs). The number an end user can take to the bank —
+                # content was REPLACED on the wire, never an estimate.
+                _measured = 0
+                for _cat in (state.get("stats") or {}).values():
+                    if isinstance(_cat, dict) and _cat.get("tokens_not_sent_measured"):
+                        _measured += _cat["tokens_not_sent_measured"]
+                if _measured:
+                    y = put(
+                        y,
+                        "  measured not-sent: %s tok  (dedup stubs — wire-verified)"
+                        % human_tokens(_measured),
+                    )
                 stale = ctx.get("stale", [])
                 y = put(y + 1, "", 0)  # section gap
                 y = put(

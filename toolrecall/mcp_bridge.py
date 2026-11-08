@@ -378,6 +378,11 @@ class MCPBridge:
         cannot drop an earlier tool_result, so re-sending identical content
         costs full tokens every time.  Their native read tools deduplicate;
         without this we are strictly more expensive than the tool we replace.
+
+        Every stub IS a measured context saving: the file content is
+        REPLACED on the wire by a one-line note, so those tokens provably
+        never reach the LLM. Counted in cache_stats.tokens_not_sent_measured
+        (category "mcp_dedup") via daemon cmd `dedup_tokens`.
         """
         if not path or "error" in resp:
             return resp
@@ -412,6 +417,13 @@ class MCPBridge:
                 "File unchanged; see earlier read. "
                 "If you no longer have it, pass bypass_cache=true."
             )
+            # MEASURED CONTEXT SAVINGS: len//4, same estimator as every
+            # other CONTEXT-tier counter. This is the one number that is
+            # not a model — the content literally did not go out.
+            self._count_measured(
+                len(content) // 4,
+                f"{path} (stub: {note})",
+            )
             return {
                 "result": {
                     "unchanged": True,
@@ -441,6 +453,7 @@ class MCPBridge:
             return resp
         digest = content_digest(content)
         if self._session_terminal.get(command) == digest:
+            self._count_measured(len(content) // 4, f"<terminal: {command[:80]}>")
             return {
                 "result": {
                     "unchanged": True,
@@ -449,6 +462,18 @@ class MCPBridge:
             }
         self._session_terminal[command] = digest
         return resp
+
+    def _count_measured(self, tokens: int, log_path: str) -> None:
+        """Fire-and-forget daemon counter for MEASURED not-sent tokens.
+
+        The stub path guarantees these tokens never reach the LLM — this is
+        the only wire-verified CONTEXT-tier number. Best-effort: a counter
+        must never break a tool call, and the daemon may be restarting.
+        """
+        try:
+            self._uds_request("dedup_tokens", tokens=int(tokens), path=log_path)
+        except Exception:
+            pass
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:
         """Send a request to the daemon and return parsed response."""

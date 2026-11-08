@@ -45,6 +45,7 @@ from concurrent.futures import ThreadPoolExecutor
 from toolrecall import __version__
 from toolrecall.keys import content_digest
 from toolrecall.cache import (
+    _record as _cache_record,
     cached_read as _cache_read,
     cached_terminal as _cache_terminal,
     cached_skill as _cache_skill,
@@ -1849,6 +1850,8 @@ class DaemonServer:
                 return self._handle_status(request)
             elif cmd == "cache_invalidate":
                 return self._handle_invalidate(request)
+            elif cmd == "dedup_tokens":
+                return self._handle_dedup_tokens(request)
             elif cmd == "cache_refresh_file":
                 return self._handle_refresh_file(request)
             elif cmd == "mcp_call":
@@ -2205,6 +2208,30 @@ class DaemonServer:
     def _handle_status(self, req: dict) -> dict:
         stats = get_stats()
         return {"result": stats}
+
+    def _handle_dedup_tokens(self, req: dict) -> dict:
+        """Count MEASURED not-sent tokens from bridge dedup stubs.
+
+        The bridge calls this when it replaced file/terminal content with a
+        stub — at that moment the tokens provably never reach the LLM. This
+        is the only wire-verified CONTEXT-tier number; it lands in
+        cache_stats under its own category ('mcp_dedup') so estimate tiers
+        can never contaminate it, and in access_log for the per-day trend.
+        """
+        tokens = req.get("tokens", 0)
+        path = req.get("path", "")
+        try:
+            tokens = int(tokens)
+        except (TypeError, ValueError):
+            tokens = 0
+        if tokens > 0:
+            _cache_record(
+                "mcp_dedup",
+                hit=False,
+                path=path,
+                tokens_not_sent_measured=tokens,
+            )
+        return {"ok": True, "counted": tokens}
 
     def _handle_invalidate(self, req: dict) -> dict:
         err = self.security.check_invalidate()
