@@ -260,6 +260,8 @@ for emoji, key in layers.items():
     hits = d.get("hits", 0)
     misses = d.get("misses", 0)
     rate = d.get("hit_rate", "0%")
+    if rate in ("-", "–"):  # empty window (post-reset) observed nothing
+        rate = "0%"
     entries = final.get(f"{key}_entries", 0)
     cost = tokens / 1_000_000 * 2
     total_tokens += tokens

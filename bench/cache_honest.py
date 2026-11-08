@@ -39,9 +39,13 @@ def main() -> None:
         "FROM cache_stats WHERE category='file_cache'"
     ).fetchone()
 
-    # Real SQLite-level saved tokens = sum of (hits_per_file × estimated_tokens)
-    # where estimated_tokens = size // 4 (chars/token rule from cache.py)
-    tok_saved_real = sum(r[1] * (r[2] // 4) for r in rows)
+    # Real SQLite-level saved tokens = sum of (re-serves × estimated_tokens),
+    # where estimated_tokens = size // 4 (chars/token rule from cache.py).
+    # `hits` counts the initial disk read too (rows are stored at hits = 1),
+    # so the re-served reads are hits - 1; counting all hits would claim the
+    # initial disk read itself as "saved". (The counter was frozen at 1 from
+    # 2026-09 to 2026-10-27 — every re-read was invisible to this report.)
+    tok_saved_real = sum(max(r[1] - 1, 0) * (r[2] // 4) for r in rows)
 
     # Tokens actually read from disk = what the daemon recorded on first reads
     tok_read_from_disk = stats[2] if stats else 0

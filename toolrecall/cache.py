@@ -810,6 +810,31 @@ def _resolve_cache_path(path: str) -> str:
     return os.path.normpath(expanded)
 
 
+def _bump_file_hits(path_hash: str | None) -> None:
+    """Count one cache serve on the persisted file_cache row.
+
+    The column is what per-file honesty tooling reads (bench/cache_honest.py
+    classifies ``hits == 1`` as "read from disk once" vs ``hits > 1`` as
+    "re-served"), so it must move — before 2026-10-27 it was stored at 1 and
+    never touched again, which made every re-read invisible. Sibling caches
+    (terminal/mcp/api) maintain theirs the same way.
+
+    Same-transaction note: callers invoke this right after ``_record()``, so
+    the write joins the transaction that already logged the hit — one extra
+    UPDATE, no extra commit. Best-effort: a failed bump must not fail the read.
+    """
+    if not path_hash:
+        return
+    try:
+        with _db() as conn:
+            conn.execute(
+                "UPDATE file_cache SET hits = hits + 1 WHERE path_hash = ?",
+                (path_hash,),
+            )
+    except Exception as e:
+        warnings.warn(f"ToolRecall: file hit-counter update failed: {e}")
+
+
 def cached_read(
     path: str,
     source: str = "",
@@ -901,6 +926,11 @@ def cached_read(
             context_tokens=context_tokens,
             client=client,
         )
+        # LRU key == DB row key for the common local caller (ns == ""); a
+        # namespaced caller's own-ns row hashes the same way (A6-7). The rare
+        # remote edge (ns entry served from the global row) is accepted: the
+        # bump lands on the caller's own row, never on a foreign one.
+        _bump_file_hits(_hash(mem_key))
         # lossless: decoded text re-encodes to exactly the raw byte size →
         # an rb-mode serve of this entry is byte-identical to disk. Entries
         # predating the newline="" read (CRLF-stripped) derive False.
@@ -926,17 +956,22 @@ def cached_read(
         path_hash_own = _hash(path)
         path_hash_global = None
     row = None
+    matched_hash = None  # which row a cache serve below must credit
     try:
         with _db() as conn:
             row = conn.execute(
                 "SELECT content, mtime, size, cached_at FROM file_cache WHERE path_hash = ?",
                 (path_hash_own,),
             ).fetchone()
-            if row is None and path_hash_global is not None:
+            if row is not None:
+                matched_hash = path_hash_own
+            elif path_hash_global is not None:
                 row = conn.execute(
                     "SELECT content, mtime, size, cached_at FROM file_cache WHERE path_hash = ?",
                     (path_hash_global,),
                 ).fetchone()
+                if row is not None:
+                    matched_hash = path_hash_global
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite read failed for {path}: {e}")
         row = None
@@ -969,6 +1004,7 @@ def cached_read(
             context_tokens=context_tokens,
             client=client,
         )
+        _bump_file_hits(matched_hash)
         # lossless derivation mirrors the memory-hit path: row["size"] holds
         # the raw on-disk byte size recorded at miss time.
         return {
@@ -2869,6 +2905,9 @@ def get_stats() -> dict:
                     if "tokens_not_sent_measured" in row.keys()
                     else 0
                 )
+                lifetime_hits = row["hits"] + b[0]
+                lifetime_misses = row["misses"] + b[1]
+                lifetime_total = lifetime_hits + lifetime_misses
                 stats[row["category"]] = {
                     "hits": row["hits"],
                     "misses": row["misses"],
@@ -2936,7 +2975,17 @@ def get_stats() -> dict:
                     "tokens_not_read_from_disk_cumulative": row["io_tokens_saved"],
                     # tokens_saved_to_llm is emitted with the canonical block above.
                     "updated_at": row["updated_at"],
-                    "hit_rate": f"{row['hits'] / total * 100:.0f}%" if total > 0 else "0%",
+                    # An empty window observed NOTHING — "0%" would claim a
+                    # measured all-miss rate that never happened (a fresh
+                    # reset reads 0% next to a lifetime 96%, which is exactly
+                    # the confusion this avoids). "-" matches the TUI, which
+                    # has rendered an empty window as "-" all along.
+                    "hit_rate": f"{row['hits'] / total * 100:.0f}%" if total > 0 else "-",
+                    "lifetime_hit_rate": (
+                        f"{lifetime_hits / lifetime_total * 100:.0f}%"
+                        if lifetime_total > 0
+                        else "-"
+                    ),
                 }
                 if row["category"] == "file_cache":
                     total_bytes = conn.execute(

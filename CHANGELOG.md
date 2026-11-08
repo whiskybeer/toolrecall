@@ -41,6 +41,20 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **`file_cache.hits` finally moves — per-file re-reads are countable again.**
+  Rows were stored at `hits = 1` and never touched (no `UPDATE` anywhere), so
+  `bench/cache_honest.py`'s whole report — "read once" vs "re-served", and its
+  per-file savings estimate — saw every re-read as invisible. Each serve now
+  bumps the persisted row in the same transaction that logs the hit (the DB is
+  already written per hit for the access log, so this adds one UPDATE and no
+  extra commit). `cache_honest.py`'s savings formula is corrected to
+  `(hits - 1) × size/4`: `hits` includes the initial disk read, and counting it
+  claimed the disk read itself as "saved".
+- **`get_stats()` reports `hit_rate = "-"` for an empty window** (previously
+  "0%") and gains `lifetime_hit_rate`. An empty window observed nothing; right
+  after `reset-stats` that read "0%" next to a `lifetime_*` value of 96% —
+  same-shaped numbers with opposite meanings. "-" matches what the TUI has
+  rendered for an empty window all along.
 - **`toolrecall reset-stats` moves statistics into lifetime totals instead of deleting them.**
   `reset_stats()` ended in `DELETE FROM cache_stats` + `DELETE FROM access_log`, so a
   reset — and every benchmark script that calls it — silently destroyed lifetime
