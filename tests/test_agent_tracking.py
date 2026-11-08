@@ -240,3 +240,15 @@ class TestAgentTracking:
         assert data["agent_id"] == "nobody"
         assert data["categories"] == []
         assert set(data["totals"].values()) == {0}
+
+    def test_cli_status_includes_active_agents(self, _clean_agent_stats, monkeypatch, capsys):
+        """toolrecall status includes an Active Agents section when agent stats exist."""
+        from toolrecall.cli import cmd_status
+
+        _record("file_cache", hit=True, tokens_saved=120, agent_id="status-agent")
+        monkeypatch.setattr(sys, "argv", ["toolrecall", "status"])
+        cmd_status()
+        captured = capsys.readouterr()
+        assert "Active Agents" in captured.out
+        assert "agent status-agent: 1 hits, 0 misses" in captured.out
+        assert "tokens_saved=120" in captured.out

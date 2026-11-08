@@ -295,6 +295,28 @@ def cmd_status():
             )
         else:
             print(f"  {k}: {v}")
+
+    # ─── Per-Agent Summary ──────────────────
+    try:
+        from toolrecall.cache import get_agent_stats
+
+        agent_rows = get_agent_stats()
+        if agent_rows:
+            print()
+            print("  ── Active Agents ──")
+            agents = sorted(set(r["agent_id"] for r in agent_rows))
+            for aid in agents:
+                rows = [r for r in agent_rows if r["agent_id"] == aid]
+                a_hits = sum(r["hits"] for r in rows)
+                a_misses = sum(r["misses"] for r in rows)
+                a_saved = sum(r["tokens_saved"] for r in rows)
+                total_a = a_hits + a_misses
+                rate_str = f"{a_hits / total_a * 100:.0f}%" if total_a > 0 else "0%"
+                saved_str = f", tokens_saved={a_saved:,}" if a_saved else ""
+                print(f"  agent {aid}: {a_hits} hits, {a_misses} misses ({rate_str} hit rate){saved_str}")
+    except Exception:
+        pass
+
     # Recent activity
     recent = stats.get("recent", [])
     if recent:

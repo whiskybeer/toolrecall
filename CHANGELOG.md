@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- **Active agents summary in `toolrecall status`.** Displays an Active Agents block
+  showing total hits, misses, hit rate, and tokens saved per agent identity when
+  per-agent statistics are recorded.
 - **OpenEvolve LLM-judge memoization (`wrap_llm_feedback`, `admit_unique`).**
   Memoizes OpenEvolve's `use_llm_feedback` judge in the work ledger, closing the
   re-billing gap where evaluator memo hits still called the external LLM judge
