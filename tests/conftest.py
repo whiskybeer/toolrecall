@@ -35,6 +35,11 @@ os.environ["TOOLRECALL_TRANSPORT"] = os.path.join(
 # No daemon auto-start from inside pytest: _ensure_daemon() must never spawn
 # a daemon that would bind the hermetic (or worse, the live) socket.
 os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
+# Log-rail tag: every daemon/test log line this pytest process emits into a
+# shared log file carries [hermetic] so production-log readers can tell the
+# two apart at a glance (test-suite "tracker snapshot saved: 0 read paths"
+# lines were twice misread as a dead production flow — 2026-09-15).
+os.environ["TOOLRECALL_HERMETIC"] = "1"
 
 
 def _points_at_prod_state(val: str) -> bool:

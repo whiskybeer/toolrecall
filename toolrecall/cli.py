@@ -287,13 +287,67 @@ def cmd_status():
     print()
 
 
+def _context_flow_snapshot() -> dict:
+    """Live context-tracker state for reporters (armed flag + banked ledger).
+
+    Fetched from the daemon over IPC so every reporter (CLI JSON, cron
+    script, dashboards) sees the same state the TUI shows, including the
+    ``armed`` flag that the bare ``tokens_not_sent_to_llm`` counter cannot
+    convey. Fail-soft: any error degrades to ``{"available": False,
+    "reason": ...}`` — a reporter must print WHY state is missing instead
+    of implying a dead flow (2026-09-15 cron misread: an armed flow with
+    593k banked tokens was reported as inactive because the armed flag
+    was invisible in the stats JSON).
+
+    Two tiers, both correct, never merge:
+      - cache tier (``tokens_not_sent_to_llm``): per agent-tool HIT.
+      - tracker ledger (``banked_tokens``): per file, once per checkpoint
+        epoch (banked-once). Smaller by design.
+    """
+    out: dict = {
+        "available": False,
+        "reason": "",
+        "armed": False,
+        "checkpoint": 0,
+        "banked_tokens": 0,
+        "read_paths": 0,
+        "clean": 0,
+        "dirty": 0,
+    }
+    try:
+        from toolrecall.transport import DEFAULT_PATH, TransportClient
+
+        resp = TransportClient(DEFAULT_PATH).send({"cmd": "context_get_stats"}, timeout=5.0)
+        if isinstance(resp, dict) and "agent_armed" in resp:
+            out.update(
+                {
+                    "available": True,
+                    "armed": bool(resp.get("agent_armed")),
+                    "checkpoint": int(resp.get("checkpoint", 0)),
+                    "banked_tokens": int(resp.get("ctx_dropped_tokens_total", 0)),
+                    "read_paths": int(resp.get("total_read", 0)),
+                    "clean": int(resp.get("total_clean", 0)),
+                    "dirty": int(resp.get("total_dirty", 0)),
+                }
+            )
+            return out
+        out["reason"] = f"unexpected response: {str(resp)[:120]}"
+    except Exception as e:  # noqa: BLE001 — reporter state is best-effort
+        out["reason"] = str(e)[:120]
+    return out
+
+
 def cmd_stats():
     """Detailed statistics as JSON."""
     from toolrecall.cache import get_stats
     import json as _json
 
     stats = get_stats()
-    print(_json.dumps(stats, indent=2))
+    # Context-flow verdict for reporters: armed/checkpoint/banked state
+    # from the live tracker. Absent this, a bare 0-vs-nonzero counter has
+    # been misread as "flow inactive" by downstream summarizers.
+    stats["context_flow"] = _context_flow_snapshot()
+    print(_json.dumps(stats, indent=2, default=str))
 
 
 def cmd_trend():

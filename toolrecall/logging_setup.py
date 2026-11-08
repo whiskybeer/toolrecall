@@ -186,9 +186,18 @@ def setup_logging(
         # Fail-soft: unwritable path (e.g. hermetic test cwd) → no logging.
         return None
 
+    hermetic = os.environ.get("TOOLRECALL_HERMETIC", "") == "1"
+
     handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+            # Hermetic daemons (pytest/e2e rigs) tag their lines so a shared
+            # log file never masquerades as production traffic: test-suite
+            # "tracker snapshot saved: 0 read paths" lines have twice been
+            # misread as a dead production flow (2026-09-15).
+            "%(asctime)s %(levelname)s %(name)s "
+            + ("[hermetic] " if hermetic else "")
+            + "%(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
     handler.addFilter(_RedactingFilter())

@@ -1,6 +1,7 @@
 """Tests for CLI — commands dispatch correctly."""
 
 import io
+import json
 import os
 import sys
 import unittest
@@ -97,6 +98,63 @@ class TestCLIResetStats(unittest.TestCase):
         cmd_reset_stats()
         output = self.stdout.getvalue()
         self.assertIn("Cache statistics reset (hits/misses/tokens)", output)
+
+
+class TestCLIStatsContextFlow(unittest.TestCase):
+    """cmd_stats embeds a context_flow block; fail-soft when daemon is down.
+
+    The 2026-09-15 cron misread: an armed flow with 593k banked tokens was
+    reported inactive because armed/checkpoint state was invisible in the
+    stats JSON. cmd_stats must always carry the live tracker snapshot (or
+    an explicit reason) so reporters can render the verdict instead of
+    guessing from a bare counter.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.tmpdir, "test.db")
+        # Save-restore (never bare pop): see TestCLIResetStats.setUp.
+        self._orig_cache_db = os.environ.get("TOOLRECALL_CACHE_DB")
+        os.environ["TOOLRECALL_CACHE_DB"] = self.db_path
+        from toolrecall.cache import _init
+
+        _init()
+        self.old_stdout = sys.stdout
+        self.stdout = io.StringIO()
+        sys.stdout = self.stdout
+
+    def tearDown(self):
+        sys.stdout = self.old_stdout
+        if self._orig_cache_db is None:
+            os.environ.pop("TOOLRECALL_CACHE_DB", None)
+        else:
+            os.environ["TOOLRECALL_CACHE_DB"] = self._orig_cache_db
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_stats_json_includes_context_flow_block(self):
+        """stats JSON always carries context_flow {available, armed, ...}."""
+        sys.argv = ["toolrecall", "stats"]
+        from toolrecall.cli import cmd_stats
+
+        cmd_stats()
+        data = json.loads(self.stdout.getvalue())
+        self.assertIn("context_flow", data)
+        cf = data["context_flow"]
+        for key in ("available", "armed", "checkpoint", "banked_tokens", "reason"):
+            self.assertIn(key, cf)
+
+    def test_context_flow_fail_soft_without_daemon(self):
+        """No daemon on the pinned hermetic socket → available=False with a
+        reason, never a raise and never a fake armed=True."""
+        sys.argv = ["toolrecall", "stats"]
+        from toolrecall.cli import cmd_stats
+
+        cmd_stats()
+        data = json.loads(self.stdout.getvalue())
+        cf = data["context_flow"]
+        self.assertFalse(cf["available"])
+        self.assertFalse(cf["armed"])
+        self.assertTrue(cf["reason"], "degraded snapshot must explain why")
 
 
 # ═══════════════════════════════════════════════════════════

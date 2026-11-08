@@ -105,6 +105,31 @@ def test_rotation_config(rail):
     assert h.backupCount == 3
 
 
+def test_hermetic_env_tags_log_lines(rail, monkeypatch):
+    """TOOLRECALL_HERMETIC=1 tags every line so shared log files stay
+    unambiguous: test-daemon 'tracker snapshot saved: 0 read paths' lines
+    were twice misread as a dead production flow (2026-09-15)."""
+    monkeypatch.setenv("TOOLRECALL_HERMETIC", "1")
+    h = logging_setup.setup_logging()
+    assert h is not None
+    logging_setup.get_logger("test").info("tracker snapshot saved: 0 read paths")
+    h.flush()
+    content = rail.read_text()
+    assert "[hermetic] tracker snapshot saved: 0 read paths" in content
+
+
+def test_no_hermetic_tag_when_env_unset(rail, monkeypatch):
+    """Production daemons (env unset) log the classic format unchanged."""
+    monkeypatch.delenv("TOOLRECALL_HERMETIC", raising=False)
+    h = logging_setup.setup_logging()
+    assert h is not None
+    logging_setup.get_logger("test").info("production line")
+    h.flush()
+    content = rail.read_text()
+    assert "production line" in content
+    assert "[hermetic]" not in content
+
+
 def test_level_from_env(rail, monkeypatch):
     monkeypatch.setenv("TOOLRECALL_LOG_LEVEL", "WARNING")
     h = logging_setup.setup_logging()
