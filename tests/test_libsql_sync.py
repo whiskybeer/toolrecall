@@ -8,6 +8,7 @@ pyturso is not installed.
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -31,7 +32,10 @@ class TestLibSQLSyncBackend(unittest.TestCase):
             "TOOLRECALL_LIBSQL_DB_PATH",
         ]:
             self._env[k] = os.environ.pop(k, None)
-        self._tmp_db = "/tmp/test_libsql_sync.test"
+        # gettempdir()-derived (NOT a literal /tmp path): TMPDIR may point
+        # elsewhere (Hermes scratch hosts), and a fixed cross-session path
+        # collides when two sessions run the suite in parallel.
+        self._tmp_db = os.path.join(tempfile.gettempdir(), f"test_libsql_sync_{os.getpid()}.test")
 
     def tearDown(self):
         for k, v in self._env.items():

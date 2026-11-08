@@ -48,7 +48,17 @@ def tearDownModule():
 
 class TestPidFileGateClassification(unittest.TestCase):
     def test_tempdir_sockets_are_hermetic(self):
-        self.assertFalse(daemon._should_manage_pid_file("/tmp/toolrecall_e2e_x/toolrecall.sock"))
+        # Derive from gettempdir(), never a literal "/tmp/...": gettempdir()
+        # follows TMPDIR (Hermes scratch hosts resolve ~/.hermes/cache/scratch)
+        # and FALLS BACK to /tmp when the TMPDIR target transiently fails its
+        # write-probe — a literal /tmp path classifies as production on the
+        # fallback path and the assert flips (observed 2026-09-21). The
+        # classifier and this assert must read the SAME resolution.
+        self.assertFalse(
+            daemon._should_manage_pid_file(
+                os.path.join(tempfile.gettempdir(), "toolrecall_e2e_x", "toolrecall.sock")
+            )
+        )
         self.assertFalse(
             daemon._should_manage_pid_file(
                 os.path.join(tempfile.gettempdir(), "tr_sweep_test_abc", "t.sock")
