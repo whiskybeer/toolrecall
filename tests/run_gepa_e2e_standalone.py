@@ -24,7 +24,10 @@ import os
 import sys
 import tempfile
 
-os.environ["TOOLRECALL_CACHE_DB"] = tempfile.mktemp(suffix="-gepa-e2e.db")
+# tempfile.mkdtemp (NOT mktemp): mktemp returns a name without creating the
+# file — a classic CodeQL py/insecure-temporary-file sink. mkdtemp creates
+# the directory atomically; the hermetic DB lives inside it.
+os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(tempfile.mkdtemp(prefix="gepa-e2e-"), "cache.db")
 os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
 os.environ["TOOLRECALL_UPDATE_CHECK"] = "0"
 

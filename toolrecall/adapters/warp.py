@@ -283,10 +283,21 @@ class WarpEdgeHandler(http.server.BaseHTTPRequestHandler):
             # 2026-09-05: upstream without Content-Length yielded
             # `Content-Length: 0` and the client saw b'').
             self.send_response(resp.status)
-            for k, v in _sanitize_header_pairs(resp.getheaders()):
+            for k, v in resp.getheaders():
                 if k.lower() in _HOP_BY_HOP:
                     continue
-                self.send_header(k, v)
+                # Never emit a header that carries CR/LF (no legitimate
+                # upstream header name or value does).
+                if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
+                    continue
+                # Sink-level barrier (CodeQL py/http-response-splitting): the
+                # modeled sanitizer is a VISIBLE .replace("\n", "") on the
+                # emitted argument — a generator helper is invisible to the
+                # query. Scrub BOTH name and value at the literal sink.
+                self.send_header(
+                    k.replace("\r", "").replace("\n", ""),
+                    v.replace("\r", "").replace("\n", ""),
+                )
             if is_sse:
                 # SSE has no declared length — terminate by closing the
                 # connection after the stream ends. Bytes still flow to the

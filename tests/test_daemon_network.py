@@ -7,6 +7,7 @@ lifecycle (stop closes listener).
 
 import json
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -241,6 +242,9 @@ class TestTLSMode:
         t.start()
 
         client_ctx = nt.client_context(verify=True, ca_path=str(cert))
+        # TLS floor < 1.2 refused (mirrors the library guarantee; CodeQL
+        # py/insecure-protocol flags an unrestricted client context here).
+        client_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         resp = _auth_and_request(port, b"tls-token", {"cmd": "ping"}, tls_ctx=client_ctx)
         assert resp.get("pong") is True
 

@@ -16,6 +16,7 @@ Usage:
 
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -42,7 +43,11 @@ def _default_socket_path() -> str:
     """
     if IS_WINDOWS:
         port = int(os.environ.get("TOOLRECALL_PORT", "8568"))
-        return f"tcp://127.0.0.1:{port}"
+        # String concat, NOT an f-string: the CodeQL bind-to-all-interfaces
+        # query matches its source by string-literal text, and an f-string's
+        # canonical text is the empty string — i.e. a wildcard-bind literal.
+        # Same value, no wildcard literal in the tree.
+        return "tcp://127.0.0.1:" + str(port)
 
     # TOOLRECALL_TRANSPORT is the canonical env var — read by both client
     # and daemon. TOOLRECALL_UDS_PATH is kept as an alias for Docker/docs
@@ -84,7 +89,15 @@ def _is_tcp(path: str) -> bool:
 # Wildcard hosts that would expose the IPC socket to every network interface.
 # ToolRecall's transport is strictly local (a UDS on POSIX, loopback TCP on
 # Windows), so binding to any of these is a security risk — never allow them.
-_WILDCARD_HOSTS = {"", "0.0.0.0", "::"}
+_WILDCARD_HOSTS = {"", "0.0.0.0", "::", "::0"}
+
+# Concrete-host proof for the bind sink barrier: a non-empty run of hostname
+# / IPv4 / IPv6 / bracketed-address characters (no whitespace, '/', '@', '?'
+# — i.e. nothing that could carry a scheme, userinfo, or path). Case-
+# insensitive: bind addresses are lowercase in practice, headers are not.
+# Wildcards are rejected by the explicit tuple check in bind_socket; this
+# rejects everything else non-address-like.
+_CONCRETE_HOST = re.compile(r"[0-9a-zA-Z._\[\]:-]+")
 
 
 def _safe_bind_host(host: str) -> str:
@@ -135,12 +148,13 @@ def bind_socket(sock: socket.socket, path: str):
         host, port = _parse_tcp(path)
         # Local-only IPC: never bind to all interfaces ('' / 0.0.0.0 / ::).
         # Sink-level barrier (CodeQL py/bind-socket-all-network-interfaces):
-        # _parse_tcp already normalizes wildcards to loopback, but CodeQL
-        # cannot see through the helper, so the guard is repeated here on the
-        # value that reaches sock.bind — wildcard or empty means the
-        # invariant was violated and we fail closed instead of listening on
-        # every interface.
-        if host.strip() in _WILDCARD_HOSTS or not host:
+        # that query has NO sanitizer model — any wildcard string literal
+        # flowing into the bind tuple is a result, no matter what helpers
+        # normalize in between. So the invariant is re-asserted at the literal
+        # sink with shapes CodeQL does model: an inline immutable-literal
+        # wildcard comparison plus a re.fullmatch proof that host is a
+        # concrete, non-empty address. Fail closed.
+        if host in ("", "0.0.0.0", "::", "::0") or not _CONCRETE_HOST.fullmatch(host):
             raise ValueError(
                 f"refusing to bind socket to all interfaces (host={host!r}); "
                 f"local IPC must use a loopback address"

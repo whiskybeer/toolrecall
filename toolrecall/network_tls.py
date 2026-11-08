@@ -51,6 +51,11 @@ def server_context(cert_path: str | None, key_path: str | None) -> ssl.SSLContex
     ctx.load_cert_chain(cert_path, key_path)
     # Client auth is HMAC-based; we do not verify client certs.
     ctx.verify_mode = ssl.CERT_NONE
+    # TLS floor: refuse < 1.2 (CodeQL py/insecure-protocol recognizes this
+    # attribute write as a protocol restriction). PROTOCOL_TLS_SERVER already
+    # negotiates >= 1.2 on any supported OpenSSL, so this is a hard guarantee,
+    # not a behavior change.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     return ctx
 
 
@@ -71,10 +76,16 @@ def client_context(verify: bool = False, ca_path: str | None = None) -> ssl.SSLC
         # already authenticates the server; hostname checks only matter
         # for real CA chains, where callers pass server_hostname for SNI.
         ctx.check_hostname = False
+        # TLS floor: refuse < 1.2 (CodeQL py/insecure-protocol). The default
+        # context already opens at >= 1.2 on supported OpenSSL; explicit.
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         return ctx
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    # TLS floor: refuse < 1.2 (CodeQL py/insecure-protocol). PROTOCOL_TLS_CLIENT
+    # already negotiates >= 1.2 on any supported OpenSSL — explicit guarantee.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     return ctx
 
 

@@ -30,7 +30,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # singleton resolves the path at first use; conftest's production-path guard
 # is the seatbelt — without this block the adapter would touch
 # ~/.toolrecall/cache.db while the live daemon holds it).
-os.environ["TOOLRECALL_CACHE_DB"] = tempfile.mktemp(prefix="lg_e2e_", suffix=".db")
+# tempfile.mkdtemp (NOT mktemp): creates the directory atomically; the DB
+# lives inside it. Same hermetic-guarantee as before, no predictable-name
+# race (CodeQL py/insecure-temporary-file).
+_LG_E2E_DIR = tempfile.mkdtemp(prefix="lg_e2e_")
+os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(_LG_E2E_DIR, "cache.db")
 os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
 os.environ["TOOLRECALL_DOCS_INDEX_TTL"] = "0"
 os.environ["TOOLRECALL_UPDATE_CHECK"] = "0"

@@ -126,6 +126,36 @@ class TestBindBarrier:
         finally:
             s.close()
 
+    def test_sink_barrier_raises_on_empty_string_host(self, monkeypatch):
+        # The empty string is itself a wildcard bind ('' → all interfaces).
+        # CodeQL's query matches its source by literal text and has no
+        # sanitizer model, so the barrier uses an inline immutable-literal
+        # comparison — exercised here for every wildcard literal form.
+        import toolrecall.transport as tr
+
+        for wildcard in ("", "0.0.0.0", "::", "::0"):
+            monkeypatch.setattr(tr, "_parse_tcp", lambda path, w=wildcard: (w, 0))
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                with pytest.raises(ValueError, match="all interfaces"):
+                    tr.bind_socket(s, "tcp://127.0.0.1:0")
+            finally:
+                s.close()
+
+    def test_sink_barrier_raises_on_structurally_invalid_host(self, monkeypatch):
+        # Anything carrying a scheme, path, or userinfo character can't be a
+        # concrete bind address — refuse even though it isn't a wildcard.
+        import toolrecall.transport as tr
+
+        for bad in ("evil.com/path", "0.0.0.0 ", "http://x"):
+            monkeypatch.setattr(tr, "_parse_tcp", lambda path, b=bad: (b, 0))
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                with pytest.raises(ValueError, match="all interfaces"):
+                    tr.bind_socket(s, "tcp://127.0.0.1:0")
+            finally:
+                s.close()
+
     def test_loopback_still_binds(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:

@@ -615,6 +615,19 @@ def _host_allowed(host: str) -> bool:
     return host.split(":", 1)[0] in FORWARD_HOSTS
 
 
+# Sink-level SSRF barrier (CodeQL py/full-ssrf): the _host_allowed() helper
+# above is runtime-sufficient but invisible to the query's dataflow. A
+# re.fullmatch against this pattern IS a modeled sanitizer: a host passing it
+# is proven to be a bare host token (hostname / IPv4 / IPv6 literal, optional
+# :port, brackets allowed) — never a scheme, userinfo, path, or query, since
+# '/', '@', '?' and whitespace cannot appear. Runtime authorization stays
+# with _host_allowed(); this is the sink-level structural proof.
+# Accepts: api.openai.com, localhost, 127.0.0.1, ::1, [::1]:8080, host:8080.
+# Rejects: "http://x", "x/y", "x@y", "x y", "x?y", "". Case-insensitive by
+# design: Host headers preserve caller case while _host_allowed() lowercases.
+_SSRF_SAFE_HOST = re.compile(r"[a-zA-Z0-9._\[\]:-]+")
+
+
 # Path-based routing: maps distinctive path prefixes to API hosts.
 # Used when the SDK sends Host: localhost (OPENAI_BASE_URL=http://localhost:8569).
 # Ordered by specificity — more specific paths checked first.
@@ -1228,6 +1241,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Loopback targets (localhost, 127.0.0.1, ::1) always use HTTP since
         # the daemon proxy speaks HTTP on its local port.
         is_loopback = host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
+        # Sink-level SSRF barrier (CodeQL py/full-ssrf) — see _SSRF_SAFE_HOST.
+        if not _SSRF_SAFE_HOST.fullmatch(host):
+            log.warning("Blocked forward to non-conformant host %r (SSRF sink guard)", host)
+            return (
+                403,
+                [("Content-Type", "application/json")],
+                json.dumps({"error": "Forbidden: non-allowlisted target host"}).encode(),
+            )
         try:
             if is_loopback:
                 conn = http.client.HTTPConnection(host, timeout=_FORWARD_TIMEOUT)
@@ -1302,6 +1323,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # SSRF guard — never open a streaming connection to a non-allowlisted host.
         if not _host_allowed(host):
             log.warning("Blocked streaming forward to non-allowlisted host %r (SSRF guard)", host)
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"Forbidden: non-allowlisted target host"}')
+            return
+        # Sink-level SSRF barrier (CodeQL py/full-ssrf) — see _SSRF_SAFE_HOST.
+        if not _SSRF_SAFE_HOST.fullmatch(host):
+            log.warning(
+                "Blocked streaming forward to non-conformant host %r (SSRF sink guard)", host
+            )
             self.send_response(403)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
