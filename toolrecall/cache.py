@@ -4050,7 +4050,7 @@ def forget_run(target: str) -> dict:
                                 hashes.add(d["request_hash"])
                         except Exception:
                             continue
-            except OSError:
+            except FileNotFoundError:
                 pass
 
     try:
@@ -4073,7 +4073,7 @@ def forget_run(target: str) -> dict:
                     conn.execute("DELETE FROM replay_scenarios WHERE scenario_name = ?", (target,))
                     scenario_deleted = True
             except Exception:
-                pass
+                scenario_deleted = False
 
             # 4. Check if trace exists at default path ~/.toolrecall/traces/<target>/trace.jsonl
             default_trace = os.path.expanduser(f"~/.toolrecall/traces/{target}/trace.jsonl")
@@ -4090,7 +4090,7 @@ def forget_run(target: str) -> dict:
                                     hashes.add(d["request_hash"])
                             except Exception:
                                 continue
-                except OSError:
+                except FileNotFoundError:
                     pass
 
             deleted = 0

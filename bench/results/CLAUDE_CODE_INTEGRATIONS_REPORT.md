@@ -89,20 +89,22 @@ task set: `swe_dj/setup.sh`.
 
 ## 0b. Repeat scenarios: what breaks replay (measured, 60 runs)
 
-5 SWE-bench Lite tasks run through 6 consecutive conditions per arm (`ab_scen.py`, 60 runs total):
+5 SWE-bench Lite tasks run through 6 consecutive conditions per arm (`ab_scen.py`, 60 runs total, one run per task, arm and condition, so small differences are noise).
+
+The first pass lost 13 of the 60 runs to an API rate limit (HTTP 429): all 12 for task 17087 and the native `--shuffle` rerun of 16820. Those 13 were rerun with the same driver and code (`4eaaed3`) and replace the errored rows; the other 47 are from the first pass. Task 17087 got a new, cold ToolRecall cache.
 
 | Scenario | Native $ | ToolRecall $ | Δ Cost | Calls replayed | TR outcome | Replay held through |
 |---|---:|---:|---:|---:|---:|---|
-| **Cold run** (base r1) | $0.486 | $0.566 | +17% | 0 / 46 | 3/5 solved | 0/24, 0/10, 0/3, 0/8, 0/1 |
-| **Identical rerun** (base r2) | $0.489 | $0.127 | **−74%** | **38 / 45** | **5/5 frozen** | all, all, all, 1/7, 0/1 |
-| **Rerun, new commit** (docs commit) | $0.584 | $0.513 | −12% (noise) | 0 / 39 | 2/5 frozen (live) | 0/24, 0/5, 0/4, 0/5, 0/1 |
-| **Rerun, prompt edited** (+1 sentence) | $0.568 | $0.492 | −13% (noise) | 0 / 40 | 3/5 frozen (live) | 0/24, 0/4, 0/4, 0/7, 0/1 |
-| **Cold run, `--shuffle`** | $0.658 | $0.568 | −14% (noise) | 0 / 46 | 2/5 solved | 0/24, 0/10, 0/4, 0/7, 0/1 |
-| **Rerun, `--shuffle`** (volatile seed) | $0.467 | $0.310 | **−34%** | **29 / 48** | **4/5 frozen** | 19/26, 6/10, 3/4, 1/7, 0/1 |
+| **Cold run** (base r1) | $0.539 | $0.665 | +23% (noise) | 0 / 49 | 4/5 solved | 0/24, 0/10, 0/3, 0/8, 0/4 |
+| **Identical rerun** (base r2) | $0.543 | $0.127 | **−77%** | **42 / 48** | **5/5 frozen** | all, all, all, 1/7, all |
+| **Rerun, new commit** (docs commit) | $0.638 | $0.563 | −12% (noise) | 0 / 41 | 2/5 same as cold (live) | 0/24, 0/5, 0/4, 0/5, 0/3 |
+| **Rerun, prompt edited** (+1 sentence) | $0.620 | $0.540 | −13% (noise) | 0 / 42 | 3/5 same as cold (live) | 0/24, 0/4, 0/4, 0/7, 0/3 |
+| **Cold run, `--shuffle`** | $0.708 | $0.662 | −7% (noise) | 0 / 48 | 3/5 solved | 0/24, 0/10, 0/4, 0/7, 0/3 |
+| **Rerun, `--shuffle`** (volatile seed) | $0.455 | $0.310 | **−32%** | **32 / 50** | **5/5 frozen** | 19/26, 6/10, 3/4, 1/7, all |
 
 ### Takeaways for loosening / normalizers:
 1. **New commit = 0% replay.** An unrelated docs commit changes git status and recent commit SHAs injected into Claude Code's first prompt. It breaks replay immediately at Call 1. For CI on consecutive commits, an opt-in profile that leaves git status out of the key is the only path to reuse.
-2. **Volatile test output (`--shuffle`) = 60% replay prefix preserved (−34% cost).** Even with randomized test seeds, replay survives the read/inspect/edit phase (19/26, 6/10, 3/4 turns) before the first random test output forks the conversation. Specialized shuffle normalizers have limited additional upside because seed differences also reorder test execution.
+2. **Volatile test output (`--shuffle`) = 64% of calls replayed (−32% cost).** Even with randomized test seeds, replay survives the read/inspect/edit phase (19/26, 6/10, 3/4 turns) before the first random test output forks the conversation. Specialized shuffle normalizers have limited additional upside because seed differences also reorder test execution.
 3. **Prompt edit = 0% replay.** Inherent: the prompt defines the task and must go live.
 
 **Run 1 — before the tool-schema fix:** ToolRecall +16.6% overall (native $1.537,
