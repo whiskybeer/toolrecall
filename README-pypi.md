@@ -343,8 +343,10 @@ toolrecall setup                # config -> systemd service -> daemon start
 
 > The `.pth` shim is **opt-in, default off** — `toolrecall shim --install` or
 > `--venv`/`--all` prompts before enabling. Use `--yes` to skip the prompt.
-> Verify with `toolrecall shim --status [--all]` (prints `probe: pass` only when
-> the shim actually imports in that venv from a neutral cwd).
+> Verify with `toolrecall shim --status [--all]` — it prints `probe: pass` only
+> when the shim actually imports in that venv from a neutral cwd, and flags
+> `DRIFT` when the venv's shim modules differ in content from this install (a
+> stale copy that still imports cleanly is exactly what `probe` cannot see).
 
 `toolrecall setup` creates `~/.config/toolrecall/toolrecall.toml` with default-deny security, generates a systemd user unit, and starts the daemon. After this, every `toolrecall` command "just works".
 
@@ -426,7 +428,7 @@ terminal_default_ttl = 300
 
 [mcp_multiplex]
 enabled = true
-servers = ["time", "github", "sequential-thinking"]
+servers = ["time", "sequential-thinking", "cache-fs"]
 
 [recall]
 enabled = false   # opt-in Recall Tier (lossless-recoverable eviction)
@@ -532,7 +534,7 @@ port = 8570
   - [herdr](https://github.com/whiskybeer/toolrecall/blob/main/docs/herdr.md) — `tr` binary + MCP bridge for any pane
   - [Odysseus](https://github.com/whiskybeer/toolrecall/blob/main/docs/odysseus.md) — `cached_tool` decorator + MCP server caching
   - [LiteLLM Dedup Hook](https://github.com/whiskybeer/toolrecall/blob/main/bench/litellm_dedup/README.md) — gateway dedup callback (see benchmark entry above)
-  - [GEPA](https://github.com/whiskybeer/toolrecall/blob/main/docs/TREE_SEARCH.md) — prompt-optimizer `evaluate` adapter over the replay fork tree; billed A/B: `bench/results/GEPA_FORK_AB_RESULTS.md` (79% saving, 25/25 byte-exact HIT replays)
+  - [GEPA](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/adapters/README.md#gepa--evaluate-adapter-over-the-replay-fork-tree) — prompt-optimizer `evaluate` adapter over the replay fork tree (design: [Tree Search](https://github.com/whiskybeer/toolrecall/blob/main/docs/TREE_SEARCH.md)); billed A/B: `bench/results/GEPA_FORK_AB_RESULTS.md` (79% saving, 25/25 byte-exact HIT replays)
   - Warp (`toolrecall.adapters.warp`) — routes Warp's custom inference endpoint through the forward proxy; canonicalization contract in [Canonicalization](https://github.com/whiskybeer/toolrecall/blob/main/docs/CANONICALIZATION.md)
 - [Hermes Transparent Cache](https://github.com/whiskybeer/toolrecall/blob/main/docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes
 - [Normalizer](https://github.com/whiskybeer/toolrecall/blob/main/docs/NORMALIZER.md) — cache key normalization, deterministic JSON

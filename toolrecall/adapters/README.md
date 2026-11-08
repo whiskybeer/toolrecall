@@ -19,6 +19,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 | **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |
 | **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
 | **OpenEvolve** | ✅ evaluator memo (work ledger) | — (evaluator-side, not a gateway) | `pip install toolrecall` + `TOOLRECALL_OPENEVOLVE_MEMO=1` |
+| **GEPA** | ✅ fork-tree tool replay across candidates | — (use the forward proxy for LLM calls) | `pip install toolrecall` (gepa = app's own dep) |
 
 ---
 
@@ -378,6 +379,63 @@ tr_oe.wrap_evaluator(globals())  # in the eval script, after evaluate() is defin
   cache, OpenEvolve's own `code_hash` diversity cache). What this adapter adds is
   placement — a harness-neutral key from `keys.work_key`, a persistent ledger,
   and an explicit policy. Details and sources: [`openevolve.py`](./openevolve.py).
+
+---
+
+## GEPA — `evaluate` Adapter over the Replay Fork Tree
+
+[GEPA](https://github.com/gepa-ai/gepa) evaluates many candidate prompts on the
+same task inputs. `ToolRecallGepaAdapter` runs each rollout on its own branch of a
+replay fork tree. Element *i* of candidate *k* forks from candidate *k−1*'s
+element-*i* node. A tool call whose `(tool, args)` an ancestor already recorded is
+served from the tree, and only calls the new prompt changed execute for real.
+
+```python
+import gepa
+from toolrecall.adapters.gepa import (
+    ToolRecallGepaAdapter, intercept_tool_call, record_tool_response,
+)
+
+
+def read_file(path, ctx):
+    hit = intercept_tool_call("read_file", {"path": path}, ctx["tree_id"], ctx["node_id"])
+    if hit["replay_hit"]:
+        return hit["data"]
+    data = open(path).read()  # real execution
+    record_tool_response("read_file", {"path": path}, data, ctx["tree_id"], ctx["node_id"])
+    return data
+
+
+def task(task_input, ctx):  # ctx["candidate"] holds the prompt texts
+    return my_agent(task_input, ctx["candidate"]["system_prompt"],
+                    tools={"read_file": lambda p: read_file(p, ctx)})
+
+
+adapter = ToolRecallGepaAdapter(task_input_fn=task, scorer=my_score)
+adapter.propose_new_texts = None  # use GEPA's reflection LM (see below)
+result = gepa.optimize(seed_candidate={"system_prompt": "..."},
+                       trainset=train, valset=val, adapter=adapter,
+                       reflection_lm=my_reflection_lm, max_metric_calls=60)
+```
+
+- **Zero-dep:** the adapter implements GEPA's adapter protocol structurally
+  (`evaluate`, `make_reflective_dataset`) and never imports gepa.
+- **Proposer:** the class ships a deterministic `propose_new_texts` (used by the
+  zero-API e2e test, `tests/run_gepa_e2e_standalone.py`). GEPA always prefers an
+  adapter's own proposer, so set `adapter.propose_new_texts = None` on the
+  instance to get GEPA's LLM reflection.
+- **Tools must be pure:** a replayed call returns what an ancestor recorded. Route
+  only calls whose result depends on `(tool, args)` alone (file reads at a fixed
+  revision, deterministic lookups) through `intercept_tool_call`. Writes and
+  time-dependent calls must execute directly.
+- **Failed rollouts score 0.0** with an `{"error": ...}` output; `evaluate` never
+  raises into the optimizer loop.
+- **LLM calls are not covered here.** A changed prompt changes every LLM request
+  body, so only identical re-evaluations can hit. Point the task LM at the
+  forward proxy to catch those.
+- **Introspection:** `tree_summary()`, `inherited_calls(node_id)`, `cleanup()`.
+- **Measured:** [`bench/results/GEPA_FORK_AB_RESULTS.md`](../../bench/results/GEPA_FORK_AB_RESULTS.md).
+  Design and cost model: [Tree Search](../../docs/TREE_SEARCH.md).
 
 ---
 

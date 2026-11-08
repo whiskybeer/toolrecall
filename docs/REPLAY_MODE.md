@@ -63,7 +63,26 @@ toolrecall replay show <scenario>      # Show recorded calls
 toolrecall replay export <scenario>    # Export as JSON (git-committable)
 toolrecall replay import <file.json>   # Import from JSON
 toolrecall replay delete <scenario>    # Delete a scenario
+
+# Fork trees (branching replay)
+toolrecall replay tree                 # List fork trees
+toolrecall replay tree <tree_id>       # Show a tree's nodes
+toolrecall replay tree new <name>      # Create a tree (prints tree_id + root node)
+toolrecall replay fork <tree> <node> <name>  # Fork a branch from a node
+toolrecall replay at <tree> <node>     # Show the call chain a node inherits (root first)
 ```
+
+### Fork trees
+
+A fork tree generalizes a flat scenario into branches. Each node records the
+calls made on it, and a replay at a node resolves through the node and its
+ancestors (deepest match wins). Every call is keyed by `(tree_id, node_id)`,
+so concurrent branches never share mode state. Branches therefore replay the
+shared tool-call prefix from their ancestors and execute only the calls where
+they diverge. The Python API is `ReplayManager.fork_tree` / `fork_node` /
+`record_call_at` / `replay_at` in `toolrecall/replay.py`. The prompt-optimizer
+caller is the GEPA adapter (`toolrecall/adapters/gepa.py`); see
+[Tree Search](TREE_SEARCH.md).
 
 ### Examples
 
@@ -157,6 +176,12 @@ Replay mode is a **module-level singleton** — `_active` in `toolrecall.replay`
 - Replay mode affects **all tool calls** going through the daemon while active
 - Mode changes are **instant** — no restart needed
 - Recording and replaying are **mutually exclusive** — starting one stops the other
+
+Callers that need several sessions at once pass `scope=` to `start_recording`,
+`start_replay`, `stop`, `status` and `intercept_call`: each scope id gets its own
+independent mode, and `scope=None` keeps the singleton behavior above. Fork-tree
+calls (`record_call_at` / `replay_at`) hold no mode state at all — they are keyed
+by `(tree_id, node_id)`.
 
 ### Data Structure & What's Recorded
 

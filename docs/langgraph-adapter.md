@@ -101,6 +101,6 @@ follows write order; `list()` returns oldest → newest.
 
 ## Related
 
-- Design note for the tree-search use case this enables: `docs/TREE_SEARCH.md` (cost model, phased contract, GEPA integration point — all modeled until the billed A/B)
+- Design note for the tree-search use case this enables: `docs/TREE_SEARCH.md` (cost model, phased contract, GEPA integration point; the first billed fork A/B is linked from its status banner)
 - LangChain adapter: `docs/langchain.md` (LLM cache + callback handler)
 - ADK adapter: `docs/google-adk.md` (same `@cached_tool` contract)

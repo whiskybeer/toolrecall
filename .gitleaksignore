@@ -6,3 +6,15 @@
 # no external system accepts it). gitleaks flags the `sk-` prefix pattern.
 # Fingerprint from: gitleaks detect --source . --no-git --redact
 bench/litellm_dedup/run_accumulate.sh:curl-auth-header:48
+
+# Langfuse adapter (0.8.23): the flagged values are ToolRecall cache-key
+# hashes in verdict-metadata fixtures (12-16 hex chars) — the
+# word "key" trips generic-api-key; none is a credential.
+# Fingerprint from: gitleaks detect --source . --no-git --redact
+docs/langfuse-adapter.md:generic-api-key:57
+tests/test_langfuse_adapter.py:generic-api-key:292
+tests/test_langfuse_adapter.py:generic-api-key:359
+tests/test_langfuse_adapter.py:generic-api-key:369
+tests/test_langfuse_adapter.py:generic-api-key:382
+tests/test_langfuse_adapter.py:generic-api-key:392
+tests/test_langfuse_adapter.py:generic-api-key:401

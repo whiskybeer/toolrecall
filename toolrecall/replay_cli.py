@@ -12,6 +12,9 @@ Usage:
     toolrecall replay export <scenario_name>   # Export scenario as JSON
     toolrecall replay import <file.json>       # Import scenario from JSON
     toolrecall replay delete <scenario_name>   # Delete a scenario
+    toolrecall replay tree [<tree_id>|new <name>]  # List/show/create fork trees
+    toolrecall replay fork <tree> <node> <name>    # Fork a branch from a node
+    toolrecall replay at <tree> <node>             # Show a node's inherited call chain
 """
 
 import json

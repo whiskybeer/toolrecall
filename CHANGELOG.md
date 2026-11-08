@@ -1,8 +1,91 @@
 # Changelog
 
-## [Unreleased] — 2026-09-26
+## [Unreleased]
+
+### Documentation
+- **GEPA / fork-tree docs caught up with what shipped in 0.8.21.**
+  `toolrecall/adapters/README.md` gains a GEPA section (usage, pure-tool
+  contract, `adapter.propose_new_texts = None` to use GEPA's reflection LM).
+  `docs/TREE_SEARCH.md` no longer says "no billed A/B exists". Its status
+  banner links the first fork A/B with its limits and notes that the naive arm
+  already had provider prefix caching. It also lists the shipped tree and
+  scoped-mode primitives. `docs/REPLAY_MODE.md` and `docs/CLI.md` document
+  `replay tree|fork|at` and scoped modes. `tests/run_gepa_e2e_standalone.py`
+  imports this checkout instead of a stale `/tmp` worktree.
+
+### Fixed
+- **`make validate` is green again.** `test_shim_tagging` stripped only
+  `HERMES_*` env vars, so it failed in any other agent session (`CLAUDECODE`,
+  `CODEX_`, …). Its setUp now strips every agent marker the shim knows.
+  `.gitleaksignore` allowlists the Langfuse fixtures' cache-key hashes, which
+  gitleaks flagged as API keys after 0.8.23.
+
+## [0.8.23] — 2026-10-21
 
 ### Added
+- **Langfuse v4 framework adapter (`adapters/langfuse.py`).** Drop-in cached tool
+  wrapper with verdict recording in span metadata and a multi-rung truncation
+  ladder guarding against Langfuse's 9KB metadata ceiling to prevent metadata
+  loss. 34 tests in `tests/test_langfuse_adapter.py`.
+- **Request-dedup attribution by tool (`dedup_by_tool` + `toolrecall dedup-stats`).**
+  Attributes request body deduplication savings to the tool that produced them
+  (e.g., repeated `skills_list` calls). Tracks blocks, tokens saved, and shares.
+  Tests in `tests/test_dedup_by_tool.py`.
+- **`work_key` — Layer-0 identity for a unit of work (`keys.py`).** Answers
+  *"have we already paid for this unit?"* for a candidate artifact (plus
+  optional evaluation parameters) instead of for a request — the level at which
+  an evaluation is worth reusing across processes, runs, and workers. Two
+  deliberately separate spaces: the legacy-compatible form
+  (`content_digest(code)`, optional `":" + stage`) is byte-identical to the
+  evaluator memo keys that predate this function, so stores already on disk
+  keep hitting — pinned by a golden vector captured from a real OpenEvolve memo
+  store; the params form is versioned (`w/v1:`) over `jcs.canonicalize`
+  (RFC 8785) so dict order cannot fork a key. Purely additive: no existing
+  preimage changes, `tests/golden_keys.json` keeps its old vectors. 6 tests in
+  `tests/test_keys.py`.
+- **Work-unit ledger (`work_ledger` table + `work_store` / `work_lookup`).**
+  The persistence half of `work_key`: `work_store(key, metrics, eval_time, ttl)`
+  records one PAID evaluation — `attempts` advances on a re-roll while the first
+  known result is never overwritten — and `work_lookup(key)` recalls it (None
+  when unknown, TTL honored). Counters land in their own `work_cache` category,
+  so reuse is visible in `top` and the healthcheck instead of borrowing another
+  tier's label — the same visibility gap that proxy dedup still has. Daemon
+  commands `work_store` / `work_lookup`, thin client wrappers with a
+  direct-SQLite fallback, malformed requests fail closed. Unit tests plus a
+  socket E2E test (`tests/test_work_ledger.py`,
+  `tests/test_e2e_work_ledger.py`).
+- **OpenEvolve evaluator memo (`adapters/openevolve.py`).** Wraps an eval
+  script's `evaluate` / `evaluate_stageN` so a repeat of an already-paid
+  candidate is served from the work ledger. Opt-in via
+  `TOOLRECALL_OPENEVOLVE_MEMO=1` (pure pass-through without it); `reuse_after(K)`
+  makes the reuse boundary explicit so deliberate re-rolls stay paid;
+  `impure=True` refuses to memoize an evaluator that is not a pure function of
+  the candidate; hits count in the `work_cache` category. No framework import —
+  duck-typed over the eval namespace, wrapping `globals()` or a module object.
+  15 tests, including the documented integration shape (the eval script wraps
+  `globals()`, then the file is imported by path the way OpenEvolve does).
+  Prior art is documented in the module docstring: fitness caching is an
+  established field and content-addressed memoization is standard — the
+  contribution is placement and policy, not mechanism.
+- **Reuse policy for a stochastic search (`adapters/openevolve.py`).** The reuse
+  boundary became a first-class knob: `samples=K` (pay K attempts, serve from
+  K+1), `policy_from_config()` to read K from a sampler field you name — verified
+  that OpenEvolve 0.3.2 exposes no re-roll field (`num_islands` and
+  `parallel_evaluations` are breadth and concurrency; each child is evaluated
+  once), so K=1 is the honest policy there —
+  and `never_reuse` as a control arm — passing both `samples` and `allow_reuse`
+  raises instead of silently picking one. `mode="shadow"` pays for every
+  evaluation while counting would-be hits into a caller-owned `stats` dict, so K
+  can be chosen from data before any behaviour changes. Every decision is logged
+  (`HIT`, `WITHHELD` with the threshold, `SHADOW-HIT`). Rationale in the module
+  docstring: the ceiling is the hit rate, and the hit rate is the sampling
+  design — 21.8 % of evaluator spend at K=1 versus 12.1 % at K=3 (100-iteration
+  A/B). 9 further tests, including the per-key score-identity gate: scores are
+  derived from the candidate's content, so a served score that came from the
+  wrong key cannot pass.
+- **Zero-egress local test server (`bench/kit/local_server.py`).** Enables local
+  loopback testing of Antigravity and MCP endpoints without third-party egress;
+  adds `TOOLRECALL_FETCH_CA_BUNDLE` support to `toolrecall/mcp_fetch.py`.
 - **Remote doc sources for the knowledge base — opt-in, local-first, guarded.**
   `[[sources.remote]]` entries of kind `llms_full` (one publisher-provided bundle
   URL) or `urls` (an explicit URL list) are ingested by `toolrecall index-remote`
@@ -55,6 +138,25 @@
   exact signal beats guessing at the compaction horizon.
 
 ### Fixed
+- **`cached_patch` false `already_applied` and lossy patch/write byte translation.**
+  `cached_patch` checked substring containment which falsely reported deletions
+  (`new_string == ""`) and earlier occurrences of `new_string` as already applied,
+  silently skipping real patches. Write/patch now compare on-disk bytes to preserve
+  CRLF line endings and non-UTF-8 bytes without corrupting them.
+- **Cache layer caller-relative path resolution (`resolve_caller_path`).**
+  Previously relative paths were resolved against daemon CWD instead of caller CWD,
+  causing path key collisions across projects. Paths are now made absolute at the
+  client and MCP bridge boundary.
+- **Knowledge DB worker thread-local path pinning.**
+  `_maybe_refresh_index_async` spawned a worker that resolved DB path after caller
+  environment was gone, intermittently hitting production DB during test teardown.
+  Worker path is now pinned in thread-local storage at spawn time.
+- **Garbage collection counter banking (`cache_stats_banked`).**
+  `garbage_collect()` zeroed stats for categories idle for 24h, destroying lifetime
+  IO token counts and inverting the context-to-IO savings ratio. Counters are now
+  banked to `cache_stats_banked` and exposed via lifetime metrics in `toolrecall status`.
+- **`uv.lock` re-tracked, anyio bumped 4.14.1 → 4.15.1.** Clears Dependabot security
+  alerts GHSA-82r6-8w77-94w6 and GHSA-5p39-cfhj-2xmp.
 - **`toolrecall proxy attach` was a silent no-op on a config without a `base_url` line.**
   It only rewrote an *existing* `llm.base_url:`; a config whose LLM section carried
   none — the state a partial revert or a hand edit leaves behind — made attach print
@@ -132,58 +234,6 @@
   preserved; applied on first open of an older DB). TUI labels follow:
   the IO table column reads `IO saved`, the headline `SAVED TO LLM TODAY`
   (never sent to the model).
-- **`work_key` — Layer-0 identity for a unit of work (`keys.py`).** Answers
-  *"have we already paid for this unit?"* for a candidate artifact (plus
-  optional evaluation parameters) instead of for a request — the level at which
-  an evaluation is worth reusing across processes, runs, and workers. Two
-  deliberately separate spaces: the legacy-compatible form
-  (`content_digest(code)`, optional `":" + stage`) is byte-identical to the
-  evaluator memo keys that predate this function, so stores already on disk
-  keep hitting — pinned by a golden vector captured from a real OpenEvolve memo
-  store; the params form is versioned (`w/v1:`) over `jcs.canonicalize`
-  (RFC 8785) so dict order cannot fork a key. Purely additive: no existing
-  preimage changes, `tests/golden_keys.json` keeps its old vectors. 6 tests in
-  `tests/test_keys.py`.
-- **Work-unit ledger (`work_ledger` table + `work_store` / `work_lookup`).**
-  The persistence half of `work_key`: `work_store(key, metrics, eval_time, ttl)`
-  records one PAID evaluation — `attempts` advances on a re-roll while the first
-  known result is never overwritten — and `work_lookup(key)` recalls it (None
-  when unknown, TTL honored). Counters land in their own `work_cache` category,
-  so reuse is visible in `top` and the healthcheck instead of borrowing another
-  tier's label — the same visibility gap that proxy dedup still has. Daemon
-  commands `work_store` / `work_lookup`, thin client wrappers with a
-  direct-SQLite fallback, malformed requests fail closed. Unit tests plus a
-  socket E2E test (`tests/test_work_ledger.py`,
-  `tests/test_e2e_work_ledger.py`).
-- **OpenEvolve evaluator memo (`adapters/openevolve.py`).** Wraps an eval
-  script's `evaluate` / `evaluate_stageN` so a repeat of an already-paid
-  candidate is served from the work ledger. Opt-in via
-  `TOOLRECALL_OPENEVOLVE_MEMO=1` (pure pass-through without it); `reuse_after(K)`
-  makes the reuse boundary explicit so deliberate re-rolls stay paid;
-  `impure=True` refuses to memoize an evaluator that is not a pure function of
-  the candidate; hits count in the `work_cache` category. No framework import —
-  duck-typed over the eval namespace, wrapping `globals()` or a module object.
-  15 tests, including the documented integration shape (the eval script wraps
-  `globals()`, then the file is imported by path the way OpenEvolve does).
-  Prior art is documented in the module docstring: fitness caching is an
-  established field and content-addressed memoization is standard — the
-  contribution is placement and policy, not mechanism.
-- **Reuse policy for a stochastic search (`adapters/openevolve.py`).** The reuse
-  boundary became a first-class knob: `samples=K` (pay K attempts, serve from
-  K+1), `policy_from_config()` to read K from a sampler field you name — verified
-  that OpenEvolve 0.3.2 exposes no re-roll field (`num_islands` and
-  `parallel_evaluations` are breadth and concurrency; each child is evaluated
-  once), so K=1 is the honest policy there —
-  and `never_reuse` as a control arm — passing both `samples` and `allow_reuse`
-  raises instead of silently picking one. `mode="shadow"` pays for every
-  evaluation while counting would-be hits into a caller-owned `stats` dict, so K
-  can be chosen from data before any behaviour changes. Every decision is logged
-  (`HIT`, `WITHHELD` with the threshold, `SHADOW-HIT`). Rationale in the module
-  docstring: the ceiling is the hit rate, and the hit rate is the sampling
-  design — 21.8 % of evaluator spend at K=1 versus 12.1 % at K=3 (100-iteration
-  A/B). 9 further tests, including the per-key score-identity gate: scores are
-  derived from the candidate's content, so a served score that came from the
-  wrong key cannot pass.
 
 ### Fixed
 - **Shim drift detection is content-based, not version-based (`venvs.py`).**

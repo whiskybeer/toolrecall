@@ -1,6 +1,6 @@
 """Real-engine e2e: gepa.optimize() drives ToolRecallGepaAdapter.
 
-Real gepa (0.1.4, installed in /tmp/lgvenv) runs its full optimizer loop —
+Real gepa (0.1.4, installed in a throwaway venv) runs its full optimizer loop —
 seed eval, reflective proposer, acceptance, Pareto state — against our
 adapter. Zero LLM API calls: the adapter owns propose_new_texts
 (deterministic mutation), so the engine never needs a reflection LM.
@@ -15,7 +15,8 @@ open()) routed through the fork-tree interception. What we verify:
    (shared prefix replays from the tree) while scores stay consistent.
 4. GEPAResult comes back well-formed.
 
-Run: /tmp/lgvenv/bin/python tests/run_gepa_e2e_standalone.py
+Run: <venv-with-gepa>/bin/python -u tests/run_gepa_e2e_standalone.py
+(-u: the runner exits via os._exit, which drops buffered stdout when piped)
 (standalone runner pattern — same as the LangGraph e2e — hermetic DB via
 env before any toolrecall import).
 """
@@ -31,7 +32,8 @@ os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(tempfile.mkdtemp(prefix="gepa-e
 os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
 os.environ["TOOLRECALL_UPDATE_CHECK"] = "0"
 
-sys.path.insert(0, "/tmp/tr-gepa")
+# this checkout, not whatever toolrecall the venv has installed
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import time  # noqa: E402
 import traceback  # noqa: E402

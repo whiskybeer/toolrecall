@@ -1,10 +1,15 @@
 # Tree Search over Agent Executions — design note
 
-> **Status: design + one shipped primitive. Everything numeric here is MODELED —
-> no billed A/B exists yet, so nothing on this page is a benchmark claim.**
-> The fork/resume primitive this note builds on IS shipped and real-graph
-> verified: see [langgraph-adapter.md](langgraph-adapter.md) (5/5 scenarios,
-> including time-travel rewind with the tool executed exactly once).
+> **Status: design note + shipped primitives + one billed A/B.** The cost-model
+> numbers on this page are MODELED. The replay fork tree and the GEPA adapter
+> are shipped (0.8.21; see "What ships today" below). The first billed fork A/B
+> is in [`bench/results/GEPA_FORK_AB_RESULTS.md`](../bench/results/GEPA_FORK_AB_RESULTS.md):
+> 79% lower billed cost than naive re-exploration on one synthetic workload,
+> with 25/25 cache hits byte-exact. That run used one key, one model and
+> simulated mutations, so read its "Honesty limits" before quoting it.
+> The LangGraph fork/resume primitive is real-graph verified: see
+> [langgraph-adapter.md](langgraph-adapter.md) (5/5 scenarios, including
+> time-travel rewind with the tool executed exactly once).
 
 ## The use case
 
@@ -31,7 +36,9 @@ Three separable axes for B branches diverging d steps after a shared prefix C:
 
 All three ratios improve simultaneously; the multiplication is the point.
 
-**What this is NOT:** a claim that any of these numbers has been measured.
+**What this is NOT:** a claim that any of these formulas has been measured.
+The one billed A/B (status banner) measured the billed-dollar axis on a
+single synthetic workload; the attention and tool-execution axes are unmeasured.
 The README's 9.5×/7.4× Context Tracker figures remain the only measured
 endurance results; the "idealized re-read-heavy agent" behind the modeled 90%
 ceiling is realized concretely by the search workload described here — which
@@ -67,6 +74,21 @@ Limitations of Phase 1 (honest): fork = same-thread rewind (cross-thread
 forking needs state copy), no workspace restore, no branch orchestration,
 no per-branch session isolation in the daemon.
 
+Since 0.8.21 the replay layer ships the tool-record half of Phase 2/3:
+
+- **Fork tree** in `toolrecall/replay.py` — `fork_tree`, `fork_node`,
+  `record_call_at`, `replay_at`, plus `toolrecall replay tree|fork|at`
+  ([REPLAY_MODE.md](REPLAY_MODE.md#fork-trees)). A node replays through its
+  ancestor chain; calls are keyed by `(tree_id, node_id)`, so concurrent
+  branches are isolated by construction.
+- **Scoped replay modes** — `scope=` on the flat record/replay API gives each
+  branch its own mode (the per-branch isolation prerequisite below).
+- **GEPA adapter** — `toolrecall/adapters/gepa.py`
+  ([adapters README](../toolrecall/adapters/README.md#gepa--evaluate-adapter-over-the-replay-fork-tree)),
+  e2e-verified against the real `gepa.optimize()` loop.
+
+Still design-only: workspace snapshot/restore and the daemon-side MCP tools.
+
 ## The contract (Phase 2/3 — design)
 
 Daemon-side MCP tools (Phase 2):
@@ -97,10 +119,10 @@ invalidation otherwise); adapters that cannot restore mtimes MUST declare
 `mtime_fidelity: false`. Explicitly out of scope, enumerated per adapter:
 running processes, env vars, network state.
 
-**Per-branch session isolation** (prereq for Phase 2): the Context Tracker
-and replay mode are daemon-global singletons today; concurrent branches
-cross-contaminate dirty/clean sets. Branch scoping keys on the existing
-per-request client concept.
+**Per-branch session isolation** (prereq for Phase 2): replay mode is solved
+(scoped modes + stateless tree calls, see "What ships today"). The Context
+Tracker is still daemon-global, so concurrent branches cross-contaminate
+dirty/clean sets. Branch scoping keys on the existing per-request client concept.
 
 ## GEPA integration point (first-party caller, Phase 3)
 
@@ -115,9 +137,11 @@ execute). GEPA keeps candidate selection, acceptance, Pareto bookkeeping,
 and budget stopping. This also gives the Recall Tier its first first-party
 caller (non-reproducible tool output restored on demand at branch re-entry).
 
-## What NOT to claim (until the billed A/B exists)
+## What NOT to claim
 
-- No measured fork-vs-re-exploration savings number of any kind
+- No general fork-vs-re-exploration savings number. The 79% is one synthetic
+  workload (C=8 shared turns, d=1 divergent turn, one model, one key, simulated
+  mutations); savings scale with C/d and do not transfer to other shapes
 - No task-quality claim: the pass@1 A/B gap from the dedup benchmark is
   open; tree search does not change that
 - No comparison against self-hosted RadixAttention stacks on the token axis
@@ -134,3 +158,10 @@ Measure per-axis: billed dollars (provider dashboard, separate keys), turns
 to context wall, tool-execution count. Gate: pre-researched execution plan,
 named DBs, per-datapoint verification before the full run — same protocol as
 every benchmark on this repo.
+
+Status: the billed-dollar axis has one run
+([GEPA_FORK_AB_RESULTS.md](../bench/results/GEPA_FORK_AB_RESULTS.md)); its naive
+arm already had provider prefix caching (≈93% of its prompt tokens billed as
+cached), so the saving is over a provider-cached baseline. Open: a second key
+for the dashboard cross-check, repeats for variance, a second model, real
+LLM-proposed mutations, and the tool-execution axis.

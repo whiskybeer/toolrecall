@@ -233,6 +233,10 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - `toolrecall replay export <scenario>` — export as JSON
   - `toolrecall replay import <file.json>` — import from JSON
   - `toolrecall replay delete <scenario>` — delete scenario
+  - `toolrecall replay tree [<tree_id>]` — list fork trees, or show one tree's nodes
+  - `toolrecall replay tree new <name>` — create a fork tree (prints tree_id + root node)
+  - `toolrecall replay fork <tree> <node> <name>` — fork a branch from a node
+  - `toolrecall replay at <tree> <node>` — show the call chain a node inherits (root first)
 - **Full reference:** [Replay Mode](REPLAY_MODE.md)
 
 ### `toolrecall turso`

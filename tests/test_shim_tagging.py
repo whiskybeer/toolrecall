@@ -39,10 +39,10 @@ class TestTagSourceGate(unittest.TestCase):
         self._saved = (shim_mod._agent_process_cache, shim_mod._tag_source_mode_cache)
         shim_mod._agent_process_cache = None
         shim_mod._tag_source_mode_cache = None
-        # Detach from the outer Hermes process env: assertions must hold
-        # for the SYNTHETIC environment, not the real one.
+        # Detach from the outer agent's env (Hermes, Claude Code, Codex, …):
+        # assertions must hold for the SYNTHETIC environment, not the real one.
         self._saved_environ = os.environ.copy()
-        for key in [k for k in os.environ if k.startswith("HERMES_")]:
+        for key in [k for k in os.environ if k.startswith(shim_mod._AGENT_ENV_MARKERS)]:
             del os.environ[key]
         os.environ.pop("TOOLRECALL_SHIM_TAG_SOURCE", None)
 
