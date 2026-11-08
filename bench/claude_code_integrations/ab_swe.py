@@ -13,12 +13,13 @@ Usage: ab_swe.py <proxy_port> <reps> [task ...]   (results appended to $AB_OUT/r
 import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
-L = Path(os.environ.get("SWE_DJ_DIR", "/tmp/trhook/long"))            # SWE-bench Lite django instances, venv, grader
-REPO_DJ = L / "swe-repos/django"
-PY = L / "env/dj/bin/python"
+L = Path(os.environ.get("SWE_DJ_DIR", "/home/hermes/bench-data/swe-dj"))  # instances, venv, grader
+REPO_DJ = L / "django"
+PY = L / "env/bin/python"
 TR = Path(os.environ.get("TR_REPO", str(Path(__file__).resolve().parents[2])))
-OUT = Path(os.environ.get("AB_OUT", "/tmp/trverify/ab/out")); OUT.mkdir(parents=True, exist_ok=True)
-WORK = Path("/tmp/trverify/ab/work")    # fixed path per task (cwd is part of the prompt)
+OUT = Path(os.environ.get("AB_OUT", "/home/hermes/bench-data/ab-out")); OUT.mkdir(parents=True, exist_ok=True)
+WORK = Path(os.environ.get("AB_WORK", "/home/hermes/bench-data/ab-work"))  # fixed path per task (cwd is in the prompt)
+MIN_FREE_MB = int(os.environ.get("AB_MIN_FREE_MB", "1000"))
 CLAUDE = shutil.which("claude") or "claude"
 MODEL = os.environ.get("AB_MODEL", "sonnet")
 TASKS = ["django__django-15738", "django__django-15996", "django__django-16595",
@@ -79,13 +80,17 @@ def run_one(iid, arm, rep, port):
            "--settings", str(settings_file(arm)), "--allowedTools", ALLOWED,
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
     t0 = time.time()
-    p = subprocess.run(cmd, cwd=w, env=env, capture_output=True, text=True, timeout=2400,
-                       stdin=subprocess.DEVNULL)
+    try:
+        p = subprocess.run(cmd, cwd=w, env=env, capture_output=True, text=True, timeout=2400,
+                           stdin=subprocess.DEVNULL)
+        stdout, stderr = p.stdout, p.stderr
+    except subprocess.TimeoutExpired as e:  # recorded as a failed run, never crashes the driver
+        stdout, stderr = "", f"TIMEOUT after {e.timeout}s"
     wall = time.time() - t0
     try:
-        j = json.loads(p.stdout)
+        j = json.loads(stdout)
     except Exception:
-        j = {"parse_error": p.stdout[-300:], "stderr": p.stderr[-300:]}
+        j = {"parse_error": stdout[-300:], "stderr": stderr[-300:]}
     subprocess.run(["git", "-C", str(w), "add", "-A", "-N"], capture_output=True)
     diff = subprocess.run(["git", "-C", str(w), "diff", "--", ".", ":(exclude)tests"],
                           capture_output=True, text=True).stdout
@@ -105,7 +110,7 @@ def run_one(iid, arm, rep, port):
     git("worktree", "remove", "--force", str(g))
     git("worktree", "remove", "--force", str(w))
     row = {"task": iid, "arm": arm, "rep": rep, "wall": round(wall, 1), "grade": grade,
-           "resolved": grade == "f2p=0 p2p=0", "session_id": j.get("session_id"),
+           "resolved": grade == "f2p=0 p2p=0", "timeout": stderr.startswith("TIMEOUT"), "session_id": j.get("session_id"),
            "turns": j.get("num_turns"), "cc_cost_usd": j.get("total_cost_usd"),
            "denials": len(j.get("permission_denials") or []), "is_error": j.get("is_error"),
            "cwd": str(w), "ts": time.time()}
@@ -115,13 +120,42 @@ def run_one(iid, arm, rep, port):
           f"denials={row['denials']}", flush=True)
 
 
+def mem_available_mb():
+    for line in open("/proc/meminfo"):
+        if line.startswith("MemAvailable:"):
+            return int(line.split()[1]) // 1024
+    return 10 ** 6
+
+
+def wait_for_memory():
+    """Pause while another workload has the machine short of RAM (swap thrash
+    turned a run into a 40-min timeout once); resumes on its own."""
+    waited = 0
+    while mem_available_mb() < MIN_FREE_MB:
+        if waited % 300 == 0:
+            print(f"waiting: {mem_available_mb()} MB available < {MIN_FREE_MB} MB", flush=True)
+        time.sleep(30)
+        waited += 30
+
+
+def done_runs():
+    p = OUT / "runs.jsonl"
+    if not p.exists():
+        return set()
+    return {(r["task"], r["arm"], r["rep"]) for r in map(json.loads, p.read_text().splitlines())}
+
+
 def main():
     port, reps = int(sys.argv[1]), int(sys.argv[2])
     tasks = sys.argv[3:] or TASKS
+    done = done_runs()  # resume: a restart skips runs already recorded
     for rep in range(1, reps + 1):
         for k, iid in enumerate(tasks):
             arms = ["A", "B"] if (rep + k) % 2 else ["B", "A"]
             for arm in arms:
+                if (iid, arm, rep) in done:
+                    continue
+                wait_for_memory()
                 run_one(iid, arm, rep, port)
 
 
