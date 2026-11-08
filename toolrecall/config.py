@@ -44,6 +44,7 @@ ENV_MAP = {
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
+    "TOOLRECALL_MCP_MULTIPLEX_FETCH_REVALIDATE": ("mcp_multiplex", "fetch_revalidate"),
     "TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL": ("mcp_multiplex", "default_ttl"),
     "TOOLRECALL_STORAGE_BACKEND": ("storage", "backend"),
     "TOOLRECALL_LIBSQL_DB_PATH": ("storage", "libsql_db"),
