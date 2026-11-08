@@ -13,12 +13,12 @@ Usage: ab_swe.py <proxy_port> <reps> [task ...]   (results appended to $AB_OUT/r
 import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
-L = Path(os.environ.get("SWE_DJ_DIR", "/home/hermes/bench-data/swe-dj"))  # instances, venv, grader
+L = Path(os.path.expanduser(os.environ.get("SWE_DJ_DIR", "~/bench-data/swe-dj")))  # instances, venv, grader
 REPO_DJ = L / "django"
 PY = L / "env/bin/python"
 TR = Path(os.environ.get("TR_REPO", str(Path(__file__).resolve().parents[2])))
-OUT = Path(os.environ.get("AB_OUT", "/home/hermes/bench-data/ab-out")); OUT.mkdir(parents=True, exist_ok=True)
-WORK = Path(os.environ.get("AB_WORK", "/home/hermes/bench-data/ab-work"))  # fixed path per task (cwd is in the prompt)
+OUT = Path(os.path.expanduser(os.environ.get("AB_OUT", "~/bench-data/ab-out"))); OUT.mkdir(parents=True, exist_ok=True)
+WORK = Path(os.path.expanduser(os.environ.get("AB_WORK", "~/bench-data/ab-work")))  # fixed path per task (cwd is in the prompt)
 MIN_FREE_MB = int(os.environ.get("AB_MIN_FREE_MB", "1000"))
 CLAUDE = shutil.which("claude") or "claude"
 MODEL = os.environ.get("AB_MODEL", "sonnet")

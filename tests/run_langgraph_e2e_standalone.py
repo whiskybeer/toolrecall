@@ -16,7 +16,7 @@ langgraph's executor threads are present (idle worker pools; see skill
 toolrecall-adapter-authoring). This runner uses per-scenario watchdogs and a
 hard os._exit to skip the shutdown join.
 
-Run: PYTHONPATH=/home/hermes/toolrecall /tmp/lgvenv/bin/python tests/run_langgraph_e2e_standalone.py
+Run: PYTHONPATH=$(git rev-parse --show-toplevel) /tmp/lgvenv/bin/python tests/run_langgraph_e2e_standalone.py
 """
 
 import faulthandler
@@ -35,7 +35,7 @@ os.environ["TOOLRECALL_TRANSPORT"] = os.path.join(_TMP, "no-daemon.sock")
 os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
 os.environ["TOOLRECALL_UPDATE_CHECK"] = "0"
 
-sys.path.insert(0, "/home/hermes/toolrecall")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Bootstrap the hermetic DB schema (fresh process, fresh file).
 from toolrecall._db import _init  # noqa: E402

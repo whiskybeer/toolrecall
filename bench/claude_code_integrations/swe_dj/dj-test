@@ -3,4 +3,4 @@
 set -e
 root=$(git rev-parse --show-toplevel)
 cd "$root/tests"
-PYTHONPATH="$root" exec /home/hermes/bench-data/swe-dj/env/bin/python runtests.py --parallel 1 "$@"
+PYTHONPATH="$root" exec "$HOME/bench-data/swe-dj/env/bin/python" runtests.py --parallel 1 "$@"

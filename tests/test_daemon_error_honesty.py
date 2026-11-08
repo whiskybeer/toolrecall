@@ -348,9 +348,9 @@ class SessionFilesNotCachedTest(unittest.TestCase):
 
         pkg_cfg = os.path.join(os.path.dirname(cache_pkg_file()), "config.toml")
         cfg = tomllib.load(open(pkg_cfg, "rb"))["cache"]
-        session = "/home/hermes/.hermes/webui/sessions/whatever.json"
+        session = "/home/user/.hermes/webui/sessions/whatever.json"
         self.assertEqual(resolve_file_ttl(session, cfg), 0)
-        other = "/home/hermes/toolrecall/toolrecall/cache.py"
+        other = "/home/user/toolrecall/toolrecall/cache.py"
         self.assertEqual(resolve_file_ttl(other, cfg), -1)
 
 

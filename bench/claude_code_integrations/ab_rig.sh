@@ -2,7 +2,7 @@
 # rig.sh start|stop — isolated ToolRecall daemon + forward proxy for arm B. Own DB/HOME/socket.
 set -u
 TR=${TR_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}
-RIG=${RIG:-/home/hermes/bench-data/ab-rig}; PORT=${PORT:-8595}
+RIG=${RIG:-$HOME/bench-data/ab-rig}; PORT=${PORT:-8595}
 stop() {  # stop only processes whose environment points at THIS rig's DB
   for p in $(pgrep -f "run_forward_proxy|toolrecall daemon"); do
     tr '\0' '\n' < /proc/$p/environ 2>/dev/null | grep -qx "TOOLRECALL_CACHE_DB=$RIG/cache.db" && kill "$p" && echo "stopped $p"

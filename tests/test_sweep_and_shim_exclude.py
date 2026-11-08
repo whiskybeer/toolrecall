@@ -154,7 +154,7 @@ class ShimVirtualFsExclusionTest(unittest.TestCase):
         self.assertTrue(shim_mod._should_skip("/dev/null"))
 
     def test_should_not_skip_normal_paths(self):
-        self.assertFalse(shim_mod._should_skip("/home/hermes/workspace/x.py"))
+        self.assertFalse(shim_mod._should_skip("/home/user/workspace/x.py"))
         self.assertFalse(shim_mod._should_skip("/tmp/notes.txt"))
         self.assertFalse(shim_mod._should_skip("/procself/impostor"))  # not /proc/
         self.assertFalse(shim_mod._should_skip("/system/real"))

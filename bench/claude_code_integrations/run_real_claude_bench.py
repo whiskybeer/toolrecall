@@ -19,7 +19,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-CLAUDE_BIN = "/home/hermes/.local/bin/claude"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or os.path.expanduser("~/.local/bin/claude")
 BENCH_ROOT = Path("/tmp/tr_real_claude_bench")
 
 
@@ -98,8 +99,8 @@ def run_claude_session(work_dir: Path, with_hook: bool) -> Dict[str, Any]:
     )
 
     env = os.environ.copy()
-    env["PATH"] = f"/home/hermes/.local/bin:{env.get('PATH', '')}"
-    env["PYTHONPATH"] = "/home/hermes/toolrecall"
+    env["PATH"] = f"{os.path.dirname(CLAUDE_BIN)}:{env.get('PATH', '')}"
+    env["PYTHONPATH"] = str(REPO_ROOT)
     # Unset Claude Code nested-session variables
     for var in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID"]:
         env.pop(var, None)

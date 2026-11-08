@@ -55,7 +55,7 @@ echo ""
 echo "==> ARM 1/2: WITH dedup (accumulating)"
 write_proxy /tmp/proxy_accum_with.yaml "$KEY" 0
 start_proxy /tmp/proxy_accum_with.yaml /tmp/proxy_accum_with.log 0
-cd /home/hermes/toolrecall
+cd "$(dirname "$0")/../.."
 TOOLRECALL_SHIM_DISABLE=1 python3 "$MEASURE" --accumulate --json > /tmp/swe_accum_with.json
 pkill -f "litellm --config /tmp/proxy_" 2>/dev/null || true
 sleep 1

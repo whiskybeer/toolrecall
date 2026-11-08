@@ -2,9 +2,9 @@
 # setup.sh [DIR] — build the SWE-bench Lite django/db/migrations task set used by ab_swe.py.
 # Needs: the SWE-bench Lite dataset in the Hugging Face cache (or network), git, uv, pyarrow.
 set -euo pipefail
-DIR=${1:-/home/hermes/bench-data/swe-dj}; HERE="$(cd "$(dirname "$0")" && pwd)"
+DIR=${1:-$HOME/bench-data/swe-dj}; HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$DIR/inst" "$DIR/bin"; cp "$HERE/grade_dj.py" "$HERE/setup_tests.py" "$DIR/"
-sed "s#/home/hermes/bench-data/swe-dj#$DIR#" "$HERE/dj-test" > "$DIR/bin/dj-test"; chmod +x "$DIR/bin/dj-test"
+sed "s#\$HOME/bench-data/swe-dj#$DIR#" "$HERE/dj-test" > "$DIR/bin/dj-test"; chmod +x "$DIR/bin/dj-test"
 python3 - "$DIR" <<'PY'
 import glob, json, os, sys
 import pyarrow.parquet as pq

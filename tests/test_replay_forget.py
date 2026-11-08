@@ -94,7 +94,7 @@ class TestReplayForget(unittest.TestCase):
             "The current local time is: 2026-11-08T00:23:56Z.\n"
             "</ADDITIONAL_METADATA>\n"
             "Conversation ID: 858ad02b-f68d-4625-a34c-44c0d83d06bc\n"
-            "Artifact Directory Path: /home/hermes/.gemini/antigravity-cli/brain/858ad02b-f68d-4625-a34c-44c0d83d06bc\n"
+            "Artifact Directory Path: /home/user/.gemini/antigravity-cli/brain/858ad02b-f68d-4625-a34c-44c0d83d06bc\n"
             "Ran 5 tests in 0.42s"
         )
         t2 = (
@@ -103,7 +103,7 @@ class TestReplayForget(unittest.TestCase):
             "The current local time is: 2026-11-08T09:45:10Z.\n"
             "</ADDITIONAL_METADATA>\n"
             "Conversation ID: 11223344-5566-7788-9900-aabbccddeeff\n"
-            "Artifact Directory Path: /home/hermes/.gemini/antigravity-cli/brain/11223344-5566-7788-9900-aabbccddeeff\n"
+            "Artifact Directory Path: /home/user/.gemini/antigravity-cli/brain/11223344-5566-7788-9900-aabbccddeeff\n"
             "Ran 5 tests in 1.89s"
         )
         body1 = json.dumps({"messages": [{"role": "user", "content": t1}]}).encode()

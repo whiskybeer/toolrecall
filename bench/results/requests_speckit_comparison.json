@@ -1,6 +1,6 @@
 {
   "benchmark": "SpecKit Spec-Driven Multi-Agent Swarm (psf/requests)",
-  "target_repo": "/home/hermes/workspace/requests",
+  "target_repo": "~/workspace/requests",
   "speckit_feature": "specs/retry-jitter",
   "stages": 3,
   "date": "2026-11-06",

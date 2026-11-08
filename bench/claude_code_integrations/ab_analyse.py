@@ -9,7 +9,7 @@ appeared in an earlier run of the same task in arm B (the proxy served it; it wa
 import json, os, re, statistics as st, sys
 from collections import defaultdict
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/home/hermes/bench-data/ab-out"
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/bench-data/ab-out")
 PROJ = os.path.expanduser("~/.claude/projects")
 
 
