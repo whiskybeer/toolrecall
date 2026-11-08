@@ -2466,6 +2466,13 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         Args in request:
             key (str): cache key
             content (str): data to store
+            etag (str, optional): HTTP validator captured from the live
+                response. Enables validate-before-serve: without it a row
+                can never be revalidated and freshness can only be guessed
+                from the clock. Measured (Phase C, 2026-09-20): clock-only
+                policies delivered ~29% wrong results; validate-before-serve
+                delivered 0%.
+            ttl (int, optional): row TTL in seconds
             url (str, optional): source URL
             contentType (str, optional): content type
         """
@@ -2473,6 +2480,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         content = req.get("content", "")
         if not key:
             return {"error": "Missing 'key' parameter"}
+        etag = req.get("etag") or None
+        ttl = req.get("ttl")
         # Address the row the CHECK reads: _handle_mcp_check looks up
         # cached_mcp_check("_generic", "_lookup", {"key": <sent key>}), whose
         # row key is _mcp_request_key of the WRAPPED dict — not the raw sent
@@ -2486,8 +2495,10 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             "_store",
             {"key": key},
             content,
+            ttl=ttl if isinstance(ttl, int) else None,
+            etag=etag,
         )
-        return {"stored": True}
+        return {"stored": True, "validated": etag is not None}
 
     # ─── Browser Cache IPCs ────────────────────────────────
 

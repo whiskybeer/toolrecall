@@ -1885,7 +1885,7 @@ def cached_mcp_check(
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT data, expires_at, hit_streak, cached_at FROM mcp_cache WHERE request_hash = ?",
+                "SELECT data, expires_at, hit_streak, cached_at, etag FROM mcp_cache WHERE request_hash = ?",
                 (request_hash,),
             ).fetchone()
             if row is not None:
@@ -1904,6 +1904,8 @@ def cached_mcp_check(
                         "server": server,
                         "tool": tool,
                         "age_s": max(0.0, now - row["cached_at"]),
+                        "etag": row["etag"],
+                        "key": request_hash,
                     }
                 if tier == ttl_policy.SWR_SERVE_STALE:
                     # SWR: serve stale; revalidation is the CALLER's job
@@ -1918,6 +1920,7 @@ def cached_mcp_check(
                         "stale": True,
                         "key": request_hash,
                         "age_s": max(0.0, now - row["cached_at"]),
+                        "etag": row["etag"],
                     }
                 # tier == "expired" → fall through to miss
     except Exception as e:
