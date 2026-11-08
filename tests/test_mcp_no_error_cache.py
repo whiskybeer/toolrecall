@@ -74,19 +74,20 @@ class TestDaemonNoErrorStore(unittest.TestCase):
         d.multiplexer.cfg.mcp_multiplex_servers_config = {"fetch": {"ttl": 60}}
         return d
 
-    def test_error_result_is_not_stored(self, tmp_dir: str | None = None) -> None:
-        if tmp_dir is None:
-            with tempfile.TemporaryDirectory() as td:
-                return self.test_error_result_is_not_stored(td)
-        d = self._daemon_with_multiplexer({"error": "fetch: boom"}, tmp_dir)
-        with (
-            mock.patch.object(daemon_mod, "_cache_mcp_store") as store,
-            mock.patch.object(daemon_mod, "_cache_mcp_check", return_value={"key": "k1"}),
-        ):
-            d._handle_mcp_call(
-                {"cmd": "mcp_call", "server": "fetch", "tool": "fetch_url", "arguments": {}}
-            )
-        store.assert_not_called()
+    def test_error_result_is_not_stored(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            d = self._daemon_with_multiplexer({"error": "fetch: boom"}, td)
+            with (
+                mock.patch.object(daemon_mod, "_cache_mcp_store") as store,
+                mock.patch.object(
+                    daemon_mod, "_cache_mcp_check", mock.Mock(return_value={"key": "k1"})
+                ),
+                mock.patch.object(daemon_mod, "_heal_poisoned_mcp_row"),
+            ):
+                d._handle_mcp_call(
+                    {"cmd": "mcp_call", "server": "fetch", "tool": "fetch_url", "arguments": {}}
+                )
+            store.assert_not_called()
 
     def test_error_result_heals_a_poisoned_row(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -127,6 +128,7 @@ class TestDaemonNoErrorStore(unittest.TestCase):
                 mock.patch.object(
                     daemon_mod, "_cache_mcp_check", mock.Mock(return_value={"key": "k3"})
                 ),
+                mock.patch.object(daemon_mod, "_heal_poisoned_mcp_row"),
             ):
                 d._handle_mcp_call(
                     {"cmd": "mcp_call", "server": "fetch", "tool": "fetch_url", "arguments": {}}
