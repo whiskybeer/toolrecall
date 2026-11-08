@@ -434,7 +434,11 @@ result = gepa.optimize(seed_candidate={"system_prompt": "..."},
   body, so only identical re-evaluations can hit. Point the task LM at the
   forward proxy to catch those.
 - **Introspection:** `tree_summary()`, `inherited_calls(node_id)`, `cleanup()`.
-- **Measured:** [`bench/results/GEPA_FORK_AB_RESULTS.md`](../../bench/results/GEPA_FORK_AB_RESULTS.md).
+- **Measured:** the real `gepa.optimize()` loop billed 33–68% less than GEPA's
+  own cache on deepseek, and the same on mistral (5 runs). 30–53% of tool calls
+  were replayed, with no loss in final score:
+  [`GEPA_REAL_RESULTS.md`](../../bench/results/GEPA_REAL_RESULTS.md). Synthetic
+  fork workload: 82–83%, [`GEPA_FORK_AB_RESULTS.md`](../../bench/results/GEPA_FORK_AB_RESULTS.md).
   Design and cost model: [Tree Search](../../docs/TREE_SEARCH.md).
 
 ---

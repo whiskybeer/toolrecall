@@ -5,8 +5,12 @@
 > are shipped (0.8.21; see "What ships today" below). The first billed fork A/B
 > is in [`bench/results/GEPA_FORK_AB_RESULTS.md`](../bench/results/GEPA_FORK_AB_RESULTS.md):
 > 79% lower billed cost than naive re-exploration on one synthetic workload,
-> with 25/25 cache hits byte-exact. That run used one key, one model and
-> simulated mutations, so read its "Honesty limits" before quoting it.
+> with 25/25 cache hits byte-exact. Repeats on two models reproduce it at
+> 82–83%, but that workload uses scripted mutations. The real `gepa.optimize()`
+> loop, with LLM-proposed prompts, a tool-calling agent and a real scorer, is in
+> [`bench/results/GEPA_REAL_RESULTS.md`](../bench/results/GEPA_REAL_RESULTS.md):
+> −33% to −68% billed vs GEPA's own cache on deepseek, +1% on mistral (5 runs),
+> 30–53% of tool calls replayed, no loss in final score.
 > The LangGraph fork/resume primitive is real-graph verified: see
 > [langgraph-adapter.md](langgraph-adapter.md) (5/5 scenarios, including
 > time-travel rewind with the tool executed exactly once).
@@ -139,9 +143,10 @@ caller (non-reproducible tool output restored on demand at branch re-entry).
 
 ## What NOT to claim
 
-- No general fork-vs-re-exploration savings number. The 79% is one synthetic
-  workload (C=8 shared turns, d=1 divergent turn, one model, one key, simulated
-  mutations); savings scale with C/d and do not transfer to other shapes
+- No general fork-vs-re-exploration savings number. The 79–83% is one synthetic
+  workload (C=8 shared turns, d=1 divergent turn, simulated mutations); savings
+  scale with C/d and do not transfer to other shapes. The real GEPA loop ranged
+  from −68% to +18% per run
 - No task-quality claim: the pass@1 A/B gap from the dedup benchmark is
   open; tree search does not change that
 - No comparison against self-hosted RadixAttention stacks on the token axis
@@ -159,9 +164,11 @@ to context wall, tool-execution count. Gate: pre-researched execution plan,
 named DBs, per-datapoint verification before the full run — same protocol as
 every benchmark on this repo.
 
-Status: the billed-dollar axis has one run
-([GEPA_FORK_AB_RESULTS.md](../bench/results/GEPA_FORK_AB_RESULTS.md)); its naive
-arm already had provider prefix caching (≈93% of its prompt tokens billed as
-cached), so the saving is over a provider-cached baseline. Open: a second key
-for the dashboard cross-check, repeats for variance, a second model, real
-LLM-proposed mutations, and the tool-execution axis.
+Status: the synthetic fork A/B
+([GEPA_FORK_AB_RESULTS.md](../bench/results/GEPA_FORK_AB_RESULTS.md)) is
+repeated 5× on two models at 82–83%, with and without provider prefix caching.
+The real GEPA loop ([GEPA_REAL_RESULTS.md](../bench/results/GEPA_REAL_RESULTS.md))
+saves far less and varies by model: most of the deepseek saving comes from GEPA
+re-running identical parent rollouts, and across different prompts only tool
+calls replay. Open: a second key for the dashboard cross-check, paid or slow
+tools (the tool axis is measured only as counts), and more task types.

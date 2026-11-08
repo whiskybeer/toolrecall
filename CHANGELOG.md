@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+- **Real GEPA benchmark (`bench/run_gepa_real.py`, `bench/gepa_real_rig.sh`).**
+  Runs the real `gepa.optimize()` loop with GEPA's LLM reflection, a
+  tool-calling agent over a pinned repo revision and a real scorer, in three
+  arms: GEPA default, GEPA's own `cache_evaluation`, and that plus ToolRecall
+  (fork-tree tool replay + forward-proxy LLM cache). The rig runs a hermetic
+  daemon, proxy and edge, with HOME pinned so the production usage CSV is
+  untouched. Results in `bench/results/GEPA_REAL_RESULTS.md`:
+  - Billed −33% to −68% vs GEPA's own cache on deepseek-v4-flash, and +1% on
+    mistral-small-3.2 (5 runs).
+  - 30–53% of tool calls replayed, with no loss in best validation score.
+  - Most of the deepseek saving is GEPA re-running identical parent rollouts:
+    its cache is written for traced parent evaluations but never read there.
+  The synthetic fork A/B was repeated 5× on two models: 82–83%, with and
+  without provider prefix caching.
+
 ### Documentation
 - **GEPA / fork-tree docs caught up with what shipped in 0.8.21.**
   `toolrecall/adapters/README.md` gains a GEPA section (usage, pure-tool

@@ -534,7 +534,7 @@ port = 8570
   - [herdr](docs/herdr.md) — `tr` binary + MCP bridge for any pane
   - [Odysseus](docs/odysseus.md) — `cached_tool` decorator + MCP server caching
   - [LiteLLM Dedup Hook](bench/litellm_dedup/README.md) — gateway dedup callback (see benchmark entry above)
-  - [GEPA](toolrecall/adapters/README.md#gepa--evaluate-adapter-over-the-replay-fork-tree) — prompt-optimizer `evaluate` adapter over the replay fork tree (design: [Tree Search](docs/TREE_SEARCH.md)); billed A/B: `bench/results/GEPA_FORK_AB_RESULTS.md` (79% saving, 25/25 byte-exact HIT replays)
+  - [GEPA](toolrecall/adapters/README.md#gepa--evaluate-adapter-over-the-replay-fork-tree) — prompt-optimizer `evaluate` adapter over the replay fork tree (design: [Tree Search](docs/TREE_SEARCH.md)); billed: real GEPA loop `bench/results/GEPA_REAL_RESULTS.md` (−33% to −68% vs GEPA's own cache on deepseek, +1% on mistral; no score loss), synthetic fork A/B `bench/results/GEPA_FORK_AB_RESULTS.md` (79–83%, 25/25 byte-exact HIT replays)
   - Warp (`toolrecall.adapters.warp`) — routes Warp's custom inference endpoint through the forward proxy; canonicalization contract in [Canonicalization](docs/CANONICALIZATION.md)
 - [Hermes Transparent Cache](docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes
 - [Normalizer](docs/NORMALIZER.md) — cache key normalization, deterministic JSON
