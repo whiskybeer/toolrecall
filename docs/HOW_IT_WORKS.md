@@ -28,10 +28,17 @@ Result: **99.3% hit rate** across 239 benchmark turns (3 seeds). Repeat reads ar
 
 Not every command that hits the terminal should be cached. The cache is gated by a configurable allowlist (`[cache] terminal_ttls` in config.toml). Commands outside the allowlist execute fresh every time.
 
-Cacheable commands are stored per TTL:
-- `ls -la` → cached 30s
-- `git status` → cached 10s
-- `pip list --outdated` → cached 1h
+The gate is `DEFAULT_CACHEABLE` in `cache.py` (8 built-in patterns), merged
+with your `[cache] terminal_ttls` overrides — a command must appear in the
+merged map to be cached at all; everything else executes fresh and records
+no cache stats.
+
+Built-in defaults:
+- `hostname`, `whoami`, `pwd`, `uname -a` → cached 1h (very static)
+- `uptime`, `free -h`, `df -h /`, `crontab -l` → cached 5 min (moderate)
+
+Anything not in the map — `ls`, `git status`, `pip list` — is never cached
+unless you add it to `[cache] terminal_ttls` (daemon restart required).
 
 ### MCP Cache
 
