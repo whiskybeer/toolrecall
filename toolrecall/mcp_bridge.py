@@ -453,6 +453,16 @@ class MCPBridge:
         # bridge's tool-result stream is the channel they DO receive. One
         # daemon round-trip per session emits it after the first tool call.
         self._update_hint_done = False
+        # Stub layer kill switch for the W1 arms (stuboff vs stubon). The two
+        # arms must be the SAME bridge with only the tool-result rendering
+        # differing, so this gates presentation, never the daemon wiring or the
+        # context hints. Default ON; disable with TOOLRECALL_BRIDGE_STUB=0.
+        self._stub_enabled = os.environ.get("TOOLRECALL_BRIDGE_STUB", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
 
     def _sync_epoch(self, body: dict) -> None:
         """Honour a compaction signal carried on a tool response.
@@ -492,6 +502,14 @@ class MCPBridge:
             return resp
         body = resp.get("result", resp)
         if not isinstance(body, dict):
+            return resp
+        if not self._stub_enabled:
+            # stuboff arm: same conversation, full content — but the internal
+            # compaction signal is stripped on BOTH arms, or the "identical
+            # except tool-result rendering" invariant is false and the arm
+            # silently carries ~25 extra chars per read.
+            self._sync_epoch(body)
+            body.pop("compaction_epoch", None)
             return resp
         self._sync_epoch(body)
         # Internal signalling only — never part of the payload the agent sees.
@@ -551,6 +569,8 @@ class MCPBridge:
             return resp
         body = resp.get("result", resp)
         if not isinstance(body, dict):
+            return resp
+        if not self._stub_enabled:
             return resp
         self._sync_epoch(body)
         body.pop("compaction_epoch", None)

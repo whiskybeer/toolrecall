@@ -134,6 +134,19 @@ def _probe_socket_alive(socket_path: str) -> bool:
 # ─── Core API ─────────────────────────────────────────────────
 
 
+def send_cmd(payload: dict) -> dict:
+    """Send one raw daemon command. Never raises.
+
+    Used by the shim's batched local-hit counter flush: accounting must never
+    be able to fail the caller's read, and a daemon that predates the command
+    answers with an error the caller simply drops.
+    """
+    try:
+        return _get_client().send(payload)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def mcp_call(
     server: str,
     tool: str,

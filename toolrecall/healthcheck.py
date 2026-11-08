@@ -142,11 +142,34 @@ def proxy_listening(port: int | None = None, timeout: float = 1.0) -> bool:
         return False
 
 
+def _proc_transport(pid: int) -> str | None:
+    """Return ``pid``'s TOOLRECALL_TRANSPORT env value.
+
+    ``""`` means the process has no override (uses the default socket);
+    ``None`` means /proc/<pid>/environ could not be read (other user, zombie,
+    hidepid) — the caller must treat that as "unknown, assume ours".
+    """
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    for item in data.split(b"\0"):
+        if item.startswith(b"TOOLRECALL_TRANSPORT="):
+            return item.split(b"=", 1)[1].decode("utf-8", "replace")
+    return ""
+
+
 def count_daemon_procs() -> int:
-    """Count live `toolrecall daemon` processes (-1 if pgrep unavailable).
+    """Count live `toolrecall daemon` processes attached to THIS instance.
 
     Uses the `[t]oolrecall` trailing-anchor trick so the pattern cannot match
     this checker's own command line (which contains the string literally).
+
+    Instances isolated by their own TOOLRECALL_TRANSPORT (bench/AB rigs with a
+    separate socket + cache DB) are NOT duplicates of the prod daemon and must
+    not be reported as a leaked/duplicate process — 2026-11-07 false alarm:
+    a bench daemon under /tmp/trvab.* made the prod healthcheck claim 2 procs.
     """
     try:
         r = subprocess.run(
@@ -157,7 +180,22 @@ def count_daemon_procs() -> int:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return -1
-    return len([line for line in r.stdout.strip().split("\n") if line.strip()])
+    own = _default_socket_path()
+    count = 0
+    for line in r.stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pid = int(line.split(None, 1)[0])
+        except (ValueError, IndexError):
+            continue
+        transport = _proc_transport(pid)
+        if transport:  # explicit override -> belongs to another instance
+            if transport != own:
+                continue
+        count += 1
+    return count
 
 
 def _log_path() -> str:
@@ -271,7 +309,10 @@ def gather() -> HealthInfo:
             text=True,
             timeout=20,
         )
-        if "probe: pass" in r.stdout:
+        # Require the hook to be APPLIED, not merely importable: a badly ordered
+        # .pth imports fine in a probe but every real interpreter starts unshimmed
+        # (2026-11-07 zz_-ordering bug).
+        if "applied: yes" in r.stdout:
             info["shim_state"] = "active"
     except (subprocess.SubprocessError, FileNotFoundError):
         pass

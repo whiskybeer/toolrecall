@@ -320,6 +320,7 @@ class TestShimManifestDrift(unittest.TestCase):
             patch.object(venv_mod, "_overlay_into", side_effect=fake_overlay),
             patch.object(venv_mod, "_pth_source", return_value=os.path.join(self.a, "shim.py")),
             patch.object(venv_mod, "_importable", return_value=True),
+            patch.object(venv_mod, "_shim_applied", return_value=True),
         ):
             self.assertTrue(venv_mod.ensure_shim(venv))
         self.assertTrue(

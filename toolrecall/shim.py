@@ -38,6 +38,7 @@ import builtins
 import logging
 import sys
 import threading
+from collections import OrderedDict
 
 
 def _marker_path() -> str:
@@ -116,12 +117,338 @@ def _get_tr():
             # the same package directory as this shim module — not from
             # wherever sys.path resolves "toolrecall" (which can be the
             # source tree if an editable install shadows site-packages).
-            from .client import cached_read as cr
+            from .client import cached_read as cr, send_cmd as sc
 
-            _TR = {"read": cr}
+            _TR = {"read": cr, "send": sc}
         except ImportError:
             _TR = False
     return _TR
+
+
+# ─── W2: in-process local-hit cache ─────────────────────────────────────────
+# A warm hit used to cost a UDS round trip (~1.6 ms p50) — ~79x the open() it
+# replaces. The entry lives in THIS process, keyed on the same identity the
+# daemon uses (realpath, mtime_ns, size, ino): any change to the file changes
+# the key, so a stale entry cannot be served. The stat IS the gate.
+#
+# Materialised temp files are KEPT per entry, not unlinked per call: the write
+# half of materialisation was 0.147 ms of every hit. Reopening a kept file is
+# the remaining cost. Callers already received a temp path as ``.name``, so
+# nothing observable changes; entries are unlinked on evict and at exit, and a
+# hard kill can leave at most 128 files (mkstemp 0600) behind.
+#
+# Accounting: a local hit is a real serve the daemon never sees. Entries are
+# queued and flushed in batches (32 hits or 2 s) plus atexit — batched rather
+# than per-hit so the fast path stays fast, and flushed at all so a faster
+# cache cannot make the savings counters smaller. A daemon that does not know
+# the command drops the batch; accounting never breaks a read.
+_LOCAL_MAX_ENTRIES = 128
+_LOCAL_MAX_BYTES = 32 * 1024 * 1024
+_LOCAL_FLUSH_AT = 32
+_LOCAL_FLUSH_DELAY_S = 2.0
+_LOCAL_TMP_PREFIX = ".toolrecall-localhit-"
+
+_local_lock = threading.RLock()
+_local_entries: "OrderedDict[tuple, dict]" = OrderedDict()
+_local_nbytes = 0
+_local_pending: list = []
+_local_timer = None
+_local_exit_hooked = False
+_local_agent_id = None
+_local_agent_id_done = False
+# Capability flag: set False if the daemon does not know ``local_hits``.
+# Continuing on the fast path would make the hit counters silently skip every
+# local hit, so an old daemon downgrades this process to the IPC path instead.
+_local_supported = True
+
+
+def _local_enabled() -> bool:
+    if not _local_supported:
+        return False
+    raw = (os.environ.get("TOOLRECALL_SHIM_LOCAL") or "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _local_key(path_str: str):
+    """(identity key, stat) for a path — the invalidation gate."""
+    st = os.stat(path_str)
+    return (os.path.realpath(path_str), st.st_mtime_ns, st.st_size, st.st_ino), st
+
+
+def _local_lookup(path_str: str):
+    if not _local_enabled():
+        return None
+    try:
+        key, _st = _local_key(path_str)
+    except OSError:
+        return None
+    with _local_lock:
+        entry = _local_entries.get(key)
+        if entry is None:
+            return None
+        _local_entries.move_to_end(key)
+    return entry
+
+
+def _local_materialise(content: str):
+    """Write ``content`` to a kept temp file (utf-8, newline='' preserved)."""
+    import tempfile
+
+    fd = None
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=_LOCAL_TMP_PREFIX, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+        fd = None
+        return tmp
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return None
+
+
+def _local_unlink(entry) -> None:
+    if not isinstance(entry, dict):
+        return
+    for field in ("tmp", "stub_tmp"):
+        tmp = entry.get(field)
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _local_exit() -> None:
+    try:
+        _local_flush_pending()
+    except Exception:
+        pass
+    try:
+        local_cache_reset()
+    except Exception:
+        pass
+
+
+def _local_hook_exit() -> None:
+    global _local_exit_hooked
+    if _local_exit_hooked:
+        return
+    _local_exit_hooked = True
+    try:
+        import atexit
+
+        atexit.register(_local_exit)
+    except Exception:
+        pass
+
+
+def local_cache_reset() -> None:
+    """Drop every in-process entry and queued counter (tests, reset paths)."""
+    global _local_nbytes, _local_timer
+    with _local_lock:
+        timer, _local_timer = _local_timer, None
+    if timer is not None:
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+    with _local_lock:
+        entries = list(_local_entries.values())
+        _local_entries.clear()
+        _local_nbytes = 0
+        _local_pending.clear()
+    for entry in entries:
+        _local_unlink(entry)
+
+
+def _local_agent():
+    """Agent identity for per-agent attribution, resolved once per process."""
+    global _local_agent_id, _local_agent_id_done
+    if _local_agent_id_done:
+        return _local_agent_id
+    _local_agent_id_done = True
+    try:
+        from .client import _resolve_agent_id
+
+        _local_agent_id = _resolve_agent_id(None)
+    except Exception:
+        _local_agent_id = None
+    return _local_agent_id
+
+
+def _local_store(path_str: str, content: str, lossless: bool, source: str, st=None):
+    """Insert/refresh the entry for ``path_str``. Returns the entry or None."""
+    global _local_nbytes
+    if not _local_enabled() or not isinstance(content, str):
+        return None
+    try:
+        if st is None:
+            key, st = _local_key(path_str)
+        else:
+            key = (os.path.realpath(path_str), st.st_mtime_ns, st.st_size, st.st_ino)
+    except OSError:
+        return None
+    tmp = _local_materialise(content)
+    if tmp is None:
+        return None
+    entry = {
+        "tmp": tmp,
+        "stub_tmp": None,
+        "content": content,
+        "lossless": bool(lossless),
+        "tokens": max(1, len(content) // 3),
+        "source": source or "",
+        "bytes": len(content.encode("utf-8", "ignore")),
+    }
+    old = None
+    evicted = []
+    with _local_lock:
+        old = _local_entries.pop(key, None)
+        if old is not None:
+            _local_nbytes -= old.get("bytes", 0)
+        _local_entries[key] = entry
+        _local_nbytes += entry["bytes"]
+        while _local_entries and (
+            len(_local_entries) > _LOCAL_MAX_ENTRIES or _local_nbytes > _LOCAL_MAX_BYTES
+        ):
+            _, victim = _local_entries.popitem(last=False)
+            _local_nbytes -= victim.get("bytes", 0)
+            evicted.append(victim)
+    if old is not None:
+        _local_unlink(old)
+    for victim in evicted:
+        _local_unlink(victim)
+    _local_hook_exit()
+    return entry
+
+
+def _local_count(path_str: str, tokens: int, source: str) -> None:
+    """Queue one served local hit; flush in batches so counters stay honest."""
+    global _local_timer
+    if not _local_enabled():
+        return
+    agent_id = _local_agent()
+    batch = None
+    with _local_lock:
+        _local_pending.append(
+            {
+                "path": path_str,
+                "tokens": int(tokens),
+                "source": source or "",
+                "client": "",
+                "agent_id": agent_id,
+            }
+        )
+        if len(_local_pending) >= _LOCAL_FLUSH_AT:
+            batch = list(_local_pending)
+            _local_pending.clear()
+        elif _local_timer is None:
+            try:
+                timer = threading.Timer(_LOCAL_FLUSH_DELAY_S, _local_flush_pending)
+                timer.daemon = True
+                _local_timer = timer
+                timer.start()
+            except Exception:
+                _local_timer = None
+    if batch:
+        _local_flush(batch)
+
+
+def _local_flush_pending() -> None:
+    global _local_timer
+    with _local_lock:
+        _local_timer = None
+        if not _local_pending:
+            return
+        batch = list(_local_pending)
+        _local_pending.clear()
+    _local_flush(batch)
+
+
+def _local_flush(batch) -> None:
+    """Send a counter batch. Best-effort: never raises, never retries."""
+    tr = _TR
+    send = tr.get("send") if isinstance(tr, dict) else None
+    if send is None:
+        tr = _get_tr()
+        send = tr.get("send") if isinstance(tr, dict) else None
+    if send is None:
+        return
+    try:
+        resp = send({"cmd": "local_hits", "entries": batch})
+    except Exception:
+        return
+    if isinstance(resp, dict):
+        err = resp.get("error")
+        if err and "unknown command" in str(err).lower():
+            _local_disable_unsupported()
+
+
+def _local_disable_unsupported() -> None:
+    """Daemon predates ``local_hits``: revert this process to the IPC path.
+
+    Reads stay correct either way, but staying on the fast path would make the
+    counters skip every local hit — slower and honest beats fast and blind.
+    Happens once per process (the flag is sticky).
+    """
+    global _local_supported
+    _local_supported = False
+    try:
+        local_cache_reset()
+    except Exception:
+        pass
+
+
+def _serve_local(entry, path_str: str, mode, mode_kind: str, args, kwargs):
+    """Serve ``entry`` like ``open()`` would. None = fall through."""
+    content = entry.get("content") or ""
+    if mode_kind == "binary":
+        if not entry.get("lossless"):
+            return None
+        serve_mode = "rb"
+        kwargs = {k: v for k, v in kwargs.items() if k not in ("encoding", "errors", "newline")}
+    else:
+        serve_mode = mode
+        enc = kwargs.get("encoding")
+        # The kept file is written utf-8; any other requested encoding must go
+        # through the per-call materialiser so the bytes still decode.
+        if enc is not None and str(enc).lower().replace("_", "-") not in ("utf-8", "utf8"):
+            return None
+    if _stub_maybe is not None and entry.get("source") == "agent_tool":
+        try:
+            note = _stub_maybe(
+                path_str,
+                content,
+                is_agent=_process_is_agent(),
+                lossless=bool(entry.get("lossless")),
+            )
+        except Exception:
+            note = None
+        if note is not None:
+            stub_tmp = entry.get("stub_tmp")
+            if not stub_tmp:
+                stub_tmp = _local_materialise(note)  # bytes must stay str
+                entry["stub_tmp"] = stub_tmp
+            if stub_tmp:
+                # Open BEFORE counting: the flush can downgrade the cache for
+                # an old daemon, which unlinks the kept temp files — a handle
+                # already open survives that (POSIX), a path lookup does not.
+                handle = _original_open(stub_tmp, serve_mode, *args, **kwargs)
+                _local_count(path_str, entry.get("tokens", 0), entry.get("source", ""))
+                return handle
+    handle = _original_open(entry["tmp"], serve_mode, *args, **kwargs)
+    _local_count(path_str, entry.get("tokens", 0), entry.get("source", ""))
+    return handle
 
 
 # ─── CONTEXT-tier source tagging (shim reads as agent_tool) ───
@@ -533,6 +860,10 @@ def _shim_open(path, mode="r", *args, **kwargs):
         return _original_open(path, mode, *args, **kwargs)
 
     path_str = os.fspath(path)
+    if isinstance(path_str, bytes):
+        # Normalize once: the cache key, the source tag and the counter batch
+        # all compare paths as str.
+        path_str = os.fsdecode(path_str)
 
     # Re-entrancy guard: if we're already inside a shim call, fall
     # through to the real open() immediately to prevent infinite recursion.
@@ -557,6 +888,13 @@ def _shim_open(path, mode="r", *args, **kwargs):
         if tr and mode_kind == "binary" and not path_str.lower().endswith(tuple(_TEXT_SUFFIXES)):
             mode_kind = None  # unknown/binary suffix → real open, untracked
         if tr and mode_kind:
+            # W2 fast path: a warm in-process entry answers the read with one
+            # stat + one open of the kept temp file. No client call at all.
+            entry = _local_lookup(path_str)
+            if entry is not None:
+                handle = _serve_local(entry, path_str, mode, mode_kind, args, kwargs)
+                if handle is not None:
+                    return handle
             try:
                 # Source tagging: a shim hit in an agent process IS the
                 # agent's file-read path — tag it agent_tool so the CONTEXT
@@ -565,7 +903,8 @@ def _shim_open(path, mode="r", *args, **kwargs):
                 # BEFORE the call (source is a cached_read argument, and
                 # the call itself records the hit): it uses path shape + one
                 # os.stat, never the content. stats stay exactly-once.
-                result = tr["read"](path_str, source=_tag_source_for(path_str))
+                source = _tag_source_for(path_str)
+                result = tr["read"](path_str, source=source)
                 # Only serve from shim if it was a cache HIT.
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly
@@ -580,6 +919,21 @@ def _shim_open(path, mode="r", *args, **kwargs):
                     and (mode_kind == "text" or result.get("lossless", False))
                 ):
                     content = result["content"]
+                    # Keep the bytes locally so the NEXT read is answered
+                    # in-process. This is the only place entries are born:
+                    # a daemon cache hit. (A miss falls through to a real
+                    # open and must not populate the shim: the daemon owns
+                    # that accounting, exactly once.)
+                    entry = _local_store(
+                        path_str,
+                        content,
+                        bool(result.get("lossless", mode_kind == "text")),
+                        result.get("source") or source,
+                    )
+                    if entry is not None:
+                        handle = _serve_local(entry, path_str, mode, mode_kind, args, kwargs)
+                        if handle is not None:
+                            return handle
                     # ── Unchanged-file stub (Lever 1): second+ agent read of
                     # an unchanged file within TTL -> one-line note instead
                     # of full content. Wire-verified not-sent, counted in

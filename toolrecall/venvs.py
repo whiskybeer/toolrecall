@@ -213,6 +213,44 @@ def discover_python_venvs() -> List[Venv]:
     return out
 
 
+def _probe_env() -> dict:
+    """Env for probe subprocesses, stripped of pytest-only markers.
+
+    ``PYTEST_CURRENT_TEST`` is inherited by children; ``shim.apply()`` treats
+    it as "running under pytest" and refuses to patch, which made every
+    real-venv test read as "shim not applied" (2026-11-07). A probe must
+    answer for a normal interpreter, not for the test harness.
+    """
+    env = dict(os.environ)
+    for key in ("PYTEST_CURRENT_TEST", "PYTEST_ADDOPTS"):
+        env.pop(key, None)
+    return env
+
+
+def _shim_applied(python: str) -> bool:
+    """True when a fresh interpreter has the shim ACTUALLY hooked into open().
+
+    ``_importable`` only proves the module exists; a .pth that runs before the
+    package is on sys.path imports fine in a later probe yet never applies the
+    hook at startup (the 2026-11-07 zz_-ordering bug: probe said pass, every
+    real process printed "Error processing line 1" and ran unshimmed). Only
+    checking ``builtins.open`` catches that class of false "verified".
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="tr-probe-") as td:
+            r = subprocess.run(
+                [python, "-c", "import builtins;print(getattr(builtins.open,'__name__',''))"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                cwd=td,
+                env=_probe_env(),
+            )
+        return r.returncode == 0 and "_shim_open" in r.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _importable(python: str, mod: str) -> bool:
     """Probe whether ``mod`` imports cleanly from a neutral cwd."""
     try:
@@ -223,6 +261,7 @@ def _importable(python: str, mod: str) -> bool:
                 text=True,
                 timeout=20,
                 cwd=td,
+                env=_probe_env(),
             )
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -246,7 +285,12 @@ _SHIM_MANIFEST_FILES = (
 #: Overlay .pth name — the file ``scripts/repo_overlay.py`` writes for the pipx
 #: venv. A bare source-tree path on a .pth line makes that env import the live
 #: tree, so a converged venv cannot drift again.
-_OVERLAY_PTH = "zz_toolrecall_repo.pth"
+#: Must sort BEFORE ``tr_shim.pth`` so the package is importable when the shim
+#: line runs at interpreter startup. ``zz_`` sorted last, so every fresh venv
+#: printed "Error processing line 1 of tr_shim.pth: No module named
+#: 'toolrecall'" and silently ran unshimmed (found 2026-11-07).
+_OVERLAY_PTH = "00_toolrecall_repo.pth"
+_LEGACY_OVERLAY_PTH = "zz_toolrecall_repo.pth"
 
 
 def _manifest_of(pkg_dir: str) -> Optional[str]:
@@ -357,6 +401,11 @@ def _overlay_into(venv: Venv, source_root: str) -> bool:
         stale = os.path.join(venv.site_packages, "toolrecall")
         if os.path.isdir(stale):
             shutil.rmtree(stale)
+        # Retire the legacy zz_-named pth: it sorted after tr_shim.pth, so the
+        # shim ran before the repo path existed and always failed to import.
+        legacy = os.path.join(venv.site_packages, _LEGACY_OVERLAY_PTH)
+        if os.path.exists(legacy):
+            os.remove(legacy)
         with open(os.path.join(venv.site_packages, _OVERLAY_PTH), "w") as fh:
             fh.write(source_root + "\n")
         return True
@@ -442,6 +491,31 @@ def _pth_source() -> str:
     return os.path.join(os.path.dirname(__file__), "tr_shim.pth")
 
 
+def _migrate_overlay_pth(venv: Venv) -> None:
+    """Rewrite a legacy ``zz_`` repo overlay to the startup-safe name.
+
+    A leftover zz_ file makes the fingerprint probe (which imports toolrecall
+    later in startup) see "in sync" while the real interpreter still fails at
+    ``tr_shim.pth`` — so drift detection must not be the only trigger for the
+    rename.
+    """
+    legacy = os.path.join(venv.site_packages, _LEGACY_OVERLAY_PTH)
+    if not os.path.isfile(legacy):
+        return
+    try:
+        with open(legacy) as fh:
+            target = fh.read().strip()
+    except OSError:
+        return
+    try:
+        if target:
+            with open(os.path.join(venv.site_packages, _OVERLAY_PTH), "w") as fh:
+                fh.write(target + "\n")
+        os.remove(legacy)
+    except OSError:
+        pass
+
+
 def ensure_shim(venv: Venv) -> bool:
     """Install the shim into ``venv`` idempotently and verify by probe + manifest.
 
@@ -462,6 +536,7 @@ def ensure_shim(venv: Venv) -> bool:
     a venv that is still behind reports a failure instead of a false "verified".
     """
     os.makedirs(venv.site_packages, exist_ok=True)
+    _migrate_overlay_pth(venv)
     # Step 1: content identity, not version identity.
     running = _running_manifest()
     target = _venv_manifest(venv.python)
@@ -482,6 +557,8 @@ def ensure_shim(venv: Venv) -> bool:
         return False
     # Step 3: probe + fingerprint check
     if not _importable(venv.python, "toolrecall.shim"):
+        return False
+    if not _shim_applied(venv.python):
         return False
     if running is None or target in (None, running):
         return True
@@ -506,6 +583,7 @@ def shim_status(venv: Venv) -> dict:
         "package_importable": _importable(venv.python, "toolrecall"),
         "pth_present": os.path.isfile(pth),
         "probe_ok": _importable(venv.python, "toolrecall.shim"),
+        "applied": _shim_applied(venv.python),
         "version_source": _running_version(),
         "version_venv": _installed_version(venv.python),
         "manifest_source": source_manifest,
@@ -520,7 +598,7 @@ def uninstall_shim(venv: Venv) -> bool:
     Leaves the package installed; only the auto-import hooks go.
     """
     try:
-        for name in ("tr_shim.pth", _OVERLAY_PTH):
+        for name in ("tr_shim.pth", _OVERLAY_PTH, _LEGACY_OVERLAY_PTH):
             pth = os.path.join(venv.site_packages, name)
             if os.path.exists(pth):
                 os.remove(pth)

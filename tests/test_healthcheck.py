@@ -7,7 +7,7 @@ render logic with tiny shims of the real path helpers.
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import sys
 
@@ -150,6 +150,45 @@ class TestRunExit(unittest.TestCase):
     @patch.object(hc, "gather", return_value=_mk_health(procs=0, pid_alive=False))
     def test_daemon_down_exits_one(self, _g):
         self.assertEqual(hc.run(), 1)
+
+
+class TestCountDaemonProcs(unittest.TestCase):
+    """Bench daemons (own TOOLRECALL_TRANSPORT) are not prod duplicates."""
+
+    def _run_pgrep(self, stdout):
+        return Mock(stdout=stdout, returncode=0)
+
+    @patch.object(hc, "_default_socket_path", return_value="/run/user/1004/toolrecall.sock")
+    @patch.object(hc.subprocess, "run")
+    @patch.object(hc, "_proc_transport")
+    def test_isolated_bench_instance_not_counted(self, _tr, _run, _sock):
+        _run.return_value = self._run_pgrep(
+            "1195 /x/toolrecall daemon --foreground\n6704 python3 -m toolrecall daemon\n"
+        )
+        _tr.side_effect = lambda pid: "" if pid == 1195 else "/tmp/trvab.4gklbr/sock"
+        self.assertEqual(hc.count_daemon_procs(), 1)
+
+    @patch.object(hc, "_default_socket_path", return_value="/run/user/1004/toolrecall.sock")
+    @patch.object(hc.subprocess, "run")
+    @patch.object(hc, "_proc_transport")
+    def test_same_transport_is_a_real_duplicate(self, _tr, _run, _sock):
+        _run.return_value = self._run_pgrep(
+            "1195 /x/toolrecall daemon --foreground\n6704 /y/toolrecall daemon --foreground\n"
+        )
+        _tr.return_value = ""
+        self.assertEqual(hc.count_daemon_procs(), 2)
+
+    @patch.object(hc, "_default_socket_path", return_value="/run/user/1004/toolrecall.sock")
+    @patch.object(hc.subprocess, "run")
+    @patch.object(hc, "_proc_transport")
+    def test_unreadable_environ_counts_as_ours(self, _tr, _run, _sock):
+        _run.return_value = self._run_pgrep("1195 /x/toolrecall daemon --foreground\n")
+        _tr.return_value = None
+        self.assertEqual(hc.count_daemon_procs(), 1)
+
+    @patch.object(hc.subprocess, "run", side_effect=FileNotFoundError)
+    def test_pgrep_missing_returns_unknown(self, _run):
+        self.assertEqual(hc.count_daemon_procs(), -1)
 
 
 if __name__ == "__main__":

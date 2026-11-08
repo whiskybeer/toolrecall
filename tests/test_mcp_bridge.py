@@ -1001,5 +1001,47 @@ class TestMcpGateway(unittest.TestCase):
         self.assertIn('"tool": "now"', text)
 
 
+class TestBridgeStubSwitch(unittest.TestCase):
+    """TOOLRECALL_BRIDGE_STUB=0 is the stuboff arm: it must not stub anything.
+
+    The W1 A/B sends byte-identical conversations except the tool-result
+    rendering, so the switch has to gate presentation only — same bridge, same
+    daemon calls, no stubs.
+    """
+
+    def _bridge(self, value=None):
+        old = os.environ.get("TOOLRECALL_BRIDGE_STUB")
+        if value is None:
+            os.environ.pop("TOOLRECALL_BRIDGE_STUB", None)
+        else:
+            os.environ["TOOLRECALL_BRIDGE_STUB"] = value
+        try:
+            b = MCPBridge("/nonexistent-test.sock", emit_context_hints=False)
+        finally:
+            if old is None:
+                os.environ.pop("TOOLRECALL_BRIDGE_STUB", None)
+            else:
+                os.environ["TOOLRECALL_BRIDGE_STUB"] = old
+        return b
+
+    @staticmethod
+    def _resp():
+        return {"result": {"path": "/x/y.py", "content": "L1\nL2\nL3\n", "cached": True}}
+
+    def test_stuboff_always_returns_full_content(self):
+        bridge = self._bridge("0")
+        first = bridge._present_read({"path": "/x/y.py"}, self._resp())
+        second = bridge._present_read({"path": "/x/y.py"}, self._resp())
+        for out in (first, second):
+            self.assertNotIn("unchanged", out["result"])
+            self.assertEqual(out["result"]["content"], "L1\nL2\nL3\n")
+
+    def test_default_still_stubs_the_repeat(self):
+        bridge = self._bridge(None)
+        bridge._present_read({"path": "/x/y.py"}, self._resp())
+        second = bridge._present_read({"path": "/x/y.py"}, self._resp())
+        self.assertTrue(second["result"].get("unchanged") is True)
+
+
 if __name__ == "__main__":
     unittest.main()

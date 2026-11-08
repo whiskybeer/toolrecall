@@ -154,6 +154,20 @@
   600000 or 1800000 ms per session, and parallel tool results arrive in completion order; both broke
   replay of identical reruns. Measured on SWE-bench Lite django tasks (Sonnet): reruns −58.8% vs
   native Claude Code with the schema fix (n=10 per arm).
+- **Shim overlay `.pth` sorted after the shim and silently disabled it.** The
+  repo overlay was written as `zz_toolrecall_repo.pth`, which `site` processes
+  AFTER `tr_shim.pth`; every startup printed `Error processing line 1 of
+  tr_shim.pth: No module named 'toolrecall'` and ran unshimmed while
+  `shim --status` still said `probe: pass` (the probe imported the package
+  later, once the overlay path existed). Overlay is now `00_toolrecall_repo.pth`,
+  legacy `zz_` files are migrated by `ensure_shim`, and verification checks
+  `builtins.open` actually became `_shim_open` (`applied: yes`) instead of
+  trusting importability. Probe subprocesses also strip `PYTEST_CURRENT_TEST`,
+  which made `shim.apply()` refuse and every real-venv test read as failed.
+- **`healthcheck` counted other instances' daemons as duplicates.** `procs`
+  matched every `toolrecall daemon` process; a bench daemon isolated by its own
+  `TOOLRECALL_TRANSPORT` (separate socket + cache DB) made the prod check claim
+  `2 procs — expected 1`. Processes with a different transport are excluded.
 - **`healthcheck` no longer starts the daemon it is diagnosing.** The
   `stats` helper subprocess inherited an autostart-enabled environment, so a
   check against a stopped daemon spawned one, which rewrote `daemon.pid` and

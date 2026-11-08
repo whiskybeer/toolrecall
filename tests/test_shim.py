@@ -557,5 +557,404 @@ class TestApplyRemove(unittest.TestCase):
             shim_mod.remove()
 
 
+class TestShimLocalHitFastPath(unittest.TestCase):
+    """W2 T2 (RED gate): a warm in-process entry must serve without IPC.
+
+    The shim currently pays a daemon round trip on EVERY cache hit (~2.46 ms,
+    bench/tr_shim_latency.py). W2 adds an in-process LRU + stat gate in
+    ``_shim_open`` and targets p50 <= 0.2 ms. The only way that is sound is if
+    a warm hit never talks to the client — so this test breaks the client on
+    purpose and demands the read still succeed.
+
+    The disk body DIFFERS from the cached body deliberately: a shim that
+    silently falls through to the real ``open()`` would return the disk body
+    and fail loudly here, instead of passing because both copies happen to
+    match. (A false green here would ship a "fast path" that is just the
+    slow path with the cache disabled.)
+    """
+
+    CACHED = "CACHED = 'served from the in-process entry'\n" * 40
+    ON_DISK = "DISK = 'the real file on disk'\n" * 40
+    ON_DISK_AFTER = "DISK = 'rewritten after the entry was warmed'\n" * 60
+
+    def setUp(self):
+        self._orig_tr = shim_mod._TR
+        self._orig_original_open = shim_mod._original_open
+        self._orig_skip_prefixes = shim_mod._SKIP_PREFIXES
+        self._orig_enabled = shim_mod._ENABLED
+        self._orig_agent = shim_mod._agent_process_cache
+        self._orig_tag_mode = shim_mod._tag_source_mode_cache
+        self._orig_stub = shim_mod._stub_maybe
+
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "fixture.py")
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(self.ON_DISK)
+
+        shim_mod._SKIP_PREFIXES = []  # no config load inside the timed path
+        shim_mod._ENABLED = True
+        shim_mod._agent_process_cache = False  # no stub: content must be served
+        shim_mod._tag_source_mode_cache = "never"
+        shim_mod._stub_maybe = None
+        shim_mod._thread_local.active = False
+        self._reset_local_entry()
+
+    def tearDown(self):
+        shim_mod._TR = self._orig_tr
+        shim_mod._original_open = self._orig_original_open
+        shim_mod._SKIP_PREFIXES = self._orig_skip_prefixes
+        shim_mod._ENABLED = self._orig_enabled
+        shim_mod._agent_process_cache = self._orig_agent
+        shim_mod._tag_source_mode_cache = self._orig_tag_mode
+        shim_mod._stub_maybe = self._orig_stub
+        shim_mod._local_supported = True
+        shim_mod._thread_local.active = False
+        try:
+            os.unlink(self.path)
+            os.rmdir(self.tmp)
+        except OSError:
+            pass
+
+    def _reset_local_entry(self):
+        """Drop any in-process entry if the fast path exists (T3+)."""
+        reset = getattr(shim_mod, "local_cache_reset", None)
+        if reset is not None:
+            reset()
+
+    def _serve_cached(self):
+        def read(p, **kwargs):
+            return {
+                "cached": True,
+                "content": self.CACHED,
+                "lossless": True,
+                "source": "shim",
+            }
+
+        return read
+
+    def _explode(self, p, **kwargs):
+        raise RuntimeError("IPC attempted on a warm local hit")
+
+    def _read(self, mode="rb"):
+        f = shim_mod._shim_open(self.path, mode)
+        try:
+            return f.read()
+        finally:
+            f.close()
+
+    def test_warm_local_hit_serves_without_ipc(self):
+        """Second read of an unchanged file must not reach the client at all."""
+        shim_mod._TR = {"read": self._serve_cached()}
+        self.assertEqual(self._read(), self.CACHED.encode(), "warm-up read failed")
+
+        shim_mod._TR = {"read": self._explode}
+        body = self._read()
+        self.assertEqual(
+            body,
+            self.CACHED.encode(),
+            "warm local hit did not serve from the in-process entry — it "
+            "either called the client (IPC) or fell through to disk",
+        )
+
+    def test_changed_stat_never_serves_the_stale_entry(self):
+        """mtime/size change must invalidate the local entry (correctness)."""
+        shim_mod._TR = {"read": self._serve_cached()}
+        self.assertEqual(self._read(), self.CACHED.encode(), "warm-up read failed")
+
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(self.ON_DISK_AFTER)  # mtime + size both change
+
+        # Cache miss from the daemon's point of view: the only correct answer
+        # is the NEW bytes read from disk, never the warm entry.
+        shim_mod._TR = {"read": lambda p, **kwargs: {"error": "miss"}}
+        self.assertEqual(self._read(), self.ON_DISK_AFTER.encode())
+
+
+class TestShimLocalHitAccounting(unittest.TestCase):
+    """W2 T4: local hits must not make the counters smaller.
+
+    The fast path answers warm reads in-process, so the daemon never sees
+    them. Each served hit is queued and flushed in batches; the batch must
+    carry every hit (32-hit threshold, timer, and atexit fallback), and the
+    daemon-side recorder must move the counters by exactly the batch size.
+    """
+
+    BODY = "PAYLOAD = 'x'\n" * 200
+
+    def setUp(self):
+        self._orig_tr = shim_mod._TR
+        self._orig_skip = shim_mod._SKIP_PREFIXES
+        self._orig_enabled = shim_mod._ENABLED
+        self._orig_agent = shim_mod._agent_process_cache
+        self._orig_tag_mode = shim_mod._tag_source_mode_cache
+        self._orig_stub = shim_mod._stub_maybe
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "fixture.py")
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(self.BODY)
+        shim_mod._SKIP_PREFIXES = []
+        shim_mod._ENABLED = True
+        shim_mod._agent_process_cache = False
+        shim_mod._tag_source_mode_cache = "never"
+        shim_mod._stub_maybe = None
+        shim_mod._thread_local.active = False
+        shim_mod.local_cache_reset()
+        # This file points TOOLRECALL_CACHE_DB at a bare temp file; create the
+        # schema so the counter assertions below measure real writes.
+        from toolrecall import cache as _cache_mod
+
+        _cache_mod._init()
+
+    def tearDown(self):
+        shim_mod.local_cache_reset()
+        shim_mod._TR = self._orig_tr
+        shim_mod._SKIP_PREFIXES = self._orig_skip
+        shim_mod._ENABLED = self._orig_enabled
+        shim_mod._agent_process_cache = self._orig_agent
+        shim_mod._tag_source_mode_cache = self._orig_tag_mode
+        shim_mod._stub_maybe = self._orig_stub
+        shim_mod._local_supported = True
+        shim_mod._thread_local.active = False
+        try:
+            os.unlink(self.path)
+            os.rmdir(self.tmp)
+        except OSError:
+            pass
+
+    def _read(self):
+        f = shim_mod._shim_open(self.path, "rb")
+        try:
+            return f.read()
+        finally:
+            f.close()
+
+    def test_threshold_flush_carries_every_hit(self):
+        sent = []
+
+        def read(p, **kwargs):
+            return {"cached": True, "content": self.BODY, "lossless": True, "source": "shim"}
+
+        shim_mod._TR = {"read": read, "send": sent.append}
+        self.assertEqual(self._read(), self.BODY.encode())  # warms: 1 queued
+        for _ in range(shim_mod._LOCAL_FLUSH_AT - 1):
+            self.assertEqual(self._read(), self.BODY.encode())
+        self.assertEqual(len(sent), 1, "batch must flush at the 32-hit threshold")
+        self.assertEqual(sent[0]["cmd"], "local_hits")
+        entries = sent[0]["entries"]
+        self.assertEqual(len(entries), shim_mod._LOCAL_FLUSH_AT)
+        self.assertTrue(all(e["tokens"] > 0 for e in entries))
+        self.assertTrue(all(e["path"] == self.path for e in entries))
+
+    def test_timer_and_pending_flush_lose_nothing(self):
+        sent = []
+
+        def read(p, **kwargs):
+            return {"cached": True, "content": self.BODY, "lossless": True, "source": "shim"}
+
+        shim_mod._TR = {"read": read, "send": sent.append}
+        self._read()  # 1 queued, timer armed
+        self._read()  # 2 queued
+        shim_mod._local_flush_pending()  # flush-on-exit path
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(len(sent[0]["entries"]), 2)
+
+    def test_daemon_recorder_moves_counters_by_batch_size(self):
+        from toolrecall import cache
+
+        base = cache.get_stats().get("file_cache", {})
+        h0 = base.get("hits", 0)
+        io0 = base.get("io_tokens_saved", 0)
+        ctx0 = base.get("tokens_saved_to_llm", 0)
+
+        n = 5
+        entries = [
+            {"path": f"/tmp/localhit-{i}.py", "tokens": 120, "source": "agent_tool"}
+            for i in range(n)
+        ]
+        self.assertEqual(cache.record_local_hits(entries), n)
+        fc = cache.get_stats()["file_cache"]
+        self.assertEqual(fc.get("hits", 0) - h0, n)
+        self.assertEqual(fc.get("io_tokens_saved", 0) - io0, n * 120)
+        self.assertEqual(fc.get("tokens_saved_to_llm", 0) - ctx0, n * 120)
+
+    def test_bad_entry_is_skipped_not_fatal(self):
+        from toolrecall import cache
+
+        base = cache.get_stats().get("file_cache", {})
+        h0 = base.get("hits", 0)
+        n = cache.record_local_hits(
+            [
+                {"path": "", "tokens": 10},
+                "not-a-dict",
+                {"tokens": 5},
+                {"path": "/tmp/ok.py", "tokens": 7},
+            ]
+        )
+        self.assertEqual(n, 1)
+        fc = cache.get_stats()["file_cache"]
+        self.assertEqual(fc.get("hits", 0) - h0, 1)
+
+
+class TestShimLocalHitSafety(unittest.TestCase):
+    """W2 T5: the fast path must keep every existing safety property."""
+
+    def setUp(self):
+        self._orig_tr = shim_mod._TR
+        self._orig_skip = shim_mod._SKIP_PREFIXES
+        self._orig_enabled = shim_mod._ENABLED
+        self._orig_agent = shim_mod._agent_process_cache
+        self._orig_tag_mode = shim_mod._tag_source_mode_cache
+        self._orig_stub = shim_mod._stub_maybe
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "fixture.py")
+        self.body = "A = 1\n" * 100
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(self.body)
+        shim_mod._SKIP_PREFIXES = []
+        shim_mod._ENABLED = True
+        shim_mod._agent_process_cache = False
+        shim_mod._tag_source_mode_cache = "never"
+        shim_mod._stub_maybe = None
+        shim_mod._thread_local.active = False
+        shim_mod.local_cache_reset()
+
+    def tearDown(self):
+        shim_mod.local_cache_reset()
+        shim_mod._TR = self._orig_tr
+        shim_mod._SKIP_PREFIXES = self._orig_skip
+        shim_mod._ENABLED = self._orig_enabled
+        shim_mod._agent_process_cache = self._orig_agent
+        shim_mod._tag_source_mode_cache = self._orig_tag_mode
+        shim_mod._stub_maybe = self._orig_stub
+        shim_mod._local_supported = True
+        shim_mod._thread_local.active = False
+        try:
+            os.unlink(self.path)
+            os.rmdir(self.tmp)
+        except OSError:
+            pass
+
+    def _read(self):
+        f = shim_mod._shim_open(self.path, "rb")
+        try:
+            return f.read()
+        finally:
+            f.close()
+
+    def _serve(self):
+        return lambda p, **kw: {
+            "cached": True,
+            "content": self.body,
+            "lossless": True,
+            "source": "agent_tool",
+        }
+
+    def test_stub_still_fires_on_a_local_hit(self):
+        """agent_tool + warm entry -> stub note, still without IPC."""
+        calls = {"n": 0}
+
+        def fake_stub(path, content, is_agent=False, lossless=False):
+            calls["n"] += 1
+            return None if calls["n"] == 1 else "STUB: see earlier read\n"
+
+        shim_mod._stub_maybe = fake_stub
+        shim_mod._agent_process_cache = True
+        shim_mod._tag_source_mode_cache = "always"
+        shim_mod._TR = {"read": self._serve()}
+        self.assertEqual(self._read(), self.body.encode())  # full first send
+        shim_mod._TR = {"read": lambda p, **kw: (_ for _ in ()).throw(RuntimeError("IPC"))}
+        self.assertEqual(self._read(), b"STUB: see earlier read\n")
+
+    def test_changed_file_with_dead_daemon_never_serves_stale(self):
+        """IPC gone AND file changed: the entry is invalid, so read from disk."""
+        shim_mod._TR = {"read": self._serve()}
+        self.assertEqual(self._read(), self.body.encode())
+
+        new_body = "B = 2  # rewritten\n" * 120
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(new_body)
+
+        shim_mod._TR = {"read": lambda p, **kw: (_ for _ in ()).throw(RuntimeError("dead"))}
+        self.assertEqual(self._read(), new_body.encode())
+
+    def test_local_disabled_env_still_serves_via_daemon(self):
+        os.environ["TOOLRECALL_SHIM_LOCAL"] = "0"
+        try:
+            reads = []
+
+            def read(p, **kwargs):
+                reads.append(p)
+                return {"cached": True, "content": self.body, "lossless": True, "source": "shim"}
+
+            shim_mod._TR = {"read": read}
+            self.assertEqual(self._read(), self.body.encode())
+            self.assertEqual(self._read(), self.body.encode())
+            self.assertEqual(len(reads), 2, "kill switch must keep the old IPC path")
+        finally:
+            os.environ.pop("TOOLRECALL_SHIM_LOCAL", None)
+
+    def test_unknown_command_reverts_to_ipc(self):
+        """An old daemon must downgrade the process, not blind the counters."""
+        reads = []
+
+        def read(p, **kwargs):
+            reads.append(p)
+            return {"cached": True, "content": self.body, "lossless": True, "source": "shim"}
+
+        shim_mod._TR = {
+            "read": read,
+            "send": lambda payload: {"error": "Unknown command: local_hits"},
+        }
+        for _ in range(shim_mod._LOCAL_FLUSH_AT + 1):
+            self._read()
+        self.assertFalse(
+            shim_mod._local_enabled(),
+            "must downgrade to the IPC path after an unknown-command reply",
+        )
+        before = len(reads)
+        self._read()
+        self.assertEqual(
+            len(reads), before + 1, "reads must go back through the daemon once downgraded"
+        )
+
+    def test_lru_evicts_and_unlinks(self):
+        orig_cap = shim_mod._LOCAL_MAX_ENTRIES
+        shim_mod._LOCAL_MAX_ENTRIES = 2
+
+        def localhit_files():
+            return {
+                n
+                for n in os.listdir(tempfile.gettempdir())
+                if n.startswith(shim_mod._LOCAL_TMP_PREFIX)
+            }
+
+        before = localhit_files()
+        try:
+            for i in range(3):
+                p = os.path.join(self.tmp, f"evict{i}.py")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(f"X = {i}\n")
+                shim_mod._TR = {
+                    "read": lambda q, **kw: {
+                        "cached": True,
+                        "content": "X = 1\n",
+                        "lossless": True,
+                        "source": "shim",
+                    }
+                }
+                fh = shim_mod._shim_open(p, "rb")
+                fh.close()
+            self.assertLessEqual(len(shim_mod._local_entries), 2)
+            # Every surviving entry points at a real temp file; the evicted one
+            # was unlinked, so the third file must not still be on disk.
+            for entry in shim_mod._local_entries.values():
+                self.assertTrue(os.path.exists(entry["tmp"]))
+            live = {os.path.basename(e["tmp"]) for e in shim_mod._local_entries.values()}
+            leftovers = (localhit_files() - before) - live
+            self.assertEqual(leftovers, set(), f"evicted temp files were not unlinked: {leftovers}")
+        finally:
+            shim_mod._LOCAL_MAX_ENTRIES = orig_cap
+
+
 if __name__ == "__main__":
     unittest.main()

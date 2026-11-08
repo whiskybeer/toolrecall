@@ -110,6 +110,7 @@ class TestMacOSLaunchAgent(unittest.TestCase):
             patch("toolrecall.cli.cmd_init"),
             patch.object(cli_mod, "_ensure_daemon", return_value=True),
             patch.object(cli_mod, "_ensure_agent_integration", return_value={}),
+            patch.object(cli_mod, "_confirm_install", return_value=False),
             patch("sys.stdout", new_callable=io.StringIO) as out,
         ):
             cli_mod.cmd_setup()

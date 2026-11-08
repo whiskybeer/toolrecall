@@ -49,6 +49,7 @@ from toolrecall import mcp_catalog
 from toolrecall.keys import content_digest
 from toolrecall.cache import (
     _record as _cache_record,
+    record_local_hits as _cache_record_local_hits,
     record_tool_call,
     work_store as _work_store,
     work_lookup as _work_lookup,
@@ -2186,6 +2187,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_invalidate(request)
             elif cmd == "dedup_tokens":
                 return self._handle_dedup_tokens(request)
+            elif cmd == "local_hits":
+                return self._handle_local_hits(request)
             elif cmd == "work_store":
                 return self._handle_work_store(request)
             elif cmd == "work_lookup":
@@ -2605,6 +2608,28 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 tokens_not_sent_measured=tokens,
             )
         return {"ok": True, "counted": tokens}
+
+    def _handle_local_hits(self, req: dict) -> dict:
+        """Count shim LOCAL-hit serves in one batch (W2 T4).
+
+        The fast path answers warm reads in-process, so the daemon never sees
+        those hits. The shim flushes a batch of entries every 32 hits / 2 s
+        and at exit; this handler records them through the SAME file_cache
+        accounting a remote hit would use, so a faster cache cannot make the
+        numbers smaller.
+
+        Unknown-batch tolerance: entries are validated in
+        ``cache.record_local_hits``, and a bad entry is skipped rather than
+        failing the batch — this is accounting, not a tool call.
+        """
+        entries = req.get("entries") or []
+        if not isinstance(entries, list):
+            return {"error": "local_hits: 'entries' must be a list"}
+        try:
+            counted = _cache_record_local_hits(entries)
+        except Exception as e:  # pragma: no cover - defensive
+            return {"error": f"local_hits failed: {e}"}
+        return {"ok": True, "counted": counted}
 
     def _handle_work_store(self, req: dict) -> dict:
         """Record one PAID evaluation of a work unit (identity: keys.work_key).

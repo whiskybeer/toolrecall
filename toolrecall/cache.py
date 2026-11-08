@@ -708,14 +708,22 @@ def _record(
                 conn.execute(
                     """
                     INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, io_tokens_saved, tokens_saved_to_llm, updated_at)
-                    VALUES (?, 1, 0, 0, 0, 0, ?)
+                    VALUES (?, 1, 0, 0, ?, ?, ?)
                     ON CONFLICT(category) DO UPDATE SET
                         hits = hits + 1,
                         io_tokens_saved = io_tokens_saved + ?,
                         tokens_saved_to_llm = tokens_saved_to_llm + ?,
                         updated_at = ?
                 """,
-                    (category, time.time(), io_tokens_saved, context_tokens, time.time()),
+                    (
+                        category,
+                        io_tokens_saved,
+                        context_tokens,
+                        time.time(),
+                        io_tokens_saved,
+                        context_tokens,
+                        time.time(),
+                    ),
                 )
             else:
                 conn.execute(
@@ -2980,6 +2988,60 @@ def work_lookup(key: Any) -> dict | None:
         "attempts": row["attempts"],
         "age_s": max(0.0, time.time() - (row["created_at"] or 0.0)),
     }
+
+
+def record_local_hits(entries) -> int:
+    """Record a batch of shim LOCAL-hit serves (W2 T4).
+
+    A local hit is a real cache serve that never reached the daemon — the
+    whole point of the in-process fast path. Without this the hit counters
+    would lose exactly the reads the fast path optimised: the savings story
+    would silently shrink as the cache got faster, which is the "stats must
+    not go blind" failure the design rejected.
+
+    Deliberately mirrors the ``file_cache`` hit path one-for-one: same
+    category, same io_tokens_saved, context_tokens only for agent_tool
+    reads, same per-file hit bump. The shim cannot call ``_record`` itself
+    (that would be one IPC per read and defeat the fast path), so it queues
+    entries and flushes them in batches.
+
+    Best-effort by contract: a malformed entry is skipped, never raised —
+    accounting must not be able to break a file read.
+    """
+    if not isinstance(entries, (list, tuple)):
+        return 0
+    counted = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        path = str(entry.get("path") or "")
+        if not path:
+            continue
+        try:
+            tokens = int(entry.get("tokens") or 0)
+        except (TypeError, ValueError):
+            tokens = 0
+        source = str(entry.get("source") or "")
+        try:
+            _record(
+                "file_cache",
+                hit=True,
+                path=path,
+                io_tokens_saved=tokens,
+                context_tokens=tokens if source == "agent_tool" else 0,
+                client=str(entry.get("client") or ""),
+                agent_id=entry.get("agent_id"),
+            )
+        except Exception:
+            # A counter must never fail a read; keep draining the batch so one
+            # bad path cannot strand the rest.
+            continue
+        try:
+            _bump_file_hits(_hash(path))
+        except Exception:
+            pass
+        counted += 1
+    return counted
 
 
 def get_stats() -> dict:
