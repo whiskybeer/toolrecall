@@ -54,6 +54,7 @@ from toolrecall.cache import (
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_serve as _cache_mcp_serve,
     cached_mcp_store as _cache_mcp_store,
+    _heal_poisoned_mcp_row as _heal_poisoned_mcp_row,
     revalidate_mcp_entry as _revalidate_mcp_entry,
     cached_browser_check as _cache_browser_check,
     cached_browser_store as _cache_browser_store,
@@ -2447,15 +2448,51 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         result = self.multiplexer.call(server, tool, arguments)
 
         # Store in cache (only when transparent cache is enabled)
-        if cache_enabled:
+        # EXCEPT: never cache errors. A failed tool call is not an answer —
+        # caching it would pin a transient failure (network blip, crashed
+        # subprocess, permission error) for the whole TTL and *replay* it to
+        # every identical call, converting a retryable miss into a dead key.
+        # Found live 2026-09-22: a daemon-env fetch failure was stored and
+        # then served from cache on the second call. Poisoned rows from
+        # before this fix are healed below (delete + re-stamp stats).
+        if cache_enabled and not self._mcp_result_is_error(result):
             import json as _json
 
             result_json = _json.dumps(result)
             _cache_mcp_store(
                 cached.get("key", f"{server}:{tool}"), server, tool, arguments, result_json, ttl=ttl
             )
+        elif cache_enabled:
+            # The poisoned row (if any) must not survive its TTL as "truth".
+            # StaleWhileRevalidate would keep serving it otherwise.
+            _heal_poisoned_mcp_row(cached.get("key", f"{server}:{tool}"))
 
         return {"result": result, "cached": False}
+
+    @staticmethod
+    def _mcp_result_is_error(result: object) -> bool:
+        """True when a multiplexer result is an error, not an answer.
+
+        Two shapes arrive at this boundary:
+          * the multiplexer's own failure dict {"error": ...}
+          * a tool's JSON-encoded {"error": ...} payload (stdlib servers
+            return results as JSON strings)
+        Deliberately narrow: a result that merely MENTIONS error (a body
+        quoting an error message) is content, not a failure — only a
+        top-level error key counts.
+        """
+        import json as _json
+
+        if isinstance(result, dict) and "error" in result:
+            return True
+        if isinstance(result, str):
+            try:
+                parsed = _json.loads(result)
+            except (ValueError, TypeError):
+                return False
+            if isinstance(parsed, dict) and "error" in parsed:
+                return True
+        return False
 
     def _handle_mcp_list_servers(self, req: dict) -> dict:
         """List available multiplexed MCP servers with their tools."""

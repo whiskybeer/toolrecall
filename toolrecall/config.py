@@ -1034,6 +1034,18 @@ class Config:
         Per-server TTLs in servers_config override this."""
         return self.get("mcp_multiplex", "default_ttl", default=60)
 
+    @staticmethod
+    def _mcp_registry_command(name_lower: str) -> tuple[str, list[str]] | None:
+        """Registry command/args for a server name; built-ins run under the
+        active interpreter (same substitution as the auto-resolve path)."""
+        resolved = _resolve_mcp_server(name_lower)
+        if resolved is None:
+            return None
+        cmd, args, source = resolved
+        if source == "builtin":
+            return sys.executable, list(args)
+        return cmd, list(args)
+
     @property
     def mcp_multiplex_servers_config(self) -> dict:
         """Resolve server configurations from the registry + optional overrides.
@@ -1048,6 +1060,21 @@ class Config:
         # 1. Explicit config.toml servers_config (user overrides)
         raw = self.get("mcp_multiplex", "servers_config", default={})
         result = dict(raw) if isinstance(raw, dict) else {}
+        # A partial override (e.g. only `ttl` or `env`) must NOT erase the
+        # registry's command/args — the auto-resolved command is what makes
+        # the server runnable. Found live 2026-09-22: `fetch = { ttl = 300 }`
+        # produced command="" → "Permission denied: ''" on every fetch call.
+        # Merge: user keys win, registry command/args fill the gaps.
+        for _name, _entry in list(result.items()):
+            if isinstance(_entry, dict) and "command" not in _entry:
+                _pair = self._mcp_registry_command(str(_name).lower())
+                if _pair is not None:
+                    _entry.setdefault("command", _pair[0])
+                    _entry.setdefault("args", _pair[1])
+                else:
+                    # Unknown name without a command can never start.
+                    _entry.setdefault("command", "")
+        result = {k: v for k, v in result.items() if isinstance(v, dict) and v.get("command")}
 
         # 2. Auto-resolve remaining server names from registry
         allow_servers = self.mcp_multiplex_servers

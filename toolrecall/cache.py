@@ -2181,6 +2181,31 @@ def revalidate_mcp_entry(
     return {"action": "failed", "rows": 0}
 
 
+def _heal_poisoned_mcp_row(request_hash: str) -> None:
+    """Delete a cached MCP row that holds an error, not an answer.
+
+    Companion to the daemon's no-errors store rule (2026-09-22): rows
+    written before the fix hold transient failures ("Permission denied",
+    crashed subprocess) and SWR would keep serving them until expiry even
+    after the fix — the next identical call would see the cached error and
+    never retry. Deleting on the first error-path call converts the row
+    back into an honest miss. Best-effort: a failure here must never mask
+    the real result being returned to the caller.
+    """
+    try:
+        with _db() as conn:
+            cur = conn.execute("DELETE FROM mcp_cache WHERE request_hash = ?", (request_hash,))
+            if cur.rowcount:
+                conn.execute(
+                    """UPDATE cache_stats
+                       SET hits = MAX(hits - 1, 0), updated_at = ?
+                       WHERE category = 'mcp_cache' AND hits > 0""",
+                    (time.time(),),
+                )
+    except Exception as e:  # pragma: no cover — heal is best-effort
+        warnings.warn(f"ToolRecall: mcp_cache poison heal failed: {e}")
+
+
 def invalidate_mcp_url(server: str, tool: str, url_substring: str) -> int:
     """Invalidate mcp_cache rows whose stored arguments contain a substring.
 
