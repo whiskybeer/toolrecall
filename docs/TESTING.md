@@ -65,6 +65,7 @@ Each test file covers a distinct module or feature:
 | `tests/test_mcp_config_resolve.py` | `toolrecall/config.py` (auto-resolution) | `mcp_multiplex_servers_config` property with registry resolution, explicit `servers_config` override, unknown server skip, partial override, env var overrides |
 | `tests/test_mcp_fetch.py` | `toolrecall/mcp_fetch.py` | Module imports, TOOLS list, URL validation (valid/invalid schemes, localhost), handler dispatch, `MAX_CONTENT_BYTES` defaults, env var override, negative value handling, registry integration (fetch is builtin) |
 | `tests/test_mcp.py` | `toolrecall/mcp_bridge.py` | MCP JsonRpc protocol (initialize, tools/list, tools/call), error handling, response formatting |
+| `tests/test_mcp_bridge_compaction_epoch.py` | `toolrecall/mcp_bridge.py` (`_sync_epoch`) | Compaction-epoch consumer contract: first epoch recorded (no reset), same epoch no reset, changed epoch resets stub state, missing epoch / non-dict body ignored, `compaction_epoch` stripped before the agent, and stub → epoch change → full content re-served |
 
 ### Security
 

@@ -31,6 +31,7 @@ ToolRecall is **built for Hermes** — the tools `read_file`, `terminal`, `mcp_c
 - Hermes is a stateless agent with limited context budget
 - Repeated file reads and terminal calls inflate prompt size fast
 - Context Tracker provides per-turn hints for which files to drop
+- Compaction signal: Hermes calls `context_compacted` from its compression boundary, so the MCP bridge never serves a dangling `"File unchanged; see earlier read"` stub after a summary. This is the harness-side half of the contract — the daemon/bridge stay agent-agnostic (see [CONTEXT_TRACKER.md](CONTEXT_TRACKER.md))
 
 **Config:**
 ```bash

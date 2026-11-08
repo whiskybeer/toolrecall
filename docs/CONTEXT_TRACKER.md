@@ -62,6 +62,25 @@ sequenceDiagram
 | `context_get_dirty` | List changed files since last checkpoint | `{checkpoint?: int}` | `{dirty: [...], clean: [...], checkpoint: N, _agent_hint: str}` |
 | `context_get_stats` | Full status — current dirty list and checkpoint | `{}` | `{dirty: [...], clean: [...], checkpoint: N, total_files: N}` |
 | `context_reset` | Clear all checkpoints and dirty state | `{}` | `{reset: true, checkpoint: 0}` |
+| `context_compacted` | Tell ToolRecall the harness compacted its transcript (see below) | `{}` | `{compacted: true, compaction_epoch: N}` |
+
+### Compaction Signal — `context_compacted` (a harness-side call)
+
+Compaction is the one context event only the harness knows about, so triggering
+it is the **harness's** job — the core stays agnostic and exposes only the
+contract:
+
+| Who | What |
+|-----|------|
+| **Daemon** | Owns the contract: daemon cmd `context_compacted` (MCP tool `context_compacted`, CLI `toolrecall context compacted`). Bumps `compaction_epoch` and stamps it on every read/terminal response. |
+| **MCP bridge** | Compares the stamped epoch with the one it last saw; on a change it drops its session-scoped file-stub state (`_sync_epoch` → `_stubs.reset_all()`), so the next read re-sends full content instead of a `"File unchanged; see earlier read"` stub. |
+| **Harness** | **Must call `context_compacted` at its own transcript-compaction boundary.** Only the harness knows when it compacted. Without the call the epoch never changes and a post-compaction stub can point at content the summary dropped. Harnesses that never compact (or never re-read the same key) need no call. |
+
+**Hermes** implements this in its compression boundary —
+`agent/conversation_compression.py` `_reset_read_dedup_caches`, beside the resets
+of its own read / skill_view / screenshot dedup generations (Hermes repo, not
+this one). That call is the harness-specific side of the contract; the daemon
+and bridge remain agent-agnostic.
 
 ### Auto-Hint: Context Guidance After Checkpoint Opt-In
 
