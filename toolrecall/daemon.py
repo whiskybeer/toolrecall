@@ -1356,8 +1356,13 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 self.logger.debug("periodic tracker snapshot failed: %s", e)
             try:
                 db_checkpoint(truncate=True)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — never break the loop, but never hide it
+                # Visibility matters more than usual here: the commit path no
+                # longer auto-checkpoints (storage/sqlite.py sets
+                # wal_autocheckpoint=0), so THIS thread is what bounds the WAL.
+                # A silently failing checkpoint would mean unbounded -wal growth
+                # with no signal at all.
+                self.logger.warning("periodic WAL checkpoint failed: %s", e)
 
     def _start_sync_worker(self):
         """Start the storage-sync background thread (backend-agnostic).

@@ -93,6 +93,19 @@ class TestLogScan(unittest.TestCase):
             self.assertEqual(errs, 1)
             self.assertEqual(warns, 1)
 
+    def test_scan_ignores_harness_daemon_lines(self):
+        """[hermetic] test-harness failures are not production health."""
+        with tempfile.TemporaryDirectory() as td:
+            log = os.path.join(td, "toolrecall.log")
+            with open(log, "w") as f:
+                f.write("2026-09-26 17:03:59 ERROR toolrecall.proxy [hermetic] Port 8569 in use\n")
+                f.write("2026-09-26 17:03:59 WARNING toolrecall.proxy [hermetic] noisy\n")
+                f.write("2026-09-26 17:10:09 ERROR toolrecall.proxy Streaming forward failed\n")
+            with patch.dict(os.environ, {"TOOLRECALL_LOG_FILE": log}):
+                _path, errs, warns = hc._scan_recent_log()
+            self.assertEqual(errs, 1, "only the real ERROR should count")
+            self.assertEqual(warns, 0, "harness WARNINGs should not count")
+
     def test_scan_missing_file_is_zero(self):
         with patch.dict(os.environ, {"TOOLRECALL_LOG_FILE": "/nonexistent/x.log"}):
             path, errs, warns = hc._scan_recent_log()

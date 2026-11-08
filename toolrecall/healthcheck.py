@@ -187,6 +187,13 @@ def _scan_recent_log() -> tuple[str, int, int]:
                 f.readline()  # drop partial first line
             for raw_line in f:
                 line = raw_line.decode("utf-8", errors="replace")
+                # Harness daemons (tests) log into the same file with a
+                # "[hermetic]" marker. Counting their failures as production
+                # health flags the live daemon for someone else's test run —
+                # observed 2026-09-26, when 2 of 2 "recent ERRORs" were
+                # [hermetic] port races from a sibling session's test rig.
+                if "[hermetic]" in line:
+                    continue
                 # Anchor on " LEVEL " to avoid matching words inside messages
                 if " ERROR " in line:
                     errors += 1
