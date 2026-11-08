@@ -477,4 +477,3 @@ class TestInvalidate:
         mod.invalidate_langfuse_cache()
         tool("a")  # re-executes after invalidation
         assert calls == ["a", "a"]
-

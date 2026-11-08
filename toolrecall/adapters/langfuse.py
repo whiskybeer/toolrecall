@@ -186,9 +186,7 @@ def _report_verdict(verdict: dict) -> None:
     try:
         from langfuse import get_client
 
-        get_client().update_current_span(
-            metadata=merge_verdict_metadata(None, verdict)
-        )
+        get_client().update_current_span(metadata=merge_verdict_metadata(None, verdict))
     except Exception as e:  # noqa: BLE001 — reporting is strictly best-effort
         logger.debug("Langfuse verdict reporting skipped: %s", e)
 
@@ -330,9 +328,7 @@ def cached_tool(ttl: Optional[int] = None, name: Optional[str] = None):
             if _roundtrip_stable(value):
                 try:
                     data = json.dumps(value, ensure_ascii=False, default=str)
-                    cached_mcp_store(
-                        check["key"], ADAPTER_SERVER, tool_name, cargs, data, ttl=ttl
-                    )
+                    cached_mcp_store(check["key"], ADAPTER_SERVER, tool_name, cargs, data, ttl=ttl)
                 except Exception as e:  # noqa: BLE001 — store must not break the tool
                     logger.warning("Cache store failed (tool unaffected): %s", e)
             _report_verdict(verdict)
@@ -350,4 +346,3 @@ def invalidate_langfuse_cache() -> None:
     """Invalidate all ToolRecall entries cached under the langfuse namespace."""
     invalidate_mcp_server(ADAPTER_SERVER)
     logger.info("Cache CLEAR langfuse — all entries invalidated")
-
