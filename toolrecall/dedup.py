@@ -224,7 +224,9 @@ def dedup_messages(
             return None
         if normalizer is not None:
             last_line = next((ln.strip() for ln in reversed(text.splitlines()) if ln.strip()), "")
-            stub = NORMALIZED_STUB_TEMPLATE.format(chars=len(text), index=first, last_line=last_line[:200])
+            stub = NORMALIZED_STUB_TEMPLATE.format(
+                chars=len(text), index=first, last_line=last_line[:200]
+            )
         else:
             stub = STUB_TEMPLATE.format(chars=len(text), digest=h, index=first)
         if len(stub) >= len(text):

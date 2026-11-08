@@ -59,7 +59,12 @@ def _attachment_parts(a: Dict[str, Any]) -> List[tuple]:
         ]
     if t in _LISTING_TYPES:
         if t == "mcp_instructions_delta":
-            return [(_LISTING_TYPES[t], sum(len(b) for b in a.get("addedBlocks") or [] if isinstance(b, str)))]
+            return [
+                (
+                    _LISTING_TYPES[t],
+                    sum(len(b) for b in a.get("addedBlocks") or [] if isinstance(b, str)),
+                )
+            ]
         if t == "skill_listing":
             return [(_LISTING_TYPES[t], len(a.get("content") or ""))]
         return [(_LISTING_TYPES[t], len(json.dumps(a)))]
@@ -107,8 +112,15 @@ def analyse_session(path: str) -> Optional[Dict[str, Any]]:
                 continue
             seen_msg.add(mid)
             us = m.get("usage") or {}
-            i, cw, cr, o = (int(us.get(k) or 0) for k in (
-                "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
+            i, cw, cr, o = (
+                int(us.get(k) or 0)
+                for k in (
+                    "input_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                    "output_tokens",
+                )
+            )
             calls += 1
             cost += i * W_IN + cw * W_CW + cr * W_CR + o * W_OUT
             out_cost += o * W_OUT
@@ -126,7 +138,9 @@ def analyse_session(path: str) -> Optional[Dict[str, Any]]:
         "output_cost_units": out_cost,
         "baseline_tokens": baseline,
         "baseline_cost_units": baseline * carry,
-        "parts": {k: {"tokens_est": _tok(v), "cost_units": _tok(v) * carry} for k, v in parts.items()},
+        "parts": {
+            k: {"tokens_est": _tok(v), "cost_units": _tok(v) * carry} for k, v in parts.items()
+        },
         "compactions": compactions,
     }
 
@@ -141,7 +155,9 @@ def audit(projects: str, days: Optional[float] = None, include_tmp: bool = False
         files = [f for f in files if os.path.getmtime(f) >= cutoff]
     sessions = [s for s in (analyse_session(f) for f in sorted(files)) if s]
     tot_cost = sum(s["cost_units"] for s in sessions)
-    parts: Dict[str, Dict[str, float]] = defaultdict(lambda: {"cost_units": 0.0, "tokens_est_max": 0, "sessions": 0})
+    parts: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {"cost_units": 0.0, "tokens_est_max": 0, "sessions": 0}
+    )
     for s in sessions:
         for k, v in s["parts"].items():
             p = parts[k]
@@ -154,17 +170,28 @@ def audit(projects: str, days: Optional[float] = None, include_tmp: bool = False
         "sessions": len(sessions),
         "calls": sum(s["calls"] for s in sessions),
         "cost_units": tot_cost,
-        "output_share": (sum(s["output_cost_units"] for s in sessions) / tot_cost) if tot_cost else 0.0,
+        "output_share": (sum(s["output_cost_units"] for s in sessions) / tot_cost)
+        if tot_cost
+        else 0.0,
         "baseline_tokens_median": baselines[len(baselines) // 2] if baselines else 0,
         "baseline_share": (base_cost / tot_cost) if tot_cost else 0.0,
         "compactions": sum(s["compactions"] for s in sessions),
         "parts": sorted(
-            ({"name": k, "share": (v["cost_units"] / tot_cost) if tot_cost else 0.0,
-              "tokens_est_max": v["tokens_est_max"], "sessions": v["sessions"]} for k, v in parts.items()),
+            (
+                {
+                    "name": k,
+                    "share": (v["cost_units"] / tot_cost) if tot_cost else 0.0,
+                    "tokens_est_max": v["tokens_est_max"],
+                    "sessions": v["sessions"],
+                }
+                for k, v in parts.items()
+            ),
             key=lambda x: -x["share"],
         ),
         "per_1k_always_loaded": (
-            sum(1000 * (W_CW + W_CR * (s["calls"] - 1)) for s in sessions) / tot_cost if tot_cost else 0.0
+            sum(1000 * (W_CW + W_CR * (s["calls"] - 1)) for s in sessions) / tot_cost
+            if tot_cost
+            else 0.0
         ),
     }
 
@@ -203,11 +230,19 @@ def format_report(r: Dict[str, Any]) -> str:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(prog="toolrecall audit claude-code",
-                                 description="Where Claude Code session tokens go (read-only).")
-    ap.add_argument("--projects", default=os.path.expanduser(os.path.join("~", ".claude", "projects")))
-    ap.add_argument("--days", type=float, default=None, help="only sessions modified in the last N days")
-    ap.add_argument("--include-tmp", action="store_true", help="include sessions whose workdir is under /tmp")
+    ap = argparse.ArgumentParser(
+        prog="toolrecall audit claude-code",
+        description="Where Claude Code session tokens go (read-only).",
+    )
+    ap.add_argument(
+        "--projects", default=os.path.expanduser(os.path.join("~", ".claude", "projects"))
+    )
+    ap.add_argument(
+        "--days", type=float, default=None, help="only sessions modified in the last N days"
+    )
+    ap.add_argument(
+        "--include-tmp", action="store_true", help="include sessions whose workdir is under /tmp"
+    )
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     r = audit(a.projects, a.days, a.include_tmp)

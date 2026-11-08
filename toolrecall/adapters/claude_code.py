@@ -153,7 +153,7 @@ def _check_daemon_stale() -> List[str]:
 
 def _check_waf_violation(tool_name: str, tool_input: Dict[str, Any]) -> Optional[str]:
     """Check if command/edit violates security policy."""
-    if not (os.environ.get("TOOLRECALL_CC_WAF") in ("1", "true", "enforce")):
+    if os.environ.get("TOOLRECALL_CC_WAF") not in ("1", "true", "enforce"):
         return None
 
     # 1. Path check for sensitive files
@@ -281,8 +281,36 @@ def hooks_config(command: str = "python3 -m toolrecall.adapters.claude_code") ->
     }
 
 
+def ci_env(port: int = 8569) -> str:
+    """Shell snippet for repeated headless runs (CI re-runs, eval/benchmark iteration).
+
+    This is the one measured way ToolRecall saves tokens for Claude Code:
+    forward-proxy replay of a task that runs again on the same commit.
+    """
+    return "\n".join(
+        [
+            "# ToolRecall replay for repeated headless Claude Code runs (source this file).",
+            "# Saves only when the SAME task runs again on the SAME commit with deterministic",
+            "# tool output. A new commit changes the first request (no replay). Do not use",
+            "# for evals that sample the model: a replayed call returns the earlier answer.",
+            f"export ANTHROPIC_BASE_URL=http://127.0.0.1:{port}",
+            'export ANTHROPIC_CUSTOM_HEADERS="X-ToolRecall-Canonicalize: claude-code"',
+            "export PYTHONHASHSEED=0  # stable set/dict order in Python tool output",
+            "# Pin MCP servers: connector tools load asynchronously and change the tool list.",
+            "TR_CLAUDE_FLAGS=(--strict-mcp-config --mcp-config '{\"mcpServers\":{}}')",
+            '# usage: claude -p "<task>" "${TR_CLAUDE_FLAGS[@]}"',
+            "# Why did replay stop? Start the proxy with TOOLRECALL_KEY_TRACE_DIR=<dir>,",
+            "# then run: toolrecall keytrace <dir>",
+        ]
+    )
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["ci-env"]:
+        port = int(argv[2]) if len(argv) > 2 and argv[1] == "--port" else 8569
+        print(ci_env(port))
+        return 0
     if argv[:1] == ["print-config"]:
         cmd = argv[1] if len(argv) > 1 else "python3 -m toolrecall.adapters.claude_code"
         print(json.dumps(hooks_config(cmd), indent=2))

@@ -19,16 +19,33 @@ def _write_session(proj: Path, slug: str, lines: list) -> Path:
 
 
 def _call(uid, mid, i, cw, cr, o):
-    return {"type": "assistant", "uuid": uid, "message": {"id": mid, "usage": {
-        "input_tokens": i, "cache_creation_input_tokens": cw, "cache_read_input_tokens": cr, "output_tokens": o}}}
+    return {
+        "type": "assistant",
+        "uuid": uid,
+        "message": {
+            "id": mid,
+            "usage": {
+                "input_tokens": i,
+                "cache_creation_input_tokens": cw,
+                "cache_read_input_tokens": cr,
+                "output_tokens": o,
+            },
+        },
+    }
 
 
 class TestClaudeCodeAudit(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.proj = Path(self.tmp.name)
-        instr = {"type": "attachment", "uuid": "a1", "attachment": {"type": "instructions", "files": [
-            {"path": "/w/AGENTS.md", "content": "x" * 4000}]}}
+        instr = {
+            "type": "attachment",
+            "uuid": "a1",
+            "attachment": {
+                "type": "instructions",
+                "files": [{"path": "/w/AGENTS.md", "content": "x" * 4000}],
+            },
+        }
         c1 = _call("u1", "m1", 0, 10000, 0, 100)
         c2 = _call("u2", "m2", 0, 0, 10000, 100)
         self.lines = [instr, c1, c2, c2]  # c2 duplicated: transcript resume artifact

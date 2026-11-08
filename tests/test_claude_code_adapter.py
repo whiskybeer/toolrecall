@@ -42,49 +42,59 @@ class TestClaudeCodeAdapter(unittest.TestCase):
         self.assertTrue(state_file.exists())
         state = json.loads(state_file.read_text(encoding="utf-8"))
         self.assertIn(str(self.file1.resolve()), state["reads"])
-        self.assertEqual(state["reads"][str(self.file1.resolve())]["size"], len(self.file1.read_bytes()))
+        self.assertEqual(
+            state["reads"][str(self.file1.resolve())]["size"], len(self.file1.read_bytes())
+        )
 
     def test_no_staleness_when_file_unchanged(self):
         # 1. Read
-        cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Read",
-            "tool_input": {"file_path": str(self.file1)},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(self.file1)},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
         # 2. Bash tool runs (e.g. running tests)
-        res = cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "pytest"},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        res = cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest"},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
         self.assertIsNone(res)
 
     def test_staleness_alert_emitted_when_file_modified(self):
         # 1. Read
-        cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Read",
-            "tool_input": {"file_path": str(self.file1)},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(self.file1)},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
 
         # 2. External modification occurs (e.g. git checkout or build step)
         time.sleep(0.05)
         self.file1.write_text("def run():\n    return 100 # updated\n", encoding="utf-8")
 
         # 3. Next modifying tool finishes
-        res = cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "git status"},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        res = cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git status"},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
         self.assertIsNotNone(res)
         self.assertIn("hookSpecificOutput", res)
         self.assertEqual(res["hookSpecificOutput"]["hookEventName"], "PostToolUse")
@@ -93,42 +103,50 @@ class TestClaudeCodeAdapter(unittest.TestCase):
         self.assertIn(str(self.file1.name), ctx)
 
         # 4. Repeated Bash tool does not repeat the alert for the same modification
-        res2 = cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "git diff"},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        res2 = cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git diff"},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
         self.assertIsNone(res2)
 
         # 5. Agent re-reads the fresh file
-        cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Read",
-            "tool_input": {"file_path": str(self.file1)},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(self.file1)},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
 
         # 6. Subsequent tool execution reports clean
-        res3 = cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "pytest"},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        res3 = cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest"},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
         self.assertIsNone(res3)
 
     def _ev(self, tool, tool_input):
-        return cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": tool,
-            "tool_input": tool_input,
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        return cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": tool,
+                "tool_input": tool_input,
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
 
     def test_agent_own_edits_never_alert(self):
         # Regression: every agent Edit to a previously read file used to raise a
@@ -155,7 +173,9 @@ class TestClaudeCodeAdapter(unittest.TestCase):
         from unittest import mock
 
         self._ev("Read", {"file_path": str(self.file1)})
-        with mock.patch.object(cc, "_check_daemon_stale", return_value=["/elsewhere/other_agent.py"]):
+        with mock.patch.object(
+            cc, "_check_daemon_stale", return_value=["/elsewhere/other_agent.py"]
+        ):
             os.environ.pop("TOOLRECALL_CC_DAEMON_STALE", None)
             self.assertIsNone(self._ev("Bash", {"command": "ls"}))
             os.environ["TOOLRECALL_CC_DAEMON_STALE"] = "1"
@@ -167,21 +187,25 @@ class TestClaudeCodeAdapter(unittest.TestCase):
 
     def test_session_lifecycle_resets_tracking(self):
         # Read file
-        cc.handle({
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Read",
-            "tool_input": {"file_path": str(self.file1)},
-            "session_id": self.sid,
-            "cwd": self.tmpdir.name,
-        })
+        cc.handle(
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(self.file1)},
+                "session_id": self.sid,
+                "cwd": self.tmpdir.name,
+            }
+        )
         state_file = self.hook_dir / f"{self.sid}.json"
         self.assertTrue(state_file.exists())
 
         # PreCompact event resets session
-        cc.handle({
-            "hook_event_name": "PreCompact",
-            "session_id": self.sid,
-        })
+        cc.handle(
+            {
+                "hook_event_name": "PreCompact",
+                "session_id": self.sid,
+            }
+        )
         self.assertFalse(state_file.exists())
 
     def test_waf_blocking_pre_tool_use(self):
@@ -189,35 +213,43 @@ class TestClaudeCodeAdapter(unittest.TestCase):
 
         # 1. Block access to .env
         env_file = Path(self.tmpdir.name) / ".env"
-        res_env = cc.handle({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Read",
-            "tool_input": {"file_path": str(env_file)},
-            "session_id": self.sid,
-        })
+        res_env = cc.handle(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(env_file)},
+                "session_id": self.sid,
+            }
+        )
         self.assertIsNotNone(res_env)
         self.assertEqual(res_env["hookSpecificOutput"]["hookEventName"], "PreToolUse")
         self.assertEqual(res_env["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertIn("sensitive file", res_env["hookSpecificOutput"]["permissionDecisionReason"])
 
         # 2. Block dangerous rm -rf /
-        res_cmd = cc.handle({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "rm -rf /"},
-            "session_id": self.sid,
-        })
+        res_cmd = cc.handle(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "rm -rf /"},
+                "session_id": self.sid,
+            }
+        )
         self.assertIsNotNone(res_cmd)
         self.assertEqual(res_cmd["hookSpecificOutput"]["permissionDecision"], "deny")
-        self.assertIn("dangerous command", res_cmd["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIn(
+            "dangerous command", res_cmd["hookSpecificOutput"]["permissionDecisionReason"]
+        )
 
         # 3. Allow safe command
-        res_safe = cc.handle({
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Bash",
-            "tool_input": {"command": "pytest -q"},
-            "session_id": self.sid,
-        })
+        res_safe = cc.handle(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest -q"},
+                "session_id": self.sid,
+            }
+        )
         self.assertIsNone(res_safe)
 
     def test_print_config(self):

@@ -74,7 +74,9 @@ class TestDedupWithNormalization(unittest.TestCase):
             {"role": "tool", "name": "bash", "content": self.output_turn2},
         ]
         # With normalizer: normalized text matches, so stubbed!
-        out, stats = dedup_messages(msgs, min_chars=800, protect_last=0, normalizer=normalize_output)
+        out, stats = dedup_messages(
+            msgs, min_chars=800, protect_last=0, normalizer=normalize_output
+        )
         self.assertEqual(stats["blocks"], 1)
         self.assertIn("[toolrecall-dedup]", out[3]["content"])
         self.assertIn("message 1", out[3]["content"])
@@ -94,7 +96,9 @@ class TestDedupWithNormalization(unittest.TestCase):
             {"role": "tool", "name": "bash", "content": out2},
         ]
         out, _ = dedup_messages(msgs, min_chars=800, protect_last=0, normalizer=normalize_output)
-        self.assertIn("Last line of this output: === 1 failed, 49 passed in 1.48s ===", out[3]["content"])
+        self.assertIn(
+            "Last line of this output: === 1 failed, 49 passed in 1.48s ===", out[3]["content"]
+        )
 
     def test_anthropic_messages_shape_nested_tool_result(self):
         # Anthropic messages shape with tool_result
@@ -122,7 +126,9 @@ class TestDedupWithNormalization(unittest.TestCase):
                 ],
             },
         ]
-        out, stats = dedup_messages(msgs, min_chars=800, protect_last=0, normalizer=normalize_output)
+        out, stats = dedup_messages(
+            msgs, min_chars=800, protect_last=0, normalizer=normalize_output
+        )
         self.assertEqual(stats["blocks"], 1)
         part = out[3]["content"][0]
         self.assertEqual(part["type"], "tool_result")
@@ -133,6 +139,7 @@ class TestDedupWithNormalization(unittest.TestCase):
 class TestProxyClaudeCodeProfileDedup(unittest.TestCase):
     def test_claude_code_profile_enables_normalization_and_protect_last_zero(self):
         import os
+
         os.environ["TOOLRECALL_FORWARD_DEDUP"] = "true"
         try:
             base_body = (

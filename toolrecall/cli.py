@@ -3396,6 +3396,9 @@ def cmd_hook():
         print("")
         print("Examples:")
         print("  toolrecall hook claude print-config")
+        print(
+            "  toolrecall hook claude ci-env [--port 8569]   # shell env for repeated headless runs"
+        )
         return
     target = args[0]
     if target == "claude":
@@ -3407,6 +3410,13 @@ def cmd_hook():
         sys.exit(1)
 
 
+def cmd_keytrace():
+    """Explain forward-proxy replay misses from a TOOLRECALL_KEY_TRACE_DIR trace."""
+    from toolrecall import keytrace
+
+    sys.exit(keytrace.main(sys.argv[2:]))
+
+
 def cmd_audit():
     """Read-only token audits of agent session transcripts."""
     args = sys.argv[2:]
@@ -3414,7 +3424,9 @@ def cmd_audit():
         print("Usage: toolrecall audit <target> [options]")
         print("")
         print("Targets:")
-        print("  claude-code     Where Claude Code session tokens go (starting context, parts, shares)")
+        print(
+            "  claude-code     Where Claude Code session tokens go (starting context, parts, shares)"
+        )
         print("")
         print("Examples:")
         print("  toolrecall audit claude-code --days 30")
@@ -3478,6 +3490,7 @@ def main():
         print("  agent           Per-agent cache stats: ls, show, prune")
         print("  hook            Agent lifecycle hooks (claude print-config, staleness)")
         print("  audit           Token audit of agent transcripts (claude-code)")
+        print("  keytrace        Explain proxy replay misses (needs TOOLRECALL_KEY_TRACE_DIR)")
         print("  healthcheck     One-shot daemon/cache health (--json, --clean-stale; exit 0/1/2)")
         return
 
@@ -3543,6 +3556,7 @@ def main():
         "agent": cmd_agent,
         "hook": cmd_hook,
         "audit": cmd_audit,
+        "keytrace": cmd_keytrace,
     }
 
     if cmd in commands:
