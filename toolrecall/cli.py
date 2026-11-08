@@ -3407,6 +3407,26 @@ def cmd_hook():
         sys.exit(1)
 
 
+def cmd_audit():
+    """Read-only token audits of agent session transcripts."""
+    args = sys.argv[2:]
+    if not args or args[0] in ("-h", "--help"):
+        print("Usage: toolrecall audit <target> [options]")
+        print("")
+        print("Targets:")
+        print("  claude-code     Where Claude Code session tokens go (starting context, parts, shares)")
+        print("")
+        print("Examples:")
+        print("  toolrecall audit claude-code --days 30")
+        return
+    if args[0] == "claude-code":
+        from toolrecall.adapters import claude_code_audit
+
+        sys.exit(claude_code_audit.main(args[1:]))
+    print(f"Unknown audit target: {args[0]}")
+    sys.exit(1)
+
+
 def main():
     if sys.platform == "win32":
         # Windows consoles default to legacy code pages (cp1252) that cannot
@@ -3457,6 +3477,7 @@ def main():
         print("  turso           Turso Cloud sync: init, status")
         print("  agent           Per-agent cache stats: ls, show, prune")
         print("  hook            Agent lifecycle hooks (claude print-config, staleness)")
+        print("  audit           Token audit of agent transcripts (claude-code)")
         print("  healthcheck     One-shot daemon/cache health (--json, --clean-stale; exit 0/1/2)")
         return
 
@@ -3521,6 +3542,7 @@ def main():
         "proxy": cmd_proxy,
         "agent": cmd_agent,
         "hook": cmd_hook,
+        "audit": cmd_audit,
     }
 
     if cmd in commands:
