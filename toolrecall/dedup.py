@@ -42,7 +42,8 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from toolrecall.keys import digest16
 
@@ -61,6 +62,44 @@ IMAGE_STUB_TEMPLATE = (
     "[toolrecall-dedup] Duplicate image omitted ({nbytes} bytes, sha256:{digest}). "
     "The byte-identical image already appears in message {index} of this request."
 )
+
+_RE_NORM_DURATION = re.compile(r"\b(in|took) \d+(?:\.\d+)?\s?(?:ms|s|sec|seconds)\b")
+_RE_NORM_TEST_SUMMARY_SEC = re.compile(r"(\bpassed(?:,\s*\d+\s*[a-zA-Z]+)* in )\d+(?:\.\d+)?s\b")
+_RE_NORM_TIMESTAMP = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\b"
+)
+_RE_NORM_PYTEST_TEMP = re.compile(
+    r"(?:/tmp|/var/tmp|/var/folders/[^/]+/[^/]+)/pytest-of-[^/\s\"']+/pytest-\d+(?:/[^\s\"']*)?"
+)
+_RE_NORM_PYTEST_NUM = re.compile(r"\bpytest-\d+\b")
+_RE_NORM_MEMADDR = re.compile(r"\b0x[0-9a-fA-F]{6,16}\b")
+_RE_NORM_PID = re.compile(r"\b(?:PID[:\s=]+|process )\d+\b")
+
+
+def normalize_output(text: str) -> str:
+    """Normalize volatile elements in repetitive tool/bash output.
+
+    Used by deduplication to match recurring command and test outputs where
+    minor elapsed durations, timestamps, temporary directory counters, or
+    memory addresses vary between turns without changing the diagnostic content.
+    """
+    if not isinstance(text, str):
+        return text
+    # 1. Durations
+    t = _RE_NORM_DURATION.sub(r"\1 <duration>", text)
+    t = _RE_NORM_TEST_SUMMARY_SEC.sub(r"\1<duration>", t)
+    # 2. Timestamps
+    t = _RE_NORM_TIMESTAMP.sub("<timestamp>", t)
+    # 3. Pytest temp directories
+    t = _RE_NORM_PYTEST_TEMP.sub("<pytest-tempdir>", t)
+    t = _RE_NORM_PYTEST_NUM.sub("<pytest-tempdir>", t)
+    # 4. Memory addresses
+    t = _RE_NORM_MEMADDR.sub("<memaddr>", t)
+    # 5. Process IDs
+    t = _RE_NORM_PID.sub("<pid>", t)
+    # 6. Normalize CRLF and trailing whitespace per line
+    lines = [line.rstrip() for line in t.replace("\r\n", "\n").split("\n")]
+    return "\n".join(lines)
 
 
 def _decode_data_url(url: Any) -> Optional[bytes]:
@@ -97,6 +136,7 @@ def dedup_messages(
     protect_last: int = 2,
     stub_roles: Tuple[str, ...] = DEFAULT_STUB_ROLES,
     media: bool = False,
+    normalizer: Optional[Callable[[str], str]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Return (new_messages, stats). Input objects are never mutated.
 
@@ -163,7 +203,8 @@ def dedup_messages(
         nonlocal blocks, chars_saved
         if not isinstance(text, str) or len(text) < min_chars:
             return None
-        h = _digest(text)
+        key_text = normalizer(text) if normalizer is not None else text
+        h = _digest(key_text)
         first = seen.get(h)
         if first is None:
             seen[h] = msg_index  # register first occurrence (any role)

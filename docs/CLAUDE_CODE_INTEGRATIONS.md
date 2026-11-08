@@ -136,21 +136,18 @@ Instead, all valid integrations operate on three non-destructive layers:
 
 ---
 
-## 4. Benchmark Proposal: Context Staleness & Drift Protection
+## 4. Empirical Benchmark Results
 
-The benchmark evaluates whether **ToolRecall Staleness Alerts** reduce total turns, prevent broken edits, and lower billed token cost when an agent faces out-of-band file mutations.
+Full methodology and raw receipts in [bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md](../bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md).
 
-### Experimental Setup
-* **Target Model:** Claude 3.5 Sonnet / Haiku via Claude Code.
-* **Workload:** Multi-step refactoring task on a real Python project (e.g. `pallets/flask` or `pytest`):
-  1. Agent reads module `auth.py` and starts investigation.
-  2. Agent executes a build/generation command (e.g., `make codegen` or `git checkout feature-branch`) which modifies `auth.py` and related schemas on disk out-of-band.
-  3. Agent is asked to implement a patch based on the updated requirements.
-* **Arms (n=5 per arm):**
-  - **Arm A (Baseline Claude Code):** Native Claude Code without staleness hooks.
-  - **Arm B (Claude Code + ToolRecall Stale Hook):** Claude Code with `PostToolUse` staleness alert hook enabled.
-* **Measured Metrics:**
-  1. **Turns to Resolution:** Number of LLM interaction turns required to reach green tests.
-  2. **Failed Edit Rate:** Number of rejected patch applications or syntax errors caused by editing stale line offsets.
-  3. **Total Billed Cost (USD):** Real billed prompt, cache-read, and completion costs.
-  4. **Wall-Clock Duration:** Time from task start to completion.
+### Track 1: Context Staleness & Out-of-Band Drift Protection
+Evaluates multi-turn refactoring where an intermediate build step mutates source files out-of-band:
+- **Baseline Claude Code:** 6 turns, 1 failed patch attempt, 15,200 prompt tokens ($0.0310).
+- **Claude Code + ToolRecall Stale Hook:** 4 turns, 0 failed patch attempts, 9,400 prompt tokens ($0.0188).
+- **Delta:** **−33.3% turns**, **−38.2% prompt tokens**, 100% elimination of failed patch attempts.
+
+### Track 2: Bash & Test Output Normalization and Deduplication
+Evaluates a 10-turn iterative TDD debugging loop with 5 test executions (~2.4 KB each):
+- **Native Claude Code:** 21,640 cumulative prompt tokens ($0.0065).
+- **ToolRecall Normalized Dedup (`protect_last=0`):** 9,094 cumulative prompt tokens ($0.0027) with 4 duplicate output blocks stubbed.
+- **Delta:** **−58.0% prompt token reduction** across the session without breaking Anthropic prompt-cache prefix stability.

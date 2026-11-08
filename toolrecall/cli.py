@@ -3385,6 +3385,28 @@ def _maybe_auto_update():
         warnings.warn(f"ToolRecall auto-update check skipped: {type(e).__name__}: {e}")
 
 
+def cmd_hook():
+    """Agent lifecycle hook dispatch."""
+    args = sys.argv[2:]
+    if not args or args[0] in ("-h", "--help"):
+        print("Usage: toolrecall hook <target> [options]")
+        print("")
+        print("Targets:")
+        print("  claude          Claude Code hook adapter (stdin JSON or print-config)")
+        print("")
+        print("Examples:")
+        print("  toolrecall hook claude print-config")
+        return
+    target = args[0]
+    if target == "claude":
+        from toolrecall.adapters import claude_code
+
+        sys.exit(claude_code.main(args[1:]))
+    else:
+        print(f"Unknown hook target: {target}")
+        sys.exit(1)
+
+
 def main():
     if sys.platform == "win32":
         # Windows consoles default to legacy code pages (cp1252) that cannot
@@ -3434,6 +3456,7 @@ def main():
         print("  replay          Record/replay tool call scenarios (Replay mode)")
         print("  turso           Turso Cloud sync: init, status")
         print("  agent           Per-agent cache stats: ls, show, prune")
+        print("  hook            Agent lifecycle hooks (claude print-config, staleness)")
         print("  healthcheck     One-shot daemon/cache health (--json, --clean-stale; exit 0/1/2)")
         return
 
@@ -3497,6 +3520,7 @@ def main():
         "top": cmd_top,
         "proxy": cmd_proxy,
         "agent": cmd_agent,
+        "hook": cmd_hook,
     }
 
     if cmd in commands:

@@ -29,26 +29,34 @@ Usage:
     from toolrecall.adapters import litellm
 """
 
-from toolrecall.adapters import antigravity
-from toolrecall.adapters import google_adk
-from toolrecall.adapters import langchain
-from toolrecall.adapters import langgraph
-from toolrecall.adapters import langfuse
-from toolrecall.adapters import herdr
-from toolrecall.adapters import odysseus
-from toolrecall.adapters import litellm
-from toolrecall.adapters import warp
-from toolrecall.adapters import gepa
+import importlib
+from typing import Any
 
-__all__ = [
+# Adapter module registry: lazy-loaded via PEP 562 __getattr__ so importing
+# a single adapter (e.g. claude_code or litellm) has near-zero cold-start overhead.
+_MODULES = {
     "antigravity",
+    "claude_code",
     "google_adk",
     "langchain",
     "langgraph",
     "langfuse",
     "herdr",
     "odysseus",
+    "openevolve",
     "litellm",
     "warp",
     "gepa",
-]
+}
+
+__all__ = sorted(_MODULES)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _MODULES:
+        return importlib.import_module(f"toolrecall.adapters.{name}")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_MODULES))

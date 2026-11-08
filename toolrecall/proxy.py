@@ -162,7 +162,7 @@ def _is_dedup_path(path: str) -> bool:
     return path.split("?", 1)[0].endswith(_DEDUP_PATH_SUFFIXES)
 
 
-def _maybe_dedup_body(body_bytes: bytes) -> tuple[bytes, dict | None]:
+def _maybe_dedup_body(body_bytes: bytes, profile: str | None = None) -> tuple[bytes, dict | None]:
     """Dedup duplicate large text blocks in a chat-completions/messages body.
 
     Returns (body_bytes_out, stats_dict). stats is None when the body was
@@ -184,12 +184,23 @@ def _maybe_dedup_body(body_bytes: bytes) -> tuple[bytes, dict | None]:
 
     from toolrecall.dedup import dedup_messages
 
+    normalizer = None
+    protect_last_default = 2
+    if profile == "claude-code" or os.environ.get("TOOLRECALL_DEDUP_NORMALIZE") in ("1", "true", "yes"):
+        from toolrecall.dedup import normalize_output
+
+        normalizer = normalize_output
+        protect_last_default = 0
+
+    protect_last = _dedup_env_num("TOOLRECALL_DEDUP_PROTECT_LAST", protect_last_default)
+
     try:
         new_messages, stats = dedup_messages(
             messages,
             min_chars=_dedup_env_num("TOOLRECALL_DEDUP_MIN_CHARS", 800),
-            protect_last=_dedup_env_num("TOOLRECALL_DEDUP_PROTECT_LAST", 2),
+            protect_last=protect_last,
             media=os.environ.get("TOOLRECALL_DEDUP_MEDIA", "").lower() in ("1", "true", "yes"),
+            normalizer=normalizer,
         )
     except Exception:
         log.warning("dedup: internal error — forwarding original body", exc_info=True)
@@ -943,6 +954,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # canonicalization, hashing, forwarding and the stream tee all see
             # the same body the provider will receive. Per-request opt-out:
             # X-ToolRecall-No-Dedup (benchmark baseline arms use this).
+            profile_hint = (
+                (self.headers.get("X-ToolRecall-Canonicalize") or "").strip().lower()
+                or _canonicalize_default()
+            )
             if (
                 method == "POST"
                 and body_bytes
@@ -950,7 +965,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 and (self.headers.get("X-ToolRecall-No-Dedup") or "").strip()
                 not in ("1", "true", "yes")
             ):
-                body_bytes, _dedup_stats = _maybe_dedup_body(body_bytes)
+                body_bytes, _dedup_stats = _maybe_dedup_body(body_bytes, profile=profile_hint)
                 # Wire-verified not-sent for THIS request (chars//4, same
                 # estimator as the dedup log line). Threaded to the usage
                 # row so every billed request carries its own Y.

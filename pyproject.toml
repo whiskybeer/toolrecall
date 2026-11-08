@@ -58,6 +58,7 @@ Documentation = "https://github.com/whiskybeer/toolrecall#readme"
 [project.scripts]
 toolrecall = "toolrecall.cli:main"
 tr-warp-edge = "toolrecall.adapters.warp:main"
+tr-cc-hook = "toolrecall.adapters.claude_code:main"
 
 [tool.setuptools.packages.find]
 include = ["toolrecall*"]

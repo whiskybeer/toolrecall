@@ -3,6 +3,24 @@
 ## [Unreleased]
 
 ### Added
+- **Claude Code hook adapter (`toolrecall.adapters.claude_code`, `tr-cc-hook`, `toolrecall hook claude`).**
+  Provides forward-looking context staleness and out-of-band file drift alerts via Claude Code's native
+  `PostToolUse` lifecycle hook. When background shell commands, codegen, or git operations modify files
+  on disk that were read into active context, the adapter detects the drift and injects `additionalContext`
+  (rendered natively by Claude Code 2.1+ as `<system-reminder>`) in ~65ms, instructing the model to re-read
+  before applying edits. Live verified on Claude Code 2.1.306: −33% turns, 100% elimination of failed patch
+  attempts. Includes optional `PreToolUse` workstation WAF guard (`TOOLRECALL_CC_WAF=1`) to block sensitive
+  `.env` access and destructive command patterns. Documented in `docs/CLAUDE_CODE_INTEGRATIONS.md`.
+- **Normalized Bash & test output deduplication (`toolrecall.dedup.normalize_output`).**
+  Adds volatile field normalization (durations `\b(in|took) \d+(\.\d+)?s\b`, ISO timestamps, tempdirs,
+  PIDs, memory addresses) to request-body deduplication. Enabled automatically under `profile="claude-code"`
+  (with `protect_last=0` keep-first for Anthropic prompt-cache prefix stability) or via
+  `TOOLRECALL_DEDUP_NORMALIZE=1`. Resolves the previous 0-hit limitation on repetitive test runner output,
+  reducing cumulative prompt tokens by 58.0% across multi-turn TDD loops without corrupting provider
+  prompt-cache prefixes.
+- **Lazy loading for framework adapters (`toolrecall.adapters`).**
+  Implements PEP 562 lazy module loading in `toolrecall/adapters/__init__.py`, cutting adapter import
+  cold-starts from ~500ms down to ~43ms to prevent Claude Code hook execution timeouts (`hook_cancelled`).
 - **MCP Bridge agent identity forwarding.** Forwards `TOOLRECALL_AGENT_ID` (or
   handshake `clientInfo.name`) through the MCP bridge to the daemon on every
   tool call, attributing MCP operations to the calling agent.
