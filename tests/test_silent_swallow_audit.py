@@ -39,8 +39,12 @@ FROZEN_COUNTS = {
     "client.py": 1,
     # 2 as of 2026-09-17 (baseline sync): 1d33b12 (update hint channel)
     # returned errors instead of swallowing on one path.
-    "config.py": 2,
-    # 22 as of 2026-09-08 (was 18): +4 best-effort socket/PID closes added by
+    "config.py": 3,
+    # 3 as of 2026-09-21 (TMPDIR-nesting fixes): +1 in tracker_ignore_read_prefixes —
+    # the tempdir carve-out (drop default prefixes that contain gettempdir(), so
+    # Hermes-scratch test reads are not silently untracked) is fail-soft: a broken
+    # tempdir leaves the prefix list unfiltered, exactly the pre-fix classification.
+    # 2 as of 2026-09-08 (was 18): +4 best-effort socket/PID closes added by
     # the 956b25a network-honesty commit without a baseline bump (found when
     # the flock-sweep work re-ran validate). All four are resource-release
     # fail-soft (conn/server close, PID-file write) — socket ping and the
@@ -72,7 +76,11 @@ FROZEN_COUNTS = {
     # (3fc2ca0) — config unavailable (tests/embedding) must degrade to the
     # hardcoded list; the fallback is the documented behavior.
     "proxy.py": 5,
-    "shim.py": 3,
+    "shim.py": 4,
+    # 4 as of 2026-09-21 (TMPDIR-nesting fixes): +1 in _looks_like_library_path —
+    # markers are matched against the path relative to gettempdir() (tempdir's
+    # own path must not satisfy /.hermes/ etc.); OSError → unstripped norm,
+    # the pre-fix classification. Guard sits on the open() hot path.
     # 3 as of 2026-09-17 (stub_core split): was 4 — the big cache-path
     # fall-through now logs a warning instead of passing silently.
     # 0 as of 2026-09-17: env-TTL parse + config resolution failures are

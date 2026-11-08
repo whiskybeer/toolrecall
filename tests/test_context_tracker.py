@@ -452,22 +452,40 @@ class TestContextTrackerIgnorePrefixes:
     """
 
     def test_ignored_prefix_not_tracked(self):
-        ct = ContextTracker(ignore_prefixes=["/tmp/sessions/"])
-        tracked = make_temp_file("tracked")
+        # Prefix derived from the ACTUAL tempdir (mkdtemp's location is
+        # host-specific: on Hermes-scratch hosts TMPDIR nests under the
+        # agent home, so the literal "/tmp/sessions/" of the pre-2026-09-21
+        # version never matched any fixture path).
+        # Anchoring pin: "<dir>/" must match that directory and nothing
+        # else — in particular NOT "<dir>_partner/" (2026-09-21 fix: the
+        # old abspath() dropped the trailing separator, degrading every
+        # slash-terminated prefix to an unanchored prefix that also
+        # swallowed sibling dirs sharing the stem).
         ignored_dir = tempfile.mkdtemp(prefix="sessions_")
+        partner_dir = ignored_dir + "_partner"
+        os.makedirs(partner_dir, exist_ok=True)
+        ct = ContextTracker(ignore_prefixes=[os.path.join(ignored_dir, "")])
+        tracked = make_temp_file("tracked")
+        partner = os.path.join(partner_dir, "partner.txt")
+        with open(partner, "w") as f:
+            f.write("partner")
         ignored = os.path.join(ignored_dir, "chat.json")
         with open(ignored, "w") as f:
             f.write("X" * 400)
         try:
             ct.mark_read(tracked)
+            ct.mark_read(partner)
             ct.mark_read(ignored)
             stats = ct.get_stats()
             assert tracked in stats["clean"]
+            assert partner in stats["clean"]
             assert ignored not in stats["clean"]
-            assert stats["total_read"] == 1
+            assert stats["total_read"] == 2
         finally:
             os.unlink(tracked)
+            os.unlink(partner)
             shutil.rmtree(ignored_dir, ignore_errors=True)
+            shutil.rmtree(partner_dir, ignore_errors=True)
 
     def test_ignored_glob_pattern(self):
         ct = ContextTracker(ignore_prefixes=["*/webui/sessions/*"])

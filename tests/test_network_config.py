@@ -116,6 +116,47 @@ class TestNetworkEnvParity:
         assert cfg.network_enabled is False
 
 
+class TestEnvListKeysParity:
+    """List-typed ENV_MAP keys: a single (comma-less) value is a 1-element
+    list, not a bare string. Regression for the
+    TOOLRECALL_TRACKER_IGNORE_PREFIXES bug — the old generic fallback stored
+    a string, and the property's isinstance(raw, list) check silently
+    dropped the override back to defaults."""
+
+    @staticmethod
+    def _cfg(monkeypatch):
+        cfg = Config.__new__(Config)
+        cfg._data = {}
+        cfg._expand_paths()
+        from toolrecall.config import _apply_env_overrides
+
+        cfg._data = _apply_env_overrides(cfg._data)
+        return cfg
+
+    def test_single_value_is_one_element_list(self, monkeypatch):
+        monkeypatch.setenv("TOOLRECALL_TRACKER_IGNORE_PREFIXES", "/nonexistent/")
+        raw = self._cfg(monkeypatch).get("tracker", "ignore_read_prefixes")
+        assert raw == ["/nonexistent/"], raw
+
+    def test_comma_list_splits_and_strips(self, monkeypatch):
+        monkeypatch.setenv(
+            "TOOLRECALL_TRACKER_IGNORE_PREFIXES",
+            "/a/b/, /c/d/,,",  # noqa: SIM905
+        )
+        raw = self._cfg(monkeypatch).get("tracker", "ignore_read_prefixes")
+        assert raw == ["/a/b/", "/c/d/"], raw
+
+    def test_single_value_exclude_prefixes(self, monkeypatch):
+        monkeypatch.setenv("TOOLRECALL_SHIM_EXCLUDE_PREFIXES", "/media/archive/")
+        raw = self._cfg(monkeypatch).get("shim", "exclude_prefixes")
+        assert raw == ["/media/archive/"], raw
+
+    def test_tracker_property_accepts_env_prefixes(self, monkeypatch):
+        monkeypatch.setenv("TOOLRECALL_TRACKER_IGNORE_PREFIXES", "/nonexistent/")
+        prefixes = self._cfg(monkeypatch).tracker_ignore_read_prefixes
+        assert "/nonexistent/" in prefixes, prefixes
+
+
 class TestNetworkClients:
     def test_default_deny_when_no_clients(self):
         cfg = Config.__new__(Config)

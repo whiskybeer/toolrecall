@@ -308,6 +308,23 @@ def _tag_source_mode() -> str:
 def _looks_like_library_path(path: str) -> bool:
     """True for vendored/package trees — run by the process, not read by the model."""
     norm = path.replace(os.sep, "/")
+    # Markers are matched against the path RELATIVE to the tempdir: when
+    # TMPDIR nests inside an agent-home tree (Hermes scratch:
+    # TMPDIR=~/.hermes/cache/scratch), the tempdir prefix itself satisfies
+    # position-independent markers (/.hermes/) and agent-authored ephemeral
+    # files classify "shim". Library STRUCTURE inside the tempdir
+    # (simulated venvs: <tmp>/site-packages/...) still matches after the
+    # strip — only the tempdir's own path stops counting.
+    try:
+        import tempfile
+
+        tmp = os.path.realpath(tempfile.gettempdir())
+        real = os.path.realpath(path)
+        if real == tmp or real.startswith(tmp + os.sep):
+            rel = os.path.relpath(real, tmp).replace(os.sep, "/")
+            norm = rel
+    except OSError:
+        pass
     return any(marker in norm for marker in _LIBRARY_DIR_MARKERS)
 
 

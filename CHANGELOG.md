@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased] — 2026-09-21
+
+### Fixed
+- **TMPDIR-nested agent-home hosts: 6 pre-existing test failures + 3 source
+  defects.** On hosts where the tempdir lives under the agent home (Hermes
+  scratch: `TMPDIR=~/.hermes/cache/scratch`), the shim's library-marker gate
+  (`/.hermes/`), the tracker's default ignore prefixes (`~/.hermes/cache/`),
+  and literal `/tmp` assumptions in tests collided with real agent-home
+  paths. Source fixes: (1) shim `_looks_like_library_path` matches markers
+  against the path RELATIVE to `gettempdir()` — the tempdir's own path no
+  longer satisfies position-independent markers, while simulated venv
+  structure inside tmp still classifies "shim"; (2) context-tracker literal
+  ignore prefixes are now anchored at a directory boundary for every entry
+  (the old `p.endswith(os.sep)` ternary tested the pre-`abspath` value and
+  was always False for slash-terminated prefixes — i.e. every config
+  default — so `"/tmp/sessions/"` degraded to unanchored `"/tmp/sessions"`
+  and also matched `"/tmp/sessions_extra"`; root `"/"` kept intact);
+  (3) single-value list-typed env overrides (`TOOLRECALL_TRACKER_IGNORE_PREFIXES`,
+  `_SHIM_EXCLUDE_PREFIXES`, `SKILL_DIRS`, `SCAN_DIRS`, `MULTIPLEX_SERVERS`)
+  were stored as a bare string and silently dropped by the properties'
+  `isinstance(raw, list)` checks — `_apply_env_overrides` now has
+  `_LIST_KEYS` (comma-split, single value wraps as 1-element list), and
+  `tracker_ignore_read_prefixes` degrades a str value to a 1-element list
+  instead of resetting to defaults. Test fixes: tracker unit test derives
+  the ignored prefix from the actual `mkdtemp` location (literal `/tmp`
+  never matched on scratch hosts) and pins the anchoring contract with a
+  sibling-dir partner; pid-gate and shim tests verified passing under
+  `TMPDIR=/tmp` (environmental, no product change needed). Silent-swallow
+  baseline +1 config.py (tempdir carve-out is fail-soft), +1 shim.py
+  (relative-marker guard on the open() hot path). Full unit suite green:
+  1657 passed.
+
 ## [Unreleased] — 2026-09-20
 
 ### Changed

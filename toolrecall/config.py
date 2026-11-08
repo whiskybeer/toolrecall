@@ -142,6 +142,21 @@ def _apply_env_overrides(config: dict) -> dict:
     # 300 default — invalid env now falls back to CONFIG per the documented
     # contract, and only to the default when the config lacks the key too.
     _FLOAT_KEYS = frozenset({"stub_ttl", "persist_ttl"})
+    # List-typed keys: an env value without a comma is still a one-element
+    # list, not a bare string. Without this branch a single-value override
+    # was stored as str, and the property's isinstance(raw, list) silently
+    # dropped it back to defaults (TOOLRECALL_TRACKER_IGNORE_PREFIXES bug:
+    # "/nonexistent/" never reached the tracker).
+    _LIST_KEYS = frozenset(
+        {
+            "skill_dirs",
+            "scan_dirs",
+            "allowed_paths",
+            "servers",
+            "exclude_prefixes",
+            "ignore_read_prefixes",
+        }
+    )
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
         if val is None:
@@ -165,6 +180,12 @@ def _apply_env_overrides(config: dict) -> dict:
                 logging.getLogger("toolrecall.config").debug(
                     "%s=%r is not a number — keeping config value", env_key, val
                 )
+            continue
+        if key in _LIST_KEYS:
+            if "," in val:
+                config[section][key] = [v.strip() for v in val.split(",") if v.strip()]
+            else:
+                config[section][key] = [val]
             continue
         try:
             config[section][key] = int(val)
@@ -1202,8 +1223,27 @@ class Config:
             default=default,
         )
         if isinstance(raw, list):
-            return [str(p) for p in raw]
-        return default
+            prefixes = [str(p) for p in raw]
+        else:
+            # Config loader guarantees list (ENV_MAP _LIST_KEYS); a raw str
+            # from a hand-edited TOML would otherwise silently disable the
+            # entire ignore list.
+            prefixes = [str(raw)] if str(raw).strip() else default
+        # The tempdir is ephemeral working space (pytest tmp_path, e2e fixture
+        # trees), never agent-session infra. When TMPDIR nests inside an
+        # ignored prefix (Hermes scratch: TMPDIR=~/.hermes/cache/scratch under
+        # ~/.hermes/cache/), every test/e2e read is silently untracked and
+        # context_get_stats reads 0 — drop prefixes that contain gettempdir().
+        try:
+            import tempfile as _tempfile
+
+            tmp = os.path.realpath(_tempfile.gettempdir())
+            prefixes = [
+                p for p in prefixes if not tmp.startswith(os.path.realpath(os.path.expanduser(p)))
+            ]
+        except (OSError, ValueError):
+            pass
+        return prefixes
 
     # ─── Update (auto-updater) Properties ───────────────
 

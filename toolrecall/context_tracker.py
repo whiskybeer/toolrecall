@@ -166,8 +166,17 @@ class ContextTracker:
         )
         # Literal prefixes are anchored to an absolute base; glob patterns
         # stay raw and are fnmatch-tested against the absolute path.
+        # Anchor EVERY literal prefix at a directory boundary (always append
+        # os.sep): abspath() strips a trailing separator, so testing the
+        # ORIGINAL p for endswith(os.sep) was always False for slash-terminated
+        # prefixes (every [tracker].ignore_read_prefixes default) and the
+        # anchor silently vanished — "/tmp/sessions/" degraded to the
+        # unanchored "/tmp/sessions", which also matched "/tmp/sessions_extra".
         self._ignore_prefixes = tuple(
-            os.path.abspath(p) + ("" if p.endswith(os.sep) else os.sep)
+            # Root "/" special case: abspath + os.sep would yield "//",
+            # which startswith() never matches — keep the root prefix as-is
+            # ("ignore everything" stays "ignore everything").
+            (os.path.abspath(p) if os.path.abspath(p) == os.sep else os.path.abspath(p) + os.sep)
             for p in self._ignore_prefixes
             if not any(c in p for c in "*?[")
         )
