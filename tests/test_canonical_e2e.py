@@ -34,6 +34,12 @@ class TestCanonicalKeysE2E(unittest.TestCase):
     def setUp(self):
         db = os.environ["TOOLRECALL_CACHE_DB"]
         assert tempfile.gettempdir() in os.path.realpath(db), f"non-temp DB: {db}"
+        # conftest's autouse fixture force-pins a FRESH per-test DB (see
+        # _isolated_toolrecall_env); the import-time pin above only survives in
+        # standalone runs. Bootstrap the idempotent schema against whichever DB
+        # is live now — same shape as test_coalescing_e2e.py (42845e3 fix
+        # family; this file was missed there, "no such table: terminal_cache").
+        _cache_mod._init()
         with _db() as conn:
             conn.execute("DELETE FROM terminal_cache")
 

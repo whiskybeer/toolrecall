@@ -90,6 +90,11 @@ class TestSwrTerminal(unittest.TestCase):
         # flag WHERE-less DELETEs).
         db = os.environ["TOOLRECALL_CACHE_DB"]
         assert tempfile.gettempdir() in os.path.realpath(db), f"refusing to clear non-temp DB: {db}"
+        # conftest force-pins a FRESH per-test DB after setUpClass's re-pin
+        # (_isolated_toolrecall_env); bootstrap the idempotent schema against
+        # whichever DB is live now — same shape as test_canonical_e2e.py /
+        # test_coalescing_e2e.py (42845e3 fix family).
+        _cache_mod._init()
         with _db() as conn:
             conn.execute("DELETE FROM terminal_cache")
 
@@ -197,6 +202,10 @@ class TestSwrMcp(unittest.TestCase):
         # See TestSwrTerminal.setUp: temp-DB invariant, asserted per class.
         db = os.environ["TOOLRECALL_CACHE_DB"]
         assert tempfile.gettempdir() in os.path.realpath(db), f"refusing to clear non-temp DB: {db}"
+        # conftest force-pins a FRESH per-test DB after setUpClass's re-pin
+        # (_isolated_toolrecall_env); bootstrap the idempotent schema — see
+        # TestSwrTerminal.setUp (42845e3 fix family).
+        _cache_mod._init()
         with _db() as conn:
             conn.execute("DELETE FROM mcp_cache")
 
@@ -264,6 +273,10 @@ class TestSwrApi(unittest.TestCase):
         # See TestSwrTerminal.setUp: temp-DB invariant, asserted per class.
         db = os.environ["TOOLRECALL_CACHE_DB"]
         assert tempfile.gettempdir() in os.path.realpath(db), f"refusing to clear non-temp DB: {db}"
+        # conftest force-pins a FRESH per-test DB after setUpClass's re-pin
+        # (_isolated_toolrecall_env); bootstrap the idempotent schema — see
+        # TestSwrTerminal.setUp (42845e3 fix family).
+        _cache_mod._init()
         with _db() as conn:
             conn.execute("DELETE FROM api_cache")
 
