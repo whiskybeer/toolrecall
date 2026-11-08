@@ -56,7 +56,11 @@ FROZEN_COUNTS = {
     # background thread; failures just leave latest_seen stale (the CLI hook
     # and the update_pending_hint handler both tolerate that), and a network
     # hiccup must never take the daemon down.
-    "daemon.py": 24,
+    # 26 as of daa820b (MCP server reap, 2026-10-03): +2 in
+    # shutdown_all_mcp_sessions / MCPClientSession teardown — best-effort
+    # process reaps at exit/GC; a dead child must not break the shutdown
+    # path it exists to clean up.
+    "daemon.py": 26,
     # 2 as of 2026-09-17 (baseline sync): 3573f4d (agent-agnostic scan_dirs)
     # refactored two swallows away.
     "docs.py": 2,

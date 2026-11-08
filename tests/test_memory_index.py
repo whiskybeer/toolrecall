@@ -268,6 +268,46 @@ class TestMemoryIndex(unittest.TestCase):
         result = docs_search("Test", source="custom-memory")
         self.assertIn("custom-memory", result)
 
+    def test_reindex_prunes_superseded_versions(self):
+        """Editing an entry must NOT accumulate old #hash versions.
+
+        The content-hash path key inserts a fresh row per edit; without the
+        prune, two days of memory edits grew ~738 stale rows (observed in
+        the live DB on 2026-10-03). After each re-index, only the hashes of
+        the current file content may remain.
+        """
+        index_agent_memory(self.memory_dir)
+
+        # Rewrite MEMORY.md with entirely different content
+        with open(os.path.join(self.memory_dir, "MEMORY.md"), "w") as f:
+            f.write("Brand new rule one\n§\nBrand new rule two\n")
+        index_agent_memory(self.memory_dir)
+
+        conn = _get_db()
+        paths = [
+            r[0]
+            for r in conn.execute(
+                "SELECT path FROM pages WHERE source = 'agent-memory' AND path LIKE 'MEMORY.md#%'"
+            ).fetchall()
+        ]
+        total = conn.execute("SELECT COUNT(*) FROM pages WHERE source = 'agent-memory'").fetchone()[
+            0
+        ]
+        conn.close()
+
+        self.assertEqual(len(paths), 2, f"exactly the 2 current MEMORY.md hashes, got {paths}")
+        # USER.md entries survive untouched
+        self.assertEqual(total, 2 + 2, "USER.md rows unaffected by MEMORY.md prune")
+        # No stale content findable (distinctive old token; "rules" would
+        # Porter-stem onto the new "rule" text)
+        r = docs_search("Air-gapped", source="agent-memory")
+        self.assertTrue(
+            r.startswith("No results"),
+            "superseded entry must be pruned from FTS",
+        )
+        r2 = docs_search("Brand new rule", source="agent-memory")
+        self.assertIn("Brand new rule one", r2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,6 @@ starved the page cache, and made the *unrelated* Hermes WebUI look broken
 
 import gc
 import os
-import signal
 import sys
 import time
 

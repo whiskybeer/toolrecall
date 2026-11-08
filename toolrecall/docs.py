@@ -658,6 +658,24 @@ def index_agent_memory(memories_dir: str | None = None, source: str = "agent-mem
             )
             total += 1
 
+        # Prune superseded versions. The content-hash path key means every
+        # edit to MEMORY.md/USER.md inserts NEW rows while old-version rows
+        # accumulate forever (observed: ~738 rows in 2 days). Keep only the
+        # hashes just indexed; the pages_ad trigger removes their FTS rows.
+        prefix = fname + "#"
+        current = {
+            row["path"]
+            for row in cursor.execute(
+                "SELECT path FROM pages WHERE source = ?", (source,)
+            ).fetchall()
+            if row["path"].startswith(prefix)
+        }
+        stale = current - {f"{fname}#{_hash(e)[:12]}" for e in entries if e.strip()}
+        for path_key in stale:
+            cursor.execute("DELETE FROM pages WHERE source = ? AND path = ?", (source, path_key))
+        if stale:
+            print(f"  docs: pruned {len(stale)} superseded {source} entries for {fname}")
+
     conn.commit()
     conn.close()
     return total
