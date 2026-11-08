@@ -212,5 +212,131 @@ class TestConfirmInstall(unittest.TestCase):
             self.assertFalse(_confirm_install(self._fake_venv()))
 
 
+class TestShimManifestDrift(unittest.TestCase):
+    """Content-based shim identity — the drift a version string cannot see.
+
+    Regression: the shim copy inside an agent venv was a hand-synced snapshot
+    whose dist-info claimed an older version while its code was 60 commits
+    behind. `ensure_shim` compared versions, pip answered "requirement already
+    satisfied", and `shim --status` printed ✅ — the venv kept pre-fix shim
+    behaviour indefinitely. Identity is content, so content is what is checked.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="tr-manifest-test-")
+        self.a = os.path.join(self.tmp, "a")
+        self.b = os.path.join(self.tmp, "b")
+        for d in (self.a, self.b):
+            os.makedirs(d)
+        for name in venv_mod._SHIM_MANIFEST_FILES:
+            for d in (self.a, self.b):
+                with open(os.path.join(d, name), "w") as fh:
+                    fh.write(f"# {name}\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _fake_venv(self):
+        return venv_mod.Venv(
+            root=os.path.join(self.tmp, "venv"),
+            python=sys.executable,
+            site_packages=os.path.join(self.tmp, "sp"),
+        )
+
+    def test_identical_trees_fingerprint_equal(self):
+        self.assertEqual(venv_mod._manifest_of(self.a), venv_mod._manifest_of(self.b))
+
+    def test_one_byte_change_changes_fingerprint(self):
+        with open(os.path.join(self.b, "shim.py"), "a") as fh:
+            fh.write("# drift\n")
+        self.assertNotEqual(venv_mod._manifest_of(self.a), venv_mod._manifest_of(self.b))
+
+    def test_half_removed_copy_is_not_a_match(self):
+        os.remove(os.path.join(self.b, "stub_core.py"))
+        self.assertNotEqual(venv_mod._manifest_of(self.a), venv_mod._manifest_of(self.b))
+
+    def test_empty_dir_has_no_manifest(self):
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        self.assertIsNone(venv_mod._manifest_of(empty))
+
+    def test_status_flags_drift_when_versions_agree(self):
+        with (
+            patch.object(venv_mod, "_running_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_venv_manifest", return_value="bbb"),
+            patch.object(venv_mod, "_running_version", return_value="0.8.22"),
+            patch.object(venv_mod, "_installed_version", return_value="0.8.22"),
+            patch.object(venv_mod, "_importable", return_value=True),
+        ):
+            st = venv_mod.shim_status(self._fake_venv())
+        self.assertTrue(st["drift"])
+        self.assertEqual(st["version_venv"], st["version_source"])
+
+    def test_status_in_sync_when_content_matches_despite_version(self):
+        with (
+            patch.object(venv_mod, "_running_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_venv_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_running_version", return_value="0.8.22"),
+            patch.object(venv_mod, "_installed_version", return_value="0.8.21"),
+            patch.object(venv_mod, "_importable", return_value=True),
+        ):
+            st = venv_mod.shim_status(self._fake_venv())
+        self.assertFalse(st["drift"])
+
+    def test_ensure_shim_fails_when_drift_persists(self):
+        """No false "verified": a still-behind venv reports failure."""
+        with (
+            patch.object(venv_mod, "_running_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_venv_manifest", return_value="bbb"),
+            patch.object(venv_mod, "_install_toolrecall", return_value=True),
+            patch.object(venv_mod, "_source_root", return_value=None),
+            patch.object(venv_mod, "_importable", return_value=True),
+        ):
+            self.assertFalse(venv_mod.ensure_shim(self._fake_venv()))
+
+    def test_ensure_shim_converges_source_tree_via_overlay(self):
+        """A source-tree install pulls a drifted venv onto the live tree."""
+        venv = self._fake_venv()
+        os.makedirs(venv.site_packages, exist_ok=True)
+        stale = os.path.join(venv.site_packages, "toolrecall")
+        os.makedirs(stale)
+        with open(os.path.join(stale, "shim.py"), "w") as fh:
+            fh.write("# stale\n")
+        state = {"drifted": True}
+        real_overlay = venv_mod._overlay_into  # capture before patching
+
+        def fake_manifest(_python):
+            return "bbb" if state["drifted"] else "aaa"
+
+        def fake_overlay(v, root):
+            state["drifted"] = False  # overlay lands → content now matches
+            return real_overlay(v, root)
+
+        with (
+            patch.object(venv_mod, "_running_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_venv_manifest", side_effect=fake_manifest),
+            patch.object(venv_mod, "_install_toolrecall", return_value=True),
+            patch.object(venv_mod, "_source_root", return_value=self.tmp),
+            patch.object(venv_mod, "_overlay_into", side_effect=fake_overlay),
+            patch.object(venv_mod, "_pth_source", return_value=os.path.join(self.a, "shim.py")),
+            patch.object(venv_mod, "_importable", return_value=True),
+        ):
+            self.assertTrue(venv_mod.ensure_shim(venv))
+        self.assertTrue(
+            os.path.isfile(os.path.join(venv.site_packages, venv_mod._OVERLAY_PTH)),
+            "overlay .pth must be written on drift",
+        )
+        self.assertFalse(os.path.isdir(stale), "shadowing snapshot dir must be removed")
+
+    def test_uninstall_removes_overlay_pth(self):
+        venv = self._fake_venv()
+        os.makedirs(venv.site_packages, exist_ok=True)
+        p = os.path.join(venv.site_packages, venv_mod._OVERLAY_PTH)
+        with open(p, "w") as fh:
+            fh.write("/somewhere\n")
+        self.assertTrue(venv_mod.uninstall_shim(venv))
+        self.assertFalse(os.path.exists(p))
+
+
 if __name__ == "__main__":
     unittest.main()

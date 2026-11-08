@@ -169,7 +169,14 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - `toolrecall shim --install --all` — discover every venv and install (opt-in)
   - `toolrecall shim --uninstall [--venv <path>|--all]` — remove the shim
   - `toolrecall shim --status [--venv <path>|--all]` — per-venv: package present,
-    `.pth` present, and `probe: pass` (verified) or `probe: FAIL`
+    `.pth` present, `probe: pass` (verified) or `probe: FAIL`, the
+    venv-vs-install version pair, and `shim modules: in sync` / `DRIFT`
+  - **Drift** = that venv's shim modules differ in *content* from the running
+    install, so it still runs older shim logic even when the version strings
+    agree. `probe: pass` cannot see it — a stale module still imports fine.
+    `toolrecall shim --install --venv <path>` converges the venv (from the
+    index, or by overlaying the live source tree when this install is a
+    checkout). See `docs/TROUBLESHOOTING.md` §19.
   - Unknown flags → usage + non-zero exit (no silent swallow)
 - **⚠️  Important when using `pipx` or `uv tool install`:** The shim is installed into the **current Python environment** only. If toolrecall is installed via `pipx` or `uv tool install`, that's an isolated environment — the shim won't activate in your agent's runtime. Use `--venv <path>` to target the right venv, `--all` to sweep every venv, or run `toolrecall setup`.
 - **Healthcheck indicator:** `toolrecall stats`/healthcheck shows `shim=active|inactive`

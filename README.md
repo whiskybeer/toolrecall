@@ -341,8 +341,10 @@ toolrecall setup                # config -> systemd service -> daemon start
 
 > The `.pth` shim is **opt-in, default off** — `toolrecall shim --install` or
 > `--venv`/`--all` prompts before enabling. Use `--yes` to skip the prompt.
-> Verify with `toolrecall shim --status [--all]` (prints `probe: pass` only when
-> the shim actually imports in that venv from a neutral cwd).
+> Verify with `toolrecall shim --status [--all]` — it prints `probe: pass` only
+> when the shim actually imports in that venv from a neutral cwd, and flags
+> `DRIFT` when the venv's shim modules differ in content from this install (a
+> stale copy that still imports cleanly is exactly what `probe` cannot see).
 
 `toolrecall setup` creates `~/.config/toolrecall/toolrecall.toml` with default-deny security, generates a systemd user unit, and starts the daemon. After this, every `toolrecall` command "just works".
 

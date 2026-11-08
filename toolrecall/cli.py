@@ -1312,6 +1312,18 @@ def cmd_shim():
             print(f"{icon} {v.root}")
             print(f"     python: {v.python}")
             print(f"     package: {pkg} | shim: {pth} | probe: {'pass' if ok else 'FAIL'}")
+            print(
+                f"     version: {st['version_venv'] or '-'} (venv) vs "
+                f"{st['version_source'] or '-'} (this install)"
+            )
+            if st["drift"]:
+                print(
+                    "     shim modules: ⚠️  DRIFT — differ from this install "
+                    "(pre-fix shim behaviour)"
+                )
+                print(f"     fix: toolrecall shim --install --venv {v.root} --yes")
+            else:
+                print("     shim modules: in sync")
         return
 
     if action == "install":
@@ -1332,6 +1344,14 @@ def cmd_shim():
                     )
                 elif not st["pth_present"]:
                     print(f"     could not write {v.site_packages}/tr_shim.pth")
+                elif st["drift"]:
+                    print(
+                        "     shim modules still differ from this install "
+                        f"(venv version: {st['version_venv'] or 'unknown'}) — "
+                        "the venv may be read-only, or its copy was installed "
+                        "out of band; reinstall it from this tree: "
+                        f"pip install -e {os.path.dirname(os.path.dirname(venv_mod.__file__))}"
+                    )
                 else:
                     print(f"     import probe failed in {v.python}")
         return

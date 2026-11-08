@@ -269,3 +269,34 @@ Since v0.8.20 this also runs automatically after a background re-index when
 the FTS shadow exceeds 50 MB **and** 5× the indexed content size. The one-off
 rebuild of a multi-GB DB can take several minutes; queries briefly block
 during the rebuild phase.
+
+## 19. A shimmed venv runs stale shim code (`shim --status` says DRIFT)
+
+**Symptom:** `toolrecall shim --status --all` reports `probe: pass` but
+`shim modules: DRIFT`, and the venv behaves like an older release — e.g. reads
+under the agent's own TMPDIR are not tagged `agent_tool`, so they never count
+toward the CONTEXT tier. The printed versions may even be identical.
+
+**Cause:** the shim is a `.pth` in that venv, but the shim *modules* live in
+the venv's own copy of the package, and that copy no longer matches the install
+you are running. Versions cannot see this: an editable install's dist-info
+keeps whatever version it was first installed with, a checkout runs ahead of
+`__version__` between releases, and a hand-synced copy can carry metadata for a
+version it is not. `probe: pass` proves only that the module imports — not that
+it is the same code, which is how a venv can sit tens of commits behind while
+reporting ✅.
+
+**Fix:**
+```bash
+toolrecall shim --status --all                  # which venvs drifted
+toolrecall shim --install --venv <path> --yes   # converge it
+```
+When the running install is a source checkout, `shim --install` overlays the
+venv onto the live tree (`zz_toolrecall_repo.pth` — the same mechanism
+`scripts/repo_overlay.py` uses for the pipx venv), so it imports this tree and
+cannot drift again. On a read-only venv the install reports failure instead of
+a false ✅; reinstall the package there with `pip install -e /path/to/repo`.
+
+**Scope:** the fingerprint covers the modules that decide shim behaviour
+(`shim.py`, `shim_stub.py`, `stub_core.py`, `client.py`, `keys.py`,
+`config.py`). Daemon-only changes do not flag drift.

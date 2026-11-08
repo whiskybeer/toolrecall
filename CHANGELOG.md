@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased] — 2026-09-26
+
+### Fixed
+- **Shim drift detection is content-based, not version-based (`venvs.py`).**
+  `ensure_shim` compared `importlib.metadata` versions, which passes whenever
+  the metadata agrees while the code differs — a hand-synced snapshot, an
+  editable install whose dist-info lags its tree, or a checkout running ahead
+  of an unchanged `__version__`. In that state `pip install --upgrade
+  toolrecall` answers "requirement already satisfied", `ensure_shim` returned
+  True, and `toolrecall shim --status` printed ✅ for a venv whose shim modules
+  were dozens of commits behind — silently keeping pre-fix shim behaviour
+  forever (found live: a Hermes-venv copy 60 commits behind mis-tagged reads
+  under the agent's TMPDIR, because the relative library-marker fix never
+  reached it). The shim modules (`shim.py`, `shim_stub.py`, `stub_core.py`,
+  `client.py`, `keys.py`, `config.py`) are now fingerprinted by content on both
+  sides (`_running_manifest` / `_venv_manifest`: one `content_digest` over
+  sorted name+bytes, missing files marked) and drift triggers the existing
+  index upgrade plus — when the running install is a source tree — a repo
+  overlay (`zz_toolrecall_repo.pth`, same mechanism as
+  `scripts/repo_overlay.py`, stale snapshot dir removed first). `ensure_shim`
+  now returns False when the fingerprint still differs instead of reporting a
+  false "verified"; `shim --status` prints the venv-vs-install version pair and
+  a `DRIFT` line with the fix command. 7 new tests in `tests/test_venvs.py`.
+
 ## [Unreleased] — 2026-09-24
 
 ### Added
