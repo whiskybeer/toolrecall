@@ -10,8 +10,9 @@ Two layers of protection:
 2. **Production-path guard (autouse fixture)** — fails the test (not silently
    skips) if the test or code under test touches real production state:
    the live daemon socket, the live DB files, port 8569 (forward proxy), or
-   **writes a file inside the live state home**. The write arm was added
-   2026-09-26: the guard watched sqlite3.connect and socket.connect only, so
+   **writes a file inside the live state home or the live config home**. The
+   write arm was added 2026-09-26: the guard watched sqlite3.connect and
+   socket.connect only, so
    two HTTP harnesses appended fake rows to the billed-truth usage log
    (~/.toolrecall/proxy_usage.csv) for weeks without a single failure —
    2048 rows across api.deduptest.invalid and api.testretry.invalid. Live log
@@ -90,7 +91,12 @@ for _var in ("TOOLRECALL_CACHE_DB", "TOOLRECALL_KNOWLEDGE_DB", "BENCH_DB_PATH"):
 _PROD_PATTERNS = [
     "/run/user/",  # live daemon socket dir
     "toolrecall.sock",
-    os.path.expanduser("~/.toolrecall"),  # live DB / config home
+    os.path.expanduser("~/.toolrecall"),  # live DB / state home: usage log, logs, recall DB
+    # Live config home — a SECOND directory, and the guard's blind spot for a
+    # long time: a test writing toolrecall.toml/.env here corrupts the user's
+    # real settings while the guard stays silent (same failure shape as the
+    # usage-log leak: the write arm simply did not look here).
+    os.path.expanduser("~/.config/toolrecall"),
     "localhost:8569",
     "127.0.0.1:8569",
 ]

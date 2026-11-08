@@ -49,6 +49,19 @@
   new arm all pass. The pre-existing junk rows are **not**
   removed — that is production data and a separate decision.
 
+- **Guard coverage extended to the live *config* home** (`tests/conftest.py`,
+  `tests/README.md`). `_PROD_PATTERNS` covered `~/.toolrecall`, the daemon
+  socket dir and `:8569` — but not `~/.config/toolrecall`, so a test writing
+  `toolrecall.toml`/`.env` there was invisible to the guard: the same
+  blind-spot shape as the usage-log leak, one directory over. Writes there now
+  fail the test; reads stay allowed (many tests legitimately load the live
+  config). Verified: a probe write to `~/.config/toolrecall/toolrecall.toml`
+  fails the guard while a read passes and the file's sha256 is unchanged, and
+  `make validate` stays green — i.e. nothing in the suite writes there today.
+  An earlier one-off warning naming the live config with an unknown `[x]`
+  section did **not** reproduce in a full run and left no trace; most likely a
+  concurrent external writer, not the suite.
+
 ## [Unreleased] — 2026-09-24
 
 ### Added

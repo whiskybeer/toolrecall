@@ -31,7 +31,8 @@ benchmark scripts under `bench/` are never swept up.
   time, i.e. after teardown, and races the next test).
 - **Production-path guard (autouse)** — wraps `sqlite3.connect`,
   `socket.socket.connect` and `builtins.open`; any touch of `~/.toolrecall`,
-  `/run/user/*/toolrecall.sock`, or `:8569` FAILS the test, and so does any
+  `~/.config/toolrecall`, `/run/user/*/toolrecall.sock`, or `:8569` FAILS the
+  test, and so does any
   **write** into `~/.toolrecall` (the write arm exists because two harnesses
   appended fake rows to the billed-truth usage log for weeks: the guard watched
   connections only, so a plain `open(path, "a")` was invisible). Reads of live
