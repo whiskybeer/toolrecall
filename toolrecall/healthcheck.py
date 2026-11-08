@@ -9,7 +9,7 @@ files the daemon actually uses — no hardcoded per-machine paths.
 Reported signals:
     procs        number of live `toolrecall daemon` processes (-1 unknown)
     pid_file     pid read from the daemon pid file ('' if absent)
-    pid_alive    whether that pid maps to a live process
+    pid_alive    whether that pid maps to a live, non-zombie process
     lock_files   count of ~/.toolrecall/daemon-*.lck files
     socket_path  the resolved default UDS socket path
     socket       whether that socket exists
@@ -21,6 +21,9 @@ Command contract (`toolrecall healthcheck`):
     - exits 0 when the daemon is healthy
     - exits 1 and prints a `note:` line + warning when something is abnormal
       (daemon down, stale pid, leaking lock files, missing socket)
+    - `--json` prints one JSON object instead of the human line
+    - `--clean-stale` first removes a *provably* dead `daemon.pid` and
+      orphaned `daemon-*.lck` files (flock-verified), then reports health
 
 Everything is configurable via the standard TOOLRECALL_* env vars and the
 `TOOLRECALL_BIN` override (cron doesn't inherit ~/.local/bin PATH).
@@ -28,10 +31,13 @@ Everything is configurable via the standard TOOLRECALL_* env vars and the
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
 from typing import TypedDict
+
+log = logging.getLogger(__name__)
 
 # ── Defaults (overridable, matching the rest of the codebase) ──────────────
 DEFAULT_CACHE_DIR = os.path.expanduser("~/.toolrecall")
@@ -234,10 +240,7 @@ def gather() -> HealthInfo:
 
     pid = info["pid_file"]
     if pid.isdigit():
-        try:
-            info["pid_alive"] = os.path.exists(f"/proc/{pid}")
-        except Exception:
-            info["pid_alive"] = False
+        info["pid_alive"] = _pid_alive(int(pid))
     elif pid:
         info["pid_alive"] = False
 
@@ -274,13 +277,17 @@ def gather() -> HealthInfo:
         pass
 
     # Best-effort hit rate from stats (bounded; direct mode trace is fine).
+    # NO_AUTOSTART is mandatory here: `toolrecall stats` is in the CLI's
+    # daemon-required set, so without it a *health check* spawns the daemon it
+    # is supposed to diagnose — which rewrites daemon.pid and the instance
+    # lock mid-run and made `--clean-stale` race its own report.
     try:
         r = subprocess.run(
             _validated_toolrecall_bin() + ["stats"],
             capture_output=True,
             text=True,
             timeout=25,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "TOOLRECALL_NO_AUTOSTART": "1"},
         )
         if r.returncode == 0:
             import json as _json
@@ -302,6 +309,295 @@ def gather() -> HealthInfo:
     info["log_file"], info["log_errors_recent"], info["log_warnings_recent"] = _scan_recent_log()
 
     return info
+
+
+# ── Stale-state inspection & cleanup (`healthcheck --clean-stale`) ────────
+
+
+class CleanupReport(TypedDict):
+    pid_file: str
+    pid_file_removed: bool
+    pid_file_reason: str
+    lock_files_removed: list[str]
+    lock_files_kept: int
+
+
+def _proc_state(pid: int) -> str:
+    """Classify a PID as 'alive' | 'zombie' | 'dead' | 'unknown'.
+
+    A ``/proc/<pid>`` entry is NOT liveness: a zombie keeps its entry until
+    reaped, and a recycled PID keeps it under a different program. The old
+    presence-only check therefore reported a dead daemon as alive in exactly
+    the two cases stale-cleanup exists for.
+
+    Without /proc we ask the kernel with signal 0 — but never on Windows,
+    where ``os.kill(pid, 0)`` is ``TerminateProcess`` and would *kill* the
+    process we are probing.
+    """
+    if pid <= 0:
+        return "dead"
+    if os.path.isdir("/proc"):
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                data = f.read().decode("utf-8", "replace")
+        except FileNotFoundError:
+            return "dead"
+        except OSError:
+            return "unknown"
+        # Field 3 (state) follows the parenthesized comm, which may itself
+        # contain spaces and parentheses — split after the LAST ')'.
+        rparen = data.rfind(")")
+        state = data[rparen + 2 : rparen + 3] if rparen != -1 else ""
+        if state == "Z":
+            return "zombie"
+        if state in ("X", "x"):
+            return "dead"
+        return "alive"
+    if os.name == "posix":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return "dead"
+        except PermissionError:
+            return "alive"
+        except OSError:
+            return "unknown"
+        return "alive"
+    return "unknown"
+
+
+def _pid_alive(pid: int) -> bool:
+    """True unless the PID is provably dead or a zombie.
+
+    'unknown' counts as alive: on a platform where liveness cannot be
+    verified, the healthcheck must not cry "stale daemon.pid".
+    """
+    return _proc_state(pid) not in ("dead", "zombie")
+
+
+def _is_toolrecall_process(pid: int) -> bool | None:
+    """Whether /proc/<pid>/cmdline names toolrecall; None when undecidable.
+
+    Only used to recognize PID reuse: a live PID recorded in daemon.pid whose
+    command line is readable and has nothing to do with ToolRecall cannot be
+    the daemon that wrote that file.
+    """
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    argv = [chunk for chunk in raw.decode("utf-8", "replace").split("\0") if chunk]
+    if not argv:
+        return None  # kernel thread or zombie: no argv to judge by
+    return any("toolrecall" in arg.lower() for arg in argv)
+
+
+def _stale_pid_reason(pid_text: str) -> str | None:
+    """Why ``pid_text`` is provably not a live daemon PID, or None if it is.
+
+    "Provably" is the contract: every branch either proves the recorded
+    daemon is gone or declines to touch the file.
+    """
+    pid_text = pid_text.strip()
+    if not pid_text:
+        return None
+    if not pid_text.isdigit():
+        return f"invalid pid {pid_text!r}"
+    pid = int(pid_text)
+    if pid <= 0:
+        return f"invalid pid {pid}"
+    state = _proc_state(pid)
+    if state == "dead":
+        return f"pid {pid} not alive"
+    if state == "zombie":
+        return f"pid {pid} is a zombie (never reaped)"
+    if state == "unknown":
+        return None  # cannot prove death → leave it alone
+    if _is_toolrecall_process(pid) is False:
+        return f"pid {pid} is alive but not a toolrecall daemon (pid reused)"
+    return None
+
+
+def _try_acquire_lock(path: str, create: bool = True):
+    """Open *path* and take a non-blocking exclusive lock.
+
+    Returns the open file object when the lock is ours, None when a live
+    process holds it. Raises FileNotFoundError when ``create=False`` and the
+    file vanished (an already-swept orphan).
+    """
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    fh = open(path, "a+" if create else "r+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]  # Windows-only
+        else:
+            import fcntl
+
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    # Record the holder PID for humans/debuggers, like daemon.py does.
+    try:
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(os.getpid()))
+        fh.flush()
+    except OSError as e:
+        # The lock itself is already ours; only the diagnostic PID is missing.
+        log.debug("could not record lock holder pid in %s: %s", path, e)
+    return fh
+
+
+def _drop_lock(fh, unlink: bool = True) -> None:
+    """Release a lock taken by ``_try_acquire_lock`` and unlink its file."""
+    if unlink:
+        try:
+            os.unlink(fh.name)
+        except FileNotFoundError:
+            pass  # already gone (raced with another sweeper)
+        except OSError as e:
+            log.debug("instance-lock unlink skipped for %s: %s", fh.name, e)
+    try:
+        fh.close()
+    except OSError as e:
+        log.debug("instance-lock close failed for %s: %s", fh.name, e)
+
+
+def _sweep_lock_files(lock_dir: str) -> tuple[list[str], int]:
+    """Unlink flock-able ``daemon-*.lck`` files; return (removed, kept).
+
+    Same safety rule as ``daemon._sweep_stale_lock_files``: the kernel lock,
+    not the recorded PID, decides. A file we can flock has no live holder;
+    a file we cannot flock is never touched, whatever its content says.
+    """
+    removed: list[str] = []
+    kept = 0
+    if not os.path.isdir(lock_dir):
+        return removed, kept
+    for name in sorted(os.listdir(lock_dir)):
+        if not (name.startswith("daemon-") and name.endswith(".lck")):
+            continue
+        path = os.path.join(lock_dir, name)
+        try:
+            fh = _try_acquire_lock(path, create=False)
+        except FileNotFoundError:
+            continue  # raced with another sweeper — success case
+        except OSError:
+            kept += 1
+            continue
+        if fh is None:
+            kept += 1  # live holder
+            continue
+        try:
+            os.unlink(path)
+            removed.append(path)
+        except FileNotFoundError:
+            pass  # raced with another sweeper — success case
+        except OSError:
+            kept += 1
+        finally:
+            _drop_lock(fh, unlink=False)
+    return removed, kept
+
+
+def cleanup_stale_state() -> CleanupReport:
+    """Remove a provably dead ``daemon.pid`` and orphaned ``daemon-*.lck``.
+
+    Safety model — fail closed at every step:
+
+    1. A lock file is removed only when its flock can be taken non-blocking;
+       the kernel decides whether a holder is alive, never the recorded PID.
+    2. The PID file is removed only when its PID is provably dead: invalid
+       content, no /proc entry, a zombie, or a live PID whose command line is
+       readable and belongs to another program (PID reuse).
+    3. PID removal runs under the production instance lock, so a daemon
+       starting concurrently either wins first (we then leave the file
+       alone) or loses and exits — it can never write a PID file that we
+       unlink afterwards.
+
+    Never touches the socket, the cache DB, or a held lock.
+    """
+    pid_path = _pid_file()
+    report: CleanupReport = {
+        "pid_file": pid_path,
+        "pid_file_removed": False,
+        "pid_file_reason": "",
+        "lock_files_removed": [],
+        "lock_files_kept": 0,
+    }
+
+    pid_text: str | None = None  # None = no pid file at all
+    if os.path.isfile(pid_path):
+        try:
+            with open(pid_path) as f:
+                pid_text = f.read().strip()
+        except OSError as e:
+            report["pid_file_reason"] = f"unreadable: {e}"
+
+    reason = _stale_pid_reason(pid_text) if pid_text is not None else None
+    if reason:
+        # Fail closed: no gate, no removal. Resolving the path or opening the
+        # lock may raise (broken install, read-only dir); let it surface as a
+        # hard healthcheck error instead of deleting unguarded.
+        from toolrecall.daemon import _instance_lock_path
+
+        gate_path = _instance_lock_path(_default_socket_path())
+        gate = _try_acquire_lock(gate_path)
+        if gate is None:
+            report["pid_file_reason"] = (
+                "daemon holds the instance lock (running or starting) — pid file left untouched"
+            )
+        else:
+            try:
+                # Re-read under the gate: a daemon that started between our
+                # first read and the lock acquisition has rewritten the file.
+                try:
+                    with open(pid_path) as f:
+                        current = f.read().strip()
+                except OSError:
+                    current = ""
+                reason = _stale_pid_reason(current) if current else None
+                if reason:
+                    try:
+                        os.remove(pid_path)
+                        report["pid_file_removed"] = True
+                        report["pid_file_reason"] = reason
+                    except FileNotFoundError:
+                        report["pid_file_reason"] = "already removed"
+                    except OSError as e:
+                        report["pid_file_reason"] = f"remove failed: {e}"
+            finally:
+                _drop_lock(gate)
+
+    report["lock_files_removed"], report["lock_files_kept"] = _sweep_lock_files(
+        os.path.dirname(pid_path)
+    )
+    return report
+
+
+def cleanup_line(report: CleanupReport) -> str:
+    """One-line summary of what ``--clean-stale`` did."""
+    if report["pid_file_removed"]:
+        pid_part = f"removed stale daemon.pid ({report['pid_file_reason']})"
+    elif report["pid_file_reason"]:
+        pid_part = f"daemon.pid kept — {report['pid_file_reason']}"
+    else:
+        pid_part = "no stale daemon.pid"
+    n = len(report["lock_files_removed"])
+    if n:
+        lock_part = f"removed {n} orphaned lock file{'s' if n != 1 else ''}"
+    else:
+        lock_part = "no orphaned lock files"
+    if report["lock_files_kept"]:
+        lock_part += f" ({report['lock_files_kept']} held, kept)"
+    return f"cleanup: {pid_part}; {lock_part}"
 
 
 def warnings(info: HealthInfo) -> list[str]:
@@ -368,19 +664,27 @@ def render(info: HealthInfo) -> str:
     )
 
 
-def run(as_json: bool = False) -> int:
+def run(as_json: bool = False, clean_stale: bool = False) -> int:
     """Execute the healthcheck and print the report. Returns the exit code.
 
     ``as_json=True`` prints a single JSON object (summary over {"health": {...},
     "warnings": [...]}) instead of the human line, for cron/script consumption.
+    ``clean_stale=True`` removes provably stale daemon state first (see
+    :func:`cleanup_stale_state`) and reports what was removed.
     """
+    cleanup = cleanup_stale_state() if clean_stale else None
     info = gather()
     notes = warnings(info)
     if as_json:
         import json as _json
 
-        print(_json.dumps({"health": info, "warnings": notes}, default=str))
+        payload: dict[str, object] = {"health": info, "warnings": notes}
+        if cleanup is not None:
+            payload["cleanup"] = cleanup
+        print(_json.dumps(payload, default=str))
     else:
+        if cleanup is not None:
+            print(cleanup_line(cleanup))
         print(render(info))
         if notes:
             print(f"  note: {'; '.join(notes)}")

@@ -152,6 +152,19 @@ pkill -f "toolrecall daemon"
 systemctl --user start toolrecall-daemon
 ```
 
+**Stale `daemon.pid` / orphaned `daemon-*.lck` files.** A crash or SIGKILL also
+leaves the PID file and per-socket lock files behind; `healthcheck` then reports
+`stale daemon.pid (pid … not alive)`. Do not blind-delete them while a daemon
+may be starting — use the guarded cleanup:
+```bash
+toolrecall healthcheck --clean-stale
+```
+It removes the PID file only when the recorded PID is provably dead (no `/proc`
+entry, a zombie, or a recycled PID whose command line is another program), and
+removes a lock file only when its `flock` can be taken (a live holder's lock is
+never touched). Removal runs under the daemon's instance lock, so it cannot
+race a daemon start.
+
 ## 14. "database is locked" warnings in daemon logs
 **Symptom:** Journal repeatedly shows `UserWarning: ToolRecall: failed to record stats: database is locked`.
 **Cause (v0.7.0–v0.7.2):** `_record()` used a separate persistent connection (`_get_stats_conn`) that competed

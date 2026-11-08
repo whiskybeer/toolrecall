@@ -48,6 +48,7 @@ Each test file covers a distinct module or feature:
 |------|------------------|---------------|
 | `tests/test_shim.py` | `toolrecall/shim.py` | Re-entrancy guard, open() routing, Option B invariant (subprocess NOT patched), apply/remove round-trip |
 | `tests/test_daemon_pid_guard.py` | `toolrecall/daemon.py` | PID file fallback: stop on stale PID, status without PID file |
+| `tests/test_healthcheck_stale_pid.py` | `toolrecall/healthcheck.py` | `--clean-stale`: dead/zombie/reused PID removal, flock-verified lock sweep, instance-lock gate (keeps a live daemon's PID file), idempotency |
 | `tests/test_transport.py` | `toolrecall/transport.py` | UDS socket lifecycle, TCP fallback, framed message protocol, large messages, pings, daemon-unavailable handling |
 
 ### Client & Proxy

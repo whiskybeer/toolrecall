@@ -68,6 +68,14 @@
   `X-ToolRecall-Bypass-Sampled: 1`. When active, `X-ToolRecall-Cache-Sampled: 1`
   allows re-enabling cache for exact replay. Documented in `docs/FORWARD_PROXY.md`
   and `docs/CONFIG_REFERENCE.md`. Tests: `tests/test_proxy_sampling_no_cache.py` (16).
+- **`toolrecall healthcheck --clean-stale`.** Removes a *provably* dead
+  `~/.toolrecall/daemon.pid` and orphaned `daemon-*.lck` files left behind by a
+  crash. The PID file is only removed when the recorded PID is gone (no `/proc`
+  entry, a zombie, or a recycled PID whose command line belongs to another
+  program), and removal runs under the daemon's instance lock so it cannot race
+  a start. Lock files are swept only when their `flock` can be taken — a lock
+  with a live holder is never touched. `--json` now also reports the `cleanup`
+  result. Tests: `tests/test_healthcheck_stale_pid.py` (27).
 
 ### Changed
 - **Claude Code positioning corrected to measured results.** Interactive
@@ -89,6 +97,11 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **`healthcheck` no longer starts the daemon it is diagnosing.** The
+  `stats` helper subprocess inherited an autostart-enabled environment, so a
+  check against a stopped daemon spawned one, which rewrote `daemon.pid` and
+  the instance lock mid-run — and made `--clean-stale` race its own report.
+  Helper subprocesses now run with `TOOLRECALL_NO_AUTOSTART=1`.
 - **LangChain tool cache keys by input and actually serves hits.**
   `ToolRecallCallbackHandler.on_tool_end` stored results under
   `{"input": <tool output>}`, and nothing ever looked a tool result up before

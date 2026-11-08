@@ -422,7 +422,7 @@ toolrecall index-memory   Index agent memory stores
 toolrecall index-dir      Index a directory for FTS5 search [not file cache pre-warm]
 toolrecall index-compact  Rebuild FTS index + VACUUM (reclaim knowledge-DB bloat)
 toolrecall proxy          Attach/detach Hermes' LLM traffic to the forward proxy (billed-savings path)
-toolrecall healthcheck    Daemon/cache healthcheck — exit 0 healthy, 1 down/abnormal, 2 hard failure
+toolrecall healthcheck    Daemon/cache healthcheck — 0 running, 1 down, 2 error; --clean-stale clears dead state
 toolrecall logs [--tail N] [--level X]   Inspect the rotating log rail
 toolrecall update         Self-update from a pinned package index ([update].index_url)
 toolrecall nginx          Generate nginx reverse-proxy config (~/.toolrecall/nginx-toolrecall.conf)

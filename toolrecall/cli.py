@@ -2918,15 +2918,26 @@ def cmd_top():
 def cmd_healthcheck():
     """Run the generalized daemon/cache healthcheck.
 
-    Local-only: reuses ToolRecall's own transport/pid/lock paths. Exit code:
+    Local-only: reuses ToolRecall's own transport/pid/lock paths. Flags:
+      --json         machine-readable JSON object (health + warnings)
+      --clean-stale  first remove a provably dead daemon.pid and orphaned
+                     daemon-*.lck files (flock-verified), then report health
+
+    Exit code:
       0  healthy
       1  daemon down or abnormal pid/lock/socket state
-      2  hard failure (e.g. healthcheck module import error)
+      2  hard failure (e.g. healthcheck module import error) or bad usage
     """
+    args = sys.argv[2:]
+    unknown = [a for a in args if a not in ("--json", "--clean-stale")]
+    if unknown:
+        print(f"toolrecall healthcheck: unknown argument(s): {' '.join(unknown)}", file=sys.stderr)
+        print("  usage: toolrecall healthcheck [--json] [--clean-stale]", file=sys.stderr)
+        sys.exit(2)
     try:
         from toolrecall import healthcheck as _hc
 
-        code = _hc.run("--json" in sys.argv[2:])
+        code = _hc.run(as_json="--json" in args, clean_stale="--clean-stale" in args)
     except Exception as e:  # noqa: BLE001  (surface a hard failure as exit 2)
         print(f"toolrecall healthcheck error: {e}")
         code = 2
@@ -3239,7 +3250,7 @@ def main():
         print("  replay          Record/replay tool call scenarios (Replay mode)")
         print("  turso           Turso Cloud sync: init, status")
         print("  agent           Per-agent cache stats: ls, show, prune")
-        print("  healthcheck     One-shot daemon/cache health (exit 0 healthy / 1 warn / 2 error)")
+        print("  healthcheck     One-shot daemon/cache health (--json, --clean-stale; exit 0/1/2)")
         return
 
     if sys.argv[1] in ("--version", "-V", "-v"):

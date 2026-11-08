@@ -3696,5 +3696,6 @@ def daemon_status():
         print(f"  Transport: {_default_socket_path()}")
     except ProcessLookupError:
         print("ToolRecall Daemon: DEAD (Stale PID file)")
-        print("  The PID file is out of date. Remove it (rm ~/.toolrecall/daemon.pid)")
+        print("  The PID file is out of date. Clean it up with:")
+        print("    toolrecall healthcheck --clean-stale")
         print("  or restart the daemon: systemctl --user restart toolrecall-daemon")

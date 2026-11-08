@@ -292,13 +292,25 @@ Most commands accept `--help` / `-h` for per-command usage and options
 - **Purpose:** One-shot daemon/cache health status for operators and cron
   watchdogs. Reuses ToolRecall's **own** transport/pid/lock paths — no
   hardcoded per-machine config.
-- **What it reports:** daemon process count, `daemon.pid` liveness, `daemon-*.lck`
-  lock-file count, UDS socket presence, shim state (`active`/`inactive`), and
-  cache hit-rate.
+- **What it reports:** daemon process count, `daemon.pid` liveness (live,
+  non-zombie PID), `daemon-*.lck` lock-file count, UDS socket presence, shim
+  state (`active`/`inactive`), and cache hit-rate.
+- **Flags:**
+  - `--json` — one JSON object: `{"health": {...}, "warnings": [...]}`, plus
+    `"cleanup": {...}` when `--clean-stale` is given.
+  - `--clean-stale` — remove a *provably* dead `daemon.pid` and orphaned
+    `daemon-*.lck` files before reporting. A PID file is kept while a daemon
+    holds the instance lock (running or starting); a lock file is removed only
+    when its `flock` can be taken, so a live holder is never touched. See
+    [Troubleshooting §13](TROUBLESHOOTING.md) for the crash recovery recipe.
+- **Side effects:** none. Helper subprocesses run with
+  `TOOLRECALL_NO_AUTOSTART=1`, so a healthcheck never starts the daemon it is
+  diagnosing (it used to, which rewrote `daemon.pid` mid-check).
 - **Exit codes:**
-  - `0` — healthy
-  - `1` — daemon down or abnormal pid/lock/socket state (warns, with `note:` line)
-  - `2` — hard error
+  - `0` — daemon process present (warnings such as a stale pid or a noisy log
+    may still be printed on the `note:` line)
+  - `1` — daemon down (no `toolrecall daemon` process)
+  - `2` — hard error or unknown flag
 - **Cron usage:** `TOOLRECALL_BIN=... toolrecall healthcheck` (cron shells don't
   inherit `~/.local/bin` PATH). The Hermes watchdog wraps this command and adds
   category-level zero-hits interpretation; the core signal lives here.
