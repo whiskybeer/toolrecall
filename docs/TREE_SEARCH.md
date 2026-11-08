@@ -9,8 +9,9 @@
 > 82–83%, but that workload uses scripted mutations. The real `gepa.optimize()`
 > loop, with LLM-proposed prompts, a tool-calling agent and a real scorer, is in
 > [`bench/results/GEPA_REAL_RESULTS.md`](../bench/results/GEPA_REAL_RESULTS.md):
-> −33% to −68% billed vs GEPA's own cache on deepseek, +1% on mistral (5 runs),
-> 30–53% of tool calls replayed, no loss in final score.
+> with both arms replaying one GEPA run's exact evaluation schedule (equal
+> work), agent LLM cost fell 45–78% on deepseek and 21–72% on mistral (6 runs),
+> and 25–59% of tool calls were replayed, with no loss in rollout score.
 > The LangGraph fork/resume primitive is real-graph verified: see
 > [langgraph-adapter.md](langgraph-adapter.md) (5/5 scenarios, including
 > time-travel rewind with the tool executed exactly once).
@@ -146,7 +147,7 @@ caller (non-reproducible tool output restored on demand at branch re-entry).
 - No general fork-vs-re-exploration savings number. The 79–83% is one synthetic
   workload (C=8 shared turns, d=1 divergent turn, simulated mutations); savings
   scale with C/d and do not transfer to other shapes. The real GEPA loop ranged
-  from −68% to +18% per run
+  from 21% to 78% per run (equal-work design)
 - No task-quality claim: the pass@1 A/B gap from the dedup benchmark is
   open; tree search does not change that
 - No comparison against self-hosted RadixAttention stacks on the token axis
@@ -167,8 +168,8 @@ every benchmark on this repo.
 Status: the synthetic fork A/B
 ([GEPA_FORK_AB_RESULTS.md](../bench/results/GEPA_FORK_AB_RESULTS.md)) is
 repeated 5× on two models at 82–83%, with and without provider prefix caching.
-The real GEPA loop ([GEPA_REAL_RESULTS.md](../bench/results/GEPA_REAL_RESULTS.md))
-saves far less and varies by model: most of the deepseek saving comes from GEPA
-re-running identical parent rollouts, and across different prompts only tool
-calls replay. Open: a second key for the dashboard cross-check, paid or slow
+The real GEPA loop ([GEPA_REAL_RESULTS.md](../bench/results/GEPA_REAL_RESULTS.md),
+equal-work design) saves 21–78% of agent LLM cost. The saving tracks how often
+GEPA re-runs identical parent rollouts, which its own cache does not serve;
+across different prompts only tool calls replay. Open: a second key for the dashboard cross-check, paid or slow
 tools (the tool axis is measured only as counts), and more task types.

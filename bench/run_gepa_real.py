@@ -26,8 +26,23 @@ with max_tokens=5. This bench runs the optimizer as a user would:
   "low" and a large max_tokens: on reasoning models, hidden reasoning can
   otherwise use the whole budget and return empty content.
 
-Arms (same model, same data, same GEPA seed and budget)
--------------------------------------------------------
+Designs
+-------
+--design schedule (default, equal work by construction): one real
+gepa.optimize() run with GEPA's own evaluation cache ON records every
+evaluate() call (prompt, example ids, traces flag). That schedule is then
+replayed call for call in a `baseline` arm (plain execution, LLM straight
+to OpenRouter) and a `toolrecall` arm (fork-tree tools + forward-proxy LLM
+cache). Same prompts, same examples, same order: ToolRecall is the only
+difference. Reflection runs once and is reported separately.
+
+--design arms (first published design): the three independent arms below.
+GEPA's reflection samples at temperature 0.7, so arms evolve different
+prompts and do different amounts of agent work; a cross-arm cost
+difference then mixes ToolRecall's saving with trajectory luck.
+
+Arms of --design arms (same model, same data, same GEPA seed and budget)
+-----------------------------------------------------------------------
   default     GEPA defaults (cache_evaluation=False). Tools execute, LLM
               calls go straight to OpenRouter (provider prefix caching
               applies as it would for any user).
@@ -73,6 +88,7 @@ Usage
     KEY=sk-or-... <venv-with-gepa>/bin/python -u bench/run_gepa_real.py --execute --seed 0
 
 Outputs (never overwritten): bench/results/gepa_real_<model>_s<seed>_<UTC>.{json,jsonl}
+(or --out)
 """
 
 from __future__ import annotations
@@ -458,15 +474,7 @@ def make_toolrecall_adapter(corpus, llm, model, seed):
 # ─── one arm ───────────────────────────────────────────────────────────────
 
 
-def run_arm(arm, args, corpus, train, val, key) -> dict:
-    import gepa
-
-    ledger = Ledger(arm, args.model, args.cost_cap)
-    task_url = args.edge if arm == "toolrecall" else OPENROUTER
-
-    def llm(body, tag):
-        return ledger.post(task_url, key, body, "task", tag)
-
+def make_reflection_lm(ledger, args, key):
     def reflection_lm(prompt):
         msgs = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
         data = ledger.post(
@@ -486,6 +494,19 @@ def run_arm(arm, args, corpus, train, val, key) -> dict:
         )
         return ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
 
+    return reflection_lm
+
+
+def run_arm(arm, args, corpus, train, val, key) -> dict:
+    import gepa
+
+    ledger = Ledger(arm, args.model, args.cost_cap)
+    task_url = args.edge if arm == "toolrecall" else OPENROUTER
+
+    def llm(body, tag):
+        return ledger.post(task_url, key, body, "task", tag)
+
+    reflection_lm = make_reflection_lm(ledger, args, key)
     execs_before = corpus.executions
     if arm == "toolrecall":
         adapter, counters = make_toolrecall_adapter(corpus, llm, args.model, args.seed)
@@ -541,6 +562,146 @@ def run_arm(arm, args, corpus, train, val, key) -> dict:
     return {"summary": summary, "rows": ledger.rows}
 
 
+# ─── equal-work design: one GEPA schedule, replayed in every arm ──────────
+
+
+class RecordingAdapter(PlainAdapter):
+    """PlainAdapter that logs every evaluate() call GEPA makes, in order."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.schedule: list[dict] = []
+
+    def evaluate(self, batch, candidate, capture_traces=False):
+        self.schedule.append(
+            {
+                "candidate": dict(candidate),
+                "ids": [item["id"] for item in batch],
+                "capture_traces": bool(capture_traces),
+            }
+        )
+        return super().evaluate(batch, candidate, capture_traces)
+
+
+def summarize_replay(arm, args, ledger, counters, tool_requests, executions, scores, wall):
+    task_rows = [r for r in ledger.rows if r["kind"] == "task"]
+    return {
+        "arm": arm,
+        "model": args.model,
+        "seed": args.seed,
+        "rollouts": len(scores),
+        "mean_rollout_score": round(sum(scores) / max(1, len(scores)), 4),
+        "task_llm_calls": len(task_rows),
+        "task_llm_hits": sum(1 for r in task_rows if r["cache"] == "HIT"),
+        "task_billed_usd": round(ledger.billed("task"), 6),
+        "task_cost_avoided_usd": round(sum(r["cost_avoided"] for r in task_rows), 6),
+        "task_prompt_tokens": sum(r["prompt_tokens"] for r in task_rows),
+        "task_cached_tokens": sum(r["cached_tokens"] for r in task_rows),
+        "tool_calls_requested": tool_requests,
+        "tool_executions": executions,
+        "tool_calls_replayed": counters["replayed"] if counters else 0,
+        "errors": sum(1 for r in ledger.rows if r["error"]),
+        "wall_s": round(wall, 1),
+    }
+
+
+def run_schedule_design(args, corpus, train, val, key) -> tuple[list, list, dict]:
+    """Equal work by construction.
+
+    1. record: one real gepa.optimize() run with GEPA's own evaluation cache
+       on (the fair baseline a GEPA user gets for free); every evaluate()
+       call it makes is logged — candidate prompt, example ids, traces flag.
+    2. baseline / toolrecall: replay that exact schedule, call for call.
+       Both arms run the same prompts on the same examples in the same
+       order, so ToolRecall is the only difference. Reflection happens once
+       (in record) and is reported separately: it is identical work for
+       both arms and no cache can serve it.
+
+    The replay order alternates with the seed so neither arm always runs
+    second against a provider prefix cache the other arm warmed.
+    """
+    import gepa
+
+    by_id = {q["id"]: q for q in train + val}
+    rows: list = []
+
+    ledger = Ledger("record", args.model, args.cost_cap)
+
+    def rec_llm(body, tag):
+        return ledger.post(OPENROUTER, key, body, "task", tag)
+
+    rec = RecordingAdapter(corpus, rec_llm, args.model, args.seed)
+    t0 = time.time()
+    result = gepa.optimize(
+        seed_candidate={"system_prompt": SEED_PROMPT},
+        trainset=train,
+        valset=val,
+        adapter=rec,
+        reflection_lm=make_reflection_lm(ledger, args, key),
+        max_metric_calls=args.budget,
+        reflection_minibatch_size=3,
+        cache_evaluation=True,
+        seed=args.seed,
+        raise_on_exception=False,
+        display_progress_bar=False,
+    )
+    best = max(range(len(result.candidates)), key=lambda i: result.val_aggregate_scores[i])
+    record = {
+        "arm": "record",
+        "evaluate_calls": len(rec.schedule),
+        "rollouts": sum(len(e["ids"]) for e in rec.schedule),
+        "candidates": len(result.candidates),
+        "seed_val_score": round(result.val_aggregate_scores[0], 4),
+        "best_val_score": round(result.val_aggregate_scores[best], 4),
+        "best_prompt": result.candidates[best]["system_prompt"],
+        "task_billed_usd": round(ledger.billed("task"), 6),
+        "reflection_calls": sum(1 for r in ledger.rows if r["kind"] == "reflection"),
+        "reflection_billed_usd": round(ledger.billed("reflection"), 6),
+        "wall_s": round(time.time() - t0, 1),
+    }
+    rows.extend(ledger.rows)
+    print(json.dumps(record, indent=2), flush=True)
+
+    order = ["baseline", "toolrecall"] if args.seed % 2 == 0 else ["toolrecall", "baseline"]
+    arms = []
+    for arm in order:
+        print(f"\n=== replay arm {arm} ({len(rec.schedule)} evaluate calls) ===", flush=True)
+        ledger = Ledger(arm, args.model, args.cost_cap)
+        url = args.edge if arm == "toolrecall" else OPENROUTER
+
+        def llm(body, tag, _ledger=ledger, _url=url):
+            return _ledger.post(_url, key, body, "task", tag)
+
+        if arm == "toolrecall":
+            adapter, counters = make_toolrecall_adapter(corpus, llm, args.model, args.seed)
+        else:
+            adapter, counters = PlainAdapter(corpus, llm, args.model, args.seed), None
+        execs_before = corpus.executions
+        scores: list[float] = []
+        t0 = time.time()
+        for e in rec.schedule:
+            batch = [by_id[i] for i in e["ids"]]
+            res = adapter.evaluate(batch, e["candidate"], e["capture_traces"])
+            scores.extend(float(x) for x in res.scores)
+        tool_requests = counters["tool_requests"] if counters else adapter.tool_requests
+        summary = summarize_replay(
+            arm,
+            args,
+            ledger,
+            counters,
+            tool_requests,
+            corpus.executions - execs_before,
+            scores,
+            time.time() - t0,
+        )
+        if arm == "toolrecall":
+            adapter.cleanup()
+        print(json.dumps(summary, indent=2), flush=True)
+        arms.append(summary)
+        rows.extend(ledger.rows)
+    return arms, rows, {"record": record, "replay_order": order}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", default=os.environ.get("BENCH_MODEL", DEFAULT_MODEL))
@@ -549,7 +710,16 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--questions", type=int, default=12, help="half train, half val")
     ap.add_argument("--budget", type=int, default=40, help="GEPA max_metric_calls per arm")
-    ap.add_argument("--arms", default="default,gepa-cache,toolrecall")
+    ap.add_argument(
+        "--design",
+        choices=("schedule", "arms"),
+        default="schedule",
+        help="schedule (default): one GEPA run's evaluate() schedule replayed "
+        "in a baseline and a toolrecall arm (equal work). arms: three "
+        "independent gepa.optimize() runs (the first published design; "
+        "arms drift apart, see GEPA_REAL_RESULTS.md)",
+    )
+    ap.add_argument("--arms", default="default,gepa-cache,toolrecall", help="--design arms only")
     ap.add_argument("--cost-cap", type=float, default=0.40, help="USD abort per arm")
     ap.add_argument("--out", default=None)
     ap.add_argument("--plan", action="store_true", help="print the plan, spend nothing")
@@ -576,12 +746,16 @@ def main() -> int:
 
     results = []
     rows: list = []
-    for arm in arms:
-        print(f"\n=== arm {arm} ===", flush=True)
-        r = run_arm(arm, args, corpus, train, val, key)
-        print(json.dumps(r["summary"], indent=2), flush=True)
-        results.append(r["summary"])
-        rows.extend(r["rows"])
+    extra: dict = {}
+    if args.design == "schedule":
+        results, rows, extra = run_schedule_design(args, corpus, train, val, key)
+    else:
+        for arm in arms:
+            print(f"\n=== arm {arm} ===", flush=True)
+            r = run_arm(arm, args, corpus, train, val, key)
+            print(json.dumps(r["summary"], indent=2), flush=True)
+            results.append(r["summary"])
+            rows.extend(r["rows"])
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     slug = args.model.split("/")[-1]
@@ -594,6 +768,7 @@ def main() -> int:
         json.dump(
             {
                 "bench": "gepa_real",
+                "design": args.design,
                 "model": args.model,
                 "rev": corpus.rev,
                 "seed": args.seed,
@@ -601,6 +776,7 @@ def main() -> int:
                 "max_steps": MAX_STEPS,
                 "max_tokens": MAX_TOKENS,
                 "arms": results,
+                **extra,
             },
             f,
             indent=2,

@@ -9,12 +9,17 @@
   arms: GEPA default, GEPA's own `cache_evaluation`, and that plus ToolRecall
   (fork-tree tool replay + forward-proxy LLM cache). The rig runs a hermetic
   daemon, proxy and edge, with HOME pinned so the production usage CSV is
-  untouched. Results in `bench/results/GEPA_REAL_RESULTS.md`:
-  - Billed −33% to −68% vs GEPA's own cache on deepseek-v4-flash, and +1% on
-    mistral-small-3.2 (5 runs).
-  - 30–53% of tool calls replayed, with no loss in best validation score.
-  - Most of the deepseek saving is GEPA re-running identical parent rollouts:
-    its cache is written for traced parent evaluations but never read there.
+  untouched. Default `--design schedule` records one GEPA run's evaluate()
+  schedule and replays it in a baseline and a ToolRecall arm, so both do equal
+  work. Results in `bench/results/GEPA_REAL_RESULTS.md`:
+  - Agent LLM cost −45…−78% on deepseek-v4-flash and −21…−72% on
+    mistral-small-3.2 (6 runs); 25–59% of tool calls replayed; rollout scores
+    equal or higher.
+  - The saving tracks GEPA re-running identical parent rollouts: its cache is
+    written for traced parent evaluations but never read there.
+  - The first design (three independent optimizer runs) showed +1% on mistral
+    because the arms evolved different prompts and did different work. It is
+    kept as `--design arms` and documented as superseded.
   The synthetic fork A/B was repeated 5× on two models: 82–83%, with and
   without provider prefix caching.
 
