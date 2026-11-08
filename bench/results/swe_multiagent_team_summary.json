@@ -1,0 +1,34 @@
+{
+  "arms": {
+    "naive": {
+      "turns_completed": 150,
+      "prompt_tokens": 14782539,
+      "completion_tokens": 17946,
+      "cost_usd": 0.747203,
+      "stubs_emitted": 0,
+      "duration_seconds": 225.17,
+      "final_context_tokens": 193636
+    },
+    "toolrecall": {
+      "turns_completed": 150,
+      "prompt_tokens": 7067918,
+      "completion_tokens": 18000,
+      "cost_usd": 0.361496,
+      "stubs_emitted": 4765,
+      "duration_seconds": 163.02,
+      "final_context_tokens": 90184
+    }
+  },
+  "model": "deepseek/deepseek-v4-flash",
+  "turns": 150,
+  "openrouter_usage_before": 705.417496672,
+  "openrouter_usage_after": 706.489886372,
+  "openrouter_delta_usd": 1.07239,
+  "comparison": {
+    "prompt_token_savings_pct": 52.19,
+    "cost_savings_pct": 51.62,
+    "context_reduction_pct": 53.43,
+    "tokens_saved": 7714621,
+    "dollars_saved": 0.3857
+  }
+}

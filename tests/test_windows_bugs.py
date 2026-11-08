@@ -98,8 +98,8 @@ class TestClaudeMultiplexerOnlyUnboundLocal(unittest.TestCase):
                 cfg = json.load(f)
             self.assertIn("toolrecall", cfg["mcpServers"])
 
-    def test_noninteractive_claude_bin_defaults_full(self):
-        """claude present + non-interactive → multiplexer_only stays False (no crash)."""
+    def test_noninteractive_claude_bin_defaults_multiplexer_only(self):
+        """claude present + non-interactive → multiplexer_only defaults to True."""
         with tempfile.TemporaryDirectory() as home:
             fake_claude = os.path.join(home, "bin", "claude")
             os.makedirs(os.path.dirname(fake_claude), exist_ok=True)
@@ -116,10 +116,13 @@ class TestClaudeMultiplexerOnlyUnboundLocal(unittest.TestCase):
             )
             home_patch = _expand_to(home)
 
-            with argv_patch, which_patch, env_patch, run_patch, home_patch:
+            with argv_patch, which_patch, env_patch, run_patch as mock_run, home_patch:
                 result = cli._ensure_agent_integration()
 
             self.assertTrue(result.get("claude"))
+            mock_run.assert_called_once()
+            cmd_called = mock_run.call_args[0][0]
+            self.assertIn("--multiplexer-only", cmd_called)
 
 
 class TestWindowsLockSemantics(unittest.TestCase):

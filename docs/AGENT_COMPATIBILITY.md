@@ -16,8 +16,8 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
 | **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ⚠️ Headless repeats only (`claude-code` profile) | ❌ | **Selective** | Interactive sessions: no measurable token saving — Claude Code already dedups unchanged re-reads natively, and 76 local transcripts showed 0 redundant reads/outputs. Headless repeats (CI re-runs): proxy replay with the `claude-code` canonical profile: −69% usage on warm repeats of short real SWE-bench tasks that run tests, −18% on a 5-issue session (replay stops at the first non-deterministic tool output). Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Context hints now silent by default: emitted only after a client calls `context_set_checkpoint`, which Claude Code never does → zero hint overhead, no config needed. Distinct from provider prefix caching, which complements TR on stateless agents. |
-| **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
-| **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
+| **Codex CLI** | ⚠️ Multiplex only (static tools) | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only; skip file caching. |
+| **Cursor** | ✅ Multiplexer only (`~/.cursor/mcp.json`) | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages context natively. `toolrecall setup` configures `~/.cursor/mcp.json` with `--multiplexer-only` to pool MCP servers host-wide, plus :8569 for proxy dedup. |
 | **Warp** | ❌ N/A | ✅ via [warp adapter](#warp-⚠️-selective--strong-for-platform-workloads) | ❌ N/A (Rust) | **Selective** | Strong for platform workloads (agent fleets, Factories replay, cross-model evals); skip the file cache — Warp manages its own context. Requires a public HTTPS endpoint (Warp's backend calls your endpoint; localhost is rejected). |
 | **Antigravity** | ✅ Bridge + replay + FTS | ❌ N/A (no endpoint override) | ⚠️ SDK only, opt-in | **Selective** | SDK tools are plain callables → `@cached_tool` dedups expensive external calls; bridge unlocks replay + `docs_search` + MCP multiplex. No LLM caching ever (inference is Google-hosted, no base-URL). Do NOT enable MCP file caching — stateful edit-heavy agent, same 2.4× trap as Claude Code. Contrast with [Google ADK](#google-adk--✅-high-value): same vendor, opposite end of the statefulness spectrum — ADK is the stateless case (shim + proxy apply), Antigravity the stateful one. Both adapters can share one daemon (separate namespaces). |
 
@@ -95,6 +95,8 @@ Cline is a Python agent that benefits from both the shim and MCP bridge.
 ```
 
 The `.pth` shim auto-caches `open()`, `subprocess.run()`, and `subprocess.Popen()` in every Cline session.
+
+`toolrecall setup` writes this automatically.
 
 ---
 
@@ -276,6 +278,7 @@ Limits, all measured:
 - **Forward proxy replay for headless repeats** — CI re-runs and regression runs of `claude -p` with the `claude-code` profile (config below). Not for interactive sessions and not for sampling evals.
 - **Request-body dedup** — the one cost lever that is compatible with an append-only harness (see below).
 - **MCP multiplexer only** — if you run 5+ MCP servers, TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point, but **don't route file tools through it**.
+- **Hook-based integrations (WAF, Staleness alerts)** — see [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md) for the roadmap of five safe integration mechanisms that respect prompt caching.
 
 ### Request-body dedup: compatible, but little to stub
 
@@ -405,7 +408,7 @@ Codex CLI is Node.js (shim N/A). The MCP bridge is useful for multiplexing stati
 
 Cursor has its own tool-execution plumbing. The shim is safe (Python process) but largely redundant — Cursor manages its own state aggressively.
 
-**Recommended:** Skip ToolRecall for Cursor sessions. The forward proxy is the only feature that adds value (API cost savings).
+**Recommended:** Skip file caching for Cursor sessions. The forward proxy adds value (API cost savings), and `toolrecall setup` configures `~/.cursor/mcp.json` automatically with `--multiplexer-only` to pool MCP servers host-wide without redundant file stubs.
 
 ---
 

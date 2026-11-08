@@ -313,7 +313,9 @@ def cmd_status():
                 total_a = a_hits + a_misses
                 rate_str = f"{a_hits / total_a * 100:.0f}%" if total_a > 0 else "0%"
                 saved_str = f", tokens_saved={a_saved:,}" if a_saved else ""
-                print(f"  agent {aid}: {a_hits} hits, {a_misses} misses ({rate_str} hit rate){saved_str}")
+                print(
+                    f"  agent {aid}: {a_hits} hits, {a_misses} misses ({rate_str} hit rate){saved_str}"
+                )
     except Exception:
         pass
 
@@ -2062,7 +2064,7 @@ def _ensure_agent_integration():
         writing ~/.claude.json directly.
       - OpenCode/Crush: writes ~/.opencode/opencode.jsonc.
 
-    Returns dict with keys: 'hermes', 'opencode', 'antigravity', 'claude' — bool per agent.
+    Returns dict with keys: 'hermes', 'opencode', 'antigravity', 'claude', 'cline', 'cursor' — bool per agent.
     """
     import os
     import subprocess
@@ -2179,29 +2181,36 @@ def _ensure_agent_integration():
     claude_bin = shutil.which("claude")
     # Initialize unconditionally: when the `claude` binary is absent but a
     # ~/.claude.json fallback fires, this variable must still exist below.
-    # (Regression: UnboundLocalError crashed `setup` on Windows, 2026-09-04.)
-    claude_multiplexer_only = False
+    # Default to multiplexer-only: file caching via MCP was tested on Claude
+    # Code and showed a 2.4× cost increase (Claude Code manages its own context).
+    claude_multiplexer_only = True
 
     if claude_bin:
-        # Prompt user: file caching via MCP was tested and costs 2.4× more
-        # for Claude Code. Offer multiplexer-only mode.
+        # Prompt user: offer full bridge mode only if explicitly desired.
         if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
             print()
-            print("  ⚠️  Claude Code detected — IMPORTANT:")
-            print("     ToolRecall's file caching via MCP was tested on Claude Code")
-            print("     and showed a 2.4× cost increase. File caching only helps")
-            print("     stateless agents (Hermes, Cline, ADK).")
+            print("  ℹ️  Claude Code detected:")
+            print(
+                "     ToolRecall's MCP multiplexer pools MCP servers host-wide, cutting RAM by 70%."
+            )
+            print(
+                "     (Note: Full MCP file caching increases cost on Claude Code by 2.4× and is not recommended)."
+            )
             print()
             print("  Options:")
-            print("    f) Full bridge — file cache + multiplexer + proxy (default)")
-            print("    m) Multiplexer-only — no file/terminal/cache tools")
+            print(
+                "    m) Multiplexer-only — host-wide MCP pooling, no file stubs (recommended, default)"
+            )
+            print(
+                "    f) Full bridge — file cache + multiplexer (warning: 2.4× cost increase tested)"
+            )
             print()
             try:
-                claude_choice = input("  Install [F/m]: ").strip().lower()
-                if claude_choice == "m":
-                    claude_multiplexer_only = True
+                claude_choice = input("  Install [M/f]: ").strip().lower()
+                if claude_choice == "f":
+                    claude_multiplexer_only = False
             except (EOFError, OSError, KeyboardInterrupt):
-                pass  # Non-interactive (or non-tty stdin) → default to full
+                pass  # Non-interactive (or non-tty stdin) → default to multiplexer-only
         # Automatic: uses Claude's own CLI to register the MCP server
         mcp_args = ["toolrecall", "mcp"]
         if claude_multiplexer_only:
@@ -2236,11 +2245,12 @@ def _ensure_agent_integration():
         # Fallback: detect via ~/.claude.json
         claude_json = os.path.expanduser("~/.claude.json")
         if os.path.exists(claude_json):
-            _write_claude_json_config()
-            print(f"  ✅ Claude Code MCP config written (automatic): {claude_json}")
+            _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
+            label = "multiplexer-only" if claude_multiplexer_only else "full"
+            print(f"  ✅ Claude Code MCP config written ({label}, automatic): {claude_json}")
             result["claude"] = True
 
-    # Instruction snippet: tell Claude to prefer cached tools
+    # Instruction snippet: tell Claude to prefer cached tools (only for full mode)
     claude_dotdir = os.path.expanduser("~/.claude/claude_dotfiles")
     claude_md = os.path.join(claude_dotdir, "claude.md")
     if result.get("claude") and not claude_multiplexer_only and not os.path.exists(claude_md):
@@ -2251,7 +2261,7 @@ def _ensure_agent_integration():
             print(f"  ✅ Claude Code instruction snippet written (automatic): {claude_md}")
         except (OSError, IOError) as e:
             print(f"  ⚠️  Could not write instruction snippet: {e}")
-    elif result.get("claude") and os.path.exists(claude_md):
+    elif result.get("claude") and not claude_multiplexer_only and os.path.exists(claude_md):
         try:
             with open(claude_md) as f:
                 content = f.read()
@@ -2261,6 +2271,48 @@ def _ensure_agent_integration():
                     print(f"  ✅ Appended ToolRecall instruction to {claude_md}")
         except (OSError, IOError) as e:
             print(f"  ⚠️  Could not check/update instruction snippet: {e}")
+
+    # ─── Cline ───────────────────────────────────────────────────────────
+    cline_bin = shutil.which("cline")
+    cline_dir = os.path.expanduser("~/.config/cline")
+    cline_rules = os.path.expanduser("~/.clinerules")
+    vscode_cline_dir = os.path.expanduser(
+        "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings"
+    )
+
+    cline_target = None
+    if os.path.isdir(vscode_cline_dir):
+        cline_target = os.path.join(vscode_cline_dir, "cline_mcp_settings.json")
+    elif os.path.isdir(cline_dir) or os.path.isfile(cline_rules) or cline_bin:
+        cline_target = os.path.join(cline_dir, "mcp_settings.json")
+
+    if cline_target:
+        wrote, info = _prepare_cline_config(cline_target)
+        if wrote:
+            print(f"  ✅ Cline MCP config written (automatic): {cline_target}")
+            result["cline"] = True
+        else:
+            print(f"  ⚠️  Cline MCP config NOT written: {info}")
+            result["cline"] = False
+    else:
+        result["cline"] = False
+
+    # ─── Cursor ──────────────────────────────────────────────────────────
+    cursor_bin = shutil.which("cursor")
+    cursor_dir = os.path.expanduser("~/.cursor")
+    cursor_config_dir = os.path.expanduser("~/.config/Cursor")
+
+    if cursor_bin or os.path.isdir(cursor_dir) or os.path.isdir(cursor_config_dir):
+        cursor_target = os.path.join(cursor_dir, "mcp.json")
+        wrote, info = _prepare_cursor_config(cursor_target)
+        if wrote:
+            print(f"  ✅ Cursor MCP config written (multiplexer-only, automatic): {cursor_target}")
+            result["cursor"] = True
+        else:
+            print(f"  ⚠️  Cursor MCP config NOT written: {info}")
+            result["cursor"] = False
+    else:
+        result["cursor"] = False
 
     return result
 
@@ -2473,11 +2525,12 @@ After configuring your agent: make sure the ToolRecall daemon is running:
 """
 
 
-def _write_claude_json_config(multiplexer_only: bool = False):
+def _write_claude_json_config(multiplexer_only: bool = True):
     """Write toolrecall MCP entry to ~/.claude.json.
 
     Reads existing config, merges toolrecall into mcpServers, writes back.
     Used as fallback when 'claude mcp add' CLI command is unavailable.
+    Defaults to multiplexer_only=True to prevent 2.4× cost increase from file stubs.
     """
     import os
     import json
@@ -2613,6 +2666,115 @@ def _print_antigravity_notice() -> None:
     print("  • Optional: fronted third-party MCP servers get transparent")
     print("    response caching — opt in via [mcp_multiplex] in the daemon")
     print("    config (set ttl = 0 on any server with write tools).")
+
+
+def _prepare_cline_config(config_path: str) -> tuple[bool, str]:
+    """Read existing Cline mcp_settings.json or create a fresh one, then
+    merge the toolrecall MCP bridge entry into ``mcpServers``.
+
+    Merge-preserving: user-defined servers in the file are kept verbatim.
+    Writes atomically (tmp file + os.replace).
+
+    Returns:
+        (wrote, info): wrote=True -> "created" or "updated";
+        wrote=False -> reason skipped.
+    """
+    import json
+    import os
+    import tempfile
+
+    config: dict = {}
+    existing = False
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+            existing = True
+        except (json.JSONDecodeError, OSError) as e:
+            return False, f"existing config unreadable ({e}) — fix or remove it first"
+
+    if not isinstance(config, dict):
+        return False, "existing config is not a JSON object"
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        return False, '"mcpServers" is not an object'
+
+    cmd_line = _toolrecall_command_for_mcp()
+    servers["toolrecall"] = {"command": cmd_line[0], "args": cmd_line[1:]}
+
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(config_path), prefix=".cline_mcp_", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, config_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return True, "updated" if existing else "created"
+
+
+def _prepare_cursor_config(config_path: str) -> tuple[bool, str]:
+    """Read existing Cursor mcp.json or create a fresh one, then
+    merge the toolrecall MCP bridge entry into ``mcpServers`` with --multiplexer-only.
+
+    Cursor manages its own context aggressively; multiplexer-only provides
+    host-wide MCP pooling without redundant file stubs.
+    Merge-preserving: user-defined servers in the file are kept verbatim.
+    Writes atomically (tmp file + os.replace).
+
+    Returns:
+        (wrote, info): wrote=True -> "created" or "updated";
+        wrote=False -> reason skipped.
+    """
+    import json
+    import os
+    import tempfile
+
+    config: dict = {}
+    existing = False
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+            existing = True
+        except (json.JSONDecodeError, OSError) as e:
+            return False, f"existing config unreadable ({e}) — fix or remove it first"
+
+    if not isinstance(config, dict):
+        return False, "existing config is not a JSON object"
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        return False, '"mcpServers" is not an object'
+
+    cmd_line = _toolrecall_command_for_mcp()
+    args = list(cmd_line[1:])
+    if "--multiplexer-only" not in args:
+        args.append("--multiplexer-only")
+    servers["toolrecall"] = {"command": cmd_line[0], "args": args}
+
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(config_path), prefix=".cursor_mcp_", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, config_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return True, "updated" if existing else "created"
 
 
 def _prepare_opencode_config(config_path):

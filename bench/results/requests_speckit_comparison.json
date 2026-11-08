@@ -1,0 +1,125 @@
+{
+  "benchmark": "SpecKit Spec-Driven Multi-Agent Swarm (psf/requests)",
+  "target_repo": "/home/hermes/workspace/requests",
+  "speckit_feature": "specs/retry-jitter",
+  "stages": 3,
+  "date": "2026-11-06",
+  "treatment_toolrecall": {
+    "stages": [
+      {
+        "stage": "Stage-1-Architect",
+        "role": "SpecKit Specification & Constitution Audit",
+        "wall_clock_seconds": 106.42,
+        "returncode": 0,
+        "api_calls": 12,
+        "input_tokens": 363202,
+        "output_tokens": 7671,
+        "reasoning_tokens": 3189,
+        "cache_read_tokens": 329984,
+        "total_tokens": 370873,
+        "cost_usd": 0.010575252
+      },
+      {
+        "stage": "Stage-2-Developer",
+        "role": "SpecKit Implementation (Jitter Backoff & Retry-After)",
+        "wall_clock_seconds": 265.19,
+        "returncode": 0,
+        "api_calls": 21,
+        "input_tokens": 1054202,
+        "output_tokens": 15881,
+        "reasoning_tokens": 8474,
+        "cache_read_tokens": 970752,
+        "total_tokens": 1070083,
+        "cost_usd": 0.024958356
+      },
+      {
+        "stage": "Stage-3-QA",
+        "role": "SpecKit Verification & Test Suite",
+        "wall_clock_seconds": 127.4,
+        "returncode": 0,
+        "api_calls": 16,
+        "input_tokens": 568148,
+        "output_tokens": 10905,
+        "reasoning_tokens": 4203,
+        "cache_read_tokens": 531456,
+        "total_tokens": 579053,
+        "cost_usd": 0.013641167999999999
+      }
+    ],
+    "totals": {
+      "wall_clock_seconds": 499.1,
+      "api_calls": 49,
+      "input_tokens": 1985552,
+      "output_tokens": 34457,
+      "reasoning_tokens": 15866,
+      "cache_read_tokens": 1832192,
+      "total_tokens": 2020009,
+      "cost_usd": 0.049174776,
+      "core_tests_passed": true,
+      "speckit_tests_passed": true
+    }
+  },
+  "baseline_without_toolrecall": {
+    "stages": [
+      {
+        "stage": "Stage-1-Architect",
+        "role": "SpecKit Specification & Constitution Audit",
+        "wall_clock_seconds": 65.08,
+        "returncode": 0,
+        "api_calls": 10,
+        "input_tokens": 283765,
+        "output_tokens": 7832,
+        "reasoning_tokens": 3293,
+        "cache_read_tokens": 269568,
+        "total_tokens": 291597,
+        "cost_usd": 0.007637453999999999
+      },
+      {
+        "stage": "Stage-2-Developer",
+        "role": "SpecKit Implementation (Jitter Backoff & Retry-After)",
+        "wall_clock_seconds": 186.24,
+        "returncode": 0,
+        "api_calls": 16,
+        "input_tokens": 557380,
+        "output_tokens": 11245,
+        "reasoning_tokens": 4484,
+        "cache_read_tokens": 517632,
+        "total_tokens": 568625,
+        "cost_usd": 0.014262096
+      },
+      {
+        "stage": "Stage-3-QA",
+        "role": "SpecKit Verification & Test Suite",
+        "wall_clock_seconds": 181.64,
+        "returncode": 0,
+        "api_calls": 16,
+        "input_tokens": 535326,
+        "output_tokens": 8990,
+        "reasoning_tokens": 2809,
+        "cache_read_tokens": 498176,
+        "total_tokens": 544316,
+        "cost_usd": 0.012461028
+      }
+    ],
+    "totals": {
+      "wall_clock_seconds": 432.99,
+      "api_calls": 42,
+      "input_tokens": 1376471,
+      "output_tokens": 28067,
+      "reasoning_tokens": 10586,
+      "cache_read_tokens": 1285376,
+      "total_tokens": 1404538,
+      "cost_usd": 0.034360578,
+      "core_tests_passed": true,
+      "speckit_tests_passed": true
+    }
+  },
+  "deltas": {
+    "tokens_saved": -615471,
+    "tokens_saved_pct": -43.82,
+    "cost_saved_usd": -0.014814,
+    "cost_saved_pct": -43.11,
+    "wall_clock_seconds_saved": -66.11,
+    "wall_clock_speedup_pct": -15.27
+  }
+}

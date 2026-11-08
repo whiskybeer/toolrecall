@@ -232,7 +232,8 @@ Most commands accept `--help` / `-h` for per-command usage and options
 - **File:** `cli.py : cmd_setup()`
 - **Purpose:** One-shot installation: creates config, systemd user service,
   OS-level `.pth` shim, and starts the daemon. Detects installed agents
-  (Hermes, OpenCode) and wires up the MCP bridge automatically.
+  (Hermes, OpenCode, Antigravity, Claude Code, Cline, Cursor) and wires up the MCP
+  bridge automatically (using multiplexer-only profiles for Claude Code and Cursor).
 - **Idempotent:** Safe to re-run — skips existing configs.
 - **Auto-start:** After setup, every `toolrecall` command auto-starts the
   daemon if it isn't running.
