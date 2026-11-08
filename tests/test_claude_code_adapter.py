@@ -121,6 +121,50 @@ class TestClaudeCodeAdapter(unittest.TestCase):
         })
         self.assertIsNone(res3)
 
+    def _ev(self, tool, tool_input):
+        return cc.handle({
+            "hook_event_name": "PostToolUse",
+            "tool_name": tool,
+            "tool_input": tool_input,
+            "session_id": self.sid,
+            "cwd": self.tmpdir.name,
+        })
+
+    def test_agent_own_edits_never_alert(self):
+        # Regression: every agent Edit to a previously read file used to raise a
+        # false "re-read" alert, adding a turn and tokens to ordinary sessions.
+        self._ev("Read", {"file_path": str(self.file1)})
+        for k in range(3):
+            time.sleep(0.02)
+            self.file1.write_text(f"def run():\n    return {k}\n", encoding="utf-8")
+            self.assertIsNone(self._ev("Edit", {"file_path": str(self.file1)}))
+            self.assertIsNone(self._ev("Bash", {"command": "pytest -q"}))
+
+    def test_drift_after_agent_edit_still_alerts(self):
+        self._ev("Read", {"file_path": str(self.file1)})
+        time.sleep(0.02)
+        self.file1.write_text("def run():\n    return 1\n", encoding="utf-8")
+        self.assertIsNone(self._ev("Write", {"file_path": str(self.file1)}))
+        time.sleep(0.02)
+        self.file1.write_text("def run():\n    return 2  # codegen\n", encoding="utf-8")
+        res = self._ev("Bash", {"command": "make codegen"})
+        self.assertIsNotNone(res)
+        self.assertIn(self.file1.name, res["hookSpecificOutput"]["additionalContext"])
+
+    def test_daemon_stale_list_is_opt_in(self):
+        from unittest import mock
+
+        self._ev("Read", {"file_path": str(self.file1)})
+        with mock.patch.object(cc, "_check_daemon_stale", return_value=["/elsewhere/other_agent.py"]):
+            os.environ.pop("TOOLRECALL_CC_DAEMON_STALE", None)
+            self.assertIsNone(self._ev("Bash", {"command": "ls"}))
+            os.environ["TOOLRECALL_CC_DAEMON_STALE"] = "1"
+            try:
+                res = self._ev("Bash", {"command": "ls"})
+            finally:
+                os.environ.pop("TOOLRECALL_CC_DAEMON_STALE", None)
+        self.assertIn("other_agent.py", res["hookSpecificOutput"]["additionalContext"])
+
     def test_session_lifecycle_resets_tracking(self):
         # Read file
         cc.handle({

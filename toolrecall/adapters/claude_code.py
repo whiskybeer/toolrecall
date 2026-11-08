@@ -45,7 +45,6 @@ except ImportError:  # pragma: no cover - Windows
 
 _SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".pdf", ".ipynb"}
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-_EXEC_TOOLS = {"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 _BLOCKED_COMMAND_PATTERNS = [
     re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\s+/(?:\s|$|\*)"),
     re.compile(r"\b(curl|wget)\s+[^|&;]+\|\s*(sh|bash)\b"),
@@ -214,9 +213,12 @@ def handle(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     # PostToolUse: Context Tracker Staleness & Drift Alerts
     if name == "PostToolUse":
-        # 1. Record Reads into active context
-        if tool == "Read":
-            raw_path = tin.get("file_path")
+        # 1. Reads and the agent's own writes: the file's current content is what
+        #    Claude has in context, so record it as the fresh baseline. An agent
+        #    edit must never be reported as drift (Claude Code itself tells the
+        #    model "file state is current in your context" after an Edit).
+        if tool == "Read" or tool in _EDIT_TOOLS:
+            raw_path = tin.get("file_path") or tin.get("notebook_path")
             if isinstance(raw_path, str) and raw_path:
                 full_path = os.path.realpath(os.path.join(cwd or ".", os.path.expanduser(raw_path)))
                 info = _file_info(full_path)
@@ -229,21 +231,23 @@ def handle(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                             "digest": digest,
                             "read_at": time.time(),
                         }
-                        # Clear any stale alert for this path since it was re-read
+                        # Clear any stale alert for this path: Claude has it fresh again
                         st["alerted"].pop(full_path, None)
             return None
 
-        # 2. Check for drift after modifying tools run
-        if tool in _EXEC_TOOLS:
+        # 2. Out-of-band drift can only come from shell commands
+        if tool == "Bash":
             stale_files: List[str] = []
             with _session_state(sid) as st:
                 stale_files = _check_stale_files(st["reads"], st["alerted"])
 
-            # Merge with daemon-level stale tracker if available
-            daemon_stale = _check_daemon_stale()
-            for p in daemon_stale:
-                if p not in stale_files:
-                    stale_files.append(p)
+            # The daemon's stale list is global across agents (it tracks reads made
+            # through ToolRecall's MCP tools, not this session's Read calls), so
+            # merging it can surface files this session never saw. Opt-in only.
+            if os.environ.get("TOOLRECALL_CC_DAEMON_STALE") in ("1", "true", "yes"):
+                for p in _check_daemon_stale():
+                    if p not in stale_files:
+                        stale_files.append(p)
 
             if stale_files:
                 file_list = "\n".join(f"  - {f}" for f in stale_files[:5])
