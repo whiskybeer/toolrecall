@@ -216,39 +216,61 @@ def mcp_request_key_v1(tool: str, arguments: Any) -> str:
     Consumer-derivable: computable from (tool, arguments) alone, before or
     after the call, on any machine, in any language with an RFC 8785
     serializer. Raises JCSTypeError for values outside the JSON data model.
+
+    ``arguments=None`` (or an omitted arguments field) normalizes to
+    ``{}`` (F18): the transport-level absence of arguments and an empty
+    argument object are the same call for identity purposes.
     """
     from toolrecall.jcs import canonicalize
 
+    if arguments is None:
+        arguments = {}
     canonical = canonicalize({"tool": tool, "arguments": arguments})
     payload = _MCP_REQUEST_KEY_V1_TAG + b"\x00" + canonical.encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
-def mcp_content_digest_v1(content: Any) -> str:
-    """Canonical content digest of a tool result's content (v1 draft).
+def mcp_content_digest_v1(
+    content: Any,
+    structuredContent: Any = None,
+    isError: bool = False,
+) -> str:
+    """Canonical content digest of a tool result (v1 draft, fix F20).
 
-    Full-width sha256 over the version-tagged JCS preimage — symmetric
-    with ``mcp_request_key_v1``::
+    Full-width sha256 over the version-tagged JCS preimage of the THREE
+    result fields that define what a client would act on::
 
-        preimage = utf8("mcp-content-digest-v1") ∥ 0x00 ∥ utf8(JCS(content))
+        preimage = utf8("mcp-content-digest-v1") ∥ 0x00
+                 ∥ utf8(JCS({"content": content,
+                             "structuredContent": structuredContent,
+                             "isError": isError}))
         contentDigest = "sha256:" ∥ hex(sha256(preimage))
 
-    The tag inside the preimage is a discriminator, not decoration: it
-    keeps contentDigest structurally disjoint from requestKey and from
-    any future derivation variant (e.g. hashing exact wire bytes
-    instead of JCS — the draft's open question), which would otherwise
-    be indistinguishable "sha256:<64hex>" strings. JCS is applied
-    because the v1 draft hashes the *logical* content value; if the
-    working group instead pins the *exact wire bytes* of the content
-    array, the derivation changes only in this one line (and the golden
-    vectors with it) — the tag makes the two worlds coexisting visible
-    in the output bytes, and the bump to a v2 tag remains the rule.
+    Hashing all three (not just ``content``) closes the silent-failure
+    hole where two results differ ONLY in structuredContent or error
+    status yet would share a digest — exactly the case a cache MUST
+    distinguish. The tag inside the preimage keeps contentDigest
+    structurally disjoint from requestKey and from any future derivation
+    variant (e.g. hashing exact wire bytes instead of JCS — the draft's
+    open question), which would otherwise collide as identical
+    "sha256:<64hex>" strings. JCS is applied to the *logical* values; if
+    the working group instead pins *exact wire bytes*, the derivation
+    changes only inside this function — the tag makes variants visible
+    in the output bytes, and a v2 tag bump remains the rule.
 
-    Raises JCSTypeError for content outside the JSON data model
+    Raises JCSTypeError for values outside the JSON data model
     (including lone surrogates — invalid Unicode, rejected uniformly).
+    ``structuredContent`` defaults to None (JSON null in the preimage),
+    so a pure-text result digests identically whether or not the server
+    set the field.
     """
     from toolrecall.jcs import canonicalize
 
-    canonical = canonicalize(content)
+    preimage = {
+        "content": content,
+        "structuredContent": structuredContent,
+        "isError": bool(isError),
+    }
+    canonical = canonicalize(preimage)
     payload = _MCP_CONTENT_DIGEST_V1_TAG + b"\x00" + canonical.encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()

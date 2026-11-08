@@ -158,10 +158,15 @@ def _serialize(value: Any) -> str:
         return _es6_string(value)
     if isinstance(value, int):
         # Route through double exactly as an ECMAScript client parses JSON.
-        if abs(value) > 2**53:
+        # Hard boundary: |n| <= 2^53 - 1 = Number.MAX_SAFE_INTEGER — the
+        # largest integer every JSON consumer round-trips exactly. 2**53 is
+        # itself representable, but integers above it start colliding with
+        # neighbors (2^53+1 parses to 2^53), so v1 rejects >= 2^53 outright
+        # instead of admitting a window where equality gets fuzzy.
+        if abs(value) > 2**53 - 1:
             raise JCSTypeError(
-                f"integer {value} exceeds IEEE-754 exact range (I-JSON); "
-                "reject instead of silently rounding"
+                f"integer {value} exceeds the I-JSON safe range "
+                f"(|n| <= 2^53 - 1); reject instead of silently rounding"
             )
         return _es6_number(float(value))
     if isinstance(value, float):

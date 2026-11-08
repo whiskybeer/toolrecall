@@ -113,8 +113,10 @@ class TestV1Derivation(unittest.TestCase):
         payload = b"mcp-request-key-v1\x00" + canonical.encode("utf-8")
         return "sha256:" + hashlib.sha256(payload).hexdigest()
 
-    def raw_content_digest(self, content):
-        canonical = canonicalize(content)
+    def raw_content_digest(self, content, structuredContent=None, isError=False):
+        canonical = canonicalize(
+            {"content": content, "structuredContent": structuredContent, "isError": isError}
+        )
         payload = b"mcp-content-digest-v1\x00" + canonical.encode("utf-8")
         return "sha256:" + hashlib.sha256(payload).hexdigest()
 
@@ -137,6 +139,11 @@ class TestV1Derivation(unittest.TestCase):
                 self.assertEqual(
                     keys.mcp_content_digest_v1(content),
                     self.raw_content_digest(content),
+                )
+                # F20: the structuredContent/isError preimage slots
+                self.assertEqual(
+                    keys.mcp_content_digest_v1(content, {"k": 1}, True),
+                    self.raw_content_digest(content, {"k": 1}, True),
                 )
 
     def test_ordering_invariance(self):
@@ -187,14 +194,54 @@ class TestV1Derivation(unittest.TestCase):
             keys.mcp_request_key_v1("t", {"n": 10.0}),
         )
 
+    def test_f19_boundary_2pow53_rejected_2pow53_minus_1_accepted(self):
+        # Hard I-JSON boundary per review fix F19: |n| <= 2^53 - 1 accepted,
+        # 2^53 itself rejected (a double's next representable integer above
+        # 2^53 jumps by 2, so equality around the boundary gets fuzzy).
+        ok = keys.mcp_request_key_v1("t", {"n": 2**53 - 1})
+        self.assertTrue(ok.startswith("sha256:"))
+        for bad in (2**53, -(2**53), 2**53 + 1, 9007199254740993):
+            with self.subTest(bad=bad):
+                with self.assertRaises(JCSTypeError):
+                    keys.mcp_request_key_v1("t", {"n": bad})
+        # the old rule (> 2**53) would have accepted 2**53 — pin the change
+        with self.assertRaises(JCSTypeError):
+            canonicalize({"n": 2**53})
+
+    def test_f18_arguments_none_normalizes_to_empty(self):
+        # Transport-level absence of arguments == empty arguments object.
+        self.assertEqual(
+            keys.mcp_request_key_v1("t", None),
+            keys.mcp_request_key_v1("t", {}),
+        )
+
     def test_content_digest_is_full_width(self):
         d = keys.mcp_content_digest_v1([{"type": "text", "text": "hello"}])
         self.assertEqual(len(d), len("sha256:") + 64)
-        raw = hashlib.sha256(
-            b"mcp-content-digest-v1\x00"
-            + canonicalize([{"type": "text", "text": "hello"}]).encode("utf-8")
-        ).hexdigest()
-        self.assertEqual(d, "sha256:" + raw)
+
+    def test_f20_content_digest_covers_three_fields(self):
+        # F20: the preimage is {content, structuredContent, isError} — two
+        # results differing ONLY in structuredContent or error status MUST
+        # NOT share a digest (a cache keying on contentDigest alone would
+        # otherwise serve the wrong structured payload / hide an error).
+        content = [{"type": "text", "text": "hello"}]
+        d0 = keys.mcp_content_digest_v1(content)
+        self.assertEqual(
+            d0, keys.mcp_content_digest_v1(content, None, False)
+        )  # defaults are the identity: null + False
+        self.assertNotEqual(d0, keys.mcp_content_digest_v1(content, {"rows": 1}))
+        self.assertNotEqual(d0, keys.mcp_content_digest_v1(content, None, True))
+        self.assertNotEqual(
+            keys.mcp_content_digest_v1(content, {"rows": 1}, False),
+            keys.mcp_content_digest_v1(content, {"rows": 1}, True),
+        )
+        # raw-stdlib re-derivation of the three-field preimage
+        pre = canonicalize({"content": content, "structuredContent": {"rows": 1}, "isError": False})
+        expect = (
+            "sha256:"
+            + hashlib.sha256(b"mcp-content-digest-v1\x00" + pre.encode("utf-8")).hexdigest()
+        )
+        self.assertEqual(keys.mcp_content_digest_v1(content, {"rows": 1}), expect)
 
 
 class TestSurrogatePolicy(unittest.TestCase):
@@ -302,7 +349,11 @@ class TestGoldenVectors(unittest.TestCase):
         for case in self.golden["content_digests"]:
             with self.subTest(content=repr(case["content"])[:40], note=case.get("note", "")):
                 self.assertEqual(
-                    keys.mcp_content_digest_v1(case["content"]),
+                    keys.mcp_content_digest_v1(
+                        case["content"],
+                        case.get("structuredContent"),
+                        case.get("isError", False),
+                    ),
                     case["contentDigest"],
                 )
 

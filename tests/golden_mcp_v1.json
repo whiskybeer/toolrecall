@@ -2,10 +2,10 @@
   "spec": {
     "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",
     "requestKey": "sha256 over utf8(\"mcp-request-key-v1\") || 0x00 || utf8(JCS({\"tool\": t, \"arguments\": a})) — rendered \"sha256:\" || lowercase-hex",
-    "contentDigest": "sha256 over utf8(\"mcp-content-digest-v1\") || 0x00 || utf8(JCS(content)) — rendered \"sha256:\" || lowercase-hex",
+    "contentDigest": "sha256 over utf8(\"mcp-content-digest-v1\") || 0x00 || utf8(JCS({\"content\": c, \"structuredContent\": s, \"isError\": e})) — rendered \"sha256:\" || lowercase-hex",
     "version": "v1",
     "generated_by": "toolrecall keys.mcp_request_key_v1 / mcp_content_digest_v1 (reference implementation)",
-    "note": "Regenerating this file requires a version-tag bump (mcp-*-v2); vectors are frozen otherwise. Lone surrogates (U+D800–U+DFFF) are rejected with an error for keys and values alike. Rejection payloads are JSON documents: parse payload_json first (that is how a hostile payload arrives), then assert your canonicalizer raises. Non-string object keys cannot occur in parsed JSON (names are always strings) but are likewise rejected for in-memory callers."
+    "note": "F20 preimage (2026-09-16): contentDigest covers {content, structuredContent, isError}; F19: integers with |n| >= 2^53 rejected. Regenerating requires a version-tag bump (mcp-*-v2); vectors are frozen otherwise. Lone surrogates (U+D800–U+DFFF) are rejected with an error for keys and values alike. Rejection payloads are JSON documents: parse payload_json first (that is how a hostile payload arrives), then assert your canonicalizer raises. Non-string object keys cannot occur in parsed JSON (names are always strings) but are likewise rejected for in-memory callers."
   },
   "request_keys": [
     {
@@ -87,6 +87,12 @@
       },
       "requestKey": "sha256:72a2f974f3dbb82a911c8ddeed082d467db22c451c3c6f8b8b811451851ecd53",
       "note": "UTF-16 code-unit ordering: astral U+1F600 sorts BEFORE U+FFFD (code-point order would reverse)"
+    },
+    {
+      "tool": "t",
+      "arguments": null,
+      "requestKey": "sha256:ced69a7e414db762b02912830bc7542336b0ea2d2549f657390eab1b61c1b034",
+      "note": "F18: arguments absent/None == empty arguments object (same key)"
     }
   ],
   "content_digests": [
@@ -97,7 +103,7 @@
           "text": "hello"
         }
       ],
-      "contentDigest": "sha256:d784fe6e0def23a054d599ba27939abe5e3483a6919964a48940a803707fd10c",
+      "contentDigest": "sha256:2e557d2bff10025ae9b8107f91358b0584872432f075337f3ddc72bbb07da796",
       "note": "typical text tool result"
     },
     {
@@ -107,12 +113,12 @@
           "text": "héllo — em dash ünïcode"
         }
       ],
-      "contentDigest": "sha256:866b175d098c4aed1520d5ca40a0e6dd6380d985b7251922531c8a8ad6f165bb",
+      "contentDigest": "sha256:99748dc53cac79ad4871c5746d0d1df68c5c5c12cfca6a9de2b4d9599e5f2718",
       "note": "non-ASCII emitted literally (no \\u escapes)"
     },
     {
       "content": [],
-      "contentDigest": "sha256:2d0941ebb96769e3fc042c4071c91ab4d5726b10457958b0ab163e983d11e36e",
+      "contentDigest": "sha256:2f723b7453b06a29fc099ae053fe31fd56df360db307ca421c9eafa3a1ec1c40",
       "note": "empty content array"
     },
     {
@@ -122,7 +128,7 @@
           "data": "iVBORw0KGgo="
         }
       ],
-      "contentDigest": "sha256:f9b8b52ec4213a94a5a182f6c7934479d176905f4be4f746a5d0e4259f031c62",
+      "contentDigest": "sha256:18e4499e5ca4502a477a27374be4dae3338196f9401bb4afd917fff19e7891a9",
       "note": "binary-ish base64 payload"
     },
     {
@@ -136,12 +142,12 @@
           ]
         }
       },
-      "contentDigest": "sha256:fe1be755b362f954e3a44cc5ef4a13dc380ca13e7d27348e4bdd72aaf3547f47",
+      "contentDigest": "sha256:a7ffe7f874ff48dc947df7fe4287def7805ee9cacedb68c49d4f5366391a8909",
       "note": "content is any JSON value, not only arrays"
     },
     {
       "content": "plain string",
-      "contentDigest": "sha256:93192e9b61d8569640b2a305c2f64816a888c5925c2b5aba5f5f7a6bfacd19a6",
+      "contentDigest": "sha256:e4f90456f529287df8444736189b4825f70e83e4c95e7e84758aa556509cbbdf",
       "note": "top-level string content"
     },
     {
@@ -149,7 +155,7 @@
         "b": 1,
         "a": 2
       },
-      "contentDigest": "sha256:1bfdec70e298e24bc462aebc3dc1762e498fbdeb2030da65e0ecb2b6b5c48693",
+      "contentDigest": "sha256:a5b567f83e9b1444572c66a990073fa1be9503c450f771cc412cde953236ebe3",
       "note": "key order is irrelevant — must equal the reversed-order case"
     },
     {
@@ -157,7 +163,7 @@
         "a": 2,
         "b": 1
       },
-      "contentDigest": "sha256:1bfdec70e298e24bc462aebc3dc1762e498fbdeb2030da65e0ecb2b6b5c48693",
+      "contentDigest": "sha256:a5b567f83e9b1444572c66a990073fa1be9503c450f771cc412cde953236ebe3",
       "note": "must equal the {b:1,a:2} digest above"
     },
     {
@@ -166,7 +172,7 @@
           "n": 10
         }
       ],
-      "contentDigest": "sha256:67cb90783d650c07f673a3bbb5c3398457d57e42c16ff8db0b1545012229db0c",
+      "contentDigest": "sha256:b7dd21cd1f0224dcbc87986d3520e597c5acd9b1a365afc57f3d3dacfc5040cd",
       "note": "int/float identical under JCS"
     },
     {
@@ -175,8 +181,32 @@
           "n": 10.0
         }
       ],
-      "contentDigest": "sha256:67cb90783d650c07f673a3bbb5c3398457d57e42c16ff8db0b1545012229db0c",
+      "contentDigest": "sha256:b7dd21cd1f0224dcbc87986d3520e597c5acd9b1a365afc57f3d3dacfc5040cd",
       "note": "must equal the int-10 digest above"
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "structuredContent": {
+        "rows": 1
+      },
+      "contentDigest": "sha256:02053524dcfb2e69dbf2c5d8adccfe899c4d3593f976280d8bc5d52c68c5ee11",
+      "note": "F20: same content, structuredContent set — digest MUST differ from the bare-content case"
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "isError": true,
+      "contentDigest": "sha256:5efb22751d6de1b5ab226512082929128a43eb8dd9dee980bf46b221082e3139",
+      "note": "F20: same content, isError=true — digest MUST differ (an error result is never a cache hit for the ok result)"
     }
   ],
   "rejection_cases": [
