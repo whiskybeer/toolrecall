@@ -466,7 +466,13 @@ class SecurityGate:
         if not self.allow_multiplex:
             print(f"[ToolRecall] MCP multiplexer is disabled, server '{server}' blocked")
             return "MCP multiplexer is disabled."
-        if self.allowed_servers and server.lower() not in self.allowed_servers:
+        # "_any" is the multiplexer-wide sentinel used by the discovery handlers
+        # (mcp_list_servers, mcp_tools_catalog): they enumerate the allowlist
+        # themselves, so the allowlist must not reject them. Live bug until
+        # 2026-09-28: with servers = ["fetch", "hermes-docs"], mcp_list_servers
+        # answered {"error": "MCP server '_any' not in allowed_servers."} — every
+        # discovery path was broken for anyone who configured an allowlist.
+        if self.allowed_servers and server != "_any" and server.lower() not in self.allowed_servers:
             print(f"[ToolRecall] Blocked MCP server '{server}' not in allowed_servers list")
             return f"MCP server '{server}' not in allowed_servers."
         return None
