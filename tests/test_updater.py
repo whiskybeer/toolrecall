@@ -312,7 +312,36 @@ class TestCliHook(unittest.TestCase):
                 pass
         chk.assert_not_called()
 
-    def test_hook_applies_update_when_newer(self):
+    def test_hook_notifies_only_by_default(self):
+        """auto_apply defaults FALSE: newer version → notice printed, no pip.
+
+        The 2026-09 review's top recommendation: a compromised PyPI account
+        must not mean silent code execution on the next CLI run.
+        """
+        import io
+        import toolrecall.cli as cli
+
+        buf = io.StringIO()
+        argv = patch.object(sys, "argv", ["toolrecall", "status"])
+        out = patch.object(sys, "stdout", buf)
+        with (
+            _update_check_env(),
+            argv,
+            out,
+            patch.object(updater, "check_for_update", return_value="9.9.9") as chk,
+            patch.object(updater, "apply_update") as app,
+            patch("toolrecall.config.load_config") as load_cfg,
+        ):
+            load_cfg.return_value.update_auto_apply = False
+            cli._maybe_auto_update()
+        chk.assert_called_once()
+        app.assert_not_called()
+        self.assertIn("9.9.9 available", buf.getvalue())
+        self.assertIn("toolrecall update", buf.getvalue())
+        self.assertNotIn("Updating", buf.getvalue())
+
+    def test_hook_applies_when_auto_apply_true(self):
+        """[update] auto_apply = true restores install-on-detect (opt-in)."""
         import io
         import toolrecall.cli as cli
 
@@ -325,7 +354,28 @@ class TestCliHook(unittest.TestCase):
             out,
             patch.object(updater, "check_for_update", return_value="9.9.9") as chk,
             patch.object(updater, "apply_update", return_value=True) as app,
-            patch.object(sys.modules["toolrecall.config"], "load_config"),
+            patch("toolrecall.config.load_config") as load_cfg,
+        ):
+            load_cfg.return_value.update_auto_apply = True
+            cli._maybe_auto_update()
+        chk.assert_called_once()
+        app.assert_called_once_with("9.9.9")
+        self.assertIn("Updated", buf.getvalue())
+
+    def test_hook_applies_update_when_newer(self):
+        import io
+        import toolrecall.cli as cli
+
+        buf = io.StringIO()
+        argv = patch.object(sys, "argv", ["toolrecall", "status"])
+        out = patch.object(sys, "stdout", buf)
+        with (
+            _update_check_env(),
+            argv,
+            out,
+            patch.object(updater, "check_for_update", return_value="9.9.9") as chk,
+            patch.object(updater, "apply_update") as app,
+            patch("toolrecall.config.load_config"),
         ):
             cli._maybe_auto_update()
         chk.assert_called_once()

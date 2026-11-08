@@ -245,6 +245,14 @@ Env overrides: `TOOLRECALL_STALE_WHILE_REVALIDATE`, `TOOLRECALL_ADAPTIVE_TTL`,
 `TOOLRECALL_CIRCUIT_BREAKER`, `TOOLRECALL_CB_FAILURE_THRESHOLD`,
 `TOOLRECALL_CB_WINDOW`, `TOOLRECALL_CB_OPEN_SECONDS`.
 
+## Auto-Update (`[update]`)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Update check at CLI entry and from the daemon's hourly refresher (interval-gated; `TOOLRECALL_UPDATE_CHECK=0` kills every check). |
+| `check_interval_hours` | `24` | Minimum hours between PyPI version checks (a failed check still counts as checked). |
+| `auto_apply` | `false` | **Announce-only by default.** A newer release is printed at CLI entry and surfaced to your agent as a tool-output hint (`[toolrecall] Update available: X → Y (run: toolrecall update)`) — never installed silently. Install explicitly with `toolrecall update`, or set `auto_apply = true` (`TOOLRECALL_UPDATE_AUTO_APPLY=1`) to restore install-on-detect: a compromised PyPI account then means code execution on your next CLI run. Index pinning (`index_url` / `TOOLRECALL_UPDATE_INDEX_URL`) applies in both modes. |
+
 ## See Also
 
 - [MCP Multiplexer](MCP_MULTIPLEXER.md) — server registry, auto-resolution, `servers_config`

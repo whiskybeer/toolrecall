@@ -41,10 +41,18 @@ FROZEN_COUNTS = {
     # kernel flock are authoritative, so the swallowed errors carry no signal.
     # 23 as of 51aff04 (A6 review): +1 srv.close() OSError pass on the
     # TLS-refusal shutdown path — listener cleanup before exit, no signal.
-    "daemon.py": 23,
+    # 24 as of 2026-09-15 (auto_apply=false hint channel): +1 in
+    # _run_update_refresher — hourly best-effort PyPI re-check on the daemon
+    # background thread; failures just leave latest_seen stale (the CLI hook
+    # and the update_pending_hint handler both tolerate that), and a network
+    # hiccup must never take the daemon down.
+    "daemon.py": 24,
     "docs.py": 4,
     "healthcheck.py": 2,
-    "mcp_bridge.py": 4,
+    # 5 as of 2026-09-15 (auto_apply=false hint channel): +1 around the
+    # update_pending_hint daemon round-trip — a notice must never break the
+    # tool call it rides on (same contract as the context-hint appends).
+    "mcp_bridge.py": 5,
     "mcp_cache_fs.py": 3,
     "normalizer.py": 1,
     # 4 as of 2026-09-10 (stream usage truth): +1 in _parse_sse_usage_tail —

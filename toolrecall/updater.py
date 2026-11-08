@@ -174,6 +174,38 @@ def check_for_update(cfg, force: bool = False) -> str | None:
     return None
 
 
+def pending_update_hint() -> str:
+    """Agent-facing one-liner for a pending update, or "" when current.
+
+    The notify-only path (auto_apply = false) is useless for the primary
+    audience: agent-driven users never run the CLI, so a stdout hint is
+    never seen. Agents DO read tool output — this hint is appended to
+    tool-call results by the MCP bridge (once per version per session),
+    so the user hears about the update from their agent. Also honored by
+    the daemon's own _handle_ping for direct transports.
+
+    Throttled via the updater state file (notified_for) so a long-lived
+    session doesn't repeat it on every call.
+    """
+    state = _load_state()
+    latest = state.get("latest_seen")
+    if not latest or _version_key(latest) <= _version_key(_VERSION):
+        return ""
+    if state.get("notified_for") == latest:
+        return ""
+    return (
+        f"[toolrecall] Update available: {_VERSION} → {latest} "
+        f"(run: toolrecall update). This notice appears once per version."
+    )
+
+
+def mark_update_notified(latest: str) -> None:
+    """Record that the pending-update hint was surfaced for *latest*."""
+    state = _load_state()
+    state["notified_for"] = latest
+    _save_state(state)
+
+
 # ─── Install mechanics ────────────────────────────────────
 
 

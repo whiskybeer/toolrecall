@@ -1669,6 +1669,15 @@ class DaemonServer:
             # Start storage sync background worker (backend decides; opt-in)
             self._start_sync_worker()
 
+            # Update refresher: keeps latest_seen current so the agent-facing
+            # hint channel (update_pending_hint) has data even when the user
+            # never runs the CLI. Interval-gated by the updater state file.
+            if load_config().update_enabled:
+                self._update_thread = threading.Thread(
+                    target=self._run_update_refresher, daemon=True, name="Update-Refresher"
+                )
+                self._update_thread.start()
+
             # Set a accept timeout so the main loop periodically checks
             # self._running instead of blocking forever on accept().
             # Without this, SIGTERM → stop() → _server.close() does NOT
@@ -1873,6 +1882,8 @@ class DaemonServer:
                 return self._handle_context_get_dirty(request)
             elif cmd == "context_get_hint":
                 return self._handle_context_get_hint(request)
+            elif cmd == "update_pending_hint":
+                return self._handle_update_pending_hint(request)
             elif cmd == "context_get_stale":
                 return self._handle_context_get_stale(request)
             elif cmd == "context_get_stats":
@@ -2423,6 +2434,58 @@ class DaemonServer:
         result = self._context.get_dirty(checkpoint=checkpoint)
         result["_agent_hint"] = self._format_context_hint(result)
         return result
+
+    def _handle_update_pending_hint(self, req: dict) -> dict:
+        """Agent-facing update notice (once per version).
+
+        Backs the bridge's tool-result hint channel: with
+        [update] auto_apply = false (the default), the CLI's stdout notice
+        never reaches agent-driven users — tool output does. The daemon
+        consults the updater state file (latest_seen, refreshed by the CLI
+        hook OR the daemon's own periodic refresher) and marks the version
+        notified so a long-lived session doesn't repeat it.
+
+        Never runs a network check here — the request path stays offline.
+        """
+        try:
+            from toolrecall import updater
+
+            hint = updater.pending_update_hint()
+            if hint:
+                updater.mark_update_notified(updater._load_state().get("latest_seen") or "")
+            return {"hint": hint}
+        except Exception:  # noqa: BLE001 — a notice must never break a tool call
+            return {"hint": ""}
+
+    def _run_update_refresher(self):
+        """Periodic PyPI check in a background thread (interval-gated).
+
+        The CLI hook only runs when a user types a command — agent-driven
+        setups can go weeks without one, and with auto_apply = false the
+        notify-only path then has nothing to notify about. This keeps
+        latest_seen fresh so the hint channel has current data. Honors the
+        same [update] enabled gate; failures just mean a stale latest_seen.
+        First attempt 60s after start (let the daemon boot cleanly); the
+        updater's own interval gate makes every attempt cheap — real
+        network happens at most once per check_interval_hours.
+        """
+        from toolrecall import updater
+
+        first = True
+        while self._running:
+            wait = 60 if first else 3600
+            first = False
+            # Sleep in 1s slices so daemon shutdown isn't delayed.
+            for _ in range(wait):
+                if not self._running:
+                    return
+                time.sleep(1)
+            try:
+                cfg = load_config()
+                if updater._update_enabled(cfg):
+                    updater.check_for_update(cfg)
+            except Exception:  # noqa: BLE001 — refresher is best-effort
+                pass
 
     def _handle_context_get_hint(self, req: dict) -> dict:
         """Get a context hint without fetching the full dirty/clean list.

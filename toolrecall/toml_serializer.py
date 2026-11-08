@@ -253,6 +253,11 @@ DEFAULT_CONFIG = {
     "update": {
         "enabled": True,
         "check_interval_hours": 24,
+        # auto_apply = false (review 2026-09): announce, never silently
+        # install — a compromised PyPI account must not mean code
+        # execution on the next CLI run. Agent-facing notice rides the
+        # MCP bridge's tool-result hint channel (update_pending_hint).
+        "auto_apply": False,
         # Supply-chain pin (F2): upgrades pull from ONE index. Empty =
         # official PyPI; override in config.toml or via
         # TOOLRECALL_UPDATE_INDEX_URL for a private mirror.

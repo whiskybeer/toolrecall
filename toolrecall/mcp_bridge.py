@@ -364,6 +364,12 @@ class MCPBridge:
         self._multiplexer_only = multiplexer_only
         if multiplexer_only:
             self._emit_context_hints = False  # context tracker is useless without file tools
+        # Update-availability hint (once per version per session): when the
+        # updater runs in notify-only mode ([update] auto_apply = false, the
+        # default), agent-driven users never see the CLI's stdout — the MCP
+        # bridge's tool-result stream is the channel they DO receive. One
+        # daemon round-trip per session emits it after the first tool call.
+        self._update_hint_done = False
 
     def _maybe_stub(self, path: str, resp: dict) -> dict:
         """Replace content with a stub when this session already holds it.
@@ -676,6 +682,24 @@ class MCPBridge:
                         "afterwards context_get_dirty lists files safe to drop from "
                         "context, cutting input tokens on every later turn."
                     )
+
+            # ── Update-availability hint (once per version per session) ──
+            # auto_apply defaults to FALSE: installing silently would be code
+            # execution from PyPI without consent, and a stdout hint never
+            # reaches agent-driven users. Tool output does. The bridge asks
+            # the daemon once per session; the daemon consults the updater
+            # state (latest_seen) and throttles across sessions via
+            # notified_for. Runs regardless of _emit_context_hints — a
+            # security notice is not a context hint.
+            if not self._update_hint_done:
+                self._update_hint_done = True
+                try:
+                    hint_resp = self.client.send({"cmd": "update_pending_hint"})
+                    update_hint = hint_resp.get("hint", "")
+                    if update_hint:
+                        result_text += "\n\n" + update_hint
+                except Exception:
+                    pass  # Graceful: never break a tool call over a notice
 
             # Auto-trigger context hint after every non-context tool call.
             # Only if the client opted in by checkpointing (and, on the daemon

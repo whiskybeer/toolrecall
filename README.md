@@ -443,6 +443,10 @@ allow_symlink_escapes = false
 # F2: self-update pinned to ONE index (default official PyPI) — pip can't discover extras
 enabled = true
 check_interval_hours = 24
+# Announce-only default: a newer release is printed at CLI entry and surfaced
+# to your agent via tool-output hints — never installed silently. Install with
+# `toolrecall update`, or set auto_apply = true to restore install-on-detect.
+auto_apply = false
 # index_url = ""   # e.g. an internal mirror; > TOOLRECALL_UPDATE_INDEX_URL > PyPI
 
 [network]

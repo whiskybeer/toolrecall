@@ -2469,8 +2469,10 @@ def cmd_update():
         print("Usage: toolrecall update [--check] [--status]")
         print()
         print("Check PyPI for a newer toolrecall and apply the upgrade.")
-        print("A background auto-update check also runs at CLI entry (opt-out:")
-        print("[update] enabled = false in config.toml, or TOOLRECALL_UPDATE_CHECK=0).")
+        print("A background update check also runs at CLI entry. By default a")
+        print("newer release is ANNOUNCED (terminal + agent tool-output hint),")
+        print("never installed silently — set [update] auto_apply = true (or")
+        print("TOOLRECALL_UPDATE_AUTO_APPLY=1) to restore install-on-detect.")
         print()
         print("Options:")
         print("  --check, -c     Check only — report newer version, do not apply")
@@ -2484,11 +2486,18 @@ def cmd_update():
 
 
 def _maybe_auto_update():
-    """Opportunistic auto-update at CLI entry (opt-out; see [update] config).
+    """Opportunistic update check at CLI entry (opt-out; see [update] config).
 
     Never raises, never blocks >1s (PyPI timeout), never runs for the
     daemon/serve paths. Failures are recorded in the updater state file —
     surfaced via `toolrecall update --status`, not swallowed silently.
+
+    Install behavior: [update] auto_apply (default FALSE, review 2026-09 —
+    a compromised PyPI account must not mean silent code execution on the
+    next CLI run). When False, prints the available version and records it
+    in the state file, where the agent-facing hint channel
+    (updater.pending_update_hint) picks it up. Installing is then an
+    explicit `toolrecall update`.
     """
     # Never in these paths: they are long-lived processes or latency-critical.
     if sys.argv[1:2] in (["daemon"], ["serve"], ["mcp"], ["debug"], ["replay"]):
@@ -2498,21 +2507,28 @@ def _maybe_auto_update():
         return
     try:
         from toolrecall import updater
-        from toolrecall.config import load_config
+        from toolrecall import config as _config_mod
 
-        cfg = load_config()
+        cfg = _config_mod.load_config()
         # Explicit gate before any state I/O: disabled = fully inert.
         if not updater._update_enabled(cfg):
             return
         latest = updater.check_for_update(cfg)
         if latest:
-            print(
-                f"  ⬆️  ToolRecall {latest} available — updating (disable: [update] enabled = false)"
-            )
-            if updater.apply_update(latest):
-                print("  ✅ Updated — run `toolrecall restart` to refresh the daemon.")
+            if cfg.update_auto_apply:
+                print(
+                    f"  ⬆️  ToolRecall {latest} available — updating "
+                    f"(disable: [update] auto_apply = false)"
+                )
+                if updater.apply_update(latest):
+                    print("  ✅ Updated — run `toolrecall restart` to refresh the daemon.")
+                else:
+                    print("  ⚠️  Auto-update failed — run `toolrecall update` for details.")
             else:
-                print("  ⚠️  Auto-update failed — run `toolrecall update` for details.")
+                print(
+                    f"  ⬆️  ToolRecall {latest} available — run `toolrecall update` to install "
+                    f"(auto-apply is off: [update] auto_apply = true to change)."
+                )
     except Exception as e:  # noqa: BLE001 — updater must never break the command
         # Recorded degradation, not a silent swallow: state file + stderr note.
         import warnings

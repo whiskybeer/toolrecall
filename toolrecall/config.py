@@ -344,7 +344,7 @@ class Config:
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
         # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
         "forward_proxy": frozenset({"port", "extra_hosts", "dedup", "canonicalize_default"}),
-        "update": frozenset({"enabled", "check_interval_hours", "index_url"}),
+        "update": frozenset({"enabled", "check_interval_hours", "index_url", "auto_apply"}),
     }
     # Sub-tables whose keys are user-defined names (per-client policies,
     # per-server configs, per-command TTL patterns) — never validated.
@@ -1144,6 +1144,22 @@ class Config:
         """
         val = self.get("update", "index_url", default=None)
         return str(val).strip() if val else None
+
+    @property
+    def update_auto_apply(self) -> bool:
+        """Install a newer release automatically when the CLI hook detects it.
+
+        Default FALSE (review 2026-09): a compromised PyPI account must not
+        mean silent code execution on every user's next CLI run. When False,
+        the CLI hook prints the available version and the agent-facing hint
+        channel announces it (updater.pending_update_hint) — installing is an
+        explicit `toolrecall update`.
+        TOOLRECALL_UPDATE_AUTO_APPLY env wins (matching env > TOML priority).
+        """
+        env = os.environ.get("TOOLRECALL_UPDATE_AUTO_APPLY")
+        if env is not None:
+            return env.strip().lower() in ("1", "true", "yes", "on")
+        return bool(self.get("update", "auto_apply", default=False))
 
     @property
     def update_check_interval_hours(self) -> float:

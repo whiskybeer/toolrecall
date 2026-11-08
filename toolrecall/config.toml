@@ -420,3 +420,9 @@ enabled = true
 [update]
 enabled = true
 check_interval_hours = 24
+# auto_apply = false (default): a new release is announced — to your terminal
+# and, via tool-output hints, to your agent — but NEVER installed silently.
+# Install explicitly with `toolrecall update`. Set true to restore
+# install-on-detect (a compromised PyPI account then means silent code
+# execution on your next CLI run — you are trusting PyPI + the pinned index).
+# auto_apply = false
