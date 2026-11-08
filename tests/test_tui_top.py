@@ -76,6 +76,96 @@ def test_access_rows_reads_log(seeded_db, monkeypatch):
     assert cat == "file_cache" and path == "/tmp/x.py" and hit == 1
 
 
+# ─── Day-scoped stub accounting (2026-09-18 umbrella headline) ───
+
+
+def test_stubbed_today_splits_day_and_window(seeded_db, monkeypatch):
+    from datetime import datetime, timezone
+
+    con = sqlite3.connect(seeded_db)
+    now = time.time()
+    day_start = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
+    today_ts = day_start + 60  # just after UTC midnight
+    old_ts = now - 2 * 86400  # two days ago
+    for ts, toks in ((today_ts, 4000), (old_ts, 11_000)):
+        con.execute(
+            "INSERT INTO access_log (category, path, hit, tokens, cached_at)"
+            " VALUES ('mcp_dedup', '/tmp/f', 0, ?, ?)",
+            (toks, ts),
+        )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
+    today, window = tui_top.stubbed_today(seeded_db)
+    assert today == 4000 and window == 15000
+
+
+def test_stubbed_today_empty_db_is_zero_tuple(seeded_db, monkeypatch):
+    monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
+    assert tui_top.stubbed_today(seeded_db) == (0, 0)
+    assert tui_top.stubbed_today(seeded_db + ".missing") == (0, 0)
+
+
+def _stub_money(monkeypatch, prompt=100_000, dedup=50_000, requests=3):
+    """Hermetic money_today: render tests must not read the prod usage CSV
+    (money_today() defaults to ~/.toolrecall/proxy_usage.csv — CSV parsing
+    itself is covered in test_usage_dedup_column.py)."""
+    money = {
+        "requests": requests,
+        "prompt": prompt,
+        "completion": 500,
+        "replays": 0,
+        "median": 0,
+        "dedup_tokens": dedup,
+        "cost_usd": 0.1234,
+    }
+    monkeypatch.setattr(tui_top, "money_today", lambda usage_csv=None: dict(money))
+
+
+def test_render_plain_umbrella_headline(seeded_db, monkeypatch):
+    from datetime import datetime, timezone
+
+    con = sqlite3.connect(seeded_db)
+    day_start = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
+    con.execute(
+        "INSERT INTO access_log (category, path, hit, tokens, cached_at)"
+        " VALUES ('mcp_dedup', '/tmp/f', 0, 7000, ?)",
+        (day_start + 120,),
+    )
+    con.commit()
+    con.close()
+    _stub_daemon(monkeypatch, enabled=False)
+    _stub_money(monkeypatch, prompt=100_000, dedup=50_000)
+    monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
+    snap = tui_top.snapshot_factory(seeded_db)
+    out = tui_top.render_plain(snap)
+    # Umbrella total = dedup (50K) + stubs (7K); pct base = billed 100K + 57K
+    # = 157K → 57/157 = 36.3% (pre-removal base, NOT "of billed").
+    assert "not sent (measured): 57.0K tok  —  36.3% of would-have-been-billed" in out
+    assert "· stubbed re-reads: 7.0K tok" in out
+    assert "· deduped blocks:   50.0K tok" in out
+    # Old mislabeled forms must be gone.
+    assert "not sent (dedup)" not in out
+    assert "% of billed" not in out
+    # Cumulative ledger is explicitly day-scoped now.
+    assert "logged days" in out and "today: 7.0K" in out
+    # The old cumulative-only line must not reappear.
+    assert "tokens never sent to the LLM" not in out
+
+
+def test_render_plain_zero_notsent_has_reason(seeded_db, monkeypatch):
+    _stub_daemon(monkeypatch, enabled=False)
+    _stub_money(monkeypatch, prompt=80_000, dedup=0)
+    monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
+    out = tui_top.render_plain(tui_top.snapshot_factory(seeded_db))
+    assert "no stubbed re-reads, no duplicate blocks today" in out
+    assert "not sent (measured)" not in out
+
+
 def test_render_plain_contains_tables_and_tail(seeded_db, monkeypatch):
     _stub_daemon(monkeypatch, enabled=False)
     snap = tui_top.snapshot_factory(seeded_db)

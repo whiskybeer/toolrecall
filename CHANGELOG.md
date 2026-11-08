@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased] — 2026-09-18
+
+### Changed
+- **`toolrecall top` view 1: the not-sent number is one umbrella total with a per-mechanism breakdown — and every number is day-scoped honestly.** Two different counters both read as "not sent today": `not sent (dedup)` (proxy usage CSV — byte-identical blocks removed within a request) and `tokens never sent to the LLM` (cumulative `cache_stats.tokens_not_sent_measured` — bridge stub events), the latter printed under a "today" header despite spanning all logged days (12.6M cumulative next to 15.9M billed-today read as if ~11M had been saved today). Now view 1 (and the non-tty `render_plain`) lead with `sent to LLM today` vs `not sent (measured): X tok — p% of would-have-been-billed`, where X = stubbed re-reads (today, summed from `access_log` category `mcp_dedup` via new `stubbed_today(db)`; read-only, `_open_ro`, day boundary UTC midnight matching `money_today()`) + deduped blocks (proxy CSV `dedup_tokens`) — disjoint, wire-verified sets (stubbed content never reaches the proxy, so the proxy can only dedup what was actually sent), with each mechanism on its own line; the cumulative counter appears only as `stubbed re-reads, logged days: Y (today: X)` — "logged days" because `access_log` is a rolling ~50k window, not since-forever history. Percentage base fixed: `removed / (billed + removed)` — the provider never billed the removed tokens, so "% of billed" was the wrong denominator. Zero-state names its reasons ("no stubbed re-reads, no duplicate blocks today"). HELP_TEXT CONTEXT tier states the two mechanisms and their disjointness. Tests: `tests/test_tui_top.py` (+4: day/window split across UTC midnight, empty-db `(0, 0)`, umbrella headline math (57K = 50K dedup + 7K stubs; 36.3% = 57/157 pre-removal base) with the old mislabeled forms asserted gone, zero-state reason line; render tests monkeypatch `money_today` — the prod `proxy_usage.csv` must never be read there). Docs: `docs/CLI.md` view list synced to the shipped view order.
+
 ## [0.8.22] — 2026-09-15
 
 ### Added

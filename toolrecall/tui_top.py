@@ -63,8 +63,10 @@ HELP_TEXT = [
     "METRIC TIERS (don't conflate):",
     "  IO      — hits/rate, tokens served cache vs disk: latency only,",
     "            NOT money. Content reaches the LLM either way.",
-    "  CONTEXT — measured not-sent (dedup stubs): wire-verified tokens",
-    "            that never reached the LLM. Estimates: `toolrecall stats`.",
+    "  CONTEXT — measured not-sent: wire-verified tokens that never",
+    "            reached the LLM — stubbed re-reads + within-request",
+    "            dedup (disjoint sets; the saved view sums both).",
+    "            Estimates: `toolrecall stats`.",
     "  MONEY   — billed input/output tokens: only from provider usage",
     "            via the API proxy. No proxy traffic = no data.",
     "",
@@ -311,6 +313,49 @@ def money_today(usage_csv: str | None = None) -> dict | None:
     }
 
 
+def stubbed_today(db: str) -> tuple[int, int]:
+    """Today-scoped wire-verified stub tokens from access_log (+ all-days).
+
+    The bridge logs every dedup-stub event to access_log under the
+    ``mcp_dedup`` category (daemon cmd ``dedup_tokens``). That per-day
+    attribution is what the cumulative ``cache_stats.tokens_not_sent_measured``
+    counter lacks — the saved view used to print that cumulative number
+    under a "today" header (12.6M next to a 15.9M billed-today; most of it
+    earned on earlier days). Sums the log instead:
+
+    Returns (today_tokens, window_tokens); day boundary = UTC midnight,
+    matching money_today(). (0, 0) when the db/log is unavailable — callers
+    treat that as "no stub data", never as zero savings.
+    """
+    con = _open_ro(db)
+    if con is None:
+        return 0, 0
+    try:
+        rows = con.execute(
+            "SELECT cached_at, tokens FROM access_log WHERE category = 'mcp_dedup'"
+        ).fetchall()
+    except sqlite3.Error:
+        return 0, 0
+    finally:
+        con.close()
+    from datetime import datetime, timezone
+
+    day_start = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
+    today = 0
+    window = 0
+    for ts, tokens in rows:
+        try:
+            tokens = int(tokens or 0)
+        except (TypeError, ValueError):
+            continue
+        window += tokens
+        if (ts or 0) >= day_start:
+            today += tokens
+    return today, window
+
+
 def blocked_reads_today(log_path: str | None = None) -> list[dict]:
     """Blocked reads today (sensitive-file / policy-denied), from the
     daemon log. Bounded tail (8k lines), today only, deduped per path
@@ -407,7 +452,7 @@ def snapshot_factory(db: str) -> dict:
     stats = stats_via_daemon()
     if stats is None:
         stats = stats_via_sqlite(db)
-    return {"stats": stats, "db": db}
+    return {"stats": stats, "db": db, "db_path": db}
 
 
 # ─── Actions (all safe; require daemon) ──────────────────────
@@ -470,18 +515,41 @@ def render_plain(snapshot: dict) -> str:
     # End-user ordering (2026-09-16): money truth + measured not-sent FIRST,
     # IO table last (tech detail). Same contract as the curses view order.
     money = money_today()
+    stubs_today, stubs_window = stubbed_today(snapshot.get("db_path") or snapshot.get("db", ""))
     if money:
         lines.append("")
         # ── THE headline: sent X, not sent Y (end-user order, 2026-09-16) ──
-        lines.append(
-            "sent to LLM today: %s tok  (%d requests)"
-            % (human_tokens(money["prompt"]), money["requests"])
-        )
+        # 2026-09-18: Y is the UMBRELLA — stubbed re-reads + within-request
+        # dedup, both wire-verified, disjoint sets (stubbed content never
+        # reaches the proxy, so the proxy can only dedup what was sent).
+        # Percentage base = pre-removal prompt total (billed + removed) —
+        # the provider never saw the removed tokens, so "of billed" was
+        # the wrong denominator.
         _dy = money.get("dedup_tokens", 0)
-        if _dy:
-            _pct = (100.0 * _dy / money["prompt"]) if money["prompt"] else 0.0
+        _notsent = _dy + stubs_today
+        if _notsent:
+            _base = money["prompt"] + _notsent
+            _pct = (100.0 * _notsent / _base) if _base else 0.0
             lines.append(
-                "  not sent (dedup): %s tok  (%.1f%% of billed)" % (human_tokens(_dy), _pct)
+                "sent to LLM today: %s tok  (%d requests)"
+                % (human_tokens(money["prompt"]), money["requests"])
+            )
+            lines.append(
+                "not sent (measured): %s tok  —  %.1f%% of would-have-been-billed"
+                % (human_tokens(_notsent), _pct)
+            )
+            lines.append(
+                "  · stubbed re-reads: %s tok  (unchanged file re-read → one-line stub)"
+                % human_tokens(stubs_today)
+            )
+            lines.append(
+                "  · deduped blocks:   %s tok  (identical blocks within a request)"
+                % human_tokens(_dy)
+            )
+        else:
+            lines.append(
+                "sent to LLM today: %s tok  (%d requests)  —  no stubbed re-reads,"
+                " no duplicate blocks today" % (human_tokens(money["prompt"]), money["requests"])
             )
         lines.append(
             "money [billed via proxy, today]: %s prompt / %s completion tok  replays %d"
@@ -501,14 +569,15 @@ def render_plain(snapshot: dict) -> str:
     elif not daemon:
         lines.append("")
         lines.append("money [billed]: no proxy traffic captured today")
-    _measured = sum(
-        c.get("tokens_not_sent_measured", 0) for c in st.values() if isinstance(c, dict)
-    )
-    if _measured:
+    if stubs_window:
         lines.append("")
+        # Today/cumulative split — the old line printed the cumulative
+        # counter under a "today" header (scope mismatch the 2026-09-18
+        # umbrella change fixes). "logged days" because access_log is a
+        # rolling window, not since-forever history.
         lines.append(
-            "  tokens never sent to the LLM: %s  (dedup stubs — wire-verified)"
-            % human_tokens(_measured)
+            "  stubbed re-reads, logged days: %s  (today: %s — dedup stubs, wire-verified)"
+            % (human_tokens(stubs_window), human_tokens(stubs_today))
         )
     ctx = context_via_daemon()
     if ctx:
@@ -566,6 +635,8 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
         "ctx": None,
         "stats": None,
         "trend": None,
+        "stubs_today": 0,
+        "stubs_window": 0,
         "toast": "",
         "toast_ts": 0.0,
         "last": 0.0,
@@ -589,6 +660,13 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             state["money"] = money_today()
         except Exception:  # noqa: BLE001 — money block must never break the TUI
             state["money"] = None
+        # day-scoped stub tokens (access_log) — same cadence, never breaks the TUI
+        try:
+            state["stubs_today"], state["stubs_window"] = stubbed_today(
+                (state["snap"] or {}).get("db_path", "")
+            )
+        except Exception:  # noqa: BLE001 — stub block must never break the TUI
+            state["stubs_today"] = state["stubs_window"] = 0
         # trend reads the db directly (like log_fn); cheap + daemon-independent
         try:
             from toolrecall.trend import coverage, daily_trend, miss_classes
@@ -670,25 +748,43 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             if money:
                 y = put(y + 1, "", 0)  # section gap
                 # ── THE headline: sent X, not sent Y (Robin's ask) ──
+                # 2026-09-18: Y = umbrella — stubbed re-reads + within-request
+                # dedup, both wire-verified and disjoint (stubbed content never
+                # reaches the proxy). Pct base = pre-removal prompt total;
+                # rationale in render_plain().
+                _dy = money.get("dedup_tokens", 0)
+                _st = state.get("stubs_today", 0) or 0
+                _notsent = _dy + _st
                 y = put(
                     y,
                     "  sent to LLM today:      %s tok  (%d requests)"
                     % (human_tokens(money["prompt"]), money["requests"]),
                     A_BOLD,
                 )
-                _dy = money.get("dedup_tokens", 0)
-                if _dy:
-                    _pct = (100.0 * _dy / money["prompt"]) if money["prompt"] else 0.0
+                if _notsent:
+                    _base = money["prompt"] + _notsent
+                    _pct = (100.0 * _notsent / _base) if _base else 0.0
                     y = put(
                         y,
-                        "  not sent (dedup):       %s tok  (%.1f%% of billed)"
-                        % (human_tokens(_dy), _pct),
+                        "  not sent (measured):    %s tok  —  %.1f%% of would-have-been-billed"
+                        % (human_tokens(_notsent), _pct),
                         A_HIT,
+                    )
+                    y = put(
+                        y,
+                        "  · stubbed re-reads:     %s tok  (unchanged file re-read → one-line stub)"
+                        % human_tokens(_st),
+                    )
+                    y = put(
+                        y,
+                        "  · deduped blocks:       %s tok  (identical blocks within a request)"
+                        % human_tokens(_dy),
                     )
                 else:
                     y = put(
                         y,
-                        "  not sent (dedup):       0 tok  (no duplicate blocks in requests)",
+                        "  not sent (measured):    0 tok  (no stubbed re-reads,"
+                        " no duplicate blocks today)",
                         A_DIM,
                     )
                 y = put(y, "", 0)
@@ -720,26 +816,25 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     " through the proxy — attach: toolrecall proxy attach)",
                     A_DIM,
                 )
-            # MEASURED tier: wire-verified not-sent tokens (bridge dedup
-            # stubs). The number an end user can take to the bank —
-            # content was REPLACED on the wire, never an estimate.
-            _measured = 0
-            for _cat in (state.get("stats") or {}).values():
-                if isinstance(_cat, dict) and _cat.get("tokens_not_sent_measured"):
-                    _measured += _cat["tokens_not_sent_measured"]
+            # Cumulative stub ledger, explicitly scoped (2026-09-18): the
+            # cache_stats counter is all-days; today's share lives in the
+            # umbrella headline above. Printing the cumulative number under
+            # a "today" header was the scope mismatch this replaces.
             y = put(y + 1, "", 0)  # section gap
-            if _measured:
+            if state.get("stubs_window"):
                 y = put(
                     y,
-                    "  tokens never sent to the LLM: %s  (dedup stubs — wire-verified)"
-                    % human_tokens(_measured),
-                    A_BOLD,
+                    "  stubbed re-reads, logged days: %s  (today: %s — dedup stubs,"
+                    " wire-verified)"
+                    % (
+                        human_tokens(state["stubs_window"]),
+                        human_tokens(state["stubs_today"]),
+                    ),
                 )
             else:
                 y = put(
                     y,
-                    "  tokens never sent to the LLM: 0 so far today"
-                    " (grows when an unchanged file re-read is stubbed)",
+                    "  stubbed re-reads: none yet (grows when an unchanged file re-read is stubbed)",
                     A_DIM,
                 )
             # Blocked reads: security-gate refusals — also wire-verified

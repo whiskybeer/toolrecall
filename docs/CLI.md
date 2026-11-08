@@ -300,16 +300,25 @@ Most commands accept `--help` / `-h` for per-command usage and options
   Read-only by design: the only write actions are the safe ones (refresh
   a stale file, set a context checkpoint). No invalidate/reset keys.
 - **Views** (`1`–`5` or `Tab` to cycle, `q` quit, lone `ESC` quits):
-  - `1` **stats** — per-cache hits/misses/hit-rate/token accounting +
-    context-tracker summary
+  - `1` **saved** — billed truth + measured not-sent (the end-user view):
+    `sent to LLM today` vs the umbrella `not sent (measured)` total —
+    stubbed re-reads (unchanged file re-reads replaced by one-line stubs,
+    today-scoped from `access_log`) + deduped blocks (byte-identical
+    blocks removed within a request, from the proxy usage CSV). Both
+    mechanisms are wire-verified and disjoint (stubbed content never
+    reaches the proxy), so the sum is exact; the percentage uses the
+    pre-removal base (`removed / (billed + removed)`). Below it: billed
+    prompt/completion, replays, provider-reported cost, the median-request
+    diagnostic, the cumulative stub ledger (explicitly "logged days" —
+    `access_log` is a rolling window), and blocked reads.
   - `2` **log** — scrollable access-log tail (`↑`/`↓`, `PgUp`/`PgDn`)
   - `3` **trend** — daily file_cache hit-rate from `access_log` (7-day view
     with bar visual) + worst hit-rate path classes (the plateau diagnostic,
     from `toolrecall/trend.py`; daemon-independent, reads the db directly)
-  - `4` **context** — stale (♻️ provably wrong in context), dirty (📝),
-    clean (🧹 droppable) file lists with token estimates (daemon required —
-    tracker state lives in daemon memory)
-  - `5` **help**
+  - `4` **stats** — per-cache IO hits/misses/hit-rate/token accounting
+    (latency tier: content reaches the LLM either way — not money)
+  - `5` **help** — keybindings + the metric-tier vocabulary (IO / CONTEXT /
+    MONEY — don't conflate)
 - **Wrong-user guard:** if the current user has no cache data but another
   user's `~/.toolrecall/cache.db` exists on the box (daemon runs as that
   user), the stats view says so and prints the `sudo -u` escape instead of
