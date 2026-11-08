@@ -1,0 +1,171 @@
+{
+  "bench": "gepa_real",
+  "model": "deepseek/deepseek-v4-flash",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 0,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `open_backend` defined, and what is its first parameter?",
+      "path": "toolrecall/storage/__init__.py",
+      "line": 76,
+      "param": "cfg"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `stats_via_sqlite` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 191,
+      "param": "db"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `cached_patch` defined, and what is its first parameter?",
+      "path": "toolrecall/client.py",
+      "line": 258,
+      "param": "path"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `miss_classes` defined, and what is its first parameter?",
+      "path": "toolrecall/trend.py",
+      "line": 109,
+      "param": "min_reads"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `is_retryable_status` defined, and what is its first parameter?",
+      "path": "toolrecall/resilience.py",
+      "line": 98,
+      "param": "status"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `blocked_reads_today` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 305,
+      "param": "log_path"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `recv_exact` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 197,
+      "param": "sock"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `client_greeting` defined, and what is its first parameter?",
+      "path": "toolrecall/network_auth.py",
+      "line": 135,
+      "param": "token"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `restrict_db_perms` defined, and what is its first parameter?",
+      "path": "toolrecall/storage/__init__.py",
+      "line": 66,
+      "param": "db_path"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `parse_greeting` defined, and what is its first parameter?",
+      "path": "toolrecall/network_auth.py",
+      "line": 140,
+      "param": "data"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `canonicalize` defined, and what is its first parameter?",
+      "path": "toolrecall/jcs.py",
+      "line": 206,
+      "param": "value"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `create_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 125,
+      "param": "path"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "default",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 0,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 2,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a helpful assistant. When asked a question about where a function is defined and what its first parameter is, follow these instructions:\n\n- The question will be in the form: \"Where is the function `function_name` defined, and what is its first parameter?\"\n- Your response must include the repository-relative path, the line number where the function is defined, and the name of the first parameter (without type annotations or default values).\n- Your response must end with a final line in the exact format:\n  ANSWER: <repo-relative path>:<line> <first parameter name>\n- Do not add any text after the final line. The rest of your response can contain additional explanation, but the final line is mandatory.\n\nExample: If the function `is_retryable_status` is defined in `toolrecall/resilience.py` at line 98 with first parameter `status`, your response should end with:\nANSWER: toolrecall/resilience.py:98 status\n\nEnsure the path is relative to the repository root and the parameter name is given exactly as it appears in the function definition.",
+      "task_llm_calls": 163,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.011719,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 167155,
+      "task_cached_tokens": 106496,
+      "reflection_calls": 6,
+      "reflection_billed_usd": 0.012543,
+      "total_billed_usd": 0.024261,
+      "tool_calls_requested": 113,
+      "tool_executions": 113,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 368.8
+    },
+    {
+      "arm": "gepa-cache",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 0,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 2,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a helpful assistant that answers questions about function definitions in a codebase. The user will ask a question in the form: \"Where is the function `function_name` defined, and what is its first parameter?\" You must answer with the location (file path relative to the repository root and line number) and the first parameter name. Your response should include a natural language description, and must end with a line in the format:\n\nANSWER: <repo-relative path>:<line> <first parameter name>\n\nFor example, if the function `is_retryable_status` is defined in `toolrecall/resilience.py` at line 98 and its first parameter is `status`, your response should end with:\n\nANSWER: toolrecall/resilience.py:98 status\n\nEnsure that the final line is exactly as specified, with no additional text after it. The line number should be the line where the function definition starts (the line with `def`). The first parameter name should be the name of the first parameter in the function signature, excluding any self or cls parameter for methods (i.e., the first actual parameter). Do not include type hints or default values in the final line.",
+      "task_llm_calls": 152,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.010269,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 145137,
+      "task_cached_tokens": 93952,
+      "reflection_calls": 6,
+      "reflection_billed_usd": 0.012614,
+      "total_billed_usd": 0.022883,
+      "tool_calls_requested": 102,
+      "tool_executions": 102,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 417.4
+    },
+    {
+      "arm": "toolrecall",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 0,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 3,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a helpful assistant. You will be asked questions of the form: \"Where is the function `FUNCTION_NAME` defined, and what is its first parameter?\" Your job is to answer accurately.\n\nYou should first provide a natural language explanation that includes:\n- The file path (relative to the repository root) where the function is defined.\n- The line number where the function definition starts.\n- The name of the first parameter (the first parameter in the function signature; for methods, ignore `self` or `cls`).\nOptionally, you may include additional details such as type annotations or default values.\n\nAfter your explanation, on a new line, you **must** include the answer in the following exact format:\n\nANSWER: <repo-relative path>:<line> <first parameter name>\n\nFor instance, if the function `foo` is defined in `bar/baz.py` at line 10 and its first parameter is `x`, then your response should end with:\n\nANSWER: bar/baz.py:10 x\n\nMake sure:\n- The final line is exactly as specified, with no extra characters, spaces, or punctuation.\n- The path is relative to the repository root (not an absolute path).\n- The line number is the line of the `def` keyword.\n- The first parameter name is exactly as it appears in the source code.\n- If you include any additional text, it must come before this final line. The final line must be the last line of your response.\n\nIf you do not know the exact location or parameter, make your best guess, but always provide the final line in the required format.",
+      "task_llm_calls": 172,
+      "task_llm_hits": 80,
+      "task_billed_usd": 0.007331,
+      "task_cost_avoided_usd": 0.006669,
+      "task_prompt_tokens": 216264,
+      "task_cached_tokens": 124928,
+      "reflection_calls": 4,
+      "reflection_billed_usd": 0.008069,
+      "total_billed_usd": 0.0154,
+      "tool_calls_requested": 122,
+      "tool_executions": 65,
+      "tool_calls_replayed": 57,
+      "errors": 0,
+      "wall_s": 237.4
+    }
+  ]
+}

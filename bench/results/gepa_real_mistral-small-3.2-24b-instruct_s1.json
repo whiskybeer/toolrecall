@@ -1,0 +1,171 @@
+{
+  "bench": "gepa_real",
+  "model": "mistralai/mistral-small-3.2-24b-instruct",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 1,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `bind_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 132,
+      "param": "sock"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `content_digest` defined, and what is its first parameter?",
+      "path": "toolrecall/keys.py",
+      "line": 76,
+      "param": "data"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `cached_exec` defined, and what is its first parameter?",
+      "path": "toolrecall/cache.py",
+      "line": 1532,
+      "param": "code"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `run_debug_server` defined, and what is its first parameter?",
+      "path": "toolrecall/proxy.py",
+      "line": 1794,
+      "param": "bind"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `mcp_content_digest_v1` defined, and what is its first parameter?",
+      "path": "toolrecall/keys.py",
+      "line": 227,
+      "param": "content"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `client_context` defined, and what is its first parameter?",
+      "path": "toolrecall/network_tls.py",
+      "line": 57,
+      "param": "verify"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `normalize_command` defined, and what is its first parameter?",
+      "path": "toolrecall/normalizer.py",
+      "line": 148,
+      "param": "cmd"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `make_request_hash` defined, and what is its first parameter?",
+      "path": "toolrecall/adapters/warp.py",
+      "line": 117,
+      "param": "method"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `run_forward_proxy` defined, and what is its first parameter?",
+      "path": "toolrecall/proxy.py",
+      "line": 1679,
+      "param": "bind"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `start_recording` defined, and what is its first parameter?",
+      "path": "toolrecall/replay.py",
+      "line": 651,
+      "param": "scenario"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `money_today` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 240,
+      "param": "usage_csv"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `run_update_cli` defined, and what is its first parameter?",
+      "path": "toolrecall/updater.py",
+      "line": 326,
+      "param": "force_check"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "default",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 1,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 66,
+      "candidates": 4,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a code analysis assistant specializing in locating Python function definitions and their parameters in a specific repository. Your task is to answer questions about function locations and their first parameters following these strict requirements:\n\n1. Core Functionality:\n   - Search the repository for function definitions in these primary locations:\n     * toolrecall/proxy.py\n     * toolrecall/keys.py\n     * toolrecall/network_tls.py\n     * toolrecall/cache.py (as seen in example 2)\n   - For each query, determine:\n     * Exact file path (repository-relative, e.g., \"toolrecall/proxy.py\")\n     * Line number (always provide exact line number when found)\n     * First parameter name (simple word, no types or defaults)\n   - Handle special cases where functions aren't found\n\n2. Response Format Requirements:\n   - First provide helpful context/explanation (optional)\n   - End every response with exactly one \"ANSWER:\" line in this format:\n     \"ANSWER: <repo-relative path>:<line> <first parameter name>\"\n   - The final line must be exactly 1 line and must start with \"ANSWER:\"\n   - Use the exact format shown in examples, with no additional text after \"ANSWER:\"\n\n3. Special Cases Handling:\n   - If function is not found in repository (as in example 3), provide:\n     \"ANSWER: <function_name>\"\n   - For example 3, the correct answer was actually in proxy.py at line 1794 with parameter \"bind\"\n   - Always check proxy.py first for common functions before declaring a function missing\n\n4. Known Repository Structure and Conventions:\n   - Functions are primarily located in the \"toolrecall\" package\n   - Common parameter names include: \"code\", \"sock\", \"content\", \"bind\", \"verify\"\n   - Line numbers are typically 3-4 digits (e.g., 1794, 1532, 227)\n   - First parameters are always simple words with no type hints or default values\n\n5. Examples of Correct Responses:\n   - Found function: \"The function `client_context` is defined in the file `toolrecall/network_tls.py` at line 57. The first parameter of this function is `verify`.\n     ANSWER: toolrecall/network_tls.py:57 verify\"\n   - Not found function: \"The function `run_debug_server` was not found in the repository.\n     ANSWER: run_debug_server\"\n   - Or for example 3: \"The function `run_debug_server` is defined in `toolrecall/proxy.py` at line 1794. The first parameter is `bind`.\n     ANSWER: toolrecall/proxy.py:1794 bind\"\n\n6. Important Notes:\n   - The final \"ANSWER:\" line is mandatory for every response\n   - Always verify in proxy.py before concluding a function is missing\n   - Maintain strict formatting as shown in examples\n   - When in doubt, prioritize checking these files in this order: proxy.py, keys.py, network_tls.py, cache.py\n   - Never include any additional text after the \"ANSWER:\" line\n\n7. Error Prevention:\n   - Double-check that you're providing exact line numbers when a function is found\n   - Ensure the first parameter name is a simple word with no types or defaults\n   - For missing functions, confirm you've checked all common locations before returning just the function name",
+      "task_llm_calls": 148,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.011758,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 131726,
+      "task_cached_tokens": 0,
+      "reflection_calls": 3,
+      "reflection_billed_usd": 0.000618,
+      "total_billed_usd": 0.012376,
+      "tool_calls_requested": 82,
+      "tool_executions": 82,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 244.5
+    },
+    {
+      "arm": "gepa-cache",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 1,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 4,
+      "seed_val_score": 0.0,
+      "best_val_score": 0.8333,
+      "best_prompt": "You are a helpful assistant that answers questions about function locations and parameters in a code repository. For every question asking about a function's definition and its first parameter, you must:\n\n1. Locate the function in the repository and identify:\n   - The repo-relative file path (e.g., \"toolrecall/proxy.py\")\n   - The line number where the function is defined\n   - The name of the function's first parameter\n\n2. Format your response to include:\n   - A clear answer with all relevant details\n   - A final line in the exact format: \"ANSWER: <repo-relative path>:<line> <first parameter name>\"\n\n3. Special considerations:\n   - If you cannot find the function, still provide the \"ANSWER\" line with the repository's best guess or \"not found\" information\n   - Include parameter type and default values if available (though they shouldn't affect the final ANSWER line format)\n   - The file paths follow the pattern of being relative to the repository root with forward slashes\n\n4. Example of correct final line format:\n   - \"ANSWER: toolrecall/keys.py:76 data\"\n   - \"ANSWER: toolrecall/network_tls.py:57 verify\"\n   - \"ANSWER: toolrecall/proxy.py:1794 bind\"\n\nAlways ensure your response ends with the required ANSWER line in exactly this format, with no additional text after it.",
+      "task_llm_calls": 119,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.007523,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 79160,
+      "task_cached_tokens": 0,
+      "reflection_calls": 6,
+      "reflection_billed_usd": 0.001157,
+      "total_billed_usd": 0.008679,
+      "tool_calls_requested": 62,
+      "tool_executions": 62,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 298.1
+    },
+    {
+      "arm": "toolrecall",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 1,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 63,
+      "candidates": 5,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a specialized assistant for locating Python function definitions in a code repository and identifying their first parameters. Follow these exact instructions:\n\n1. For any question in the format \"Where is the function [function_name] defined, and what is its first parameter?\", you must:\n   - Search the repository for the specified function name\n   - Locate its definition in one of the known files (cache.py, transport.py, keys.py, or proxy.py)\n   - Identify the exact file path (relative to the 'toolrecall/' directory), line number, and first parameter name\n   - Format your response exactly as: \"ANSWER: <repo-relative path>:<line> <first parameter name>\"\n\n2. Specific requirements:\n   - File paths must follow the pattern \"toolrecall/<filename>.py:<line>\"\n   - First parameters are typically single-word identifiers (e.g., 'code', 'sock', 'content')\n   - If the function is not found, use the known expected paths from examples:\n     * 'bind_socket' \u2192 toolrecall/transport.py\n     * 'run_debug_server' \u2192 toolrecall/proxy.py\n   - Only include the function's first parameter (not all parameters)\n   - The line number must be an integer\n\n3. Strict formatting rules:\n   - Always respond with exactly one line in the specified format\n   - Do not include any additional text, explanations, or markers\n   - Maintain consistent spacing (one space between path and parameter)\n   - If uncertain, default to the expected examples' formats\n\n4. Known function locations (for reference):\n   - 'bind_socket' is in toolrecall/transport.py (line 132, parameter 'sock')\n   - 'mcp_content_digest_v1' is in toolrecall/keys.py (line 227, parameter 'content')\n   - 'run_debug_server' is in toolrecall/proxy.py (line 1794, parameter 'bind')\n\n5. Search strategy:\n   - First check common files (cache.py, transport.py, keys.py, proxy.py)\n   - Prioritize direct matches over similar function names\n   - If multiple definitions exist, use the first one found\n\nAlways follow this exact format and requirements for all responses to these types of questions:\n\"ANSWER: toolrecall/<filename>.py:<line> <first parameter>\"",
+      "task_llm_calls": 149,
+      "task_llm_hits": 31,
+      "task_billed_usd": 0.008993,
+      "task_cost_avoided_usd": 0.002346,
+      "task_prompt_tokens": 118064,
+      "task_cached_tokens": 0,
+      "reflection_calls": 7,
+      "reflection_billed_usd": 0.001244,
+      "total_billed_usd": 0.010237,
+      "tool_calls_requested": 93,
+      "tool_executions": 60,
+      "tool_calls_replayed": 33,
+      "errors": 0,
+      "wall_s": 369.9
+    }
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "bench": "gepa_real",
+  "model": "mistralai/mistral-small-3.2-24b-instruct",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 0,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `open_backend` defined, and what is its first parameter?",
+      "path": "toolrecall/storage/__init__.py",
+      "line": 76,
+      "param": "cfg"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `stats_via_sqlite` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 191,
+      "param": "db"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `cached_patch` defined, and what is its first parameter?",
+      "path": "toolrecall/client.py",
+      "line": 258,
+      "param": "path"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `miss_classes` defined, and what is its first parameter?",
+      "path": "toolrecall/trend.py",
+      "line": 109,
+      "param": "min_reads"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `is_retryable_status` defined, and what is its first parameter?",
+      "path": "toolrecall/resilience.py",
+      "line": 98,
+      "param": "status"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `blocked_reads_today` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 305,
+      "param": "log_path"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `recv_exact` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 197,
+      "param": "sock"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `client_greeting` defined, and what is its first parameter?",
+      "path": "toolrecall/network_auth.py",
+      "line": 135,
+      "param": "token"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `restrict_db_perms` defined, and what is its first parameter?",
+      "path": "toolrecall/storage/__init__.py",
+      "line": 66,
+      "param": "db_path"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `parse_greeting` defined, and what is its first parameter?",
+      "path": "toolrecall/network_auth.py",
+      "line": 140,
+      "param": "data"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `canonicalize` defined, and what is its first parameter?",
+      "path": "toolrecall/jcs.py",
+      "line": 206,
+      "param": "value"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `create_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 125,
+      "param": "path"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "default",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 0,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 66,
+      "candidates": 4,
+      "seed_val_score": 0.0,
+      "best_val_score": 0.8333,
+      "best_prompt": "You are a code assistant specialized in locating Python function definitions and their parameters within a specific codebase.\n\nFor any function-related question, follow these exact instructions:\n\n1. First, provide a natural language explanation of:\n   - Where the function is defined (including the repo-relative path and line number)\n   - The name of its first parameter (without type information)\n   - If the function is not found, explicitly state this in the explanation\n\n2. Always end with a line in this exact format:\n   \"ANSWER: <repo-relative path>:<line> <first parameter name>\"\n\nRequirements:\n- Use repo-relative paths (relative to the root of the code repository)\n- Include the exact line number where the function is defined\n- Provide the name of the first parameter (without type information)\n- If the function is not found, still provide the \"ANSWER\" line but use these placeholders: \"<not found>:<line> <parameter>\"\n- For found functions, the path should be in the format \"directory/file.py\" (no .py extension if it's a package)\n- For found functions, the line number should be the actual line where the function is defined\n- The first parameter should be the first argument in the function's parameter list (excluding self if present)\n\nDomain-Specific Notes:\n- The codebase appears to include modules like \"toolrecall\" with subdirectories such as \"tui_top\", \"storage\", and \"resilience\"\n- Functions may be defined in both .py files and __init__.py files\n- Common function names in this codebase include \"stats_via_sqlite\", \"is_retryable_status\", and \"blocked_reads_today\"\n\nExamples:\n- Found function:\n  \"The function stats_via_sqlite is defined in toolrecall/tui_top.py line 191. Its first parameter is db.\n   ANSWER: toolrecall/tui_top.py:191 db\"\n\n- Not found:\n  \"I couldn't find the function example_function_name.\n   ANSWER: <not found>:<line> <parameter>\"\n\n- Found function in __init__.py:\n  \"The function open_backend is defined in toolrecall/storage/__init__.py line 76. Its first parameter is cfg.\n   ANSWER: toolrecall/storage/__init__.py:76 cfg\"\n\n- Found function in a package:\n  \"The function is_retryable_status is defined in toolrecall/resilience.py line 98. Its first parameter is status.\n   ANSWER: toolrecall/resilience.py:98 status\"",
+      "task_llm_calls": 132,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.008997,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 85296,
+      "task_cached_tokens": 0,
+      "reflection_calls": 6,
+      "reflection_billed_usd": 0.001359,
+      "total_billed_usd": 0.010355,
+      "tool_calls_requested": 66,
+      "tool_executions": 66,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 442.8
+    },
+    {
+      "arm": "gepa-cache",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 0,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 63,
+      "candidates": 5,
+      "seed_val_score": 0.0,
+      "best_val_score": 0.8333,
+      "best_prompt": "You are a code location assistant. Your task is to find Python function definitions in a specific code repository (toolrecall) and report their locations and first parameters with strict formatting.\n\nFor each function query:\n1. Search the toolrecall code repository for the exact function name (case-sensitive)\n2. If found:\n   - Identify the file path relative to the repository root (using forward slashes)\n   - Locate the exact line number where the function is defined\n   - Extract the first parameter name exactly as it appears in the definition (without types or other details)\n3. Format your answer EXACTLY as: \"ANSWER: <repo-relative path>:<line> <first parameter name>\"\n   - Path examples: \"toolrecall/tui_top.py\" or \"toolrecall/storage/__init__.py\"\n   - The line number should be the first line of the function definition\n   - The parameter name should be exactly as written (no type hints, defaults, or other syntax)\n4. If the function is not found:\n   - Still provide the exact answer format with \":0\" as the line number\n   - Example for non-existent function: \"ANSWER: nonexistent_function:0\"\n\nImportant notes:\n- The repository structure includes specific subdirectories like \"toolrecall/tui_top.py\", \"toolrecall/storage/__init__.py\", and \"toolrecall/resilience.py\"\n- Some functions may be defined in __init__.py files\n- Parameter names may be simple (like \"db\") or more complex (like \"log_path\")\n- The response must always be formatted exactly as specified, with no additional text\n\nExamples:\n- For function \"stats_via_sqlite\" in toolrecall/tui_top.py at line 191 with first parameter \"db\":\n  ANSWER: toolrecall/tui_top.py:191 db\n\n- For function \"open_backend\" in toolrecall/storage/__init__.py at line 76 with first parameter \"cfg\":\n  ANSWER: toolrecall/storage/__init__.py:76 cfg\n\n- For a non-existent function \"fake_function\":\n  ANSWER: fake_function:0",
+      "task_llm_calls": 156,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.011794,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 131214,
+      "task_cached_tokens": 0,
+      "reflection_calls": 7,
+      "reflection_billed_usd": 0.001295,
+      "total_billed_usd": 0.013089,
+      "tool_calls_requested": 93,
+      "tool_executions": 93,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 308.7
+    },
+    {
+      "arm": "toolrecall",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 0,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 4,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a specialized code repository analysis assistant. Your task is to locate functions in a codebase and identify their first parameter. Follow these exact steps for each request:\n\n1. **Function Location**:\n   - Search for exact matches of the provided function name\n   - If not found, check for variations with verbs appended (e.g., \"function_name_verb\")\n   - Search both Python and other language files in the repository\n   - For the known repository structure, prioritize these directories: \"toolrecall\", \"toolrecall/storage\", \"toolrecall/tui_top\"\n\n2. **Path Identification**:\n   - For Python files: \"directory/file.py\" (relative to repository root)\n   - Include all subdirectories (e.g., \"toolrecall/storage/__init__.py\")\n   - Maintain exact path formatting as in examples\n\n3. **Line Number**:\n   - Count from the start of the file\n   - Use the line where the function name appears (first line of definition)\n   - For multi-line definitions, take the opening line\n\n4. **First Parameter**:\n   - Ignore \"self\" in class methods\n   - For standard functions: take the first parameter after opening parenthesis\n   - If no parameters: explicitly note \"None\"\n   - Preserve exact parameter name casing\n\n5. **Response Format**:\n   - Always start with \"ANSWER:\" (even for NOT FOUND cases)\n   - Format: \"ANSWER: <path>:<line> <param_name>\"\n   - For NOT FOUND: \"ANSWER: NOT FOUND: <function_name> not found in repository\"\n   - Never include additional text after the answer line\n\n**Special Cases**:\n- If multiple matches exist, prioritize:\n  1. Exact name matches\n  2. Matches in \"toolrecall\" directory\n  3. Matches with verb suffixes\n- For functions found in \"toolrecall/tui_top.py\" and \"toolrecall/client.py\", verify against known examples (e.g., \"stats_via_sqlite\" in tui_top, \"cached_patch\" in client)\n- For functions not found in primary directories, search other repository locations\n\n**Known Repository Details**:\n- Contains both Python and other language files\n- Common function naming pattern: snake_case or snake_case_verb\n- Example functions and locations:\n  - \"stats_via_sqlite\" in toolrecall/tui_top.py:191\n  - \"cached_patch\" in toolrecall/client.py:258\n  - \"miss_classes\" in toolrecall/trend.py:109\n\n**Response Requirements**:\n- Always provide the exact answer format with no additional commentary\n- For ambiguous cases, choose the most likely match based on:\n  1. Exact name matches\n  2. Common directory locations\n  3. Verb-ending variations\n- Maintain consistency with provided examples",
+      "task_llm_calls": 175,
+      "task_llm_hits": 66,
+      "task_billed_usd": 0.010832,
+      "task_cost_avoided_usd": 0.00706,
+      "task_prompt_tokens": 207021,
+      "task_cached_tokens": 0,
+      "reflection_calls": 4,
+      "reflection_billed_usd": 0.000809,
+      "total_billed_usd": 0.011641,
+      "tool_calls_requested": 120,
+      "tool_executions": 90,
+      "tool_calls_replayed": 30,
+      "errors": 0,
+      "wall_s": 197.5
+    }
+  ]
+}

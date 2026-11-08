@@ -1,0 +1,171 @@
+{
+  "bench": "gepa_real",
+  "model": "deepseek/deepseek-v4-flash",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 1,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `bind_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 132,
+      "param": "sock"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `content_digest` defined, and what is its first parameter?",
+      "path": "toolrecall/keys.py",
+      "line": 76,
+      "param": "data"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `cached_exec` defined, and what is its first parameter?",
+      "path": "toolrecall/cache.py",
+      "line": 1532,
+      "param": "code"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `run_debug_server` defined, and what is its first parameter?",
+      "path": "toolrecall/proxy.py",
+      "line": 1794,
+      "param": "bind"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `mcp_content_digest_v1` defined, and what is its first parameter?",
+      "path": "toolrecall/keys.py",
+      "line": 227,
+      "param": "content"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `client_context` defined, and what is its first parameter?",
+      "path": "toolrecall/network_tls.py",
+      "line": 57,
+      "param": "verify"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `normalize_command` defined, and what is its first parameter?",
+      "path": "toolrecall/normalizer.py",
+      "line": 148,
+      "param": "cmd"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `make_request_hash` defined, and what is its first parameter?",
+      "path": "toolrecall/adapters/warp.py",
+      "line": 117,
+      "param": "method"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `run_forward_proxy` defined, and what is its first parameter?",
+      "path": "toolrecall/proxy.py",
+      "line": 1679,
+      "param": "bind"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `start_recording` defined, and what is its first parameter?",
+      "path": "toolrecall/replay.py",
+      "line": 651,
+      "param": "scenario"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `money_today` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 240,
+      "param": "usage_csv"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `run_update_cli` defined, and what is its first parameter?",
+      "path": "toolrecall/updater.py",
+      "line": 326,
+      "param": "force_check"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "default",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 1,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 2,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a helpful assistant. Answer the question.\n\nFor questions that ask about where a function is defined and what its first parameter is, your response must end with a line in the following exact format:\n\nANSWER: <repo-relative path>:<line> <first parameter name>\n\nExamples:\n- If the function `run_debug_server` is defined in toolrecall/proxy.py at line 1794 and its first parameter is `bind`, the final line should be:\n  ANSWER: toolrecall/proxy.py:1794 bind\n- If the function `content_digest` is defined in toolrecall/keys.py at line 76 and its first parameter is `data`, the final line should be:\n  ANSWER: toolrecall/keys.py:76 data\n- If the function `client_context` is defined in toolrecall/network_tls.py at line 57 and its first parameter is `verify`, the final line should be:\n  ANSWER: toolrecall/network_tls.py:57 verify\n\nMake sure the final line is present exactly as specified, with no additional text after it. You may include explanatory text before this line.",
+      "task_llm_calls": 135,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.007708,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 107412,
+      "task_cached_tokens": 80896,
+      "reflection_calls": 1,
+      "reflection_billed_usd": 0.000597,
+      "total_billed_usd": 0.008305,
+      "tool_calls_requested": 75,
+      "tool_executions": 75,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 164.6
+    },
+    {
+      "arm": "gepa-cache",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 1,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 2,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a helpful assistant. When asked a question of the form \"Where is the function `{function_name}` defined, and what is its first parameter?\", you must:\n\n1. Locate the definition of the function in the codebase (the line starting with `def {function_name}(`).\n2. Identify the file path relative to the repository root and the line number of that `def` line.\n3. Determine the first parameter of the function, ignoring `self` or `cls` if they appear as the first parameter.\n4. Provide a clear answer. You may include additional explanatory text, but your answer **must end with exactly one line** in the following format:\n\n   `ANSWER: <repo-relative path>:<line> <first parameter name>`\n\n   For example: `ANSWER: toolrecall/proxy.py:1794 bind`\n\nEnsure the line number is the exact line of the function definition and the parameter name is spelled exactly as in the source code. If the function has no parameters (other than possibly `self`/`cls`), state that there is no first parameter and adapt the final line accordingly (e.g., `ANSWER: path:line None`). However, in the typical case, there will be at least one parameter.\n\nAlways conclude with the required `ANSWER:` line to guarantee the information is extracted correctly.",
+      "task_llm_calls": 144,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.008804,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 127932,
+      "task_cached_tokens": 95488,
+      "reflection_calls": 1,
+      "reflection_billed_usd": 0.00094,
+      "total_billed_usd": 0.009744,
+      "tool_calls_requested": 84,
+      "tool_executions": 84,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 196.3
+    },
+    {
+      "arm": "toolrecall",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 1,
+      "budget_metric_calls": 60,
+      "metric_calls_used": 60,
+      "candidates": 2,
+      "seed_val_score": 0.0,
+      "best_val_score": 1.0,
+      "best_prompt": "You are a helpful assistant. Answer the question.\n\nWhen you are asked \"Where is the function `X` defined, and what is its first parameter?\", you must provide a natural language answer that includes the repository-relative path, the line number of the function definition, and the name of the first parameter. **Your answer must end with exactly the following line, and nothing after it:**\n\nANSWER: <repo-relative path>:<line> <first parameter name>\n\n- The path must be relative to the repository root (e.g., `toolrecall/proxy.py`).  \n- The line number must be the line where the function definition starts (the `def` line).  \n- The first parameter name is the name of the first parameter in the function signature (excluding `self` for methods).  \n- The ANSWER line must be the very last line of your response, with no extra spaces, punctuation, or additional text after it.\n\nFor example, if the function is `run_debug_server` defined in `toolrecall/proxy.py` at line 1794 with first parameter `bind`, your answer should end with:\n\nANSWER: toolrecall/proxy.py:1794 bind\n\nYou may include additional descriptive text before this line, but the final line must be exactly as specified.",
+      "task_llm_calls": 121,
+      "task_llm_hits": 84,
+      "task_billed_usd": 0.001899,
+      "task_cost_avoided_usd": 0.004538,
+      "task_prompt_tokens": 87905,
+      "task_cached_tokens": 55552,
+      "reflection_calls": 1,
+      "reflection_billed_usd": 0.001178,
+      "total_billed_usd": 0.003077,
+      "tool_calls_requested": 61,
+      "tool_executions": 27,
+      "tool_calls_replayed": 34,
+      "errors": 0,
+      "wall_s": 70.0
+    }
+  ]
+}
