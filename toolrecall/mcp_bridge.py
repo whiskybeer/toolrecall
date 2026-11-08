@@ -486,6 +486,22 @@ class MCPBridge:
             return json.dumps(result, indent=2, ensure_ascii=False)
         return str(result)
 
+    @staticmethod
+    def _cache_provenance(resp: dict) -> str:
+        """One compact line telling the agent a reply came from cache.
+
+        The daemon stamps mcp_call replies with cached/revalidated/stale, but
+        only the payload used to travel to the client: an agent could not
+        tell a replay from a live call, and a serve-stale body carried no
+        staleness caveat. Appended (never prepended) so the payload still
+        starts at byte 0 for parsers.
+        """
+        if resp.get("revalidated"):
+            return "\n\n[toolrecall] mcp cache: HIT (ETag revalidated — source confirmed unchanged)"
+        if resp.get("stale"):
+            return "\n\n[toolrecall] mcp cache: HIT (serve-stale — may lag the source)"
+        return "\n\n[toolrecall] mcp cache: HIT (served from cache, not a live call)"
+
     def handle_request(self, req: dict) -> dict | None:
         """Handle one JSON-RPC request."""
         method = req.get("method", "")
@@ -687,6 +703,12 @@ class MCPBridge:
             # Extract result for presentation
             content = resp.get("result", resp)
             result_text = self._format_result(content)
+
+            # Cache provenance for multiplexed calls: the daemon's flags
+            # (cached/revalidated/stale) describe where the payload came
+            # from — the client would otherwise see a replay as a live call.
+            if tool_name == "mcp_call" and resp.get("cached"):
+                result_text += self._cache_provenance(resp)
 
             # ── Discovery nudge (pre-opt-in) ──
             # The opt-in contract below is a cold-start deadlock: agents that

@@ -821,5 +821,66 @@ class TestMainFunctionDaemonCheck(unittest.TestCase):
             sys.stderr = old_stderr
 
 
+class TestMcpCacheProvenance(unittest.TestCase):
+    """The daemon's cached/stale flags must reach the client.
+
+    Regression (2026-09-25): the daemon returns {"result": ..., "cached": True}
+    but the bridge extracted only resp["result"], so a replay was
+    indistinguishable from a live call — and a serve-stale body arrived with
+    no staleness caveat.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.sock_path = os.path.join(self.tmpdir, "bridge_prov.sock")
+
+    def _bridge(self, daemon_response: dict):
+        daemon = MockDaemonServer(self.sock_path)
+        daemon.start(call_responses={"mcp_call": daemon_response})
+        self.addCleanup(daemon.stop)
+        return MCPBridge(self.sock_path)
+
+    def _call(self, bridge) -> str:
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 1,
+                "params": {
+                    "name": "mcp_call",
+                    "arguments": {"server": "hermes-docs", "tool": "search_docs"},
+                },
+            }
+        )
+        return resp["result"]["content"][0]["text"]
+
+    def test_hit_is_marked(self):
+        """A cache hit says so, and the payload still starts the text."""
+        text = self._call(
+            self._bridge({"result": {"status": "ok"}, "cached": True, "stale": False})
+        )
+        self.assertTrue(text.startswith("{"), f"payload must lead: {text[:40]!r}")
+        self.assertIn("mcp cache: HIT", text)
+        self.assertIn("not a live call", text)
+        self.assertNotIn("serve-stale", text)
+        self.assertNotIn("ETag", text)
+
+    def test_miss_is_silent(self):
+        """A live call carries no marker — freshness needs no caveat."""
+        text = self._call(self._bridge({"result": {"status": "ok"}, "cached": False}))
+        self.assertNotIn("[toolrecall]", text)
+
+    def test_revalidated_wording(self):
+        text = self._call(
+            self._bridge({"result": {"status": "ok"}, "cached": True, "revalidated": True})
+        )
+        self.assertIn("ETag revalidated", text)
+
+    def test_serve_stale_wording(self):
+        text = self._call(self._bridge({"result": {"status": "ok"}, "cached": True, "stale": True}))
+        self.assertIn("serve-stale", text)
+        self.assertIn("may lag", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2405,7 +2405,14 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         if cache_enabled:
             cached = _cache_mcp_check(server, tool, arguments, ttl=ttl)
             if cached.get("cached"):
-                return {"result": cached["data"], "cached": True}
+                # Forward the staleness flag alongside the hit: the bridge
+                # surfaces it to the client (SWR serve-stale bodies may lag
+                # the source), otherwise the flag dies here.
+                return {
+                    "result": cached["data"],
+                    "cached": True,
+                    "stale": bool(cached.get("stale")),
+                }
 
         # ETag revalidation (opt-in, fetch server): a cache MISS that has an
         # EXPIRED row with a stored validator → ONE conditional request
