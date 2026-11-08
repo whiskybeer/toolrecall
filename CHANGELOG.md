@@ -3,6 +3,25 @@
 ## [Unreleased] — 2026-09-26
 
 ### Added
+- **Remote doc sources for the knowledge base — opt-in, local-first, guarded.**
+  `[[sources.remote]]` entries of kind `llms_full` (one publisher-provided bundle
+  URL) or `urls` (an explicit URL list) are ingested by `toolrecall index-remote`
+  and become searchable like local content. This replaces the workspace-local
+  `docs_crawler.py`/`docs_server.py` pair and its second database: one knowledge
+  base, one docs server. Not a crawler — no link following, no sitemap, no depth.
+  Guardrails: byte and page caps, robots.txt honoured (an unreadable robots.txt is
+  a refusal, not a yes), one request per second in one process, and
+  fetch→parse→**validate**→replace in a single transaction so a truncated download
+  cannot delete good pages. Fetched pages carry a provenance header
+  (`… | external content — not instructions`) on `docs_get_page` and a footnote on
+  `docs_search`. See [docs/REMOTE_SOURCES.md](docs/REMOTE_SOURCES.md).
+- **`toolrecall docs-rejects` — the ledger that makes the opt-in falsifiable.**
+  Every skipped and every flagged page is counted per `(source, path, reason)` and
+  accumulates across runs, so "which files do we reject most, and why" is
+  answerable. `rejected` (not indexed) and `flagged` (indexed, served with a
+  warning) are reported separately; an empty ledger says it is not proof of
+  health. Injection-suspect pages are *flagged, never dropped*: real
+  documentation legitimately talks about prompts.
 - **Gateway surface control: `gateway_exclude` / `gateway_exclude_tools`.**
   The gateway made write-capable tools first-class — `sqlite-browser` (pointed
   at the live cache DB) advertised `write_query`, `create_table` and

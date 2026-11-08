@@ -13,6 +13,8 @@ Usage:
     toolrecall index-memory    # Index agent memory stores
     toolrecall index-dir       # Index a directory into knowledge DB
     toolrecall tool-usage      # Which ToolRecall tools agents actually call
+    toolrecall index-remote    # Sync configured remote doc sources (opt-in)
+    toolrecall docs-rejects    # What remote syncs skipped or flagged
     toolrecall config-set      # Set a config value (section.key = value)
     toolrecall serve           # Start forward proxy (cache API responses)
     toolrecall debug           # Start debug/demo server (test cached_read via curl)
@@ -557,6 +559,86 @@ def cmd_tool_usage():
         print(f"{row['tool']:22} {row['calls']:>8} {row['errors']:>7}  {last}")
     print()
     print("  Counted tools only: knowledge base, MCP surface, cache_status.")
+
+
+def cmd_index_remote():
+    r"""Sync remote doc sources ([[sources.remote]]) into the knowledge database.
+
+    Opt-in and local-first: nothing is fetched unless a source is configured,
+    and the local content (skills, memories, scanned dirs) is untouched. Every
+    skipped or flagged page is recorded — see 'toolrecall docs-rejects'.
+
+    Usage:
+        toolrecall index-remote                  # all configured sources
+        toolrecall index-remote --source NAME    # one source
+        toolrecall index-remote --force          # ignore ETag/Last-Modified
+    """
+    from toolrecall.docs_sources import configured_sources, sync_all
+
+    sources = configured_sources()
+    if not sources and "--source" not in sys.argv:
+        print("No remote sources configured — the knowledge base stays local.")
+        print()
+        print("Remote sources are opt-in. Add to your toolrecall.toml:")
+        print()
+        print("  [[sources.remote]]")
+        print('  name = "hermes-docs"')
+        print('  kind = "llms_full"                       # or "urls"')
+        print('  url  = "https://example.com/docs/llms-full.txt"')
+        print('  base_url = "https://example.com/docs/"')
+        print()
+        print("Then: toolrecall index-remote  ·  toolrecall docs-rejects")
+        return
+
+    only = None
+    if "--source" in sys.argv:
+        i = sys.argv.index("--source")
+        if i + 1 < len(sys.argv):
+            only = sys.argv[i + 1]
+    force = "--force" in sys.argv
+
+    print(f"Syncing remote sources{' (' + only + ')' if only else ''}...")
+    reports = sync_all(only=only, force=force)
+    if not reports:
+        print(f"  no configured source named '{only}'")
+        return
+
+    total = sum(r["indexed"] for r in reports)
+    flagged = sum(r["flagged"] for r in reports)
+    skipped = sum(sum(r["rejected"].values()) for r in reports)
+    print()
+    print(f"Done. {total} pages indexed, {flagged} flagged, {skipped} skipped.")
+    for r in reports:
+        for e in r["errors"]:
+            print(f"  ⚠ {r['source']}: {e}")
+    if flagged or skipped:
+        print()
+        print("Why pages were skipped or flagged:  toolrecall docs-rejects")
+
+
+def cmd_docs_rejects():
+    r"""Which remote pages are skipped or flagged most, and for what reason.
+
+    Usage:
+        toolrecall docs-rejects                # all sources, top 20
+        toolrecall docs-rejects --source NAME
+        toolrecall docs-rejects --top 50
+    """
+    from toolrecall.docs_sources import format_rejection_stats, rejection_stats
+
+    source, top = None, 20
+    if "--source" in sys.argv:
+        i = sys.argv.index("--source")
+        if i + 1 < len(sys.argv):
+            source = sys.argv[i + 1]
+    if "--top" in sys.argv:
+        i = sys.argv.index("--top")
+        if i + 1 < len(sys.argv):
+            try:
+                top = int(sys.argv[i + 1])
+            except ValueError:
+                print(f"  ignoring non-numeric --top value: {sys.argv[i + 1]!r}")
+    print(format_rejection_stats(rejection_stats(source=source, top=top), source=source))
 
 
 def cmd_index_memory():
@@ -2922,6 +3004,7 @@ def main():
         "index",
         "index-memory",
         "index-dir",
+        "index-remote",
         "context",
     }
     if cmd in _DAEMON_REQUIRED:
@@ -2943,6 +3026,8 @@ def main():
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,
         "tool-usage": cmd_tool_usage,
+        "index-remote": cmd_index_remote,
+        "docs-rejects": cmd_docs_rejects,
         "config-set": cmd_config_set,
         "serve": cmd_serve,
         "debug": cmd_debug,
