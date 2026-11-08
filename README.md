@@ -100,6 +100,27 @@ Full detail in [Architecture](docs/ARCHITECTURE.md).
 
 ---
 
+## Live Measurement of Core Primitives
+
+ToolRecall's performance gains rest on three foundational primitives. You can run the hermetic benchmark suite locally without external APIs or live network connections:
+
+```bash
+python3 bench/run_3_local_tests.py
+```
+
+| # | Primitive & Metric | Baseline (Uncached / Live) | With ToolRecall | Measured Impact |
+|:--|:---|:---|:---|:---|
+| **1** | **Subprocess & Tool Latency**<br>*(30 iterations `git rev-parse HEAD`)* | **5.33 ms** / call<br>*(Live OS fork/exec)* | **0.014 ms** / call<br>*(Local SQLite cache hit)* | **~380× faster**<br>Spawning overhead eliminated |
+| **2** | **Prompt Input Deduplication**<br>*(Multi-turn file inspection re-reads)* | **1,829 tokens**<br>*(7,318 chars uncompressed)* | **749 tokens**<br>*(2,996 chars after hook)* | **−59.1% input tokens**<br>Stripped pre-billing |
+| **3** | **Deterministic Replay & Fork-Tree**<br>*(20 trunk calls branched across 5 forks)* | *N/A (Non-deterministic subprocesses)* | **3,200+ calls/sec**<br>*(100 calls in ~31 ms)* | **100% byte-exact**<br>Zero drift across parallel forks |
+
+### Why these three matter:
+1. **Tool Latency:** Eliminates the heavy cold-start cost of spawning repeated CLI tools and subprocesses across agent loops.
+2. **Context Window Savings:** Protects against context snowballing by deduplicating recurring tool and file outputs before provider billing.
+3. **Branching & CI Replay:** Enables concurrent agent hypothesis testing (fork-tree) and CI reproduction with guaranteed byte-identical observations.
+
+---
+
 ## Verifying Your Hit Rate — `toolrecall trend`
 
 > **TL;DR:** Lifetime hit rate is one number; your workload is a curve. `toolrecall trend` shows the daily hit rate and — crucially — *which path classes* are missing, so you can tell "cache is broken" from "this directory is never cacheable" and fix either honestly.
