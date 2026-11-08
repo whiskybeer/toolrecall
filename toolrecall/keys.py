@@ -262,14 +262,21 @@ def mcp_content_digest_v1(
     (including lone surrogates — invalid Unicode, rejected uniformly).
     ``structuredContent`` defaults to None (JSON null in the preimage),
     so a pure-text result digests identically whether or not the server
-    set the field.
+    set the field. ``isError`` MUST be a bool — truthy coercion of a
+    string ``"false"`` into True would be a silent correctness bug
+    (review round 2); any non-bool raises TypeError.
     """
     from toolrecall.jcs import canonicalize
 
+    if not isinstance(isError, bool):
+        raise TypeError(
+            f"isError must be a bool, got {type(isError).__name__} — "
+            'truthy coercion would flip string "false" to True'
+        )
     preimage = {
         "content": content,
         "structuredContent": structuredContent,
-        "isError": bool(isError),
+        "isError": isError,
     }
     canonical = canonicalize(preimage)
     payload = _MCP_CONTENT_DIGEST_V1_TAG + b"\x00" + canonical.encode("utf-8")

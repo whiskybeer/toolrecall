@@ -220,8 +220,7 @@ class TestV1Derivation(unittest.TestCase):
         self.assertEqual(len(d), len("sha256:") + 64)
 
     def test_f20_content_digest_covers_three_fields(self):
-        # F20: the preimage is {content, structuredContent, isError} — two
-        # results differing ONLY in structuredContent or error status MUST
+        # The preimage is {content, structuredContent, isError} — two
         # NOT share a digest (a cache keying on contentDigest alone would
         # otherwise serve the wrong structured payload / hide an error).
         content = [{"type": "text", "text": "hello"}]
@@ -242,6 +241,15 @@ class TestV1Derivation(unittest.TestCase):
             + hashlib.sha256(b"mcp-content-digest-v1\x00" + pre.encode("utf-8")).hexdigest()
         )
         self.assertEqual(keys.mcp_content_digest_v1(content, {"rows": 1}), expect)
+
+    def test_isError_must_be_bool(self):
+        # Truthy coercion bug (review round 2): string "false" would become
+        # True under bool() — silent correctness bug. Strictly rejected.
+        content = [{"type": "text", "text": "hello"}]
+        for bad in ("false", "true", 0, 1, None):
+            with self.subTest(bad=bad):
+                with self.assertRaises(TypeError):
+                    keys.mcp_content_digest_v1(content, None, bad)
 
 
 class TestSurrogatePolicy(unittest.TestCase):
