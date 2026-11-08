@@ -29,6 +29,8 @@ import json
 import sys
 import logging
 import os
+import ssl
+import urllib.request
 import ipaddress
 import socket
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -229,7 +231,15 @@ def _do_fetch(
     # SSRF guard (F14): never follow redirects — the redirect target was
     # never validated and could be an internal address. The resulting
     # HTTPError (3xx) is surfaced to the caller below.
-    opener = build_opener(_no_redirects())
+    # TOOLRECALL_FETCH_CA_BUNDLE: optional CA bundle for TLS verification.
+    # Intended for the local test kit (loopback server with a bundled pinned
+    # cert). Unset → default system verification, unchanged behavior.
+    ca_bundle = os.environ.get("TOOLRECALL_FETCH_CA_BUNDLE", "").strip()
+    if ca_bundle:
+        tls_ctx = ssl.create_default_context(cafile=ca_bundle)
+        opener = build_opener(_no_redirects(), urllib.request.HTTPSHandler(context=tls_ctx))
+    else:
+        opener = build_opener(_no_redirects())
     try:
         with opener.open(req, timeout=TIMEOUT_SECONDS) as resp:
             status = resp.status

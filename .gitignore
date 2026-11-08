@@ -29,3 +29,4 @@ bench/media-bench/venv-*/
 
 # swe verify venv
 bench/swe-verify-venv/
+bench/kit/local_cert.pem

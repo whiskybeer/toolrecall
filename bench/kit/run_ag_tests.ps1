@@ -15,7 +15,7 @@
 #   3. Read-only verification script (PATH/shim/config/daemon checks)
 #   4. T1: MCP config entry present + bridge launches (handshake check)
 #   5. T2: fetch + ETag 304 revalidation (LIVE — needs internet)
-#   6. T3: cached_tool A/B benchmark (live httpbin calls, per-seed isolated)
+#   6. T3: cached_tool A/B benchmark (local TLS server, per-seed isolated)
 #   7. T4: replay record/replay determinism
 #   8. T5: freshness metadata (age_s on hit)
 #   9. T6: scoped invalidation (--url / --server)
@@ -160,39 +160,62 @@ if ($trBin) {
 }
 
 # ---------- step 5: T2 - fetch + ETag revalidation ----------
-Step "STEP 5 (T2): fetch + ETag 304 (live internet)"
-$statsBefore = (& toolrecall stats --json 2>$null) -join ""
-$fetchResult = & python -c @"
-import json
-from toolrecall.mcp_fetch import _handle
-url = 'https://httpbin.org/etag/live-test-2026'
-r1 = _handle('fetch_url', {'url': url})
-print(json.dumps({'status': r1.get('status'), 'etag': r1.get('etag')}))
-"@ 2>&1
-$fetchResult | Out-File -FilePath $logFile -Append
-$t2 = @{ }
-try {
-    $t2.first = ($fetchResult | Select-Object -Last 1 | ConvertFrom-Json)
-    if ($t2.first.status -eq 200 -and $t2.first.etag) {
-        # expired revalidation via revalidate_mcp_entry with the REAL fetch fn
-        $t2.reval = & python -c @"
-import json
+Step "STEP 5 (T2): fetch + ETag 304 revalidation (LOCAL server, no egress)"
+# Boot the bundled loopback TLS server; everything in T2/T3 hits 127.0.0.1 only.
+# TOOLRECALL_FETCH_CA_BUNDLE pins the bundled cert — TLS verification stays ON.
+$env:TOOLRECALL_FETCH_CA_BUNDLE = Join-Path $PSScriptRoot "local_cert.pem"
+$t2out = & python -c @"
+import json, sys, time
+sys.path.insert(0, r'$PSScriptRoot')
+from local_server import serve_in_thread
 from toolrecall import cache as tc
-from toolrecall.mcp_fetch import _handle
-url = 'https://httpbin.org/etag/live-test-2026'
+import toolrecall.mcp_fetch as mf
+
+mf._setup()
+httpd, port = serve_in_thread(0)
+base = f'https://127.0.0.1:{port}'
+url = f'{base}/etag/kit-test-2026'
+args = {'url': url}
+
+r1 = mf._handle('fetch_url', {'url': url})
+print(json.dumps({'status': r1.get('status'), 'etag': r1.get('etag')}))
+
+# seed the cache row the way the daemon's transparent cache would, then
+# force-expire it so the revalidate path (expired row + validator) runs
+key = tc.cached_mcp_check('fetch', 'fetch_url', args, ttl=300)
+tc.cached_mcp_store(key['key'], 'fetch', 'fetch_url', args, json.dumps(r1), ttl=300, etag=r1.get('etag'))
+with tc._db() as conn:
+    conn.execute('UPDATE mcp_cache SET expires_at = ? WHERE request_hash = ?', (time.time() - 10, key['key']))
+"@ 2>&1
+$t2out | Out-File -FilePath $logFile -Append
+$t2 = @{}
+try {
+    $t2.first = ($t2out | Select-Object -Last 1 | ConvertFrom-Json)
+    if ($t2.first.status -eq 200 -and $t2.first.etag) {
+        $t2.reval = & python -c @"
+import json, sys
+sys.path.insert(0, r'$PSScriptRoot')
+from local_server import serve_in_thread
+from toolrecall import cache as tc
+import toolrecall.mcp_fetch as mf
+
+mf._setup()
+httpd, port = serve_in_thread(0)
+base = f'https://127.0.0.1:{port}'
+url = f'{base}/etag/kit-test-2026'
 args = {'url': url}
 out = tc.revalidate_mcp_entry('fetch', 'fetch_url', args,
-    fetch_fn=lambda etag: _handle('fetch_revalidate', {'url': url, 'etag': etag}))
+    fetch_fn=lambda etag: mf._handle('fetch_revalidate', {'url': url, 'etag': etag}))
 print(json.dumps(out))
 "@ 2>&1 | Select-Object -Last 1 | ConvertFrom-Json
-        if ($t2.reval.action -in @('revalidated','replaced','no_etag','not_found')) {
+        if ($t2.reval.action -in @('revalidated','replaced')) {
             Pass "T2.etag_revalidate" $t2
         } else {
             Fail "T2.etag_revalidate" "unexpected action" $t2
         }
     } elseif ($t2.first.status -eq 200 -and -not $t2.first.etag) {
-        Log "WARN" "httpbin returned 200 without ETag - revalidate falls back to plain refetch (expected for this URL)"
-        $results["T2.etag_revalidate"] = @{ note = "no ETag from server; fallback path verified"; first = $t2.first }
+        $results["T2.etag_revalidate"] = @{ note = "no ETag from server (unexpected for local server)"; first = $t2.first }
+        Fail "T2.etag_revalidate" "local server returned no ETag"
     } else {
         Fail "T2.etag_revalidate" "fetch failed status=$($t2.first.status)"
     }
@@ -235,11 +258,11 @@ $rec = & python -c @"
 import json
 from toolrecall.cache import cached_mcp_store, cached_mcp_check
 # one deterministic synthetic call so replay has content
-key = cached_mcp_check('fetch', 'fetch_url', {'url': 'https://example.com/'}, ttl=300)
+key = cached_mcp_check('fetch', 'fetch_url', {'url': 'https://127.0.0.1:9/replay-seed'}, ttl=300)
 if not key.get('cached'):
-    cached_mcp_store(key.get('key'), 'fetch', 'fetch_url', {'url': 'https://example.com/'},
+    cached_mcp_store(key.get('key'), 'fetch', 'fetch_url', {'url': 'https://127.0.0.1:9/replay-seed'},
                      json.dumps({'status': 200, 'content': 'hello-from-ag-kit'}), ttl=300)
-r = cached_mcp_check('fetch', 'fetch_url', {'url': 'https://example.com/'}, ttl=300)
+r = cached_mcp_check('fetch', 'fetch_url', {'url': 'https://127.0.0.1:9/replay-seed'}, ttl=300)
 print(json.dumps({'cached': bool(r.get('cached')), 'data': (r.get('data') or '')[:40]}))
 "@ 2>&1
 $rec | Out-File -FilePath $logFile -Append
@@ -260,7 +283,7 @@ $out = & python -c @"
 import json
 from toolrecall.replay import ReplayManager
 m = ReplayManager()
-r = m.find_replay('ag-kit-$stamp', 'fetch_url', {'url': 'https://example.com/'})
+r = m.find_replay('ag-kit-$stamp', 'fetch_url', {'url': 'https://127.0.0.1:9/replay-seed'})
 print(json.dumps({'replayed': r is not None}))
 "@ 2>&1
 $out | Out-File -FilePath $logFile -Append
@@ -268,6 +291,31 @@ if ("$out" -match '"replayed":\s*true') { Pass "T4b.replay_offline" $true }
 else {
     Log "WARN" "T4b offline replay returned no hit (see log - replay lookup needs the daemon's recording flow)"
     $results["T4b.replay_offline"] = "WARN: no replay hit"
+}
+
+# ---------- step 7c: T7 - Google MCP server multiplex saving ----------
+# Measures what ToolRecall saves when a Google MCP server's calls are fronted
+# through the multiplexer with transparent caching: identical repeat calls are
+# answered from the local cache instead of re-executing (latency + bytes).
+Step "STEP 7c (T7): Google MCP multiplex saving (loopback only)"
+$t7out = & python bench\mcp_multiplex_bench.py --ttl 300 --calls 6 --ms 200 2>&1
+$t7out | Out-File -FilePath $logFile -Append
+$t7json = $t7out | Where-Object { $_ -match '"arm"' } | ForEach-Object { $_ | ConvertFrom-Json }
+if ($t7json.Count -ge 2) {
+    $ctrl = $t7json | Where-Object { $_.arm -eq "control" } | Select-Object -First 1
+    $treat = $t7json | Where-Object { $_.arm -eq "treatment" } | Select-Object -First 1
+    $avoided = [int]$ctrl.live_calls - [int]$treat.live_calls
+    $bytesSaved = [int]$ctrl.bytes_on_wire - [int]$treat.bytes_on_wire
+    if ($avoided -gt 0 -and $bytesSaved -gt 0) {
+        Pass "T7.multiplex" $true
+        $results["T7.avoided_calls"] = $avoided
+        $results["T7.bytes_saved"] = $bytesSaved
+        Log "INFO" "T7: $avoided live calls avoided, $bytesSaved bytes kept off the wire"
+    } else {
+        Fail "T7.multiplex" "no saving measured (control=$($ctrl.live_calls), treatment=$($treat.live_calls))" $t7out
+    }
+} else {
+    Fail "T7.multiplex" "expected 2 JSON arms, got $($t7json.Count)" $t7out
 }
 
 # ---------- step 8: T5 - freshness metadata ----------
@@ -296,7 +344,7 @@ try {
 
 # ---------- step 9: T6 - scoped invalidation ----------
 Step "STEP 9 (T6): scoped invalidation"
-$out = & toolrecall invalidate --url httpbin.org 2>&1
+$out = & toolrecall invalidate --url 127.0.0.1 2>&1
 $out | Out-File -FilePath $logFile -Append
 if ("$out" -match "Invalidated") { Pass "T6.invalidate_url" @{ output = "$out" } }
 else { Fail "T6.invalidate_url" "no Invalidated output" }

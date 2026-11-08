@@ -79,3 +79,60 @@ tells you where the files are.
   Antigravity's config file) will show a warning.
 - `httpbin.org` unreachable → T2/T3 fail but T1/T4–T6 still validate the
   local plumbing; re-run when online.
+
+---
+
+## T7 — Google MCP server savings (what it measures, what it doesn't)
+
+Antigravity can reach Google's first-party MCP servers (Workspace, gcloud,
+Firebase, Maps…) through ToolRecall's multiplexer. With transparent caching
+enabled, identical repeat calls within the TTL are answered from the local
+cache instead of re-executing on the server.
+
+**What T7 measures** — the cache-layer saving *pattern*: N identical calls,
+control (ttl=0, all live) vs treatment (ttl=N, 1 live + N-1 hits), reporting
+latency and bytes kept off the wire. Verified locally: 6 calls → 5 avoided,
+83% bytes saved, wall delta ≈ N×ms.
+
+**What T7 does NOT measure** — a billed Google API delta. That needs OAuth
+against the real server plus the API console's quota dashboard, which this
+zero-credential kit deliberately avoids. The cache-layer saving transfers to
+the real servers **when their responses are byte-identical for identical
+args within the TTL** — true for metadata reads (file lists, calendar
+listings, doc properties), not for personalized/mutating calls.
+
+### Configuring a real Google MCP server with ToolRecall
+
+In `%USERPROFILE%\.gemini\config\mcp_config.json` (merge-preserving —
+`toolrecall setup` wrote the `toolrecall` entry; do NOT remove it):
+
+```json
+{
+  "mcpServers": {
+    "toolrecall": { "command": "<abs path>\\toolrecall.exe", "args": ["mcp"] },
+    "googleworkspace": {
+      "command": "npx",
+      "args": ["-y", "@googleworkspace/mcp-server"],
+      "env": { "GOOGLE_OAUTH_CONFIG": "…your own config…" }
+    }
+  }
+}
+```
+
+Fronting through the multiplexer (all MCP traffic via `toolrecall mcp`,
+transparent cache + per-server TTL in
+`%USERPROFILE%\.config\toolrecall\toolrecall.toml`):
+
+```toml
+[mcp_multiplex]
+transparent_cache = true
+default_ttl = 300
+
+[mcp_multiplex.servers_config.googleworkspace]
+ttl = 120        # metadata reads: short TTL; never cache mutations
+```
+
+**Guardrails:** set `ttl = 0` on any server exposing write/send tools (an
+identical-args *write* replaying a cached success is the classic poisoning
+mode). Cached OAuth-scoped responses stay on your disk — the cache DB is
+local, but treat it as sensitive and never share `cache.db`.

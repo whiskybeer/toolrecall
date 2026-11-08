@@ -14,16 +14,18 @@ override). Currency of this benchmark:
 Design:
   - Two arms, equal work: control (ttl=0, cache bypass) and treatment
     (ttl=300). Identical call sequences per seed.
-  - Tool = HTTP GET to httpbin.org/delay/1 (~1s server-side latency, stable)
-    with the seed in the query string → per-seed cache namespaces, no
-    cross-seed contamination, no shared-state dependency.
+  - Tool = HTTP GET to a LOCAL HTTPS test server (local_server.py, loopback
+    only, bundled pinned cert) — zero third-party egress. The /delay/<ms>
+    route simulates ~<ms> latency deterministically; seed+slot in the query
+    → per-seed cache namespaces, no cross-seed contamination.
   - Live-call counter wraps the real function — hits NEVER increment it.
+  - Server-side /counter provides independent ground truth (its count of
+    /delay requests should equal the client-side live-call count).
   - Arms differ ONLY in ttl. Both run with the daemon up; the script
     preflights daemon_running() and refuses to run treatment without it
     (a silent bypass would fake a null result).
 
-Run (Windows PowerShell, after `toolrecall setup`, from the repo or anywhere
-with toolrecall + google-antigravity importable):
+Run (Windows PowerShell, after `toolrecall setup`, from the kit folder):
 
     python bench\\antigravity_win.py --arm both --seeds 5
 
@@ -34,13 +36,22 @@ Requires the ToolRecall daemon running (toolrecall status). All mcp_cache
 writes go through the client-side cache DB resolved by the toolrecall config
 — same file the daemon/CLI read on the same machine; leave
 TOOLRECALL_CACHE_DB unset so both sides agree.
+
+Network: loopback only (127.0.0.1, TLS with the bundled pinned cert).
+No third-party service is contacted.
 """
 
 import argparse
 import json
+import ssl
 import sys
 import time
 import urllib.request
+from pathlib import Path
+
+# Local test server (bundled next to this script in the kit).
+_KIT_DIR = Path(__file__).resolve().parent
+local_server = None  # imported lazily in main() so --help works offline
 
 
 def _build_tool(ttl: int, url_template: str, timeout: float):
@@ -104,30 +115,107 @@ def preflight() -> None:
 
 
 def main() -> None:
+    global local_server
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--arm", choices=["control", "treatment", "both"], default="both")
     ap.add_argument("--seeds", type=int, default=5, help="cache namespaces (default 5)")
     ap.add_argument("--passes", type=int, default=2, help="cold + warm passes (default 2)")
     ap.add_argument("--slots", type=int, default=3, help="distinct args per pass (default 3)")
     ap.add_argument(
-        "--url",
-        default="https://httpbin.org/delay/1?seed={seed}&slot={slot}",
-        help="URL template; {seed}/{slot} are substituted (default: httpbin delay/1 ≈ 1s)",
+        "--ms",
+        type=int,
+        default=1000,
+        help="simulated server latency per live call in ms (default 1000)",
     )
     ap.add_argument("--timeout", type=float, default=30.0)
     args = ap.parse_args()
 
     preflight()
+
+    # Boot the LOCAL test server (zero third-party egress, TLS loopback).
+    import importlib.util
+
+    server_path = _KIT_DIR / "local_server.py"
+    if not server_path.exists():
+        # repo layout: bench/kit/local_server.py next to bench/antigravity_win.py
+        server_path = _KIT_DIR / "kit" / "local_server.py"
+    spec = importlib.util.spec_from_file_location("local_server", server_path)
+    local_server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(local_server)
+    httpd, port = local_server.serve_in_thread(0)
+    url_template = f"https://127.0.0.1:{port}/delay/{args.ms}?seed={{seed}}&slot={{slot}}"
+    print(f"# local test server: https://127.0.0.1:{port} (loopback TLS, no egress)", file=sys.stderr)
+
+    # Pin the bundled cert — verification ON, just scoped to this CA file.
+    client_ctx = ssl.create_default_context(cafile=str(server_path.parent / "local_cert.pem"))
+
+    def fetch(seed: int, slot: int) -> str:
+        url = url_template.format(seed=seed, slot=slot)
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, context=client_ctx, timeout=args.timeout) as resp:
+            return f"status={resp.status} bytes={len(resp.read())}"
+
+    counters = {"live_total": 0}
+
+    def counted(seed: int, slot: int) -> str:
+        counters["live_total"] += 1
+        return fetch(seed, slot)
+
     arms = []
     if args.arm in ("control", "both"):
         arms.append(("control", 0))
     if args.arm in ("treatment", "both"):
         arms.append(("treatment", 300))
 
-    results = [
-        run_arm(name, ttl, args.seeds, args.passes, args.slots, args.url, args.timeout)
-        for name, ttl in arms
-    ]
+    results = []
+    for name, ttl in arms:
+        # fresh cached_tool per arm — ttl is the ONLY difference
+        from toolrecall.adapters import antigravity
+
+        live_before = counters["live_total"]
+        wrapped = antigravity.cached_tool(ttl=ttl)(counted)
+        latencies = []
+        t_start = time.perf_counter()
+        # Pass OUTER, seed/slot inner: pass 0 = every call cold (live on
+        # treatment), pass 1 = every call warm (cache hit) — the cold/warm
+        # slices below then split cleanly. Seed-inner order would interleave
+        # seed 2's live calls after seed 1's hits and poison both averages.
+        for _pass in range(args.passes):
+            for seed in range(1, args.seeds + 1):
+                for slot in range(args.slots):
+                    t0 = time.perf_counter()
+                    wrapped(seed=seed, slot=slot)
+                    latencies.append(round(time.perf_counter() - t0, 4))
+        total = round(time.perf_counter() - t_start, 3)
+        n = len(latencies)
+        warm = latencies[(args.seeds * args.slots):] if args.passes > 1 else []
+        cold = latencies[: (args.seeds * args.slots)] if args.passes > 1 else latencies
+        arm_live = counters["live_total"] - live_before
+        results.append(
+            {
+                "arm": name,
+                "ttl": ttl,
+                "seeds": args.seeds,
+                "passes": args.passes,
+                "slots": args.slots,
+                "total_s": total,
+                "calls": n,
+                "live_calls": arm_live,
+                "cache_hits": n - arm_live,
+                "cold_avg_s": round(sum(cold) / len(cold), 4) if cold else None,
+                "warm_avg_s": round(sum(warm) / len(warm), 4) if warm else None,
+                "latencies": latencies,
+            }
+        )
+
+    # Server-side ground truth: total /delay requests the server actually saw.
+    counter_ctx = ssl.create_default_context(cafile=str(server_path.parent / "local_cert.pem"))
+    seen = json.loads(
+        urllib.request.urlopen(
+            f"https://127.0.0.1:{port}/counter", context=counter_ctx, timeout=5
+        ).read()
+    )
+    print(f"# server-side /delay request count (ground truth): {seen}", file=sys.stderr)
 
     for r in results:
         print(json.dumps(r, ensure_ascii=False))
