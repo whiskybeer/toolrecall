@@ -8,6 +8,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest.mock import patch
 
 from toolrecall import cache
 from toolrecall.proxy import _canonicalize_body
@@ -126,6 +127,27 @@ class TestReplayForget(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("Forgot 1 cached API response(s) for run 'ci-job-99'", out)
         self.assertFalse(cache.cached_api_check("h_cli_forget")["cached"])
+
+    def test_antigravity_dedup_normalize(self):
+        from toolrecall.proxy import _maybe_dedup_body
+
+        with patch.dict(os.environ, {"TOOLRECALL_FORWARD_DEDUP": "1"}):
+            block1 = "Repeated large output with duration: passed in 1.25s\n" + ("x" * 900)
+            block2 = "Repeated large output with duration: passed in 2.80s\n" + ("x" * 900)
+            body = json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "run 1"},
+                        {"role": "tool", "content": block1},
+                        {"role": "tool", "content": block2},
+                    ]
+                }
+            ).encode()
+            out_bytes, stats = _maybe_dedup_body(body, profile="antigravity")
+            self.assertIsNotNone(stats)
+            self.assertEqual(stats["blocks"], 1)
+            envelope = json.loads(out_bytes.decode())
+            self.assertIn("[toolrecall-dedup] Same output", envelope["messages"][2]["content"])
 
 
 if __name__ == "__main__":

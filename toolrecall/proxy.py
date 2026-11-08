@@ -186,7 +186,9 @@ def _maybe_dedup_body(body_bytes: bytes, profile: str | None = None) -> tuple[by
 
     normalizer = None
     protect_last_default = 2
-    if profile == "claude-code" or os.environ.get("TOOLRECALL_DEDUP_NORMALIZE") in (
+    if profile in ("claude-code", "antigravity") or os.environ.get(
+        "TOOLRECALL_DEDUP_NORMALIZE"
+    ) in (
         "1",
         "true",
         "yes",
