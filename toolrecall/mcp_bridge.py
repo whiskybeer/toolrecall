@@ -26,6 +26,7 @@ import time
 
 from toolrecall.transport import TransportClient, DEFAULT_PATH
 from toolrecall import __version__
+from toolrecall import mcp_catalog
 from toolrecall.context_tracker import format_stale_block
 from toolrecall.keys import content_digest
 
@@ -497,10 +498,13 @@ class MCPBridge:
         starts at byte 0 for parsers.
         """
         if resp.get("revalidated"):
-            return "\n\n[toolrecall] mcp cache: HIT (ETag revalidated — source confirmed unchanged)"
+            return "\n\n[toolrecall] cached (ETag revalidated — source confirmed unchanged)"
         if resp.get("stale"):
-            return "\n\n[toolrecall] mcp cache: HIT (serve-stale — may lag the source)"
-        return "\n\n[toolrecall] mcp cache: HIT (served from cache, not a live call)"
+            return "\n\n[toolrecall] cached (serve-stale — may lag the source)"
+        ttl = resp.get("ttl")
+        if ttl:
+            return f"\n\n[toolrecall] cached (ttl {int(ttl)}s — source not re-checked)"
+        return "\n\n[toolrecall] cached (source not re-checked)"
 
     def handle_request(self, req: dict) -> dict | None:
         """Handle one JSON-RPC request."""
@@ -582,6 +586,7 @@ class MCPBridge:
         allow_invalidate = info.get("allow_invalidate", False)
         multiplex_enabled = info.get("multiplex_enabled", False)
         recall_enabled = info.get("recall_enabled", False)
+        gateway = info.get("gateway", False)
 
         tools = []
         for tdef in TOOL_DEFINITIONS:
@@ -598,11 +603,33 @@ class MCPBridge:
                 continue
             tools.append(tdef)
 
+        # Gateway: advertise each multiplexed server's tools as first-class
+        # names (mcp__<server>__<tool>) so an agent can call them directly
+        # instead of discovering them through two indirections. The catalog
+        # holds schemas the daemon learned when a server last started; this
+        # never spawns a server inside a handshake.
+        if multiplex_enabled and gateway:
+            cat_resp = self._uds_request("mcp_tools_catalog")
+            catalog = (cat_resp.get("result") or {}).get("servers") or {}
+            listed = {t["name"] for t in tools}
+            for tdef in mcp_catalog.defs(catalog):
+                if tdef["name"] not in listed:
+                    tools.append(tdef)
+
         return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
 
     def _handle_tool_call(self, req_id, params):
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
+
+        # Gateway names (mcp__<server>__<tool>) route through the same daemon
+        # mcp_call path, so the security scans, the transparent cache and the
+        # cache-provenance marker apply unchanged — the gateway only removes
+        # the discovery indirection, it does not add a second code path.
+        routed = mcp_catalog.split_tool_name(tool_name)
+        if routed:
+            arguments = {"server": routed[0], "tool": routed[1], "arguments": arguments}
+            tool_name = "mcp_call"
 
         # cwd-scoped terminal cache: the bridge runs as the agent's stdio
         # subprocess, so os.getcwd() here is the agent's working directory.

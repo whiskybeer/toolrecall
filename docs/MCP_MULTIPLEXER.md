@@ -28,7 +28,8 @@ every setup:
   `mcp_servers` in `config.yaml`, Claude Code `.mcp.json`, Cursor
   `mcp.json`). You already get per-session lifecycle and direct config;
   the multiplexer then only adds an extra hop (`mcp_call` indirection)
-  and a merged tool surface.
+  and a merged tool surface. With `gateway = true` the extra hop is gone:
+  the servers appear as `mcp__<server>__<tool>` in `tools/list`.
 - **You run few agents and call MCP tools rarely** — check the `mcp_cache`
   table in the stats DB: if it stays empty, the multiplexer is dead weight.
   Disable with `[mcp_multiplex] enabled = false` — the daemon skips the
@@ -70,6 +71,40 @@ flowchart LR
 - **Idle timeout** — inactive servers auto-killed after 15 min (configurable)
 - **Failure isolation** — one crash doesn't affect others
 - **Auto-reconnect** — up to 3 retries on subprocess crash
+
+## Gateway Mode — Multiplexed Servers as First-Class Tools
+
+By default the bridge exposes one multiplexed entry point: `mcp_call` (plus
+`mcp_list_servers`). Measured 2026-09-26 on a live Hermes setup, that produced
+**zero organic traffic**: an agent must list servers, learn the tool names and
+then take two indirections, and no model does that spontaneously.
+`hermes-docs/search_docs` answered real hits when called by hand and was never
+called once by an agent — the server was reachable in theory only.
+
+`[mcp_multiplex] gateway = true` (env `TOOLRECALL_MCP_MULTIPLEX_GATEWAY=1`)
+advertises every configured server's tools in `tools/list` as
+`mcp__<server>__<tool>` and routes those calls through the same daemon
+`mcp_call` path — security scans, the transparent cache and the
+cache-provenance marker apply unchanged.
+
+- **Discovery is a persisted catalog** (`~/.toolrecall/mcp_tools_catalog.json`,
+  next to the cache DB), written whenever a server starts — the only moment
+  tool schemas exist (the registry carries command lines, not schemas).
+  `tools/list` never spawns a server: a cold `uv run` costs seconds and has no
+  place inside an MCP handshake.
+- **A call never needs the catalog.** Routing is by name; a tool that is not
+  advertised yet (its server has not started) still runs — it is simply not
+  listed until that server has started once.
+- **Default `false`**: enabling it changes every client's tool surface.
+- Works together with `toolrecall mcp --multiplexer-only`, where the gateway
+  is the *only* way to reach a multiplexed server.
+
+```toml
+[mcp_multiplex]
+enabled = true
+gateway = true              # expose mcp__<server>__<tool> in tools/list
+servers = ["time", "fetch", "hermes-docs"]
+```
 
 ## Configuration
 

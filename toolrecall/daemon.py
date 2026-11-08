@@ -43,6 +43,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from toolrecall import __version__
+from toolrecall import mcp_catalog
 from toolrecall.keys import content_digest
 from toolrecall.cache import (
     _record as _cache_record,
@@ -892,6 +893,9 @@ class MCPMultiplexer:
         self._idle_timeout = cfg.mcp_multiplex_idle_minutes or 15  # minutes
         self._last_use: dict[str, float] = {}
         self._reaper_running = False
+        # Gateway discovery data (server → tools) lives outside the process so
+        # an MCP tools/list never has to spawn a server; see mcp_catalog.
+        self._catalog_path = mcp_catalog.catalog_path(cfg)
 
     # ─── Discovery ────────────────────────────────────
 
@@ -943,10 +947,38 @@ class MCPMultiplexer:
                 # Fetch tools for warmup
                 tools = session.list_tools()
                 self._sessions[name_lower] = session
+                # A running server is the only place tool schemas can come
+                # from (the registry carries command lines, not schemas) —
+                # persist them so the gateway can advertise them later
+                # without paying this cold start inside tools/list.
+                mcp_catalog.store(self._catalog_path, config["name"], tools)
                 print(f"  ✓ {name_lower}: {len(tools)} tools started on-demand")
             except Exception as e:
                 return f"{name_lower}: start failed — {e}"
         return None
+
+    # ─── Gateway Catalog ──────────────────────────────
+
+    def catalog(self) -> dict:
+        """Tool catalog for the gateway: fresh for running servers, disk for the rest.
+
+        Never starts a server — discovery must not pay a cold ``uv run`` inside
+        an MCP handshake. A tool absent from the catalog is merely not
+        advertised yet: a call routes by name and still works.
+        """
+        self._discover_configs()
+        with self._lock:
+            running = [(n, s) for n, s in self._sessions.items() if s.running]
+        for name_lower, session in running:
+            try:
+                tools = session.list_tools()
+            except Exception as e:
+                logging.getLogger("toolrecall.daemon").debug(
+                    "mcp catalog refresh failed for %s: %s", name_lower, e
+                )
+                continue
+            mcp_catalog.store(self._catalog_path, self._configs[name_lower]["name"], tools)
+        return mcp_catalog.load(self._catalog_path)
 
     # ─── Idle Timeout (Reaper) ────────────────────────
 
@@ -1942,6 +1974,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_mcp_call(request)
             elif cmd == "mcp_list_servers":
                 return self._handle_mcp_list_servers(request)
+            elif cmd == "mcp_tools_catalog":
+                return self._handle_mcp_tools_catalog(request)
             elif cmd == "cached_mcp_check":
                 return self._handle_mcp_check(request)
             elif cmd == "cached_mcp_serve":
@@ -2017,6 +2051,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             "client_hint_policy": self.cfg.mcp_client_hint_policy,
             "recall_enabled": self.cfg.recall_enabled,
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
+            "gateway": bool(self.cfg.mcp_multiplex_gateway),
             "context_tracker": {
                 "checkpoint": ctx.get("checkpoint", 0),
                 "dirty": ctx.get("total_dirty", 0),
@@ -2412,6 +2447,10 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                     "result": cached["data"],
                     "cached": True,
                     "stale": bool(cached.get("stale")),
+                    # Policy TTL: the bound on how old this body may be. The
+                    # bridge states it in the provenance marker — "cached" is
+                    # only actionable if the client knows the staleness bound.
+                    "ttl": int(ttl) if isinstance(ttl, (int, float)) else None,
                 }
 
         # ETag revalidation (opt-in, fetch server): a cache MISS that has an
@@ -2453,6 +2492,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                         "result": refreshed["data"],
                         "cached": True,
                         "revalidated": outcome["action"] == "revalidated",
+                        "ttl": int(ttl) if isinstance(ttl, (int, float)) else None,
                     }
             # failed / not_found / no_etag / read-back miss → normal path
 
@@ -2513,6 +2553,18 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             return {"error": err}
         servers = self.multiplexer.list_servers()
         return {"result": servers}
+
+    def _handle_mcp_tools_catalog(self, req: dict) -> dict:
+        """Gateway catalog: every multiplexed server's tools (with schemas).
+
+        Discovery metadata only. The bridge appends these to its tools/list as
+        ``mcp__<server>__<tool>`` so agents can call a multiplexed tool
+        directly instead of discovering it through two indirections.
+        """
+        err = self.security.check_mcp_server("_any")
+        if err:
+            return {"error": err}
+        return {"result": {"servers": self.multiplexer.catalog()}}
 
     # ─── MCP Cache IPCs (key-value check/store) ──────────
 

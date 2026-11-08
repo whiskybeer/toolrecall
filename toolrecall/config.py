@@ -48,6 +48,7 @@ ENV_MAP = {
     "TOOLRECALL_MCP_REQUIRE_VALIDATOR": ("mcp", "require_validator"),
     "TOOLRECALL_MCP_EMIT_CONTEXT_HINTS": ("mcp", "emit_context_hints"),
     "TOOLRECALL_MCP_MULTIPLEX_ENABLED": ("mcp_multiplex", "enabled"),
+    "TOOLRECALL_MCP_MULTIPLEX_GATEWAY": ("mcp_multiplex", "gateway"),
     "TOOLRECALL_MCP_MULTIPLEX_SERVERS": ("mcp_multiplex", "servers"),
     "TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE": ("mcp_multiplex", "transparent_cache"),
     "TOOLRECALL_MCP_MULTIPLEX_FETCH_REVALIDATE": ("mcp_multiplex", "fetch_revalidate"),
@@ -338,6 +339,7 @@ class Config:
         "mcp_multiplex": frozenset(
             {
                 "enabled",
+                "gateway",
                 "servers",
                 "servers_config",
                 "transparent_cache",
@@ -1038,6 +1040,21 @@ class Config:
     def mcp_multiplex_servers(self) -> list:
         """Allowlist of server names to multiplex. Empty = all configured."""
         return self.get("mcp_multiplex", "servers", default=[])
+
+    @property
+    def mcp_multiplex_gateway(self) -> bool:
+        """Expose multiplexed servers' tools as first-class bridge tools.
+
+        When true the bridge advertises each configured server's tools in
+        ``tools/list`` as ``mcp__<server>__<tool>`` and routes those calls
+        through the same daemon ``mcp_call`` path. Default OFF: it changes
+        every client's tool surface, so it is opt-in.
+
+        Why it exists: the `mcp_call`-only surface measured ZERO organic
+        traffic (2026-09-26) — an agent must list servers, learn the names,
+        then take two indirections; nothing does that spontaneously.
+        """
+        return bool(self.get("mcp_multiplex", "gateway", default=False))
 
     @property
     def mcp_multiplex_fetch_revalidate(self) -> bool:

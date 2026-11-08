@@ -21,7 +21,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[nginx]` | Optional nginx config generation | `site_name`, `domain`, `ssl` |
 | `[security]` | MCP security gates | `tool_access_control`, `dangerous_tool_keywords`, `cognitive_check_enabled`, `ast_check_enabled` |
 | `[mcp]` | MCP file/terminal access | `allowed_paths`, `allow_terminal`, `allow_invalidate`, `emit_context_hints`, `allowed_terminal_commands` |
-| `[mcp_multiplex]` | MCP Multiplexer settings — optional layer; only enable when multiple agent sessions share the daemon or the agent lacks native MCP config (see [MCP_MULTIPLEXER.md](MCP_MULTIPLEXER.md)) | `enabled`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache`, `fetch_revalidate` |
+| `[mcp_multiplex]` | MCP Multiplexer settings — optional layer; only enable when multiple agent sessions share the daemon or the agent lacks native MCP config (see [MCP_MULTIPLEXER.md](MCP_MULTIPLEXER.md)) | `enabled`, `gateway`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache`, `fetch_revalidate` |
 | `[mcp_multiplex.servers_config]` | Custom server overrides | Any server name with `command`, `args`, `env`, `ttl` |
 | `[sources]` | Knowledge DB scanning | `scan_dirs` (default: `<agent_home>/memories` + `<agent_home>/skills` via `AGENT_HOME`/`[paths].agent_home`), `scan_extensions`, `scan_ignore`, `max_file_kb` |
 | `[sources.memory]` | Agent memory indexing | `enabled` |

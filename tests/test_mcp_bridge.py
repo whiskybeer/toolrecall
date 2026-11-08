@@ -88,6 +88,7 @@ class MockDaemonServer:
                     send_message(conn, self.call_responses[cmd])
                 elif cmd == "mcp_call":
                     # Echo with mock result
+                    self.last_request = req
                     send_message(
                         conn,
                         {
@@ -860,10 +861,18 @@ class TestMcpCacheProvenance(unittest.TestCase):
             self._bridge({"result": {"status": "ok"}, "cached": True, "stale": False})
         )
         self.assertTrue(text.startswith("{"), f"payload must lead: {text[:40]!r}")
-        self.assertIn("mcp cache: HIT", text)
-        self.assertIn("not a live call", text)
+        self.assertIn("[toolrecall] cached (", text)
+        self.assertIn("source not re-checked", text)
         self.assertNotIn("serve-stale", text)
         self.assertNotIn("ETag", text)
+
+    def test_hit_states_the_staleness_bound(self):
+        """A hit carries the TTL: 'cached' is only actionable with the bound."""
+        text = self._call(
+            self._bridge({"result": {"status": "ok"}, "cached": True, "stale": False, "ttl": 3600})
+        )
+        self.assertIn("ttl 3600s", text)
+        self.assertIn("source not re-checked", text)
 
     def test_miss_is_silent(self):
         """A live call carries no marker — freshness needs no caveat."""
@@ -880,6 +889,115 @@ class TestMcpCacheProvenance(unittest.TestCase):
         text = self._call(self._bridge({"result": {"status": "ok"}, "cached": True, "stale": True}))
         self.assertIn("serve-stale", text)
         self.assertIn("may lag", text)
+
+
+class TestMcpGateway(unittest.TestCase):
+    """Multiplexed servers must be reachable as first-class tools.
+
+    Measured 2026-09-26: routing every multiplexed call through the generic
+    `mcp_call` produced ZERO organic traffic — no agent discovers a server by
+    listing servers and then taking two indirections. The gateway lists each
+    server's tools as mcp__<server>__<tool> and routes calls by name.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.sock_path = os.path.join(self.tmpdir, "gateway.sock")
+        self.catalog_response = {
+            "result": {
+                "servers": {
+                    "hermes-docs": {
+                        "tools": [
+                            {
+                                "name": "search_docs",
+                                "description": "Full-text search",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {"query": {"type": "string"}},
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+    def _bridge(self, gateway: bool, multiplexer_only: bool = False):
+        daemon = MockDaemonServer(self.sock_path)
+        daemon.start(
+            ping_response={
+                "allowed_paths": ["/home", "/tmp"],
+                "allow_terminal": True,
+                "allow_invalidate": True,
+                "multiplex_enabled": True,
+                "recall_enabled": True,
+                "gateway": gateway,
+            },
+            call_responses={"mcp_tools_catalog": self.catalog_response},
+        )
+        self.addCleanup(daemon.stop)
+        self.daemon = daemon
+        return MCPBridge(self.sock_path, multiplexer_only=multiplexer_only)
+
+    def _tools(self, bridge) -> dict:
+        resp = bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+        return {t["name"]: t for t in resp["result"]["tools"]}
+
+    def test_gateway_lists_server_tools_with_schema(self):
+        tools = self._tools(self._bridge(gateway=True))
+        self.assertIn("mcp__hermes-docs__search_docs", tools)
+        tdef = tools["mcp__hermes-docs__search_docs"]
+        self.assertIn("query", tdef["inputSchema"]["properties"])
+        # The server name must be visible: several servers share one flat list.
+        self.assertIn("hermes-docs", tdef["description"])
+
+    def test_gateway_off_by_default(self):
+        """Without the flag the tool list stays exactly what it was."""
+        tools = self._tools(self._bridge(gateway=False))
+        self.assertFalse([n for n in tools if n.startswith("mcp__")])
+
+    def test_gateway_active_in_multiplexer_only_mode(self):
+        """In multiplexer-only mode the gateway IS the way to reach servers."""
+        tools = self._tools(self._bridge(gateway=True, multiplexer_only=True))
+        self.assertIn("mcp__hermes-docs__search_docs", tools)
+        self.assertNotIn("read_file", tools)
+
+    def test_gateway_call_routes_to_the_mcp_call_path(self):
+        """A gateway name reaches the daemon as server+tool, args unwrapped."""
+        bridge = self._bridge(gateway=True)
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 2,
+                "params": {
+                    "name": "mcp__hermes-docs__search_docs",
+                    "arguments": {"query": "cache"},
+                },
+            }
+        )
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn('"server": "hermes-docs"', text)
+        self.assertIn('"tool": "search_docs"', text)
+        # The inner arguments travel unwrapped — the server must see them as
+        # its own params, not nested under the bridge's envelope.
+        self.assertEqual(self.daemon.last_request["cmd"], "mcp_call")
+        self.assertEqual(self.daemon.last_request["arguments"], {"query": "cache"})
+
+    def test_native_names_are_not_routed(self):
+        """A native tool name must never be split into a gateway route."""
+        bridge = self._bridge(gateway=True)
+        resp = bridge.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "id": 3,
+                "params": {"name": "mcp_call", "arguments": {"server": "time", "tool": "now"}},
+            }
+        )
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn('"server": "time"', text)
+        self.assertIn('"tool": "now"', text)
 
 
 if __name__ == "__main__":
