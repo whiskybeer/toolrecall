@@ -2118,7 +2118,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             # funnel through the shim into cached_read. Tracking those
             # poisoned the tracker's clean set: the "ctx dropped" number was
             # 70% infra files that are never in any LLM context. Mirrors the
-            # context_tokens_saved rule — only agent-tool reads can drop
+            # tokens_saved_to_llm rule — only agent-tool reads can drop
             # content from context.
             if source == "agent_tool":
                 self._context.mark_read(path)
@@ -2269,7 +2269,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             # Accounting: a get hit = tokens served from the recall sink
             # that would have been re-sent into the context.
             tokens = int(entry.get("tokens") or 0)
-            _cache_record("recall", hit=True, tokens_saved=tokens, context_tokens=tokens)
+            _cache_record("recall", hit=True, io_tokens_saved=tokens, context_tokens=tokens)
         return {"entry": entry}
 
     def _handle_recall_stats(self, req: dict) -> dict:

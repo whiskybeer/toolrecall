@@ -185,8 +185,8 @@ class GcResilienceTest(unittest.TestCase):
                 category TEXT PRIMARY KEY, updated_at REAL DEFAULT 0,
                 hits INTEGER DEFAULT 0, misses INTEGER DEFAULT 0,
                 tokens_read_from_disk INTEGER DEFAULT 0,
-                tokens_saved INTEGER DEFAULT 0,
-                context_tokens_saved INTEGER DEFAULT 0
+                io_tokens_saved INTEGER DEFAULT 0,
+                tokens_saved_to_llm INTEGER DEFAULT 0
             );
             INSERT INTO terminal_cache VALUES ('h1','o','',0,1,0.5,'',0,NULL);
             INSERT INTO mcp_cache VALUES ('m1','s','t','{}','d',1,0.5,1,0);
@@ -244,8 +244,8 @@ class GcResilienceTest(unittest.TestCase):
                 category TEXT PRIMARY KEY, updated_at REAL DEFAULT 0,
                 hits INTEGER DEFAULT 0, misses INTEGER DEFAULT 0,
                 tokens_read_from_disk INTEGER DEFAULT 0,
-                tokens_saved INTEGER DEFAULT 0,
-                context_tokens_saved INTEGER DEFAULT 0
+                io_tokens_saved INTEGER DEFAULT 0,
+                tokens_saved_to_llm INTEGER DEFAULT 0
             );
             INSERT INTO recall_cache VALUES ('n1','f','c','t',0,'',1,1,0.5);
             """
@@ -295,6 +295,48 @@ class GcResilienceTest(unittest.TestCase):
         cols = {row[1] for row in conn.execute("PRAGMA table_info(recall_cache)")}
         conn.close()
         self.assertIn("expires_at", cols, "migration did not add expires_at")
+
+    def test_migration_renames_savings_columns(self):
+        """2026-09-26 split: tokens_saved → io_tokens_saved,
+        context_tokens_saved → tokens_saved_to_llm — values preserved.
+
+        Simulates a pre-rename DB (legacy column names + accumulated data)
+        and re-runs the migration pass: idempotent, no value loss.
+        """
+        import sqlite3
+        from toolrecall import _db as db_mod
+        from toolrecall.cache import SCHEMA as _SCHEMA
+
+        db = os.path.join(self.tmpdir, "legacy_savings.db")
+        conn = sqlite3.connect(db)
+        conn.executescript(_SCHEMA)
+        conn.execute(
+            "INSERT INTO cache_stats (category, hits, io_tokens_saved, tokens_saved_to_llm) "
+            "VALUES ('file_cache', 7, 111, 222)"
+        )
+        # Downgrade to the legacy names — what a pre-rename DB looks like.
+        conn.execute("ALTER TABLE cache_stats RENAME COLUMN io_tokens_saved TO tokens_saved")
+        conn.execute(
+            "ALTER TABLE cache_stats RENAME COLUMN tokens_saved_to_llm TO context_tokens_saved"
+        )
+        conn.commit()
+        conn.close()
+
+        with _TempDbFixture(db):
+            db_mod._init(_SCHEMA)
+
+        conn = sqlite3.connect(db)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(cache_stats)")}
+        row = conn.execute(
+            "SELECT io_tokens_saved, tokens_saved_to_llm FROM cache_stats "
+            "WHERE category='file_cache'"
+        ).fetchone()
+        conn.close()
+        self.assertIn("io_tokens_saved", cols, "rename did not land")
+        self.assertIn("tokens_saved_to_llm", cols, "rename did not land")
+        self.assertNotIn("tokens_saved", cols, "legacy column survived the rename")
+        self.assertNotIn("context_tokens_saved", cols, "legacy column survived the rename")
+        self.assertEqual(row, (111, 222), "rename lost the accumulated values")
 
 
 class SessionFilesNotCachedTest(unittest.TestCase):

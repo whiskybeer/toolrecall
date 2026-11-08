@@ -82,14 +82,14 @@ class TestE2ERecallDaemon(unittest.TestCase):
         conn = sqlite3.connect(self.daemon.db_path)
         try:
             row = conn.execute(
-                "SELECT hits, tokens_saved, context_tokens_saved "
+                "SELECT hits, io_tokens_saved, tokens_saved_to_llm "
                 "FROM cache_stats WHERE category='recall'"
             ).fetchone()
         finally:
             conn.close()
         self.assertIsNotNone(row, "expected a cache_stats row for category 'recall'")
         self.assertEqual(row[0], 1, "one get hit should be recorded")
-        self.assertGreater(row[2], 0, "context_tokens_saved should be > 0")
+        self.assertGreater(row[2], 0, "tokens_saved_to_llm should be > 0")
 
 
 class TestE2ERecallBridgeVisibility(unittest.TestCase):

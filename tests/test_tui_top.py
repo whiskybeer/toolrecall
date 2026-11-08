@@ -23,7 +23,7 @@ def seeded_db(tmp_path, monkeypatch):
         CREATE TABLE cache_stats (
             category TEXT PRIMARY KEY, hits INTEGER DEFAULT 0,
             misses INTEGER DEFAULT 0, tokens_read_from_disk INTEGER DEFAULT 0,
-            tokens_saved INTEGER DEFAULT 0, context_tokens_saved INTEGER DEFAULT 0,
+            io_tokens_saved INTEGER DEFAULT 0, tokens_saved_to_llm INTEGER DEFAULT 0,
             updated_at REAL DEFAULT 0);
         CREATE TABLE access_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL,
@@ -145,7 +145,7 @@ def test_render_plain_umbrella_headline(seeded_db, monkeypatch):
     out = tui_top.render_plain(snap)
     # Headline: not sent. This test seeds one stub event (7K today)
     # + dedup 50K → 57K not sent; without ToolRecall = 100K + 57K = 157K.
-    assert "NOT SENT TO THE MODEL TODAY:  57.0K tok" in out
+    assert "SAVED TO LLM TODAY:  57.0K tok" in out
     assert "0.57x everything that was sent" in out
     assert "Sent to the model:   100.0K tok" in out
     assert "Without ToolRecall:  157.0K tok" in out
@@ -163,7 +163,7 @@ def test_render_plain_zero_notsent_has_reason(seeded_db, monkeypatch):
     _stub_money(monkeypatch, prompt=80_000, dedup=0)
     monkeypatch.setattr(tui_top, "DEFAULT_PATH", seeded_db + ".nonexistent")
     out = tui_top.render_plain(tui_top.snapshot_factory(seeded_db))
-    assert "NOT SENT TO THE MODEL TODAY:  0 tok" in out
+    assert "SAVED TO LLM TODAY:  0 tok" in out
     assert "Nothing was held back today" in out
 
 

@@ -2,6 +2,22 @@
 
 ## [Unreleased] — 2026-09-26
 
+### Changed
+- **Savings counters split into two unmistakable names (`cache_stats`).**
+  `cache_stats.tokens_saved` had drifted into meaning "IO offload" while
+  reading like "tokens saved to the LLM" — the two are different claims
+  (the first is disk/subprocess work avoided, the second is tokens that
+  never entered the model's context), and a consumer quoting the wrong one
+  overstates savings. Columns are now `io_tokens_saved` and
+  `tokens_saved_to_llm`; the stats JSON emits the same canonical keys
+  (`io_tokens_saved`, `tokens_saved_to_llm`) alongside the long-standing
+  measured aliases (`tokens_served_from_cache`, `tokens_not_read_from_disk`,
+  `tokens_not_sent_to_llm`), and the ambiguous `context_tokens_saved` key is
+  gone. Migration is an in-place SQLite `RENAME COLUMN` (idempotent, values
+  preserved; applied on first open of an older DB). TUI labels follow:
+  the IO table column reads `IO saved`, the headline `SAVED TO LLM TODAY`
+  (never sent to the model).
+
 ### Fixed
 - **Shim drift detection is content-based, not version-based (`venvs.py`).**
   `ensure_shim` compared `importlib.metadata` versions, which passes whenever

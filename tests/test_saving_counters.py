@@ -10,9 +10,9 @@ that saving on the cost side of the ledger (7,289 lifetime HITs, 39.1M
 tokens). Cost on a HIT row is the cached body's replayed price, not money
 charged again, so it must not inflate billed truth either.
 
-Bug 2 — `cached_api_check` computed `tokens_saved` and dropped it on the
+Bug 2 — `cached_api_check` computed `io_tokens_saved` and dropped it on the
 floor: `_record("api_cache", True)` was called without it, so api_cache
-showed hits with tokens_saved=0 forever.
+showed hits with io_tokens_saved=0 forever.
 
 Hermetic: temp CSV / temp DB only. The production CSV
 (~/.toolrecall/proxy_usage.csv) is billed truth and is never read here.
@@ -126,7 +126,9 @@ class TestApiCacheRecordsTokensSaved(unittest.TestCase):
 
         src = inspect.getsource(cache_mod.cached_api_check)
         # Both SWR tiers (fresh + serve-stale) must pass the computed value.
-        self.assertEqual(src.count('_record("api_cache", True, tokens_saved=tokens_saved)'), 2)
+        self.assertEqual(
+            src.count('_record("api_cache", True, io_tokens_saved=io_tokens_saved)'), 2
+        )
         self.assertNotIn('_record("api_cache", True)\n', src)
 
 

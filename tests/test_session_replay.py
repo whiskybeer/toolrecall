@@ -167,7 +167,7 @@ class TestSessionReplay(unittest.TestCase):
             }
             out = tui_top.render_plain(snap)
             # Headline is the not-sent number; the comparison follows.
-            self.assertIn("NOT SENT TO THE MODEL TODAY:  225.0K tok", out)
+            self.assertIn("SAVED TO LLM TODAY:  225.0K tok", out)
             # peak_naive (210K) > peak_actual (30K) → biggest-message line.
             self.assertIn("Biggest single message:  30.0K tok", out)
             self.assertIn("without ToolRecall 210.0K tok", out)

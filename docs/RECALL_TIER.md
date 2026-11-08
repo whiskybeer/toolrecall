@@ -67,7 +67,7 @@ Every `recall_get` hit records tokens into a dedicated `recall` category in
 `cache_stats`:
 
 - `hits` incremented
-- `tokens_saved` / `context_tokens_saved` += the entry's token estimate
+- `io_tokens_saved` / `tokens_saved_to_llm` += the entry's token estimate
 
 `recall_stats` returns the aggregate (`total` entries, persisted `tokens`).
 Because recall savings are attributed to their own sink — never merged into

@@ -138,10 +138,10 @@ class TestDaemonNoErrorStore(unittest.TestCase):
 
 
 class TestHitTokensSaved(unittest.TestCase):
-    """tokens_saved must ride the hit record — not be computed-and-dropped.
+    """io_tokens_saved must ride the hit record — not be computed-and-dropped.
 
     Regression for the 2026-09-24 finding: mcp_cache had 12 hits with
-    tokens_saved=0, so the TUI IO-offload column read 0 despite real
+    io_tokens_saved=0, so the TUI IO-offload column read 0 despite real
     replays. Same class as the api_cache fix (computed-but-dropped counter).
     """
 
@@ -159,10 +159,10 @@ class TestHitTokensSaved(unittest.TestCase):
         assert hit.get("cached") is True
         with cache_mod._db() as conn:
             row = conn.execute(
-                "SELECT tokens_saved FROM cache_stats WHERE category='mcp_cache'"
+                "SELECT io_tokens_saved FROM cache_stats WHERE category='mcp_cache'"
             ).fetchone()
         assert row is not None
-        assert row[0] > 0, f"tokens_saved stayed 0 on a hit: {row[0]}"
+        assert row[0] > 0, f"io_tokens_saved stayed 0 on a hit: {row[0]}"
 
         # SWR serve-stale tier records it too. The window is config-gated
         # (default off) — enable it for this test only, then expire the row
@@ -177,9 +177,9 @@ class TestHitTokensSaved(unittest.TestCase):
         assert stale.get("cached") is True and stale.get("stale") is True
         with cache_mod._db() as conn:
             (saved,) = conn.execute(
-                "SELECT tokens_saved FROM cache_stats WHERE category='mcp_cache'"
+                "SELECT io_tokens_saved FROM cache_stats WHERE category='mcp_cache'"
             ).fetchone()
-        assert saved > 0, f"stale hit dropped tokens_saved: {saved}"
+        assert saved > 0, f"stale hit dropped io_tokens_saved: {saved}"
 
     def test_miss_records_zero_tokens(self) -> None:
         import toolrecall.cache as cache_mod
@@ -188,10 +188,10 @@ class TestHitTokensSaved(unittest.TestCase):
         cache_mod.cached_mcp_check("hermes-docs", "search_docs", {"q": 2})
         with cache_mod._db() as conn:
             row = conn.execute(
-                "SELECT tokens_saved FROM cache_stats WHERE category='mcp_cache'"
+                "SELECT io_tokens_saved FROM cache_stats WHERE category='mcp_cache'"
             ).fetchone()
         assert row is not None
-        assert row[0] == 0, f"a miss must not carry tokens_saved: {row[0]}"
+        assert row[0] == 0, f"a miss must not carry io_tokens_saved: {row[0]}"
 
 
 class TestPartialOverrideMerge(unittest.TestCase):

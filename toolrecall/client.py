@@ -153,7 +153,7 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
         path: File path to read.
         source: "agent_tool" for agent-initiated reads, "shim" for
                 infrastructure/interception reads. Controls whether
-                tokens count toward context_tokens_saved.
+                tokens count toward tokens_saved_to_llm.
     """
     client = _get_client()
     resp = client.send({"cmd": "cached_read", "path": path, "source": source})

@@ -71,7 +71,7 @@ def _ids():
 
 def _record(path="/tmp/probe"):
     cache._record(
-        "file_cache", hit=True, path=path, tokens_saved=1, context_tokens=1, client="test"
+        "file_cache", hit=True, path=path, io_tokens_saved=1, context_tokens=1, client="test"
     )
 
 

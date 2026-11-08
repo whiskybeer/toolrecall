@@ -406,6 +406,15 @@ def _init(schema: str = ""):
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
+    def _rename_column(conn, table: str, old: str, new: str) -> None:
+        """Idempotent RENAME COLUMN — no-ops when the source is absent (fresh
+        DBs already carry the new name) or the target already exists. SQLite
+        ≥3.25 moves the data in place; no table copy, no value loss.
+        """
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if old in cols and new not in cols:
+            conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+
     with _db() as conn:
         if schema:
             conn.executescript(schema)
@@ -427,8 +436,12 @@ def _init(schema: str = ""):
         # where later migrations (stderr/cwd on terminal_cache etc.) would
         # abort on a missing table.
         _add_column(conn, "recall_cache", "expires_at REAL")
-        # Migration: v0.7.5 → v0.8.0 — add tokens_saved column
-        _add_column(conn, "cache_stats", "tokens_saved INTEGER DEFAULT 0")
+        # Migration: v0.7.5 → v0.8.0 — add tokens_saved column. Renamed to
+        # io_tokens_saved below; skipped when the post-rename column is
+        # already present (fresh DBs carry it from the schema).
+        _cs_cols = {row[1] for row in conn.execute("PRAGMA table_info(cache_stats)")}
+        if "io_tokens_saved" not in _cs_cols:
+            _add_column(conn, "cache_stats", "tokens_saved INTEGER DEFAULT 0")
         # Migration: v0.9.0 — add tokens_read_uncacheable (ttl=0 reads, which
         # no cache could ever serve; previously they inflated the
         # tokens_read_from_disk denominator and produced bogus "2% savings")
@@ -436,7 +449,17 @@ def _init(schema: str = ""):
         # Migration: v0.8.x → v0.9.0 — add updated_at column for cache_stats freshness
         _add_column(conn, "cache_stats", "updated_at REAL DEFAULT 0")
         # Migration: v0.9.4 → v0.10.0 — add context_tokens_saved column
-        _add_column(conn, "cache_stats", "context_tokens_saved INTEGER DEFAULT 0")
+        # (renamed to tokens_saved_to_llm below; same skip rule as above).
+        if "tokens_saved_to_llm" not in _cs_cols:
+            _add_column(conn, "cache_stats", "context_tokens_saved INTEGER DEFAULT 0")
+        # Migration: 2026-09-26 — split the ambiguous "tokens_saved" into the
+        # two concepts the ledger actually needs, named the same in the DB as
+        # in the stats JSON:
+        #   io_tokens_saved     — IO offload: disk/subprocess work avoided.
+        #   tokens_saved_to_llm — tokens that never entered the LLM context.
+        # SQLite RENAME COLUMN keeps the accumulated values in place.
+        _rename_column(conn, "cache_stats", "tokens_saved", "io_tokens_saved")
+        _rename_column(conn, "cache_stats", "context_tokens_saved", "tokens_saved_to_llm")
         # Migration: v0.8.22 → v0.8.23 — MEASURED not-sent tokens (bridge
         # dedup stubs; wire-verified, never an estimate)
         _add_column(conn, "cache_stats", "tokens_not_sent_measured INTEGER DEFAULT 0")

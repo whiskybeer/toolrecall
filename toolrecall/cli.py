@@ -244,7 +244,7 @@ def cmd_status():
                 v.get("tokens_not_read_from_disk_adjusted", 0),
             )
             read = v.get("tokens_served_from_disk", v.get("tokens_read_from_disk", 0))
-            context = v.get("tokens_not_sent_to_llm", v.get("context_tokens_saved", 0))
+            context = v.get("tokens_not_sent_to_llm", v.get("tokens_saved_to_llm", 0))
             content_tokens = v.get("cached_content_tokens", 0)
             saved_str = f", tokens_served_from_cache={saved:,}" if saved else ""
             adjusted_str = f", adjusted={adjusted:,}" if adjusted and adjusted != saved else ""

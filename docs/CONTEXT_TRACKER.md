@@ -97,7 +97,7 @@ ToolRecall reports TWO distinct "context" numbers. They measure different things
 
 | Metric | Where | Counts | Increments |
 |--------|-------|--------|------------|
-| **`tokens_not_sent_to_llm`** (cache tier) | `cache_stats.file_cache.context_tokens_saved`, shown by `toolrecall stats` / TUI CONTEXT line | Every **cache hit** of an agent-tool read: content served from cache instead of being pasted into the LLM context again | **Per hit** — re-reading the same file 3× counts 3× (each hit = one avoided re-send) |
+| **`tokens_not_sent_to_llm`** (cache tier) | `cache_stats.file_cache.tokens_saved_to_llm`, shown by `toolrecall stats` / TUI CONTEXT line | Every **cache hit** of an agent-tool read: content served from cache instead of being pasted into the LLM context again | **Per hit** — re-reading the same file 3× counts 3× (each hit = one avoided re-send) |
 | **`ctx_dropped_tokens`** (tracker) | `context_get_stats()`, TUI ctx view, healthcheck | Each **file** whose content the agent can drop from context (read, not modified, banked once per checkpoint epoch) | **Per file, once per epoch** — repeat reads of an already-banked file add 0 |
 
 Worked example — `README.md` (7,930 tok), read twice after a checkpoint:
@@ -106,6 +106,20 @@ Worked example — `README.md` (7,930 tok), read twice after a checkpoint:
 - Tracker: the file enters the clean set once and is banked **once** (+7,930 total, second read adds 0 — the agent already dropped it; re-banking would double-count a drop already made).
 
 **Which one to quote where:** the cache tier answers "how many tokens did caching keep out of the LLM window in total" (a savings rate). The tracker answers "what can the agent drop right now" (an action ledger). Never report tracker numbers as cumulative savings — they are deliberately de-duplicated per epoch.
+
+**Canonical counter names (2026-09-26).** Each number has exactly one word per
+claim, the same in the DB and in the stats JSON:
+
+| Canonical | Means | Never quote it as |
+|---|---|---|
+| `io_tokens_saved` | IO offload: tokens served from cache instead of re-read from disk / re-fetched (latency/IO work avoided) | model-token savings |
+| `tokens_saved_to_llm` | tokens that never entered the LLM context (the cost metric) | an IO number |
+
+Renamed from `tokens_saved` / `context_tokens_saved` (in-place SQLite
+`RENAME COLUMN`, values preserved, applied on first open of an older DB).
+Aliases kept for existing consumers: `tokens_served_from_cache` /
+`tokens_not_read_from_disk` = `io_tokens_saved`; `tokens_not_sent_to_llm` =
+`tokens_saved_to_llm`.
 
 ### Source Gate — Which Reads Count as Context Savings
 

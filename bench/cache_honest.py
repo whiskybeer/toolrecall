@@ -35,7 +35,7 @@ def main() -> None:
 
     # ── cache_stats: the daemon's cumulative counter ─────────
     stats = con.execute(
-        "SELECT hits, misses, tokens_read_from_disk, tokens_saved, context_tokens_saved, updated_at "
+        "SELECT hits, misses, tokens_read_from_disk, io_tokens_saved, tokens_saved_to_llm, updated_at "
         "FROM cache_stats WHERE category='file_cache'"
     ).fetchone()
 
@@ -101,7 +101,7 @@ def main() -> None:
     print("  BOTTOM LINE")
     print()
     print("  The daemon's status command counts EVERY in-memory LRU cache hit")
-    print(f"  as tokens_saved — same {total_entries} files served from RAM 10× each.")
+    print(f"  as io_tokens_saved — same {total_entries} files served from RAM 10× each.")
     print(f"  Real content ever read from disk: {tok_read_from_disk:,} tokens.")
     print()
     print("  For benchmark comparisons, ignore cache_stats entirely.")

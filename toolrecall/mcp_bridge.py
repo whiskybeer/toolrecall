@@ -665,7 +665,7 @@ class MCPBridge:
                         }
                     )
                 else:
-                    # Mark agent-tool reads so context_tokens_saved counts.
+                    # Mark agent-tool reads so tokens_saved_to_llm counts.
                     # Only when context hints are enabled: if the agent isn't
                     # receiving drop instructions, it can't be saving context,
                     # so the counter would be misleading.

@@ -244,12 +244,12 @@ class TestDaemonSubprocess(unittest.TestCase):
         self.assertEqual(resp["status"], "pong")
 
     def test_daemon_stats(self):
-        """Daemon returns stats including tokens_saved."""
+        """Daemon returns stats including io_tokens_saved."""
         if not self._start_daemon():
             self.skipTest("Daemon subprocess failed to start")
         resp = self._send_command("stats")
         self.assertEqual(resp["hits"], 42)
-        self.assertGreater(resp["tokens_saved"], 0)
+        self.assertGreater(resp["io_tokens_saved"], 0)
 
     def test_daemon_invalidate(self):
         """Daemon invalidate returns cleared=True."""

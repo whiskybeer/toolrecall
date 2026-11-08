@@ -80,7 +80,7 @@ def analyze(rows, runs):
     total = len(rows)
     hits = [r for r in rows if r["status"] == "HIT"]
     live = [r for r in rows if r["status"] in ("STREAM", "MISS")]
-    tokens_saved = sum(h["prompt"] for h in hits)
+    io_tokens_saved = sum(h["prompt"] for h in hits)
     tokens_live = sum(r["prompt"] for r in live)
 
     # Decay curve: HIT fraction by position within each run
@@ -103,9 +103,9 @@ def analyze(rows, runs):
         "hit_requests": len(hits),
         "replay_rate": round(len(hits) / total, 3) if total else 0.0,
         "prompt_tokens_live": tokens_live,
-        "prompt_tokens_saved": tokens_saved,
-        "tokens_saved_pct": round(tokens_saved / (tokens_saved + tokens_live), 3)
-        if (tokens_saved + tokens_live) else 0.0,
+        "prompt_tokens_saved": io_tokens_saved,
+        "tokens_saved_pct": round(io_tokens_saved / (io_tokens_saved + tokens_live), 3)
+        if (io_tokens_saved + tokens_live) else 0.0,
         "runs_detected": len(runs),
         "decay_curve": decay,
         "per_run": [

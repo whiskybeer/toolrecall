@@ -250,7 +250,7 @@ class TestAccessLogFiltering(unittest.TestCase):
         from toolrecall.cache import _record
 
         count_before = self._count_access_log()
-        _record("file_cache", hit=True, path="/test/some_file.txt", tokens_saved=100)
+        _record("file_cache", hit=True, path="/test/some_file.txt", io_tokens_saved=100)
         count_after = self._count_access_log()
         self.assertEqual(
             count_after,
@@ -275,7 +275,7 @@ class TestAccessLogFiltering(unittest.TestCase):
 
         count_before = self._count_access_log()
         _record("mcp_cache", hit=False)
-        _record("api_cache", hit=True, tokens_saved=500)
+        _record("api_cache", hit=True, io_tokens_saved=500)
         _record("browser_cache", hit=True)
         count_after = self._count_access_log()
         self.assertEqual(
@@ -290,7 +290,7 @@ class TestAccessLogFiltering(unittest.TestCase):
 
         _record("file_cache", hit=False, path="/etc/hosts")
         _record("terminal_cache", hit=True)  # no path - skip
-        _record("file_cache", hit=True, path="/etc/resolv.conf", tokens_saved=50)
+        _record("file_cache", hit=True, path="/etc/resolv.conf", io_tokens_saved=50)
         entries = self._get_access_log_entries()
         self.assertEqual(len(entries), 2, "Only 2 of 3 _record calls should be in access_log")
         paths = [e["path"] for e in entries]

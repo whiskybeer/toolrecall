@@ -347,8 +347,8 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     misses INTEGER DEFAULT 0,
     tokens_read_from_disk INTEGER DEFAULT 0,
     tokens_read_uncacheable INTEGER DEFAULT 0,
-    tokens_saved INTEGER DEFAULT 0,
-    context_tokens_saved INTEGER DEFAULT 0,
+    io_tokens_saved INTEGER DEFAULT 0,
+    tokens_saved_to_llm INTEGER DEFAULT 0,
     tokens_not_sent_measured INTEGER DEFAULT 0,
     updated_at REAL DEFAULT 0
 );
@@ -433,23 +433,23 @@ def _record(
     hit: bool,
     tokens_read: int = 0,
     path: str = "",
-    tokens_saved: int = 0,
+    io_tokens_saved: int = 0,
     context_tokens: int = 0,
     client: str = "",
     tokens_not_sent_measured: int = 0,
 ):
     """Track cache statistics + access log.
 
-    - hit=True:  increments hit counter and tokens_saved
+    - hit=True:  increments hit counter and io_tokens_saved
     - hit=False: increments miss counter
     - tokens_read: (only on disk-read miss) records how many tokens
       were read from disk. NOT set on cache hits.
     - path: optional file path for access logging
-    - tokens_saved: (only on cache hit) records how many tokens were
+    - io_tokens_saved: (only on cache hit) records how many tokens were
       served from cache without disk I/O (disk-read avoidance)
     - context_tokens: (only on cache hit, agent-tool reads) records how
       many tokens were served from cache that would have been sent to
-      the LLM context. This is a subset of tokens_saved — only counts
+      the LLM context. This is a subset of io_tokens_saved — only counts
       reads that originate from agent tools (read_file, skill_view),
       not internal infrastructure reads (config, cron, cwd files).
 
@@ -481,15 +481,15 @@ def _record(
             if hit:
                 conn.execute(
                     """
-                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, tokens_saved, context_tokens_saved, updated_at)
+                    INSERT INTO cache_stats (category, hits, misses, tokens_read_from_disk, io_tokens_saved, tokens_saved_to_llm, updated_at)
                     VALUES (?, 1, 0, 0, 0, 0, ?)
                     ON CONFLICT(category) DO UPDATE SET
                         hits = hits + 1,
-                        tokens_saved = tokens_saved + ?,
-                        context_tokens_saved = context_tokens_saved + ?,
+                        io_tokens_saved = io_tokens_saved + ?,
+                        tokens_saved_to_llm = tokens_saved_to_llm + ?,
                         updated_at = ?
                 """,
-                    (category, time.time(), tokens_saved, context_tokens, time.time()),
+                    (category, time.time(), io_tokens_saved, context_tokens, time.time()),
                 )
             else:
                 conn.execute(
@@ -529,7 +529,7 @@ def _record(
                         # entries whose token count must NOT touch the
                         # disk-read counter — surface them in access_log for
                         # per-day trend only.
-                        tokens_saved
+                        io_tokens_saved
                         if hit
                         else (tokens_read if tokens_read else tokens_not_sent_measured),
                         time.time(),
@@ -654,8 +654,8 @@ def cached_read(
     Args:
         path: File path to read.
         source: Optional source identifier. When "agent_tool", cache hits
-            count toward context_tokens_saved (actual LLM context savings)
-            in addition to the general tokens_saved (disk-read avoidance).
+            count toward tokens_saved_to_llm (actual LLM context savings)
+            in addition to the general io_tokens_saved (disk-read avoidance).
             Empty string or "internal" = only counts disk-read avoidance.
     """
     path = os.path.expanduser(path)
@@ -725,7 +725,7 @@ def cached_read(
             "file_cache",
             hit=True,
             path=path,
-            tokens_saved=tokens,
+            io_tokens_saved=tokens,
             context_tokens=context_tokens,
             client=client,
         )
@@ -793,7 +793,7 @@ def cached_read(
             "file_cache",
             hit=True,
             path=path,
-            tokens_saved=tokens,
+            io_tokens_saved=tokens,
             context_tokens=context_tokens,
             client=client,
         )
@@ -2056,19 +2056,19 @@ def cached_mcp_check(
                 # produced — replaying it skips the subprocess round-trip
                 # entirely. Estimate the avoided IO as tokens (same rule as
                 # api_cache: bytes/3 on the stored body).
-                tokens_saved = _estimate_tokens(row["data"])
+                io_tokens_saved = _estimate_tokens(row["data"])
                 if tier == ttl_policy.SWR_FRESH:
                     conn.execute(
                         "UPDATE mcp_cache SET hits = hits + 1, hit_streak = hit_streak + 1 WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    # tokens_saved was computed but never passed (2026-09-24):
-                    # mcp_cache showed 12 hits with tokens_saved=0, so the
+                    # io_tokens_saved was computed but never passed (2026-09-24):
+                    # mcp_cache showed 12 hits with io_tokens_saved=0, so the
                     # TUI IO-offload column read 0 despite real replays —
                     # same class as the api_cache fix. A cached MCP replay
                     # skips the subprocess round-trip entirely: the response
                     # body is what the server would have produced.
-                    _record("mcp_cache", hit=True, tokens_saved=tokens_saved)
+                    _record("mcp_cache", hit=True, io_tokens_saved=io_tokens_saved)
                     return {
                         "cached": True,
                         "data": row["data"],
@@ -2082,7 +2082,7 @@ def cached_mcp_check(
                     # SWR: serve stale; revalidation is the CALLER's job
                     # (check has no fetch capability — cached_mcp() handles
                     # it via fetch_fn; daemon-routed callers re-invoke).
-                    _record("mcp_cache", hit=True, tokens_saved=tokens_saved)
+                    _record("mcp_cache", hit=True, io_tokens_saved=io_tokens_saved)
                     return {
                         "cached": True,
                         "data": row["data"],
@@ -2362,7 +2362,7 @@ def cached_mcp(
 def get_stats() -> dict:
     """Get cache statistics with honest token accounting.
 
-    ``tokens_served_from_cache`` (née ``tokens_saved``) is the real
+    ``tokens_served_from_cache`` (née ``io_tokens_saved``) is the real
     cumulative accumulator — each cache hit records the estimated token
     count of the content served, so this is the actual number of tokens
     served from cache instead of being re-read from disk.
@@ -2376,13 +2376,21 @@ def get_stats() -> dict:
     (file_cache only) re-counts based on SQLite re-reads only, excluding
     the first unavoidable disk read per file — mirrors
     bench/cache_honest.py logic.
-    ``tokens_not_sent_to_llm`` (née ``context_tokens_saved``) tracks only
-    agent-tool-initiated reads (tagged with source="agent_tool") — tokens
-    that never entered the LLM context.
-    Old key names (``tokens_served_from_disk`` was ``tokens_read_from_disk``;
-    ``tokens_served_from_cache`` was ``tokens_not_read_from_disk``;
-    ``tokens_not_sent_to_llm`` was ``context_tokens_saved``) remain as
-    back-compat aliases.
+    ``tokens_not_sent_to_llm`` tracks only agent-tool-initiated reads
+    (tagged with source="agent_tool") — tokens that never entered the LLM
+    context. It IS the same number as ``tokens_saved_to_llm``.
+
+    Canonical names (2026-09-26 rename) — the DB column and the JSON key are
+    now the same word, and the two savings concepts are cleanly split:
+      ``io_tokens_saved``     — IO offload: tokens served from the cache
+        instead of being re-read from disk / re-fetched (latency metric).
+      ``tokens_saved_to_llm`` — tokens that never entered the LLM context
+        (the cost/savings metric).
+    Older spellings remain as back-compat aliases: ``tokens_served_from_cache``
+    / ``tokens_not_read_from_disk`` (= io_tokens_saved) and
+    ``tokens_not_sent_to_llm`` (= tokens_saved_to_llm). The ambiguous
+    ``context_tokens_saved`` / ``tokens_saved`` names are gone (DB migration
+    renames the columns in place).
     """
     stats: dict[str, Any] = {}
     try:
@@ -2413,18 +2421,21 @@ def get_stats() -> dict:
                     "tokens_read_uncacheable": row["tokens_read_uncacheable"]
                     if "tokens_read_uncacheable" in row.keys()
                     else 0,
-                    "tokens_served_from_cache": row["tokens_saved"],
-                    "tokens_served_from_cache_cumulative": row["tokens_saved"],
-                    "tokens_not_sent_to_llm": row["context_tokens_saved"],
+                    "tokens_served_from_cache": row["io_tokens_saved"],
+                    "tokens_served_from_cache_cumulative": row["io_tokens_saved"],
+                    # Canonical names (2026-09-26): same word in DB and JSON.
+                    "io_tokens_saved": row["io_tokens_saved"],
+                    "tokens_saved_to_llm": row["tokens_saved_to_llm"],
+                    "tokens_not_sent_to_llm": row["tokens_saved_to_llm"],
                     # MEASURED tier — wire-verified (bridge replaced the
                     # content with a stub). Never an estimate; independent
                     # of any checkpoint/hint state.
                     "tokens_not_sent_measured": measured,
                     # Back-compat aliases (v0.10.x → v0.11+).
                     "tokens_read_from_disk": row["tokens_read_from_disk"],
-                    "tokens_not_read_from_disk": row["tokens_saved"],
-                    "tokens_not_read_from_disk_cumulative": row["tokens_saved"],
-                    "context_tokens_saved": row["context_tokens_saved"],
+                    "tokens_not_read_from_disk": row["io_tokens_saved"],
+                    "tokens_not_read_from_disk_cumulative": row["io_tokens_saved"],
+                    # tokens_saved_to_llm is emitted with the canonical block above.
                     "updated_at": row["updated_at"],
                     "hit_rate": f"{row['hits'] / total * 100:.0f}%" if total > 0 else "0%",
                 }
@@ -2463,7 +2474,7 @@ def get_stats() -> dict:
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite stats failed: {e}")
 
-    # Zero context_tokens_saved when the agent can't drop content.
+    # Zero tokens_saved_to_llm when the agent can't drop content.
     # The DB still holds the cumulative value, but reporting it as
     # "saved" is misleading when emit_context_hints is off.
     # Load config once — re-parsing TOML every call is wasteful.
@@ -2477,7 +2488,7 @@ def get_stats() -> dict:
     if not _hints_on:
         for _cat in stats:
             if isinstance(stats[_cat], dict):
-                for _key in ("tokens_not_sent_to_llm", "context_tokens_saved"):
+                for _key in ("tokens_not_sent_to_llm", "tokens_saved_to_llm"):
                     if _key in stats[_cat]:
                         stats[_cat][_key] = 0
 
@@ -2691,7 +2702,7 @@ def garbage_collect() -> int:
                     hits = 0,
                     misses = 0,
                     tokens_read_from_disk = 0,
-                    tokens_saved = 0,
+                    io_tokens_saved = 0,
                     updated_at = ?
                 WHERE updated_at > 0 AND updated_at < ?
             """,
@@ -2735,11 +2746,11 @@ def cached_browser_check(
                     (cache_key,),
                 )
                 _record("browser_cache", True)
-                tokens_saved = _estimate_tokens(row["content"])
+                io_tokens_saved = _estimate_tokens(row["content"])
                 return {
                     "cached": True,
                     "content": row["content"],
-                    "tokens_not_read_from_disk": tokens_saved,
+                    "tokens_not_read_from_disk": io_tokens_saved,
                 }
     except Exception as e:
         warnings.warn(f"ToolRecall: browser_cache check failed: {e}")
@@ -2841,24 +2852,24 @@ def cached_api_check(request_hash: str) -> dict:
                 import json as _json
 
                 headers = _json.loads(row["response_headers"]) if row["response_headers"] else {}
-                tokens_saved = _estimate_tokens(row["response_body"])
+                io_tokens_saved = _estimate_tokens(row["response_body"])
                 if tier == ttl_policy.SWR_FRESH:
                     conn.execute(
                         "UPDATE api_cache SET hits = hits + 1, hit_streak = hit_streak + 1 "
                         "WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    # tokens_saved was computed but never passed (2026-09-21):
-                    # api_cache showed 122 hits with tokens_saved=0, hiding a
+                    # io_tokens_saved was computed but never passed (2026-09-21):
+                    # api_cache showed 122 hits with io_tokens_saved=0, hiding a
                     # whole-call saving — the strongest one there is, since the
                     # model is not called at all.
-                    _record("api_cache", True, tokens_saved=tokens_saved)
+                    _record("api_cache", True, io_tokens_saved=io_tokens_saved)
                     return {
                         "cached": True,
                         "status": row["response_status"],
                         "headers": headers,
                         "body": row["response_body"],
-                        "tokens_not_read_from_disk": tokens_saved,
+                        "tokens_not_read_from_disk": io_tokens_saved,
                     }
                 if tier == ttl_policy.SWR_SERVE_STALE:
                     # SWR serve-stale ONLY. An LLM completion is never
@@ -2868,13 +2879,13 @@ def cached_api_check(request_hash: str) -> dict:
                         "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    _record("api_cache", True, tokens_saved=tokens_saved)
+                    _record("api_cache", True, io_tokens_saved=io_tokens_saved)
                     return {
                         "cached": True,
                         "status": row["response_status"],
                         "headers": headers,
                         "body": row["response_body"],
-                        "tokens_not_read_from_disk": tokens_saved,
+                        "tokens_not_read_from_disk": io_tokens_saved,
                         "stale": True,
                     }
                 # tier == "expired" → fall through to miss

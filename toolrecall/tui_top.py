@@ -209,8 +209,8 @@ def stats_via_sqlite(db: str) -> dict | None:
         return None
     try:
         rows = con.execute(
-            "SELECT category, hits, misses, tokens_saved,"
-            " context_tokens_saved, updated_at FROM cache_stats"
+            "SELECT category, hits, misses, io_tokens_saved,"
+            " tokens_saved_to_llm, updated_at FROM cache_stats"
         ).fetchall()
         for cat, hits, misses, t_saved, ctx_saved, upd in rows:
             total = hits + misses
@@ -714,7 +714,7 @@ def render_plain(snapshot: dict) -> str:
     lines.append("")
     lines.append(
         "%-14s %8s %8s %7s %12s %10s"
-        % ("cache [IO]", "hits", "misses", "rate", "IO-offload", "last-act")
+        % ("cache [IO]", "hits", "misses", "rate", "IO saved", "last-act")
     )
     for cat in CATEGORIES:
         c = st.get(cat)
@@ -747,7 +747,7 @@ def render_plain(snapshot: dict) -> str:
     _avoided = _rp.get("avoided_total", _notsent)
     _naive = _rp.get("naive_total", (money or {}).get("prompt", 0) + _notsent)
     _sent = (money or {}).get("prompt", 0)
-    lines.append("NOT SENT TO THE MODEL TODAY:  %s tok" % human_tokens(_avoided))
+    lines.append("SAVED TO LLM TODAY:  %s tok  (never sent to the model)" % human_tokens(_avoided))
     if _sent and _avoided:
         _ratio = _avoided / _sent
         _windows = _avoided / float(_rp.get("limit") or _CONTEXT_WALL)
@@ -998,7 +998,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             y = put(y, "", 0)
             y = put(
                 y,
-                " NOT SENT TO THE MODEL TODAY:  %s tok" % human_tokens(_avoided),
+                " SAVED TO LLM TODAY:  %s tok  (never sent to the model)" % human_tokens(_avoided),
                 A_BOLD,
             )
             if _sent and _avoided:
@@ -1117,7 +1117,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 y = put(y + 1, "", 0)  # section gap
                 y = put(
                     y,
-                    "  disk reads avoided (IO bonus, not money): %s" % human_tokens(_io_saved),
+                    "  IO saved (disk reads avoided, not money): %s" % human_tokens(_io_saved),
                     A_DIM,
                 )
         elif view == "stats":
@@ -1127,15 +1127,14 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 # phone/narrow SSH: drop the last-act column (low value)
                 y = put(
                     y,
-                    " %-14s %8s %8s %6s %10s"
-                    % ("cache [IO]", "hits", "miss", "rate", "IO-offload"),
+                    " %-14s %8s %8s %6s %10s" % ("cache [IO]", "hits", "miss", "rate", "IO saved"),
                     A_BOLD,
                 )
             else:
                 y = put(
                     y,
                     " %-14s %9s %9s %7s %12s %10s"
-                    % ("cache [IO]", "hits", "misses", "rate", "IO-offload", "last-act"),
+                    % ("cache [IO]", "hits", "misses", "rate", "IO saved", "last-act"),
                     A_BOLD,
                 )
             if not any(cat in st for cat in CATEGORIES):

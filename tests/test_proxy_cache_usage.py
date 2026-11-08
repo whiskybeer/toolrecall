@@ -158,7 +158,7 @@ class TestProviderCacheRender(unittest.TestCase):
         self.assertIn("discount $0.1234 (provider-reported)", out)
         # Bill-side effect stays out of the not-sent headline; the cache
         # line lives in Details.
-        self.assertIn("NOT SENT TO THE MODEL TODAY:  0 tok", out)
+        self.assertIn("SAVED TO LLM TODAY:  0 tok", out)
         self.assertIn("provider prefix-cache: 90.0K tok re-served by provider", out)
 
     def test_render_plain_hides_line_when_no_cache(self):

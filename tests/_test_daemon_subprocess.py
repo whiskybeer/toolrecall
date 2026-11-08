@@ -30,7 +30,7 @@ while True:
             if req.get("action") == "ping":
                 c.sendall(json.dumps({"status": "pong"}).encode())
             elif req.get("action") == "stats":
-                c.sendall(json.dumps({"hits": 42, "misses": 7, "tokens_saved": 99999}).encode())
+                c.sendall(json.dumps({"hits": 42, "misses": 7, "io_tokens_saved": 99999}).encode())
             elif req.get("action") == "invalidate":
                 c.sendall(json.dumps({"status": "ok", "cleared": True}).encode())
             else:
