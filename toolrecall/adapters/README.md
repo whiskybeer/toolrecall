@@ -45,11 +45,13 @@ callables):
 ```python
 from toolrecall.adapters import antigravity
 
+
 @antigravity.cached_tool(ttl=300)
 async def search_web(query: str) -> str:
-    return await external_api_call(query)   # runs only on cache miss
+    return await external_api_call(query)  # runs only on cache miss
 
-config = LocalAgentConfig(tools=[search_web])   # plain callable — done
+
+config = LocalAgentConfig(tools=[search_web])  # plain callable — done
 ```
 
 - **ToolContext excluded:** SDK-injected conversation state never enters the key
