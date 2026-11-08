@@ -276,9 +276,21 @@ def cmd_status():
             # name and read as billed-truth.
             context_str = f", context_estimate={context:,}" if context else ""
             content_str = f", cached_content_tokens={content_tokens:,}" if content_tokens else ""
+            # A banked total means the GC reset this row at some point; without
+            # showing the lifetime sum, housekeeping would look like "nothing
+            # ever happened here" (which is exactly how a 2.02 B io total
+            # disappeared unnoticed).
+            banked = v.get("banked_io_tokens_saved") or 0
+            lifetime_str = (
+                f", lifetime_io_saved={v.get('lifetime_io_tokens_saved', 0):,}"
+                f" (+{banked:,} banked, {v.get('bank_count', 0)}x)"
+                if banked
+                else ""
+            )
             print(
                 f"  {k}: {v['hits']} hits, {v['misses']} misses, "
-                f"hit_rate={v['hit_rate']}{read_str}{saved_str}{adjusted_str}{context_str}{content_str}"
+                f"hit_rate={v['hit_rate']}{read_str}{saved_str}{adjusted_str}"
+                f"{context_str}{content_str}{lifetime_str}"
             )
         else:
             print(f"  {k}: {v}")

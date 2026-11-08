@@ -423,6 +423,22 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     tokens_not_sent_measured INTEGER DEFAULT 0,
     updated_at REAL DEFAULT 0
 );
+-- Lifetime counters the GC's idle-category reset moved aside. The GC zeroes
+-- hits/misses/tokens_read_from_disk/io_tokens_saved for categories idle >24 h
+-- (so the status view is not dominated by dead categories); it used to do that
+-- by DELETING the totals, which destroyed 2.02 B io_tokens_saved on the live DB
+-- (found 2026-10-03). Totals are now banked here and stay readable as
+-- live + banked (get_stats lifetime_*). Only the four reset columns are banked,
+-- so a lifetime sum can never double-count.
+CREATE TABLE IF NOT EXISTS cache_stats_banked (
+    category              TEXT PRIMARY KEY,
+    hits                  INTEGER NOT NULL DEFAULT 0,
+    misses                INTEGER NOT NULL DEFAULT 0,
+    tokens_read_from_disk INTEGER NOT NULL DEFAULT 0,
+    io_tokens_saved       INTEGER NOT NULL DEFAULT 0,
+    banked_at             REAL,
+    bank_count            INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS access_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     category TEXT NOT NULL,
@@ -2680,8 +2696,25 @@ def get_stats() -> dict:
     stats: dict[str, Any] = {}
     try:
         with _db() as conn:
+            # Lifetime view: the GC banks the four counters it resets for idle
+            # categories (cache_stats_banked), so a total a user cares about
+            # cannot be destroyed by housekeeping. Table check instead of
+            # try/except: a missing table on a pre-migration DB is expected,
+            # and a swallowed exception here would hide real read errors.
+            banked: dict[str, tuple] = {}
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cache_stats_banked'"
+            ).fetchone():
+                banked = {
+                    r[0]: (r[1], r[2], r[3], r[4], r[5], r[6])
+                    for r in conn.execute(
+                        "SELECT category, hits, misses, tokens_read_from_disk,"
+                        " io_tokens_saved, banked_at, bank_count FROM cache_stats_banked"
+                    )
+                }
             for row in conn.execute("SELECT * FROM cache_stats"):
                 total = row["hits"] + row["misses"]
+                b = banked.get(row["category"], (0, 0, 0, 0, None, 0))
                 measured = (
                     row["tokens_not_sent_measured"]
                     if "tokens_not_sent_measured" in row.keys()
@@ -2712,6 +2745,18 @@ def get_stats() -> dict:
                     "io_tokens_saved": row["io_tokens_saved"],
                     "tokens_saved_to_llm": row["tokens_saved_to_llm"],
                     "tokens_not_sent_to_llm": row["tokens_saved_to_llm"],
+                    # Lifetime = live + banked. The live columns are what
+                    # happened since the last GC reset; these are what happened
+                    # ever. Both are honest; a reader who wants "total" reads
+                    # these, and never has to wonder whether housekeeping
+                    # silently dropped a number (it did, until 2026-10-03).
+                    "lifetime_hits": row["hits"] + b[0],
+                    "lifetime_misses": row["misses"] + b[1],
+                    "lifetime_tokens_read_from_disk": row["tokens_read_from_disk"] + b[2],
+                    "lifetime_io_tokens_saved": row["io_tokens_saved"] + b[3],
+                    "banked_io_tokens_saved": b[3],
+                    "banked_at": b[4],
+                    "bank_count": b[5],
                     # MEASURED tier — wire-verified (bridge replaced the
                     # content with a stub). Never an estimate; independent
                     # of any checkpoint/hint state.
@@ -2994,18 +3039,73 @@ def garbage_collect() -> int:
                     "DELETE FROM browser_cache WHERE cached_at IS NULL OR cached_at < ?",
                     (now - BROWSER_CACHE_TTL,),
                 ).rowcount
-            c3 = conn.execute(
-                """
-                UPDATE cache_stats SET
-                    hits = 0,
-                    misses = 0,
-                    tokens_read_from_disk = 0,
-                    io_tokens_saved = 0,
-                    updated_at = ?
-                WHERE updated_at > 0 AND updated_at < ?
-            """,
-                (now, now - ONE_DAY),
-            ).rowcount
+            # Never destroy a lifetime total. The previous form zeroed
+            # hits/misses/io_tokens_saved for every category idle >24 h and
+            # wrote updated_at = now in the same statement, so the wipe looked
+            # like activity and nothing was logged: the live DB went from
+            # 551,803 hits / 2.02 B io to 1,675 / 1.9 M while the two ctx
+            # columns — which the statement did not touch — kept growing, i.e.
+            # the display ended up claiming more context savings than IO
+            # offload (impossible: ctx ⊆ io). Statement dates from 36d27d0
+            # (2026-07-04); found and reproduced 2026-10-03.
+            # Bank the four reset columns, then reset the live row.
+            idle = conn.execute(
+                "SELECT category, hits, misses, tokens_read_from_disk, io_tokens_saved"
+                " FROM cache_stats WHERE updated_at > 0 AND updated_at < ?",
+                (now - ONE_DAY,),
+            ).fetchall()
+            c3 = 0
+            if idle:
+                # Self-sufficient on a pre-migration DB: a missing bank table
+                # must never abort the whole GC (the same guard style as the
+                # column checks above). Caught by
+                # test_daemon_error_honesty::test_gc_with_legacy_recall_cache.
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS cache_stats_banked ("
+                    " category TEXT PRIMARY KEY,"
+                    " hits INTEGER NOT NULL DEFAULT 0,"
+                    " misses INTEGER NOT NULL DEFAULT 0,"
+                    " tokens_read_from_disk INTEGER NOT NULL DEFAULT 0,"
+                    " io_tokens_saved INTEGER NOT NULL DEFAULT 0,"
+                    " banked_at REAL,"
+                    " bank_count INTEGER NOT NULL DEFAULT 0)"
+                )
+                for row in idle:
+                    conn.execute(
+                        """
+                        INSERT INTO cache_stats_banked
+                            (category, hits, misses, tokens_read_from_disk,
+                             io_tokens_saved, banked_at, bank_count)
+                        VALUES (?, ?, ?, ?, ?, ?, 1)
+                        ON CONFLICT(category) DO UPDATE SET
+                            hits = hits + excluded.hits,
+                            misses = misses + excluded.misses,
+                            tokens_read_from_disk =
+                                tokens_read_from_disk + excluded.tokens_read_from_disk,
+                            io_tokens_saved = io_tokens_saved + excluded.io_tokens_saved,
+                            banked_at = excluded.banked_at,
+                            bank_count = bank_count + 1
+                    """,
+                        (*row, now),
+                    )
+                c3 = conn.execute(
+                    """
+                    UPDATE cache_stats SET
+                        hits = 0,
+                        misses = 0,
+                        tokens_read_from_disk = 0,
+                        io_tokens_saved = 0,
+                        updated_at = ?
+                    WHERE updated_at > 0 AND updated_at < ?
+                """,
+                    (now, now - ONE_DAY),
+                ).rowcount
+                log.warning(
+                    "GC: banked %d idle cache_stats row(s) before reset (%s) —"
+                    " lifetime totals stay readable as live + banked",
+                    c3,
+                    ", ".join(str(r[0]) for r in idle),
+                )
         # VACUUM must run in its own connection (auto-commits, can't be in a transaction).
         # Gated — see _VACUUM_MIN_FREE_*: a rewrite is only worth the write-lock stall
         # when it returns a meaningful share of the file. The decision is logged either
