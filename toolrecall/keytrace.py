@@ -100,24 +100,37 @@ def explain(trace_dir: str) -> List[Dict[str, Any]]:
                 row["why"] = "identical canonical body was seen before (entry expired or evicted)"
             elif not seen:
                 row["why"] = "first request seen (nothing to replay from)"
+            elif not any(_common_messages(x, body) for x in seen):
+                row["why"] = "first request of this conversation (nothing to replay from)"
             elif row["messages"] > max(
-                (len(x.get("messages") or []) for x in seen if _same_frame(x, body)), default=0
+                (
+                    len(x.get("messages") or [])
+                    for x in seen
+                    if _common_messages(x, body) and _same_frame(x, body)
+                ),
+                default=row["messages"],
             ):
-                # Longer than anything seen with this system/tools: a step no
-                # earlier run reached, so a live call is expected (agents also
-                # move cache markers between turns, so a prefix diff is noise).
+                # Longer than anything seen from the same start with the same
+                # system/tools: a step no earlier run reached, so a live call is
+                # expected (agents move cache markers between turns, so a
+                # prefix diff would be noise).
                 row["why"] = "new step: no earlier request this long (nothing to replay)"
             else:
                 n_msgs = len(body.get("messages") or [])
                 best = max(
                     seen,
                     key=lambda s: (
+                        _common_messages(s, body),  # same conversation first
                         _same_frame(s, body),
-                        _common_messages(s, body),
                         -abs(len(s.get("messages") or []) - n_msgs),  # same step of an earlier run
                     ),
                 )
-                d = _first_diff(best, body)
+                # System prompt / tools / model before messages: a changed tool
+                # description breaks every call and must be named as such.
+                frame = {k: v for k, v in best.items() if k != "messages"}
+                d = _first_diff(frame, {k: v for k, v in body.items() if k != "messages"})
+                if d is None:
+                    d = _first_diff(best, body)
                 if d is not None:
                     p, va, vb = d
                     xa, xb = _excerpt(va, vb)

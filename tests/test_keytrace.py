@@ -50,6 +50,29 @@ class TestKeyTrace(unittest.TestCase):
         text = keytrace.format_rows(rows)
         self.assertIn("1 replayed (HIT), 3 live (MISS)", text)
 
+    def test_names_tool_schema_change(self):
+        # Measured on Claude Code: the Bash tool schema flips between two
+        # server-side variants; the report must name the tool field, not
+        # point at another conversation.
+        def body(timeout, *msgs):
+            return json.dumps(
+                {
+                    "tools": [{"name": "Bash", "description": f"default {timeout} ms"}],
+                    "messages": list(msgs),
+                },
+                sort_keys=True,
+            ).encode()
+
+        task_a = {"role": "user", "content": "task A"}
+        task_b = {"role": "user", "content": "task B"}
+        _key_trace("claude-code", "a1", body(600000, task_a), False)
+        _key_trace("claude-code", "b1", body(1800000, task_b), False)
+        _key_trace("claude-code", "a2", body(1800000, task_a), False)
+        rows = keytrace.explain(self.dir)
+        self.assertIn("first request of this conversation", rows[1]["why"])
+        self.assertEqual(rows[2]["path"], ".tools[0].description")
+        self.assertIn("600000", rows[2]["earlier"])
+
     def test_identical_body_miss(self):
         _key_trace("claude-code", "h1", _body({"role": "user", "content": "x"}), False)
         _key_trace("claude-code", "h1", _body({"role": "user", "content": "x"}), False)
