@@ -636,7 +636,15 @@ def cached_read(
             context_tokens=context_tokens,
             client=client,
         )
-        return {"cached": True, "content": entry["content"], "path": path}
+        # lossless: decoded text re-encodes to exactly the raw byte size →
+        # an rb-mode serve of this entry is byte-identical to disk. Entries
+        # predating the newline="" read (CRLF-stripped) derive False.
+        return {
+            "cached": True,
+            "content": entry["content"],
+            "path": path,
+            "lossless": len(entry["content"].encode("utf-8")) == entry["size"],
+        }
 
     # ttl=0 for this path: serve-through — skip BOTH cache layers entirely.
     # (The disk-read section below honors never_cache by not persisting.)
@@ -696,7 +704,14 @@ def cached_read(
             context_tokens=context_tokens,
             client=client,
         )
-        return {"cached": True, "content": row["content"], "path": path}  # ── 2. SQLite hit ──
+        # lossless derivation mirrors the memory-hit path: row["size"] holds
+        # the raw on-disk byte size recorded at miss time.
+        return {
+            "cached": True,
+            "content": row["content"],
+            "path": path,  # ── 2. SQLite hit ──
+            "lossless": len(row["content"].encode("utf-8")) == row["size"],
+        }
     # Miss accounting only applies to cacheable paths. A ttl=0 (never_cache)
     # file is not cache traffic: it can never produce a hit, so counting its
     # reads as misses would permanently depress the hit rate (the Sep 2026
@@ -737,8 +752,18 @@ def cached_read(
             from toolrecall.shim import _original_open as _real_open
         except ImportError:
             _real_open = open
-        with _real_open(path, "r", encoding="utf-8", errors="ignore") as f:
+        # Newline-preserving text read: newline="" disables universal-newline
+        # translation, so "\r\n" survives into the cached string byte-for-byte
+        # (decoded as UTF-8 with errors="ignore"). A universal-newlines read
+        # here SILENTLY stripped \r — an rb-mode serve of that text returned
+        # byte-different content for CRLF files (caught by the 2026-09-15
+        # checksum sweep: raw acb24a12… vs shim 1e19d262…).
+        # Source of truth for the lossless flag: raw byte size. Decoded text
+        # re-encoded is byte-identical iff len == raw byte count (any dropped
+        # \r, replacement char, or BOM-as-space shrinks/changes the count).
+        with _real_open(path, "r", encoding="utf-8", errors="ignore", newline="") as f:
             content = f.read()
+        lossless = len(content.encode("utf-8")) == stat.st_size
     except Exception as e:
         return {"error": str(e)}
 
@@ -755,7 +780,13 @@ def cached_read(
 
     _file_cache.put(
         mem_key,
-        {"content": content, "mtime": stat.st_mtime, "size": stat.st_size, "cached_at": now_ts},
+        {
+            "content": content,
+            "mtime": stat.st_mtime,
+            "size": stat.st_size,
+            "cached_at": now_ts,
+            "lossless": lossless,
+        },
     )
     _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=_is_new_file)
 

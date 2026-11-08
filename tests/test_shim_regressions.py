@@ -29,9 +29,20 @@ import builtins
 
 
 def _force_hit(content="line\nline2\n"):
-    """Make _get_tr() return a stub cached_read that always returns a HIT."""
+    """Make _get_tr() return a stub cached_read that always returns a HIT.
+
+    lossless=True mirrors the daemon's file-cache response shape post
+    newline="" read (2026-09-15): rb serving requires it; without the flag
+    the shim must fall through (old-daemon failsafe).
+    """
     shim_mod._SKIP_PREFIXES = []
-    shim_mod._TR = {"read": lambda p, **kw: {"cached": True, "content": content}}
+    shim_mod._TR = {
+        "read": lambda p, **kw: {
+            "cached": True,
+            "content": content,
+            "lossless": True,
+        }
+    }
 
 
 class TestCacheHitIsARealFile(unittest.TestCase):
@@ -212,6 +223,19 @@ class TestBinaryModeServing(unittest.TestCase):
         _force_hit(content="café ✓\n")
         fh = shim_mod._shim_open("/some/notes.md", "rb")
         self.assertEqual(fh.read(), "café ✓\n".encode("utf-8"))
+        fh.close()
+
+    def test_rb_hit_without_lossless_flag_falls_through(self):
+        # Daemon responses without lossless=True (old daemon, non-file-cache
+        # source) must NEVER be served as bytes — failsafe direction:
+        # degraded benefit, never corruption.
+        real = os.path.join(self.tmpdir, "legacy.py")
+        with open(real, "w") as f:
+            f.write("print('legacy')\n")
+        shim_mod._SKIP_PREFIXES = []
+        shim_mod._TR = {"read": lambda p, **kw: {"cached": True, "content": "CACHED-TEXT"}}
+        fh = shim_mod._shim_open(real, "rb")
+        self.assertEqual(fh.read(), b"print('legacy')\n")
         fh.close()
 
     def test_rb_hit_with_text_kwargs_still_serves_bytes(self):

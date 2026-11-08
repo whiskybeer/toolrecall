@@ -405,8 +405,10 @@ def _open_cached_content(content, mode="r", *args, **kwargs):
         fd, tmp_path = tempfile.mkstemp(prefix=".toolrecall-shim-", suffix=".tmp")
         # Persist cached bytes with the same encoding the re-opened handle
         # will use, so the round-trip is lossless for any encoding.
+        # newline="" keeps \n and \r\n EXACTLY as stored — default text-mode
+        # write translation would corrupt CRLF content byte-exactness.
         enc = kwargs.get("encoding") or "utf-8"
-        with os.fdopen(fd, "w", encoding=enc) as f:
+        with os.fdopen(fd, "w", encoding=enc, newline="") as f:
             f.write(content)
         fd = None  # ownership moved into the with-block
         handle = _original_open(tmp_path, mode, *args, **kwargs)
@@ -534,7 +536,15 @@ def _shim_open(path, mode="r", *args, **kwargs):
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly
                 # and records stats exactly once.
-                if result and result.get("cached", False) and "content" in result:
+                if (
+                    result
+                    and result.get("cached", False)
+                    and "content" in result
+                    # rb serve must be byte-exact: lossless=False entries
+                    # (invalid-UTF-8 bytes, legacy CRLF-stripped text) are
+                    # NOT re-encodable — the caller gets the real file.
+                    and (mode_kind == "text" or result.get("lossless", False))
+                ):
                     if mode_kind == "binary":
                         serve_mode = "rb"
                         # encoding/errors/newline are invalid on a binary
