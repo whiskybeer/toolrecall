@@ -19,7 +19,7 @@ policy — all from a single background process.
 | **Context Tracker** | Tracks dirty/clean files, auto-hints agents which files to drop from context |
 | **Security gate** | Path allowlist, terminal policy, sensitive-file blocklist — framework-agnostic |
 | **LiteLLM proxy hook** | `async_pre_call_hook` dedup of repeated content blocks in gateway requests → `toolrecall/adapters/litellm.py`. opt-in, fails open, zero new deps. Experimental image-part dedup (data-URL screenshots and messages-style image blocks) behind `TOOLRECALL_DEDUP_MEDIA`, default off |
-| **Framework adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
+| **Framework adapters** | Drop-in wrappers for ADK, LangChain, LangGraph, Langfuse, herdr, Odysseus, LiteLLM, OpenEvolve |
 | **Storage backends** | sqlite (default), libsql, or libsql-sync with Turso Cloud |
 | **Replay mode** | Record agent sessions, replay deterministically in CI |
 
@@ -107,7 +107,7 @@ flowchart TB
 | **MCP Multiplexer** | Keeps persistent MCP server sessions — no cold start per tool call | `daemon.py` (class `MCPMultiplexer`) |
 | **Context Tracker** | Tracks dirty/clean files, auto-hints agents via MCP bridge | `context_tracker.py` |
 | **OS-level Shim** | Patches `builtins.open`, `subprocess.run/Popen` in every Python process | `shim.py`, `tr_shim.pth` |
-| **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus | `adapters/` |
+| **Framework Adapters** | Drop-in wrappers for ADK, LangChain, LangGraph, Langfuse, herdr, Odysseus | `adapters/` |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist | (embedded in `daemon.py` + config) |
 
 ### 3.1 The Problem
@@ -331,7 +331,7 @@ that every `toolrecall/*.py` path cited in `docs/` exists.
 
 | File | Purpose |
 |------|---------|
-| `toolrecall/adapters/` | Framework adapters (ADK, LangChain, LangGraph, LiteLLM, herdr, Odysseus, Warp, GEPA) |
+| `toolrecall/adapters/` | Framework adapters (ADK, LangChain, LangGraph, Langfuse, LiteLLM, herdr, Odysseus, Warp, GEPA) |
 
 **CLI, UI & support**
 
@@ -589,6 +589,7 @@ Drop-in adapters for popular agent frameworks. All communicate with the daemon o
 |---------|--------------|-------|
 | **Google ADK** | `@cached_tool` decorator for `@FunctionTool` | `pip install toolrecall`, then `@google_adk.cached_tool(ttl=300)` |
 | **LangChain / LangGraph** | `ToolRecallCache` (LLM cache) + `ToolRecallCallbackHandler` (tool cache) | `pip install toolrecall[langchain]` |
+| **Langfuse** | `@cached_tool` decorator; cache verdicts reported into Langfuse span metadata | `pip install toolrecall` (langfuse is the app's own dependency) |
 | **herdr** | `tr` binary + MCP bridge — every pane inherits the cache | Build `tr`, run `toolrecall mcp` |
 | **Odysseus** | `install_agent_cache()` + `install_mcp_cache()` | `pip install toolrecall`, then `odysseus.install_agent_cache()` |
 | **LiteLLM proxy** | `async_pre_call_hook` content dedup on gateway requests | Add `toolrecall.adapters.litellm.handler` to `litellm_settings: callbacks` in your proxy config |
@@ -788,7 +789,7 @@ Result: Full token cost. SSE relayed with accurate usage logging from final even
 | Must `from toolrecall import cached_read` | Use UDS from any language (curl, nc, Go, Rust) |
 | Python-only | Any language via UDS or HTTP bridge |
 
-### 6.3 Framework adapter users (ADK, LangChain, herdr, Odysseus)
+### 6.3 Framework adapter users (ADK, LangChain, LangGraph, Langfuse, herdr, Odysseus)
 | Today | Daemon Architecture |
 |-------|---------------------|
 | Framework-specific caching per tool | Shared cache across all frameworks |
@@ -1006,7 +1007,7 @@ See [Context Tracker](CONTEXT_TRACKER.md) for the full workflow.
 | `toolrecall/storage/` | Storage backend layer (sqlite, libsql, libsql-sync) |
 | `toolrecall/transport.py` | UDS transport client/server |
 | `toolrecall/daemon.py` | `SecurityGate` — injection scan (cognitive + AST), read-path/terminal/MCP policy checks |
-| `toolrecall/adapters/` | Framework adapters (ADK, LangChain, herdr, Odysseus) |
+| `toolrecall/adapters/` | Framework adapters (ADK, LangChain, LangGraph, Langfuse, herdr, Odysseus) |
 
 ### E. FAQ
 

@@ -13,6 +13,7 @@ connection, avoiding lock contention.
     antigravity   — @cached_tool decorator for Antigravity SDK tools
     langchain     — ToolRecallCache BaseCache subclass + auto-callback handler
     langgraph     — ToolRecallCheckpointSaver (BaseCheckpointSaver) + @cached_tool
+    langfuse      — @cached_tool decorator reporting cache verdicts into Langfuse traces
     herdr         — Integration guide for herdr terminal multiplexer
     odysseus      — Agent tool + MCP server cache for Odysseus AI workspace
     litellm       — Pre-call content dedup hook for LiteLLM proxy
@@ -32,6 +33,7 @@ from toolrecall.adapters import antigravity
 from toolrecall.adapters import google_adk
 from toolrecall.adapters import langchain
 from toolrecall.adapters import langgraph
+from toolrecall.adapters import langfuse
 from toolrecall.adapters import herdr
 from toolrecall.adapters import odysseus
 from toolrecall.adapters import litellm
@@ -43,6 +45,7 @@ __all__ = [
     "google_adk",
     "langchain",
     "langgraph",
+    "langfuse",
     "herdr",
     "odysseus",
     "litellm",

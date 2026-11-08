@@ -13,6 +13,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 | **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |
 | **Google Antigravity** | ✅ `@cached_tool` decorator + MCP bridge | ❌ N/A (no base-URL override — Google-hosted inference) | `pip install toolrecall` + `toolrecall setup` |
 | **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |
+| **Langfuse** | ✅ `@cached_tool` decorator (verdicts in span metadata) | — (tool layer; LLM calls stay with your provider) | `pip install toolrecall` (langfuse = app's own dep) |
 | **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |
 | **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |
 | **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |
@@ -211,6 +212,28 @@ Same contract as the ADK adapter: async-safe, namespaced under `langgraph` (no k
 Same pattern as the LangChain adapter: the module imports without `langgraph` installed; `get_saver()` raises a clear `ImportError` otherwise.
 
 [Full docs →](../../docs/langgraph-adapter.md)
+
+---
+
+## Langfuse — `@cached_tool` with verdicts in your traces
+
+Same decorator contract as ADK/LangGraph, plus verdict reporting: every cache
+hit/miss is written into the current Langfuse span's metadata
+(`metadata.toolrecall`), so the trace shows which tool calls were served
+deterministically and which were billed.
+
+```python
+from toolrecall.adapters.langfuse import cached_tool
+
+@cached_tool(ttl=300)
+def search_web(query: str) -> dict:
+    return external_api_call(query)
+```
+
+Works without langfuse installed (reporting silently skips); composes with
+`@langfuse.observe()` and dataset experiments. No pip extra required.
+
+[Full docs →](../../docs/langfuse-adapter.md)
 
 ---
 
