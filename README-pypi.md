@@ -74,12 +74,12 @@ If your agent uses MCP, register one server:
 ```toml
 # ~/.config/toolrecall/toolrecall.toml
 [mcp_multiplex]
-servers = ["time", "github", "fetch"]
+servers = ["time", "github", "sequential-thinking"]
 ```
 
 Now every MCP-capable agent shares one warm pool of servers. No more N×M cold Node processes.
 
-Features: lazy loading, idle timeout, failure isolation, auto-resolution. See [MCP Multiplexer](https://github.com/whiskybeer/toolrecall/blob/main/docs/MCP_MULTIPLEXER.md).
+Features: lazy loading, idle timeout, failure isolation, auto-resolution. Since 0.8.21, every MCP bridge response carries a deterministic RFC 8785 (JCS) request key, so identical MCP calls are cache-identical across sessions — key ordering, whitespace, and numeric spelling drift cannot split the cache. See [MCP Multiplexer](https://github.com/whiskybeer/toolrecall/blob/main/docs/MCP_MULTIPLEXER.md).
 
 ---
 
@@ -90,11 +90,11 @@ Features: lazy loading, idle timeout, failure isolation, auto-resolution. See [M
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
 | **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions. |
 | **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
-| **Replay Mode** | Record agent sessions, replay deterministically in CI |
+| **Replay Mode** | Record agent sessions, replay deterministically in CI — 0.8.21 adds a fork tree (`replay tree` / `fork` / `at`): concurrent branches replay the shared tool-call prefix and re-execute only divergent calls, the substrate for the GEPA adapter |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
 | **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session |
 | **File / Terminal Cache** | Reduce redundant reads within a turn; bounded context growth for stateless agents without built-in context management |
-| **Framework Adapters** | Drop-in wrappers for ADK, LangChain, herdr, Odysseus, LiteLLM |
+| **Framework Adapters** | Drop-in wrappers for ADK, LangChain, LangGraph, herdr, Odysseus, LiteLLM, GEPA, Warp |
 
 Full detail in [Architecture](https://github.com/whiskybeer/toolrecall/blob/main/docs/ARCHITECTURE.md).
 
@@ -356,7 +356,7 @@ Daemon auto-start fallback: systemd -> os.fork() -> DETACHED_PROCESS (Linux -> D
 | **Go Client (tr)** | `tr read file.py`, `tr term "hostname"` | Shell scripts, CI, any language |
 | **Python Shim** | `toolrecall shim --install` | Every Python process auto-caches open/subprocess |
 | **Python Client** | `from toolrecall.client import cached_read` | Direct embedding in Python code |
-| **HTTP Bridge** | `toolrecall serve` on :8569 | Any HTTP client (curl, Go, Rust...) |
+| **HTTP Bridge** | `toolrecall debug` on :8570 (`/read?path=` `/term?cmd=` `/stats` `/health`) | Minimal demo/testing endpoint; for production use the MCP bridge or `tr` |
 | **Forward Proxy** | Set `OPENAI_BASE_URL=http://localhost:8569/v1` | Cache API responses, zero tokens on hit |
 
 ### Extra storage backends
@@ -372,15 +372,18 @@ pip install toolrecall[libsql-sync]  # libSQL + Turso Cloud sync
 
 ```
 toolrecall setup          One-shot: config + systemd + daemon start  [required once]
+toolrecall daemon         Start daemon: cache + MCP bridge + forward proxy :8569
 toolrecall status         Cache status and stats                     [auto-starts]
 toolrecall stats          Detailed cache statistics (JSON)           [auto-starts]
 toolrecall trend          Daily hit-rate trend + worst miss classes  [no daemon]
 toolrecall trend --json   Machine-readable trend (observer/CI)       [no daemon]
+toolrecall top            Interactive TUI dashboard: stats, access log, trend, tracker
 toolrecall invalidate     Clear agent caches (api_cache: scope=api)  [auto-starts]
+toolrecall reset-stats    Reset counters (hits, misses, tokens) without clearing entries
 toolrecall mcp            Start MCP Bridge                           [auto-starts]
-toolrecall serve          Forward proxy (cache API responses)        [auto-starts]
-toolrecall serve --9000   Custom port forward proxy
-toolrecall replay         Record/replay agent sessions
+toolrecall serve          Forward proxy — daemon already owns :8569; standalone on another port:
+toolrecall serve --port 9090   Standalone forward proxy on :9090 (daemon must be stopped)
+toolrecall replay         Record/replay agent sessions; tree|fork|at for fork-tree branches
 toolrecall shim --install [--venv <path>|--all]  Install OS-level cache shim (.pth) — opt-in
 toolrecall shim --status [--venv <path>|--all]   Check shim presence + import probe
 toolrecall shim --uninstall [--venv <path>|--all] Remove .pth shim
@@ -391,6 +394,15 @@ toolrecall context        Inspect Context Tracker / Recall Tier        [auto-sta
 toolrecall index          Index knowledge DB (FTS5 search)  [not file cache pre-warm]
 toolrecall index-memory   Index agent memory stores
 toolrecall index-dir      Index a directory for FTS5 search [not file cache pre-warm]
+toolrecall index-compact  Rebuild FTS index + VACUUM (reclaim knowledge-DB bloat)
+toolrecall proxy          Attach/detach Hermes' LLM traffic to the forward proxy (billed-savings path)
+toolrecall healthcheck    Daemon/cache healthcheck — exit 0 healthy, 1 down/abnormal, 2 hard failure
+toolrecall logs [--tail N] [--level X]   Inspect the rotating log rail
+toolrecall update         Self-update from a pinned package index ([update].index_url)
+toolrecall nginx          Generate nginx reverse-proxy config (~/.toolrecall/nginx-toolrecall.conf)
+toolrecall debug          Minimal HTTP demo server on :8570 (/read /term /stats /health)
+toolrecall restart        Health-checked systemd restart (config check → restart → verify)
+toolrecall stop           Stop the daemon and revert agent proxy base-URL wiring
 ```
 
 > **Knowledge indexing ≠ cache warming:** `toolrecall index*` commands build an FTS5 search index for knowledge retrieval (`docs_search()`). They do NOT pre-warm the file/terminal/API response cache. The daemon's file cache warms naturally as the agent reads files — no separate command needed.
@@ -404,18 +416,33 @@ Full reference: [CLI.md](https://github.com/whiskybeer/toolrecall/blob/main/docs
 ```toml
 # ~/.config/toolrecall/toolrecall.toml
 [mcp]
-allowed_paths = ["/home/user/projects"]  # Default-deny!
+allowed_paths = ["~/projects"]  # Default-deny! Shipped default: ["~/projects", "~/.hermes/skills"]
 allow_terminal = false
 
 [cache]
-terminal_default_ttl = 60
+terminal_default_ttl = 300
 
 [mcp_multiplex]
 enabled = true
-servers = ["time", "sequential-thinking"]
+servers = ["time", "github", "sequential-thinking"]
 
 [recall]
 enabled = false   # opt-in Recall Tier (lossless-recoverable eviction)
+
+[tracker]
+# 0.8.21: checkpoint/dirty/clean state survives daemon restarts (default 6h, 0 = off)
+persist_ttl = 21600
+# ignore_read_prefixes = []   # paths never counted as agent context reads
+
+[security]
+# F1: lexical symlink rescue inside allowed dirs (realpath containment always enforced)
+allow_symlink_escapes = true
+
+[update]
+# F2: self-update pinned to ONE index (default official PyPI) — pip can't discover extras
+enabled = true
+check_interval_hours = 24
+# index_url = ""   # e.g. an internal mirror; > TOOLRECALL_UPDATE_INDEX_URL > PyPI
 
 [network]
 # A6: shared team daemon — OFF by default. Daemon host:
@@ -442,6 +469,7 @@ port = 8570
 
 [forward_proxy]
 # Starts on :8569 automatically with the daemon
+# dedup = true   # 0.8.21: strip duplicate file-content blocks pre-billing (−32.3% on SWE-bench Lite)
 ```
 
 `TOOLRECALL_*` env vars override TOML. Full reference: [Configuration Reference](https://github.com/whiskybeer/toolrecall/blob/main/docs/CONFIG_REFERENCE.md)
@@ -485,13 +513,20 @@ port = 8570
 - [Docker Deployment](https://github.com/whiskybeer/toolrecall/blob/main/docs/DOCKER.md) — containerized stack
 - [Troubleshooting](https://github.com/whiskybeer/toolrecall/blob/main/docs/TROUBLESHOOTING.md) — common fixes
 - [Changelog](https://github.com/whiskybeer/toolrecall/blob/main/CHANGELOG.md) — version history
+- [Cost Savings](https://github.com/whiskybeer/toolrecall/blob/main/docs/COST_SAVINGS.md) — why savings are model/provider-agnostic
+- [Resilience](https://github.com/whiskybeer/toolrecall/blob/main/docs/RESILIENCE.md) — coalescing, retry, circuit breaker (`toolrecall/resilience.py`)
+- [Tree Search](https://github.com/whiskybeer/toolrecall/blob/main/docs/TREE_SEARCH.md) — tree search over agent executions: cost model, phased contract, GEPA integration
 - [Go Client](https://github.com/whiskybeer/toolrecall/blob/main/go-client/README.md) — standalone `tr` binary for any language/shell
 - [Agent Configs](https://github.com/whiskybeer/toolrecall/blob/main/configs/README.md) — ready-to-use MCP configs for popular agents
 - **Framework Adapters:**
   - [Google ADK](https://github.com/whiskybeer/toolrecall/blob/main/docs/google-adk.md) — `@cached_tool` decorator + forward proxy
   - [LangChain / LangGraph](https://github.com/whiskybeer/toolrecall/blob/main/docs/langchain.md) — `ToolRecallCache` BaseCache + callback
+  - [LangGraph Checkpointing](https://github.com/whiskybeer/toolrecall/blob/main/docs/langgraph-adapter.md) — `BaseCheckpointSaver` + `@cached_tool` for nodes; fork/resume for tree-search agents
   - [herdr](https://github.com/whiskybeer/toolrecall/blob/main/docs/herdr.md) — `tr` binary + MCP bridge for any pane
   - [Odysseus](https://github.com/whiskybeer/toolrecall/blob/main/docs/odysseus.md) — `cached_tool` decorator + MCP server caching
+  - [LiteLLM Dedup Hook](https://github.com/whiskybeer/toolrecall/blob/main/bench/litellm_dedup/README.md) — gateway dedup callback (see benchmark entry above)
+  - [GEPA](https://github.com/whiskybeer/toolrecall/blob/main/docs/TREE_SEARCH.md) — prompt-optimizer `evaluate` adapter over the replay fork tree; billed A/B: `bench/results/GEPA_FORK_AB_RESULTS.md` (79% saving, 25/25 byte-exact HIT replays)
+  - Warp (`toolrecall.adapters.warp`) — routes Warp's custom inference endpoint through the forward proxy; canonicalization contract in [Canonicalization](https://github.com/whiskybeer/toolrecall/blob/main/docs/CANONICALIZATION.md)
 - [Hermes Transparent Cache](https://github.com/whiskybeer/toolrecall/blob/main/docs/HERMES_TRANSPARENT_CACHE.md) — auto-patching for Hermes
 - [Normalizer](https://github.com/whiskybeer/toolrecall/blob/main/docs/NORMALIZER.md) — cache key normalization, deterministic JSON
 - [Canonicalization](https://github.com/whiskybeer/toolrecall/blob/main/docs/CANONICALIZATION.md) — request-body canonicalization (warp profile): volatile-field stripping for cross-session replay, experiment status + known risks
