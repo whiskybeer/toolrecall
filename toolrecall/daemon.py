@@ -47,6 +47,7 @@ from toolrecall import mcp_catalog
 from toolrecall.keys import content_digest
 from toolrecall.cache import (
     _record as _cache_record,
+    record_tool_call,
     cached_read as _cache_read,
     cached_terminal as _cache_terminal,
     cached_skill as _cache_skill,
@@ -1371,6 +1372,26 @@ def _fetch_revalidate_once(url: str, etag: str) -> dict | None:
         return None
 
 
+def _count_tool_call(tool, handler, request):
+    """Run an agent-facing handler and count the call — success or failure.
+
+    Counting failures too is the point: a tool that is called and always errors
+    must not look identical to a tool that nobody calls.
+
+    The counter is best-effort by construction (record_tool_call logs and never
+    raises), so instrumenting a handler can never turn a working tool call into
+    a failed one.
+    """
+    try:
+        result = handler(request)
+    except Exception:
+        record_tool_call(tool, ok=False)
+        raise
+    ok = not (isinstance(result, dict) and result.get("error"))
+    record_tool_call(tool, ok=ok)
+    return result
+
+
 def _warm_gateway_catalog(mux, logger) -> None:
     """Thread target for the gateway warm-up: log the outcome, never raise.
 
@@ -2081,11 +2102,11 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             elif cmd == "cached_patch":
                 return self._handle_patch(request)
             elif cmd == "docs_search":
-                return self._handle_docs_search(request)
+                return _count_tool_call(cmd, self._handle_docs_search, request)
             elif cmd == "docs_get_page":
-                return self._handle_docs_get_page(request)
+                return _count_tool_call(cmd, self._handle_docs_get_page, request)
             elif cmd == "cache_status":
-                return self._handle_status(request)
+                return _count_tool_call(cmd, self._handle_status, request)
             elif cmd == "cache_invalidate":
                 return self._handle_invalidate(request)
             elif cmd == "dedup_tokens":
@@ -2093,9 +2114,9 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             elif cmd == "cache_refresh_file":
                 return self._handle_refresh_file(request)
             elif cmd == "mcp_call":
-                return self._handle_mcp_call(request)
+                return _count_tool_call(cmd, self._handle_mcp_call, request)
             elif cmd == "mcp_list_servers":
-                return self._handle_mcp_list_servers(request)
+                return _count_tool_call(cmd, self._handle_mcp_list_servers, request)
             elif cmd == "mcp_tools_catalog":
                 return self._handle_mcp_tools_catalog(request)
             elif cmd == "cached_mcp_check":

@@ -44,6 +44,69 @@ from toolrecall._db import _hash
 
 log = logging.getLogger("toolrecall.cache")
 
+# Agent-facing tools whose calls are counted. Deliberately excludes the
+# file/shim commands: their volume is a different question, and mixing them in
+# would hide the answer to "does anyone use the knowledge base / MCP surface".
+TOOL_USAGE_TRACKED = frozenset(
+    ("docs_search", "docs_get_page", "mcp_call", "mcp_list_servers", "cache_status")
+)
+
+
+def record_tool_call(tool: str, ok: bool = True) -> None:
+    """Count one agent-facing tool call (and its outcome).
+
+    Why the daemon and not the bridge: the daemon sees every call exactly once,
+    with no second DB writer and no extra round trip per tool call.
+
+    Failures are counted as failures rather than skipped: a tool that is called
+    and always errors must not look the same as a tool nobody calls.
+
+    Never raises — but never silent either. A counter write that cannot land is
+    logged, because "the counter is broken" and "nobody uses the tool" must not
+    look identical; that confusion is exactly what let this surface sit
+    unmeasured (2026-09-30: docs_search had been advertised for months and had
+    never been called once).
+    """
+    if tool not in TOOL_USAGE_TRACKED:
+        return
+    try:
+        now = time.time()
+        with _db() as conn:
+            conn.execute(
+                "INSERT INTO tool_usage (tool, calls, errors, first_at, last_at)"
+                " VALUES (?, 1, ?, ?, ?)"
+                " ON CONFLICT(tool) DO UPDATE SET"
+                "   calls  = calls + 1,"
+                "   errors = errors + excluded.errors,"
+                "   last_at = excluded.last_at",
+                (tool, 0 if ok else 1, now, now),
+            )
+    except Exception as e:
+        log.warning("tool usage counter write failed for %s: %s", tool, e)
+
+
+def tool_usage_counts() -> list[dict]:
+    """Per-tool call counts, most-called first; empty list when unreadable."""
+    try:
+        with _db() as conn:
+            rows = conn.execute(
+                "SELECT tool, calls, errors, first_at, last_at FROM tool_usage"
+                " ORDER BY calls DESC, tool"
+            ).fetchall()
+    except Exception as e:
+        log.warning("tool usage counter read failed: %s", e)
+        return []
+    return [
+        {
+            "tool": r[0],
+            "calls": int(r[1] or 0),
+            "errors": int(r[2] or 0),
+            "first_at": r[3],
+            "last_at": r[4],
+        }
+        for r in rows
+    ]
+
 
 # Re-export for test compatibility: toolrecall.cache._init() calls _db_init with SCHEMA
 def _init():
@@ -416,6 +479,17 @@ CREATE TABLE IF NOT EXISTS recall_cache (
     expires_at     REAL
 );
 CREATE INDEX IF NOT EXISTS idx_recall_type ON recall_cache(content_type);
+-- Agent-facing tool usage. Filled by the daemon's request dispatch for the
+-- tools agents actually call; the file/shim commands are deliberately NOT
+-- counted (their volume — every read in every agent process — is a different
+-- question and would bury this one: "is the knowledge/MCP surface used at all".
+CREATE TABLE IF NOT EXISTS tool_usage (
+    tool     TEXT PRIMARY KEY,
+    calls    INTEGER NOT NULL DEFAULT 0,
+    errors   INTEGER NOT NULL DEFAULT 0,
+    first_at REAL,
+    last_at  REAL
+);
 """
 
 

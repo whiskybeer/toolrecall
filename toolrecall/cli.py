@@ -12,6 +12,7 @@ Usage:
     toolrecall index           # Index knowledge base
     toolrecall index-memory    # Index agent memory stores
     toolrecall index-dir       # Index a directory into knowledge DB
+    toolrecall tool-usage      # Which ToolRecall tools agents actually call
     toolrecall config-set      # Set a config value (section.key = value)
     toolrecall serve           # Start forward proxy (cache API responses)
     toolrecall debug           # Start debug/demo server (test cached_read via curl)
@@ -526,6 +527,36 @@ def cmd_index_compact():
         f"Done. {result['before'] / 1e6:.1f} MB → {result['after'] / 1e6:.1f} MB "
         f"(reclaimed {result['reclaimed'] / 1e6:.1f} MB)."
     )
+
+
+def cmd_tool_usage():
+    """Which agent-facing ToolRecall tools are actually called, and how often.
+
+    Exists because ToolRecall could not previously answer that about itself:
+    `docs_search` and `docs_get_page` had been advertised for months and had
+    never been called once (measured 2026-09-30 via the Hermes agent log and the
+    session transcripts) while nothing in the product showed it.
+    """
+    import time as _time
+
+    from toolrecall.cache import TOOL_USAGE_TRACKED, tool_usage_counts
+
+    rows = tool_usage_counts()
+    if not rows:
+        print("No agent-facing tool calls recorded yet.")
+        print()
+        print("  counted:     " + ", ".join(sorted(TOOL_USAGE_TRACKED)))
+        print("  not counted: file/shim commands (different question, far higher volume)")
+        print()
+        print("  An empty table means none of the counted tools ran since the counter")
+        print("  exists — it is NOT proof that agents do not use ToolRecall.")
+        return
+    print(f"{'tool':22} {'calls':>8} {'errors':>7}  last call")
+    for row in rows:
+        last = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(row["last_at"] or 0))
+        print(f"{row['tool']:22} {row['calls']:>8} {row['errors']:>7}  {last}")
+    print()
+    print("  Counted tools only: knowledge base, MCP surface, cache_status.")
 
 
 def cmd_index_memory():
@@ -2911,6 +2942,7 @@ def main():
         "index-compact": cmd_index_compact,
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,
+        "tool-usage": cmd_tool_usage,
         "config-set": cmd_config_set,
         "serve": cmd_serve,
         "debug": cmd_debug,

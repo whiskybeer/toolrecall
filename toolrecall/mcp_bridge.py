@@ -121,20 +121,27 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "docs_search",
-        "description": "Full-text search indexed documents (FTS5+BM25). "
-        "Hide from tools/list when knowledge DB is empty.",
+        "description": "Search the indexed knowledge base by full text (skills, "
+        "memories, project docs, indexed external documentation). Use it before "
+        "answering questions about past decisions, earlier work, or documentation "
+        "that was indexed here — instead of grepping the working tree, which only "
+        "sees files that happen to be checked out.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search terms"},
-                "source": {"type": "string", "description": "Optional namespace filter"},
+                "source": {
+                    "type": "string",
+                    "description": "Optional namespace filter (e.g. 'hermes-docs')",
+                },
             },
             "required": ["query"],
         },
     },
     {
         "name": "docs_get_page",
-        "description": "Retrieve an indexed document page by source and path.",
+        "description": "Read one page from the indexed knowledge base by source "
+        "and path — take the exact source/path from a docs_search result.",
         "inputSchema": {
             "type": "object",
             "properties": {
