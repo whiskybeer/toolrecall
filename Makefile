@@ -9,7 +9,9 @@
 #   - Test, lint, format, and type-check commands match CI gate expectations
 #   - Dev-server target orchestrates daemon + MCP bridge + proxy locally
 #
-.ONESHELL:
+.ONESHELL:            # each recipe = ONE shell; exit status = LAST command's.
+                      # Any recipe where an early command must abort the recipe
+                      # (gates!) starts with `set -e`. See `check` below.
 SHELL := /bin/bash
 
 # ─── Detect uv availability ───────────────────────────────────
@@ -148,6 +150,7 @@ format:
 # lint/format still cover them for dev hygiene.
 .PHONY: check
 check:
+	set -e   # .ONESHELL: without this, ruff check failures are eaten by format --check
 	$(PY_RUN) ruff check toolrecall/ tests/
 	$(PY_RUN) ruff format --check toolrecall/ tests/
 
@@ -316,12 +319,14 @@ dev-stop:
 
 .PHONY: build
 build:
+	set -e
 	$(PY_RUN) -m build
 	@echo "✓ Built:"
 	@ls -lh dist/
 
 .PHONY: publish-prep
 publish-prep:
+	set -e
 	@echo "=== Pre-publish Checklist ==="
 	$(PY_RUN) -m build
 	@echo ""

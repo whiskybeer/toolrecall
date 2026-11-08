@@ -61,7 +61,6 @@ from toolrecall.cache import (
     invalidate_all,
     invalidate_api_cache,
     get_stats,
-    _record as _cache_record,
 )
 from toolrecall.transport import (
     TransportClient,
