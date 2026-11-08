@@ -175,6 +175,15 @@ class Config:
     def __init__(self, path: str | None = None):
         self._data = self._load(path)
         self._expand_paths()
+        # Wire [norm] into the normalizer's module defaults (B1): the keys
+        # were plumbed (ENV_MAP, schema, norm_* properties) but no consumer
+        # ever read the properties, so env/TOML overrides never changed how
+        # cache keys were normalized. Config is loaded once per process, so
+        # a single call here covers daemon, CLI, adapters and replay. Lazy
+        # import: config.py must not import its consumers at module level.
+        from toolrecall.normalizer import apply_config
+
+        apply_config(self)
 
     def _load(self, path: str | None = None) -> dict:
         pkg_default = Path(__file__).parent / "config.toml"
@@ -342,6 +351,35 @@ class Config:
     _FREEFORM_KEYS: frozenset[str] = frozenset(
         {"terminal_ttls", "clients", "servers_config", "memory"}
     )
+    # Per-ENTRY field schemas for freeform sub-tables whose entries are
+    # consumed by code (review 2026-09): the parent section's key list is
+    # the WRONG schema for entry fields — [network.clients."id"] token/
+    # allowed_paths/private_writes and [mcp_multiplex.servers_config."srv"]
+    # command/args are read verbatim by the daemon/multiplexer yet were
+    # false-positived as "unknown key (key ignored)" against the parent's
+    # keys. Keyed "<section>.<freeform>". Freeform tables absent here
+    # (terminal_ttls: scalar values; sources.memory: user-defined store
+    # names, schemaless today) get no entry-level validation.
+    _FREEFORM_ENTRY_KEYS: dict[str, frozenset[str]] = {
+        "network.clients": frozenset(
+            {
+                "token",
+                "allowed_paths",
+                "allow_terminal",
+                "allowed_terminal_commands",
+                "private_writes",
+            }
+        ),
+        "mcp.clients": frozenset(
+            {
+                "emit_context_hints",
+                "allowed_paths",
+                "allow_terminal",
+                "allowed_terminal_commands",
+            }
+        ),
+        "mcp_multiplex.servers_config": frozenset({"command", "args", "env", "ttl"}),
+    }
 
     def _warn_unknown_keys(self, known: dict, user: dict, source: str) -> None:
         """Warn when a user config defines sections/keys the schema doesn't know.
@@ -366,29 +404,24 @@ class Config:
                 continue
             for key, key_val in sec_val.items():
                 if key in valid_keys or key in self._FREEFORM_KEYS:
-                    # Freeform sub-table: recurse one level into its
-                    # user-defined keys so typos INSIDE are not our business,
-                    # but a misnamed sub-table (e.g. [mcp.client]) still is.
+                    # Freeform sub-table: validate its ENTRIES' fields against
+                    # the entry schema (NOT the parent section's key list —
+                    # e.g. [network.clients."id"] token/allowed_paths are read
+                    # verbatim by the daemon but are not [network] keys), so
+                    # a typo'd entry field still fails loudly instead of
+                    # silently falling back to restrictive defaults.
                     if key in self._FREEFORM_KEYS and isinstance(key_val, dict) and key_val:
-                        first = next(iter(key_val))
-                        if (
-                            isinstance(key_val[first], dict)
-                            # Only recurse when the freeform sub-table is a
-                            # KNOWN key of this section (e.g. [mcp.clients],
-                            # [mcp_multiplex.servers_config]). A freeform
-                            # table that IS the section's sub-table namespace
-                            # (e.g. [network.clients]) has user-defined
-                            # sub-keys validated against the section schema,
-                            # not against the parent's key list — recursing
-                            # there produces false "typo" warnings.
-                            and key in valid_keys
-                        ):
-                            for sub in key_val[first]:
-                                if sub not in valid_keys:
-                                    warnings.warn(
-                                        f"ToolRecall: unknown key [{section}.{key}.*] {sub} "
-                                        f"in {source} — typo? (key ignored)"
-                                    )
+                        entry_keys = self._FREEFORM_ENTRY_KEYS.get(f"{section}.{key}")
+                        if entry_keys is not None:
+                            for entry in key_val.values():
+                                if not isinstance(entry, dict):
+                                    continue
+                                for sub in entry:
+                                    if sub not in entry_keys:
+                                        warnings.warn(
+                                            f"ToolRecall: unknown key [{section}.{key}.*] {sub} "
+                                            f"in {source} — typo? (field ignored)"
+                                        )
                     continue
                 warnings.warn(
                     f"ToolRecall: unknown config key [{section}] {key} in {source} — "

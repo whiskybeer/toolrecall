@@ -16,7 +16,10 @@ Usage:
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from toolrecall.config import Config
 
 
 # Keys that are non-semantic noise — stripping them broadens cache hits
@@ -56,6 +59,23 @@ def configure(*, sort_lists: bool | None = None, strip_strings: bool | None = No
         _SORT_LISTS = sort_lists
     if strip_strings is not None:
         _STRIP_STRINGS = strip_strings
+
+
+def apply_config(cfg: "Config") -> None:
+    """Push [norm] config values into the module defaults.
+
+    Called from ``Config.__init__`` so every process that loads a
+    ToolRecall config (daemon, CLI, adapters, replay, cache module init)
+    honors ``[norm].sort_lists`` / ``[norm].strip_strings``. Without this
+    hook those keys were plumbed through ENV_MAP, the known-keys schema
+    and the ``norm_*`` properties, but ``normalize_tool_args()`` always
+    ran on the hard-coded module defaults above.
+
+    Per-call overrides (``normalize_json(..., sort_lists=...)``) still win
+    over configured module defaults; a direct ``configure()`` call after
+    config load overrides again.
+    """
+    configure(sort_lists=cfg.norm_sort_lists, strip_strings=cfg.norm_strip_strings)
 
 
 def normalize_json(
