@@ -49,6 +49,23 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **LangChain tool cache keys by input and actually serves hits.**
+  `ToolRecallCallbackHandler.on_tool_end` stored results under
+  `{"input": <tool output>}`, and nothing ever looked a tool result up before
+  the tool ran (a LangChain callback cannot skip execution anyway). So the
+  documented "same tool + same args → cached result" never saved a single
+  tool call. New `cached_tool(tool, ttl=None)` in
+  `toolrecall/adapters/langchain.py` returns a wrapped copy of a `BaseTool`
+  whose `_run`/`_arun` checks the cache keyed by tool name + parsed input
+  (`{"input": s}` or `{"kwargs": {...}}`; injected `run_manager`/`RunnableConfig`
+  args excluded) and stores successful JSON-serializable results. Input
+  validation, callbacks and `ToolMessage` formatting still run on a hit;
+  daemon down or any cache error runs the tool live. The callback handler is
+  now documented as store-only and records string results under the same
+  input key, so `cached_tool` can serve them. Docs (`docs/langchain.md`,
+  `toolrecall/adapters/README.md`, `docs/ARCHITECTURE.md`, `README.md`, `README-pypi.md`)
+  updated; they also no longer point at a `toolrecall[langchain]` extra that
+  does not exist. Tests: `tests/test_langchain_tool_cache.py` (28).
 - **Forward proxy: streaming responses arrived compressed and undecodable.**
   The streaming passthrough forwarded the client's `Accept-Encoding` but drops
   `Content-Encoding` on relay, so a gzip stream reached the client as raw

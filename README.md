@@ -551,7 +551,7 @@ port = 8570
 - [Agent Configs](configs/README.md) — ready-to-use MCP configs for popular agents
 - **Framework Adapters:**
   - [Google ADK](docs/google-adk.md) — `@cached_tool` decorator + forward proxy
-  - [LangChain / LangGraph](docs/langchain.md) — `ToolRecallCache` BaseCache + callback
+  - [LangChain / LangGraph](docs/langchain.md) — `ToolRecallCache` BaseCache + `cached_tool` tool wrapper
   - [LangGraph Checkpointing](docs/langgraph-adapter.md) — `BaseCheckpointSaver` + `@cached_tool` for nodes; fork/resume for tree-search agents
   - [herdr](docs/herdr.md) — `tr` binary + MCP bridge for any pane
   - [Odysseus](docs/odysseus.md) — `cached_tool` decorator + MCP server caching

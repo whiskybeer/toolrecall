@@ -588,7 +588,7 @@ Drop-in adapters for popular agent frameworks. All communicate with the daemon o
 | Adapter | What it wraps | Setup |
 |---------|--------------|-------|
 | **Google ADK** | `@cached_tool` decorator for `@FunctionTool` | `pip install toolrecall`, then `@google_adk.cached_tool(ttl=300)` |
-| **LangChain / LangGraph** | `ToolRecallCache` (LLM cache) + `ToolRecallCallbackHandler` (tool cache) | `pip install toolrecall[langchain]` |
+| **LangChain / LangGraph** | `ToolRecallCache` (LLM cache) + `cached_tool` (tool cache) | `pip install langchain-core` |
 | **Langfuse** | `@cached_tool` decorator; cache verdicts reported into Langfuse span metadata | `pip install toolrecall` (langfuse is the app's own dependency) |
 | **herdr** | `tr` binary + MCP bridge — every pane inherits the cache | Build `tr`, run `toolrecall mcp` |
 | **Odysseus** | `install_agent_cache()` + `install_mcp_cache()` | `pip install toolrecall`, then `odysseus.install_agent_cache()` |

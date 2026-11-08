@@ -84,6 +84,7 @@ Note: tests using the `capsys` fixture cannot run under `-p no:capture`
 | `test_file_cache.py` | 6 | Cache | file cache hit/miss, mtime invalidation, OOM protection |
 | `test_healthcheck.py` | 11 | Daemon | healthcheck output logic |
 | `test_integration.py` | 13 | E2E | index → FTS5 → get_page pipeline |
+| `test_langchain_tool_cache.py` | 28 | Adapters | LangChain `cached_tool` input-keyed hits, store-only callback handler |
 | `test_libsql_local.py` | 24 | Storage | libSQL embedded backend |
 | `test_libsql_sync.py` | 11 | Storage | Turso sync opt-in |
 | `test_mcp_bridge.py` | 40 | MCP | MCP JSON-RPC protocol, security gate, tool definitions |

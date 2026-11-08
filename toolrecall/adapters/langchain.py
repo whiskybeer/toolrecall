@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: MIT
 # Source: https://github.com/whiskybeer/toolrecall
 """
-LangChain Adapter — ToolRecallCache BaseCache subclass + auto callback handler.
+LangChain Adapter — ToolRecallCache BaseCache subclass + cached_tool wrapper.
 
-LangChain already has a BaseCache abstraction for LLM response caching, and
-a callback system for intercepting tool execution results. This adapter
-implements ToolRecallCache as a BaseCache subclass for LLM caching, plus
-a ToolRecallCallbackHandler that intercepts tool execution results.
+LangChain already has a BaseCache abstraction for LLM response caching.
+This adapter implements ToolRecallCache as a BaseCache subclass for LLM
+caching, plus cached_tool(), which wraps a LangChain BaseTool so repeat
+calls with the same input are served from ToolRecall's cache.
 
 Usage (LLM cache):
     from langchain.globals import set_llm_cache
@@ -20,14 +20,24 @@ Usage (LLM cache):
     # Cache miss: calls the LLM, stores the result.
 
 Usage (tool cache):
-    from langchain.callbacks.base import BaseCallbackManager
-    from toolrecall.adapters.langchain import ToolRecallCallbackHandler
+    from langchain_core.tools import tool
+    from toolrecall.adapters.langchain import cached_tool
 
-    callback = ToolRecallCallbackHandler()
-    manager = BaseCallbackManager.add_handler(callback)
+    @tool
+    def search(query: str) -> str:
+        '''Search the docs.'''
+        ...
 
-    # Tool execution results are cached under their tool name + args hash.
-    # Same tool + same args -> cached result from ToolRecall's MCP cache.
+    search = cached_tool(search, ttl=300)
+
+    # Same tool + same input -> cached result, the tool body does not run.
+    # Input validation, callbacks and ToolMessage formatting still happen
+    # as usual; only the tool's own _run/_arun is skipped on a hit.
+
+    A LangChain callback handler cannot skip tool execution, so
+    ToolRecallCallbackHandler is store-only: it records results keyed by
+    tool name + input (the same key cached_tool reads), but it never serves
+    a hit by itself. Use cached_tool to actually save tool calls.
 
 Architecture:
     Both use toolrecall.cache functions (cached_mcp_check/store) through
@@ -38,14 +48,14 @@ Architecture:
     so they don't collide with other frameworks.
 
 Note:
-    langchain_core is an optional dependency. Install with:
-        pip install toolrecall[langchain]
-    or:
+    langchain_core is an optional dependency. Install it with:
         pip install langchain langchain-core
-    Import the adapter only when LangChain is installed - the module
-    will raise ImportError otherwise.
+    The module imports without LangChain; _ensure_base() and cached_tool()
+    raise ImportError when langchain_core is missing.
 """
 
+import contextvars
+import functools
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Optional
@@ -163,24 +173,214 @@ class ToolRecallCache:
         logger.info("Cache CLEAR langchain - all entries invalidated")
 
 
-# ---- Tool Cache (Callback Handler) -------------------------
+# ---- Tool Cache (cached_tool wrapper) ----------------------
+# Keys are derived from the tool INPUT (never its output) so the same tool +
+# same input addresses the same row. String input -> {"input": s}; dict
+# input -> {"kwargs": {...}} (key order canonicalized by cached_mcp_check's
+# sort_keys). Values are stored JSON-encoded. Everything here is
+# best-effort: a cache failure falls through to live execution.
+
+# Callback plumbing BaseTool injects into _run - never part of a key. The
+# RunnableConfig parameter is found per tool (its name is not fixed, and a
+# real tool argument may be called "config").
+_INJECTED_KWARGS = frozenset({"run_manager", "callbacks"})
+
+
+def _injected_names(fn: Any) -> frozenset:
+    """Names BaseTool injects into ``fn`` (run_manager, callbacks, RunnableConfig)."""
+    try:
+        from langchain_core.tools.base import _get_runnable_config_param
+
+        config_param = _get_runnable_config_param(fn)
+    except Exception:
+        config_param = None
+    return _INJECTED_KWARGS | ({config_param} if config_param else frozenset())
+
+
+# Set while a cached _arun runs, so BaseTool's default _arun -> _run
+# delegation doesn't check/store the same call a second time.
+_IN_CACHED_CALL: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "toolrecall_langchain_in_cached_call", default=False
+)
+
+
+def _tool_arguments(args: tuple, kwargs: dict) -> Optional[dict]:
+    """Canonical cache arguments for a tool input, or None if uncacheable.
+
+    ``args``/``kwargs`` are what BaseTool passes to ``_run`` after input
+    parsing, with injected plumbing already removed.
+    """
+    if len(args) == 1 and not kwargs and isinstance(args[0], str):
+        arguments: dict = {"input": args[0]}
+    elif args:
+        arguments = {"args": list(args), "kwargs": kwargs}
+    else:
+        arguments = {"kwargs": kwargs}
+    try:
+        json.dumps(arguments, sort_keys=True)
+    except (TypeError, ValueError):
+        return None  # non-JSON input: no deterministic key -> run live
+    return arguments
+
+
+def _tool_lookup(name: str, arguments: dict, ttl: Optional[int]) -> tuple[bool, Any]:
+    """Return (hit, value). Any cache error is a miss."""
+    try:
+        result = cached_mcp_check(ADAPTER_SERVER, name, arguments, ttl=ttl)
+        if not result.get("cached"):
+            return False, None
+        return True, json.loads(result["data"])
+    except Exception as e:  # cache must never break the tool
+        logger.warning("Tool cache lookup failed for %s: %s", name, e)
+        return False, None
+
+
+def _tool_store(name: str, arguments: dict, value: Any, ttl: Optional[int]) -> None:
+    """Store a successful tool result. Best-effort, never raises."""
+    if ttl is not None and ttl <= 0:
+        return  # ttl=0 means bypass: don't write either
+    try:
+        serialized = json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError) as e:
+        logger.debug("Tool result for %s not JSON-serializable, not cached: %s", name, e)
+        return
+    try:
+        check_result = cached_mcp_check(ADAPTER_SERVER, name, arguments, ttl=ttl)
+        cached_mcp_store(
+            check_result.get("key", ""),
+            ADAPTER_SERVER,
+            name,
+            arguments,
+            serialized,
+            ttl=ttl,
+        )
+        logger.info("Cache STORE langchain/tool:%s - %d chars", name, len(serialized))
+    except Exception as e:  # cache must never break the tool
+        logger.warning("Failed to cache tool result for %s: %s", name, e)
+
+
+def cached_tool(tool: Any, ttl: Optional[int] = None) -> Any:
+    """Return a copy of a LangChain ``BaseTool`` that serves repeat calls from cache.
+
+    The cache is keyed by tool name + parsed tool input. On a hit the tool's
+    ``_run``/``_arun`` is skipped and the cached value is returned; input
+    validation, callbacks (on_tool_start/on_tool_end) and ToolMessage
+    formatting still run as usual. On a miss the tool runs and a successful,
+    JSON-serializable result is stored. Exceptions are never cached.
+
+    Results round-trip through JSON (tuples become lists, except the
+    ``(content, artifact)`` pair of ``response_format="content_and_artifact"``
+    tools, which is restored). Daemon down or any cache error -> the tool
+    runs live, exactly as unwrapped.
+
+    Args:
+        tool: A ``langchain_core.tools.BaseTool`` instance (e.g. from ``@tool``).
+        ttl: Cache TTL in seconds. None = daemon default, 0 = bypass.
+
+    Returns:
+        A wrapped copy of ``tool``; the original instance is not modified.
+    """
+    try:
+        from langchain_core.tools import BaseTool
+    except ImportError as e:
+        raise ImportError(
+            "langchain_core is required for cached_tool. "
+            "Install it with: pip install langchain-core"
+        ) from e
+
+    if not isinstance(tool, BaseTool):
+        raise TypeError(f"cached_tool expects a LangChain BaseTool, got {type(tool).__name__}")
+
+    wrapped = tool.model_copy()
+    name = wrapped.name
+    restore_tuple = getattr(wrapped, "response_format", "content") == "content_and_artifact"
+    filter_injected = getattr(wrapped, "_filter_injected_args", None)
+
+    def _key(args: tuple, kwargs: dict, injected: frozenset) -> Optional[dict]:
+        if not _tr_client.daemon_running():
+            return None
+        clean = {k: v for k, v in kwargs.items() if k not in injected}
+        if callable(filter_injected):
+            try:
+                clean = filter_injected(clean)  # drops InjectedToolArg params
+            except Exception:
+                pass
+        return _tool_arguments(args, clean)
+
+    def _decode(value: Any) -> Any:
+        if restore_tuple and isinstance(value, list) and len(value) == 2:
+            return tuple(value)
+        return value
+
+    orig_run = wrapped._run
+    run_injected = _injected_names(orig_run)
+
+    # functools.wraps keeps the original signature visible, so BaseTool
+    # still injects run_manager / config exactly as for the unwrapped tool.
+    @functools.wraps(orig_run)
+    def _run(*args: Any, **kwargs: Any) -> Any:
+        if _IN_CACHED_CALL.get():
+            return orig_run(*args, **kwargs)
+        arguments = _key(args, kwargs, run_injected)
+        if arguments is None:
+            return orig_run(*args, **kwargs)
+        hit, value = _tool_lookup(name, arguments, ttl)
+        if hit:
+            logger.info("Cache HIT   langchain/tool:%s", name)
+            return _decode(value)
+        value = orig_run(*args, **kwargs)
+        _tool_store(name, arguments, value, ttl)
+        return value
+
+    object.__setattr__(wrapped, "_run", _run)
+
+    # Only wrap _arun when the class overrides it; BaseTool's default _arun
+    # delegates to self._run, which is already wrapped above.
+    if type(wrapped)._arun is not BaseTool._arun:
+        orig_arun = wrapped._arun
+        arun_injected = _injected_names(orig_arun)
+
+        @functools.wraps(orig_arun)
+        async def _arun(*args: Any, **kwargs: Any) -> Any:
+            arguments = _key(args, kwargs, arun_injected)
+            if arguments is None:
+                return await orig_arun(*args, **kwargs)
+            hit, value = _tool_lookup(name, arguments, ttl)
+            if hit:
+                logger.info("Cache HIT   langchain/tool:%s", name)
+                return _decode(value)
+            token = _IN_CACHED_CALL.set(True)
+            try:
+                value = await orig_arun(*args, **kwargs)
+            finally:
+                _IN_CACHED_CALL.reset(token)
+            _tool_store(name, arguments, value, ttl)
+            return value
+
+        object.__setattr__(wrapped, "_arun", _arun)
+
+    return wrapped
+
+
+# ---- Tool result recorder (Callback Handler, store-only) ---
 
 
 class ToolRecallCallbackHandler:
-    """LangChain callback handler that caches tool execution results.
+    """LangChain callback handler that records tool results (store-only).
 
-    Intercepts tool start/finish events and stores the result keyed by
-    tool name + arguments. Repeat calls with identical args hit the local
-    cache instead of re-executing the tool.
-
-    This is a lightweight handler - it does NOT modify the tool execution
-    pipeline itself. For that, combine with ToolRecallCache or the MCP
-    multiplexer which provides native-named tools with transparent caching.
+    A callback handler cannot skip tool execution, so this handler never
+    saves a tool call by itself. It stores each successful string result
+    keyed by tool name + tool INPUT (captured in on_tool_start per run_id),
+    using the same key as cached_tool() - so a later cached_tool-wrapped
+    call with the same input can be served from what was recorded here.
+    Non-string outputs (e.g. ToolMessage when called with a tool_call_id)
+    are not recorded. Use cached_tool() to actually serve cache hits.
     """
 
     def __init__(self, ttl: Optional[int] = None):
         self._ttl = ttl
         self._tool_errors: set[str] = set()
+        self._pending: dict[Any, tuple[str, dict]] = {}
 
     def on_tool_start(
         self,
@@ -188,40 +388,35 @@ class ToolRecallCallbackHandler:
         input_str: str,
         **kwargs: Any,
     ) -> None:
-        """Called before a tool runs. Resets error tracking."""
-        self._tool_errors.discard(serialized.get("name", "unknown"))
+        """Called before a tool runs. Remembers the input for on_tool_end."""
+        name = serialized.get("name", "unknown")
+        self._tool_errors.discard(name)
+        inputs = kwargs.get("inputs")
+        if isinstance(inputs, dict):
+            arguments = _tool_arguments((), dict(inputs))
+        else:
+            arguments = _tool_arguments((input_str,), {})
+        if arguments is not None:
+            self._pending[kwargs.get("run_id")] = (name, arguments)
 
     def on_tool_end(
         self,
-        output: str,
+        output: Any,
         observation_prefix: Optional[str] = None,
         llm_prefix: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        """Called after a tool completes. Stores result in ToolRecall cache.
+        """Called after a tool completes. Stores the result keyed by its input.
 
-        The result is stored under the tool's name + input string hash.
-        This is a best-effort cache - failures are logged but not raised.
+        Best-effort: failures are logged, never raised.
         """
+        pending = self._pending.pop(kwargs.get("run_id"), None)
+        if pending is None or not isinstance(output, str):
+            return
         if not _tr_client.daemon_running():
             return
-
-        name = kwargs.get("name", "unknown")
-        arguments = {"input": str(output)}
-
-        try:
-            check_result = cached_mcp_check(ADAPTER_SERVER, name, arguments, ttl=self._ttl)
-            cached_mcp_store(
-                check_result.get("key", ""),
-                ADAPTER_SERVER,
-                name,
-                arguments,
-                str(output),
-                ttl=self._ttl,
-            )
-            logger.info("Cache STORE langchain/tool:%s  -  %d chars", name, len(str(output)))
-        except Exception as e:
-            logger.warning("Failed to cache tool result for %s: %s", name, e)
+        name, arguments = pending
+        _tool_store(name, arguments, output, self._ttl)
 
     def on_tool_error(
         self,
@@ -229,6 +424,7 @@ class ToolRecallCallbackHandler:
         **kwargs: Any,
     ) -> None:
         """Called when a tool raises an error. We don't cache errors."""
+        self._pending.pop(kwargs.get("run_id"), None)
         name = kwargs.get("name", "unknown")
         self._tool_errors.add(name)
         logger.debug("Tool error (not cached): %s - %s", name, error)
@@ -297,6 +493,7 @@ def _ensure_base():
                 super().__init__()
                 self._impl = _OriginalHandler(ttl=ttl)
                 self._tool_errors = self._impl._tool_errors
+                self._pending = self._impl._pending
                 self._ttl = self._impl._ttl
 
             def on_tool_start(self, serialized, input_str, **kwargs):
@@ -313,5 +510,5 @@ def _ensure_base():
     except ImportError as e:
         raise ImportError(
             "langchain_core is required for ToolRecallCache. "
-            "Install it with: pip install toolrecall[langchain]"
+            "Install it with: pip install langchain-core"
         ) from e

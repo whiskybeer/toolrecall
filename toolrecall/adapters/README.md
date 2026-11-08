@@ -12,7 +12,7 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 |---------|------|-----|-------|
 | **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |
 | **Google Antigravity** | ✅ `@cached_tool` decorator + MCP bridge | ❌ N/A (no base-URL override — Google-hosted inference) | `pip install toolrecall` + `toolrecall setup` |
-| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |
+| **LangChain / LangGraph** | ✅ `cached_tool` (LangChain `BaseTool` / LangGraph node functions) | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install langchain-core` / `toolrecall[langgraph]` |
 | **Langfuse** | ✅ `@cached_tool` decorator (verdicts in span metadata) | — (tool layer; LLM calls stay with your provider) | `pip install toolrecall` (langfuse = app's own dep) |
 | **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |
 | **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |
@@ -74,7 +74,7 @@ config = LocalAgentConfig(tools=[search_web])  # plain callable — done
 
 ---
 
-## LangChain / LangGraph — `ToolRecallCache` + Callback
+## LangChain / LangGraph — `ToolRecallCache` + `cached_tool`
 
 Two integration points:
 
@@ -93,6 +93,40 @@ set_llm_cache(ToolRecallCache())
 - Compatible with any LangChain LLM provider (OpenAI, Anthropic, Google, local…)
 - Persistent SQLite — survives restarts
 - TTL-based expiration (daemon default or custom)
+
+### Tool Cache (`cached_tool`)
+
+```python
+from langchain_core.tools import tool
+from toolrecall.adapters.langchain import cached_tool
+
+@tool
+def search(query: str) -> str:
+    """Search the docs."""
+    ...
+
+search = cached_tool(search, ttl=300)
+
+# Same tool + same input → cached result, the tool body does not run.
+```
+
+- Returns a wrapped copy of any `BaseTool`; the original is not modified
+- Keyed by tool name + parsed tool **input** (never the output)
+- Input validation, callbacks and `ToolMessage` formatting still run on a hit
+- Sync and async (`invoke` / `ainvoke`); errors and non-JSON results are not cached
+- Best-effort: daemon down or cache errors → the tool runs live, never raises
+
+`ToolRecallCallbackHandler` is **store-only**: a LangChain callback cannot skip
+tool execution, so it only records string results under the same input key
+that `cached_tool` reads. Use `cached_tool` to actually save tool calls.
+
+### Lazy Base Binding
+
+The module is importable **without** `langchain_core` installed. Base class inheritance (`BaseCache`, `BaseCallbackHandler`) is resolved lazily on first use via `_ensure_base()`; `cached_tool()` imports `langchain_core` on call. If LangChain is absent, both raise a clear `ImportError` with install instructions.
+
+**Namespace:** `langchain`
+
+[Full docs →](../../docs/langchain.md)
 
 ---
 
@@ -135,31 +169,6 @@ repeat calls with identical arguments.
 - **No new dependencies:** uses `toolrecall.cache` — already installed
 
 [Full docs →](../../docs/odysseus.md)
-
-### Tool Cache (Callback Handler)
-
-```python
-from langchain.callbacks.base import BaseCallbackManager
-from toolrecall.adapters.langchain import ToolRecallCallbackHandler
-
-callback = ToolRecallCallbackHandler()
-manager = BaseCallbackManager.add_handler(callback)
-
-# Tool results cached under tool name + args hash.
-# Same tool + same args → cached result, no re-execution.
-```
-
-- Intercepts `on_tool_end` → stores result keyed by tool name + input
-- Error results are not cached
-- Best-effort: failures log a warning, never raise
-
-### Lazy Base Binding
-
-The module is importable **without** `langchain_core` installed. Base class inheritance (`BaseCache`, `BaseCallbackHandler`) is resolved lazily on first use via `_ensure_base()`. If LangChain is absent, `ToolRecallCache()` raises a clear `ImportError` with install instructions.
-
-**Namespace:** `langchain`
-
-[Full docs →](../../docs/langchain.md)
 
 ---
 
@@ -460,7 +469,7 @@ result = gepa.optimize(seed_candidate={"system_prompt": "..."},
 │  Your Agent / Framework                           │
 │  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
 │  │  ADK     │  │ LangChain │  │  herdr pane   │  │
-│  │ @cached  │  │ Cache+CB  │  │  tr / MCP     │  │
+│  │ @cached  │  │ Cache+tool│  │  tr / MCP     │  │
 │  └────┬─────┘  └────┬─────┘  └───────┬───────┘  │
 │       │              │                │           │
 └───────┼──────────────┼────────────────┼───────────┘

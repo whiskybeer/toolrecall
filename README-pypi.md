@@ -530,7 +530,7 @@ port = 8570
 - [Agent Configs](https://github.com/whiskybeer/toolrecall/blob/main/configs/README.md) — ready-to-use MCP configs for popular agents
 - **Framework Adapters:**
   - [Google ADK](https://github.com/whiskybeer/toolrecall/blob/main/docs/google-adk.md) — `@cached_tool` decorator + forward proxy
-  - [LangChain / LangGraph](https://github.com/whiskybeer/toolrecall/blob/main/docs/langchain.md) — `ToolRecallCache` BaseCache + callback
+  - [LangChain / LangGraph](https://github.com/whiskybeer/toolrecall/blob/main/docs/langchain.md) — `ToolRecallCache` BaseCache + `cached_tool` tool wrapper
   - [LangGraph Checkpointing](https://github.com/whiskybeer/toolrecall/blob/main/docs/langgraph-adapter.md) — `BaseCheckpointSaver` + `@cached_tool` for nodes; fork/resume for tree-search agents
   - [herdr](https://github.com/whiskybeer/toolrecall/blob/main/docs/herdr.md) — `tr` binary + MCP bridge for any pane
   - [Odysseus](https://github.com/whiskybeer/toolrecall/blob/main/docs/odysseus.md) — `cached_tool` decorator + MCP server caching
