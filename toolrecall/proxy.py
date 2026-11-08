@@ -1497,12 +1497,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         headers = {}
+        # accept-encoding too: the relay drops Content-Encoding below, so a
+        # compressed upstream stream would reach the client undecodable.
         skip_headers = {
             "host",
             "connection",
             "proxy-connection",
             "transfer-encoding",
             "content-length",
+            "accept-encoding",
         }
         for k, v in self.headers.items():
             if k.lower() not in skip_headers:

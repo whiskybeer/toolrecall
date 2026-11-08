@@ -48,14 +48,26 @@ class _StreamHandler(http.server.BaseHTTPRequestHandler):
 
     sse_body = b""
     protocol_version = "HTTP/1.1"
+    # Accept-Encoding the upstream last saw; like real providers, the mock
+    # gzips the stream when the client offers it.
+    last_accept_encoding = None
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+        _StreamHandler.last_accept_encoding = self.headers.get("Accept-Encoding")
+        body = self.sse_body
+        gz = "gzip" in (_StreamHandler.last_accept_encoding or "")
+        if gz:
+            import gzip
+
+            body = gzip.compress(body)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Content-Length", str(len(self.sse_body)))
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(self.sse_body)
+        self.wfile.write(body)
 
     def log_message(self, format, *args):  # noqa: A002 - stdlib signature
         pass
@@ -156,7 +168,7 @@ class TestStreamBilledTruth(unittest.TestCase):
 
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def _forward(self):
+    def _forward(self, extra_headers=None):
         import uuid
 
         # "stream": true is required — the proxy routes to the streaming
@@ -167,7 +179,11 @@ class TestStreamBilledTruth(unittest.TestCase):
             "POST",
             "/v1/chat/completions",
             body=body,
-            headers={"Host": "api.testretry.invalid:80", "Content-Type": "application/json"},
+            headers={
+                "Host": "api.testretry.invalid:80",
+                "Content-Type": "application/json",
+                **(extra_headers or {}),
+            },
         )
         resp = conn.getresponse()
         data = resp.read()
@@ -215,6 +231,22 @@ class TestStreamBilledTruth(unittest.TestCase):
         # Provider-billed dollars land in the row (OpenRouter usage.cost),
         # written with 6-decimal precision
         self.assertAlmostEqual(float(cost), 0.0051379, places=6)
+
+    def test_client_accept_encoding_not_forwarded(self):
+        # Claude Code sends Accept-Encoding: gzip on /v1/messages streams. The
+        # relay drops Content-Encoding, so a compressed upstream stream reached
+        # the client as undecodable bytes ("Stream ended without receiving any
+        # events") and Claude Code silently re-sent every turn non-streaming.
+        _StreamHandler.sse_body = _sse(
+            {"type": "message_start", "message": {"usage": {"input_tokens": 7}}},
+            "[DONE]",
+        ).encode()
+        self._proxy_port()
+        resp, data = self._forward({"Accept-Encoding": "gzip, deflate, br"})
+        self.assertEqual(resp.status, 200)
+        # http.client adds "identity" by itself; what matters is no gzip offer
+        self.assertNotIn("gzip", _StreamHandler.last_accept_encoding or "")
+        self.assertIn(b'"type": "message_start"', data)
 
     def test_no_usage_chunk_falls_back_to_estimate(self):
         _StreamHandler.sse_body = _sse(

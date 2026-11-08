@@ -41,6 +41,15 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **Forward proxy: streaming responses arrived compressed and undecodable.**
+  The streaming passthrough forwarded the client's `Accept-Encoding` but drops
+  `Content-Encoding` on relay, so a gzip stream reached the client as raw
+  bytes. Claude Code (`ANTHROPIC_BASE_URL` → proxy) logged "Stream ended
+  without receiving any events" and silently re-sent every turn non-streaming,
+  so each turn was billed twice while its reported `total_cost_usd` showed
+  only the cheap cache-read retry. The streaming path now strips
+  `Accept-Encoding` like the non-streaming path
+  (`tests/test_proxy_stream_usage.py::test_client_accept_encoding_not_forwarded`).
 - **`file_cache.hits` finally moves — per-file re-reads are countable again.**
   Rows were stored at `hits = 1` and never touched (no `UPDATE` anywhere), so
   `bench/cache_honest.py`'s whole report — "read once" vs "re-served", and its

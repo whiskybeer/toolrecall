@@ -135,7 +135,7 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 | Feature | Verdict | Evidence |
 |---------|---------|----------|
 | **Forward Proxy** | ✅ Verified — saves real cost | Orthogonal to tool loop |
-| **Request-body dedup** (proxy) | ⚠️ Mechanism-verified — no billed run on this path yet | Keep-first, prefix-stable stub of repeated `tool_result` payloads — the one compatible cost lever, see below |
+| **Request-body dedup** (proxy) | ⚠️ Compatible but idle — measured 0 tokens removed in 11 real sessions | Keep-first, prefix-stable stub of repeated `tool_result` payloads; Claude Code sessions produce no byte-identical repeats (see "Measured 2026-10") |
 | **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
 | **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | Numbers and methodology in "The Numbers" and "Root causes" below |
 | **Context tracker** | ❌ No benefit — but now silent by default (see below) | Same report; opt-in mechanism in `c66b16c` |
@@ -250,8 +250,33 @@ the Anthropic wire shape (`/v1/messages` dedup, prefix stability,
 `cache_control` preservation in `tests/test_dedup_anthropic.py`). The sibling
 chat-completions path is billing-verified at **−32.3% prompt tokens /
 −30.0% billed** (SWE-bench Lite × 8 turns, LiteLLM/OpenRouter). The
-`/v1/messages` path has **no billed measurement yet** — treat its saving as
-unquantified until an A/B run on your own Claude Code workload produces one.
+`/v1/messages` path is now measured on Claude Code and removed nothing — see
+"Measured 2026-10" below.
+
+### Measured 2026-10: Claude Code A/B on SWE-bench (Sonnet 5.5, headless)
+
+Headless `claude -p` fixed real SWE-bench Lite issues, graded by the official
+FAIL_TO_PASS / PASS_TO_PASS tests. Costs are Claude Code's own
+`total_cost_usd` (list-price equivalent; subscription auth).
+
+- **Single issues** (3 pytest issues × 3 runs per arm): native $0.043 vs full
+  ToolRecall setup (proxy + dedup, MCP server, context-tracker CLAUDE.md)
+  $0.055 per task, bugs fixed 8/9 vs 9/9; sessions of 3–8 turns. Dedup removed
+  0 tokens, and Claude Code never called a ToolRecall MCP tool.
+- **Backlog sessions** (one resumed session fixes five django/db/migrations
+  issues in a row, 34–50 turns, 2 sessions per arm): native $0.54, proxy +
+  dedup only $0.54, `docs_search` MCP + CLAUDE.md $0.65, the same with
+  built-in search blocked $0.67. Dedup again removed 0 tokens: test output
+  differs in its timing line and file reads differ in range. Claude Code called
+  `docs_search` 1–6 times per session even when told to and with grep blocked,
+  switching to `sed`/`cat`/`python -c` instead; the extra tool schemas and
+  instructions grew peak context (74–88k vs 56–68k tokens).
+
+The first run of this A/B also exposed a proxy bug: the streaming passthrough
+forwarded `Accept-Encoding`, so Claude Code received gzip bytes it could not
+parse and re-sent every turn non-streaming (billed twice, reported once).
+Fixed in the release after 0.8.23 — do not point `ANTHROPIC_BASE_URL` at an
+older proxy.
 
 ### Config (multiplexer + proxy only, no file caching)
 
@@ -286,8 +311,9 @@ For an A/B baseline arm, per-request opt-out is the header
 > through ToolRecall with Claude Code. Context hints need no action: they're
 > silent by default (checkpoint opt-in), so a stock TR install no longer
 > appends any hint text to Claude Code sessions. Request-body dedup is the one
-> lever that is compatible with the append-only transcript — measure it on
-> your own workload before trusting a number.
+> lever that is compatible with the append-only transcript, but on measured
+> Claude Code sessions it found nothing to remove (0 tokens in 11 sessions), so
+> it is not worth routing Claude Code through the proxy for.
 
 ---
 
