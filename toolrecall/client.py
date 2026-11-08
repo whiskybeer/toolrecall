@@ -324,9 +324,7 @@ def cached_write(path: str, content: str, agent_id: str | None = None) -> dict:
     }
 
 
-def cached_patch(
-    path: str, old_string: str, new_string: str, agent_id: str | None = None
-) -> dict:
+def cached_patch(path: str, old_string: str, new_string: str, agent_id: str | None = None) -> dict:
     """Apply patch via daemon or fail closed.
 
     Uses daemon's diff engine for idempotent patching.
@@ -430,6 +428,19 @@ def cache_invalidate(scope: str = "agent") -> str:
         rows = _get_direct_cache().invalidate_api_cache()
         return f"Cache invalidated (direct, scope=api): {rows} api_cache entries"
     return "Cache invalidated (direct, agent caches — api_cache untouched)"
+
+
+def forget_run(target: str) -> dict:
+    """Evict cached API responses and scenario entries for a run or trace path.
+
+    Daemon-first: sends cached_api_forget command to running daemon.
+    Falls back to direct SQLite eviction when daemon is unavailable.
+    """
+    client = _get_client()
+    resp = client.send({"cmd": "cached_api_forget", "run": target})
+    if not _is_daemon_down(resp) and isinstance(resp, dict) and "forgotten" in resp:
+        return resp
+    return _get_direct_cache().forget_run(target)
 
 
 def refresh_file(path: str) -> dict:

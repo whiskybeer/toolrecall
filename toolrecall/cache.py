@@ -532,6 +532,13 @@ hits INTEGER DEFAULT 1,
 hit_streak INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_api_expires ON api_cache(expires_at);
+CREATE TABLE IF NOT EXISTS api_cache_runs (
+    run_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    cached_at REAL NOT NULL,
+    PRIMARY KEY (run_id, request_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_api_cache_runs_id ON api_cache_runs(run_id);
 CREATE TABLE IF NOT EXISTS recall_cache (
     node_id        TEXT PRIMARY KEY,
     fingerprint    TEXT NOT NULL,
@@ -734,7 +741,11 @@ def _record(
                 )
 
             # Per-agent stats (optional — explicit param or TOOLRECALL_AGENT_ID env var)
-            resolved_agent_id = agent_id or os.environ.get("TOOLRECALL_AGENT_ID") or os.environ.get("TOOLRECALL_AGENT")
+            resolved_agent_id = (
+                agent_id
+                or os.environ.get("TOOLRECALL_AGENT_ID")
+                or os.environ.get("TOOLRECALL_AGENT")
+            )
             if resolved_agent_id:
                 _upsert_agent_stats(
                     conn,
@@ -827,7 +838,11 @@ def _record_tokens_read_from_disk(
                 """,
                     (category, tokens, tokens, time.time()),
                 )
-                resolved_agent_id = agent_id or os.environ.get("TOOLRECALL_AGENT_ID") or os.environ.get("TOOLRECALL_AGENT")
+                resolved_agent_id = (
+                    agent_id
+                    or os.environ.get("TOOLRECALL_AGENT_ID")
+                    or os.environ.get("TOOLRECALL_AGENT")
+                )
                 if resolved_agent_id and not uncacheable:
                     conn.execute(
                         """
@@ -3907,6 +3922,7 @@ def cached_api_store(
     response_headers: dict,
     response_body: str,
     ttl: int | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """Store an API response in the cache.
 
@@ -3983,11 +3999,128 @@ def cached_api_store(
                     0,
                 ),
             )
+            if run_id:
+                conn.execute(
+                    """INSERT OR REPLACE INTO api_cache_runs
+                       (run_id, request_hash, cached_at)
+                       VALUES (?, ?, ?)""",
+                    (str(run_id).strip(), request_hash, now),
+                )
         _record_tokens_read_from_disk("api_cache", _estimate_tokens(response_body))
         return {"stored": True}
     except Exception as e:
         warnings.warn(f"ToolRecall: api_cache store failed: {e}")
         return {"stored": False, "error": str(e)}
+
+
+def forget_run(target: str) -> dict:
+    """Evict cached API responses and scenario records created during a run.
+
+    Target can be:
+      1. A run_id string (e.g. from TOOLRECALL_RUN_ID or X-ToolRecall-Run-Id)
+      2. A path to a key-trace directory containing trace.jsonl, or a trace file
+      3. A scenario name from `toolrecall replay record`
+
+    Returns:
+        dict: {"target": target, "forgotten": count, "scenario_deleted": bool}
+    """
+    import json as _json
+    import os
+
+    hashes = set()
+    scenario_deleted = False
+
+    # 1. Check if target is a path to trace dir or file
+    if os.path.exists(target):
+        trace_file = target
+        if os.path.isdir(target):
+            cand = os.path.join(target, "trace.jsonl")
+            if os.path.exists(cand):
+                trace_file = cand
+        if os.path.isfile(trace_file):
+            try:
+                with open(trace_file, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            d = _json.loads(line)
+                            if isinstance(d, dict) and d.get("request_hash"):
+                                hashes.add(d["request_hash"])
+                        except Exception:
+                            continue
+            except OSError:
+                pass
+
+    try:
+        with _db() as conn:
+            # 2. Look up in api_cache_runs table
+            rows = conn.execute(
+                "SELECT request_hash FROM api_cache_runs WHERE run_id = ?",
+                (target,),
+            ).fetchall()
+            for r in rows:
+                hashes.add(r["request_hash"])
+
+            # 3. Check if target is a scenario in replay_scenarios
+            try:
+                scen_rows = conn.execute(
+                    "SELECT COUNT(*) as c FROM replay_scenarios WHERE scenario_name = ?",
+                    (target,),
+                ).fetchone()
+                if scen_rows and scen_rows["c"] > 0:
+                    conn.execute("DELETE FROM replay_scenarios WHERE scenario_name = ?", (target,))
+                    scenario_deleted = True
+            except Exception:
+                pass
+
+            # 4. Check if trace exists at default path ~/.toolrecall/traces/<target>/trace.jsonl
+            default_trace = os.path.expanduser(f"~/.toolrecall/traces/{target}/trace.jsonl")
+            if os.path.exists(default_trace):
+                try:
+                    with open(default_trace, "r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                d = _json.loads(line)
+                                if isinstance(d, dict) and d.get("request_hash"):
+                                    hashes.add(d["request_hash"])
+                            except Exception:
+                                continue
+                except OSError:
+                    pass
+
+            deleted = 0
+            if hashes:
+                hash_list = list(hashes)
+                batch_size = 500
+                for i in range(0, len(hash_list), batch_size):
+                    batch = hash_list[i : i + batch_size]
+                    placeholders = ",".join("?" for _ in batch)
+                    cur = conn.execute(
+                        f"DELETE FROM api_cache WHERE request_hash IN ({placeholders})",
+                        batch,
+                    )
+                    deleted += cur.rowcount
+                    conn.execute(
+                        f"DELETE FROM api_cache_runs WHERE request_hash IN ({placeholders})",
+                        batch,
+                    )
+
+            # Clean up target from api_cache_runs
+            conn.execute("DELETE FROM api_cache_runs WHERE run_id = ?", (target,))
+
+            return {
+                "target": target,
+                "forgotten": deleted,
+                "scenario_deleted": scenario_deleted,
+            }
+    except Exception as e:
+        warnings.warn(f"ToolRecall: forget_run failed: {e}")
+        return {"target": target, "forgotten": 0, "error": str(e)}
 
 
 def invalidate_api_cache() -> int:

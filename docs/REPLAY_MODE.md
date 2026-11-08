@@ -63,6 +63,7 @@ toolrecall replay show <scenario>      # Show recorded calls
 toolrecall replay export <scenario>    # Export as JSON (git-committable)
 toolrecall replay import <file.json>   # Import from JSON
 toolrecall replay delete <scenario>    # Delete a scenario
+toolrecall replay forget <run_id|dir>  # Evict cached entries created during a run
 
 # Fork trees (branching replay)
 toolrecall replay tree                 # List fork trees
@@ -152,6 +153,24 @@ Benefits:
 - **No network flakiness** — tests never reach external services
 - **Deterministic results** — every run produces the same tool outputs
 - **Zero cost** — no LLM API calls, no cloud compute for tool execution
+
+### Evicting Failed Runs in CI (`replay forget`)
+
+Replaying a **failed** run reproduces the failure on every retry. To ensure retries run live while successful runs remain cached:
+
+1. Tag the run using `TOOLRECALL_RUN_ID` or HTTP header `X-ToolRecall-Run-Id`:
+   ```bash
+   export TOOLRECALL_RUN_ID="ci-$GITHUB_RUN_ID"
+   ```
+2. If the test step fails, evict all entries created by that run:
+   ```bash
+   your-agent-test.sh || { toolrecall replay forget "$TOOLRECALL_RUN_ID"; exit 1; }
+   ```
+   Alternatively, if using `TOOLRECALL_KEY_TRACE_DIR=/tmp/trace`:
+   ```bash
+   your-agent-test.sh || { toolrecall replay forget /tmp/trace; exit 1; }
+   ```
+3. For selective fresh attempts without evicting the cache, send the `X-ToolRecall-No-Cache: 1` header on specific requests.
 
 ## What Gets Normalized
 

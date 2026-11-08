@@ -273,6 +273,7 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - `toolrecall replay export <scenario>` — export as JSON
   - `toolrecall replay import <file.json>` — import from JSON
   - `toolrecall replay delete <scenario>` — delete scenario
+  - `toolrecall replay forget <run_id | trace_dir>` — evict cached responses created during a run (CI failure recovery)
   - `toolrecall replay tree [<tree_id>]` — list fork trees, or show one tree's nodes
   - `toolrecall replay tree new <name>` — create a fork tree (prints tree_id + root node)
   - `toolrecall replay fork <tree> <node> <name>` — fork a branch from a node

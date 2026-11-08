@@ -479,6 +479,34 @@ def _cc_canon_walk(node):
     return node
 
 
+_RE_AG_TIME = re.compile(
+    r"The current local time is: \d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?"
+)
+_RE_AG_BRAIN_PATH = re.compile(r"/brain/[0-9a-fA-F-]{36}")
+_RE_AG_CONV_ID = re.compile(r"Conversation ID: [0-9a-fA-F-]{36}")
+
+
+def _ag_canon_text(text: str) -> str:
+    """Antigravity profile: volatile timestamp in <ADDITIONAL_METADATA>,
+    conversation UUIDs, brain directory paths, test durations + hermes rules."""
+    text = _hermes_canon_text(text)
+    text = _RE_AG_TIME.sub("The current local time is: 1970-01-01T00:00:00Z", text)
+    text = _RE_AG_CONV_ID.sub("Conversation ID: 00000000-0000-0000-0000-000000000000", text)
+    text = _RE_AG_BRAIN_PATH.sub("/brain/00000000-0000-0000-0000-000000000000", text)
+    text = _RE_CANON_DURATION.sub(r"\1 <duration>", text)
+    return text
+
+
+def _ag_canon_walk(node):
+    if isinstance(node, dict):
+        return {k: _ag_canon_walk(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_ag_canon_walk(x) for x in node]
+    if isinstance(node, str):
+        return _ag_canon_text(node)
+    return node
+
+
 def _canonicalize_body(profile: str, body: bytes):
     """Canonicalized body for cache-key hashing under `profile`, or None.
 
@@ -493,13 +521,18 @@ def _canonicalize_body(profile: str, body: bytes):
     blank-line rules. Same envelope contract as `warp`.
 
     Profile `claude-code`: `hermes` rules + test-runner durations, and the
-    top-level `metadata` object (session/account ids) is dropped."""
+    top-level `metadata` object (session/account ids) is dropped.
+
+    Profile `antigravity`: volatile local time in <ADDITIONAL_METADATA>,
+    conversation IDs, brain paths, plus hermes rules + test-runner durations."""
     if profile == "warp":
         walk = _canon_walk
     elif profile == "hermes":
         walk = _hermes_canon_walk
     elif profile == "claude-code":
         walk = _cc_canon_walk
+    elif profile == "antigravity":
+        walk = _ag_canon_walk
     else:
         return None
     try:
@@ -539,7 +572,13 @@ def _sse_complete(raw: str) -> bool:
     return False
 
 
-def _key_trace(profile: str, request_hash: str, canonical: bytes, hit: bool) -> None:
+def _key_trace(
+    profile: str,
+    request_hash: str,
+    canonical: bytes,
+    hit: bool,
+    run_id: str | None = None,
+) -> None:
     """Opt-in replay diagnostics: TOOLRECALL_KEY_TRACE_DIR=<dir>.
 
     Writes the canonical body that was hashed to ``<dir>/<request_hash>.json``
@@ -559,6 +598,8 @@ def _key_trace(profile: str, request_hash: str, canonical: bytes, hit: bool) -> 
             with open(body_path, "wb") as fh:
                 fh.write(canonical)
         line = {"ts": time.time(), "request_hash": request_hash, "profile": profile, "hit": hit}
+        if run_id:
+            line["run_id"] = run_id
         with open(os.path.join(d, "trace.jsonl"), "a", encoding="utf-8") as fh:
             fh.write(json.dumps(line) + "\n")
     except OSError:
@@ -1138,6 +1179,17 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             or ""
         )
 
+        run_id = (
+            (
+                self.headers.get("X-ToolRecall-Run-Id")
+                or self.headers.get("X-ToolRecall-Run")
+                or ""
+            ).strip()
+            or (os.environ.get("TOOLRECALL_RUN_ID") or "").strip()
+            or None
+        )
+        self._run_id = run_id
+
         sampled = (
             method == "POST"
             and bypass_sampled_active
@@ -1182,6 +1234,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     request_hash,
                     hash_body,
                     bool(cached.get("cached") and 200 <= cached.get("status", 200) < 300),
+                    run_id=run_id,
                 )
                 if cached.get("cached") and 200 <= cached.get("status", 200) < 300:
                     n = self._replay_stream_from_cache(
@@ -1281,6 +1334,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         if agent_id:
             check_cmd["agent_id"] = agent_id
         cached = self._client.send(check_cmd)
+        if canonical_profile:
+            _key_trace(
+                canonical_profile,
+                request_hash,
+                hash_body,
+                bool(cached.get("cached") and 200 <= cached.get("status", 200) < 300),
+                run_id=run_id,
+            )
         if cached.get("cached"):
             status = cached.get("status", 200)
             # Don't replay non-2xx responses even if cached
@@ -1378,20 +1439,21 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 if isinstance(resp_body, bytes)
                 else resp_body
             )
-            self._client.send(
-                {
-                    "cmd": "cached_api_store",
-                    "request_hash": request_hash,
-                    "method": method,
-                    "host": target_host,
-                    "path": target_path,
-                    "request_body_hash": body_hash,
-                    "response_status": resp_status,
-                    "response_headers": headers_dict,
-                    "response_body": body_str,
-                    "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
-                }
-            )
+            store_cmd = {
+                "cmd": "cached_api_store",
+                "request_hash": request_hash,
+                "method": method,
+                "host": target_host,
+                "path": target_path,
+                "request_body_hash": body_hash,
+                "response_status": resp_status,
+                "response_headers": headers_dict,
+                "response_body": body_str,
+                "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
+            }
+            if getattr(self, "_run_id", None):
+                store_cmd["run_id"] = self._run_id
+            self._client.send(store_cmd)
 
         # Respond with Content-Length (body is flat from .read())
         resp_body_bytes = resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8")
@@ -1998,20 +2060,21 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
                 return
             body = raw
-            resp = self._client.send(
-                {
-                    "cmd": "cached_api_store",
-                    "request_hash": request_hash,
-                    "method": "POST",
-                    "host": host,
-                    "path": path,
-                    "request_body_hash": content_digest(request_body) if request_body else "",
-                    "response_status": 200,
-                    "response_headers": {"Content-Type": "application/json"},
-                    "response_body": body,
-                    "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
-                }
-            )
+            store_cmd = {
+                "cmd": "cached_api_store",
+                "request_hash": request_hash,
+                "method": "POST",
+                "host": host,
+                "path": path,
+                "request_body_hash": content_digest(request_body) if request_body else "",
+                "response_status": 200,
+                "response_headers": {"Content-Type": "application/json"},
+                "response_body": body,
+                "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
+            }
+            if getattr(self, "_run_id", None):
+                store_cmd["run_id"] = self._run_id
+            resp = self._client.send(store_cmd)
             if isinstance(resp, dict) and resp.get("error"):
                 # Fail-open, but say so: logging "stored" here hid a dead
                 # daemon behind a stream cache that never filled.

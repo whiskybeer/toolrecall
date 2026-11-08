@@ -3,7 +3,8 @@
 # Needs: the SWE-bench Lite dataset in the Hugging Face cache (or network), git, uv, pyarrow.
 set -euo pipefail
 DIR=${1:-/home/hermes/bench-data/swe-dj}; HERE="$(cd "$(dirname "$0")" && pwd)"
-mkdir -p "$DIR/inst"; cp "$HERE/grade_dj.py" "$HERE/setup_tests.py" "$DIR/"
+mkdir -p "$DIR/inst" "$DIR/bin"; cp "$HERE/grade_dj.py" "$HERE/setup_tests.py" "$DIR/"
+sed "s#/home/hermes/bench-data/swe-dj#$DIR#" "$HERE/dj-test" > "$DIR/bin/dj-test"; chmod +x "$DIR/bin/dj-test"
 python3 - "$DIR" <<'PY'
 import glob, json, os, sys
 import pyarrow.parquet as pq

@@ -68,6 +68,7 @@ from toolrecall.cache import (
     cached_browser_store as _cache_browser_store,
     cached_api_check as _cache_api_check,
     cached_api_store as _cache_api_store,
+    forget_run as _cache_forget_run,
     _is_sensitive_path,
     invalidate_all,
     invalidate_api_cache,
@@ -2211,6 +2212,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_api_check(request)
             elif cmd == "cached_api_store":
                 return self._handle_api_store(request)
+            elif cmd == "cached_api_forget":
+                return self._handle_api_forget(request)
             elif cmd == "ping":
                 return self._handle_ping(request)
             elif cmd == "shutdown":
@@ -3050,7 +3053,15 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             response_headers=req.get("response_headers", {}),
             response_body=req.get("response_body", ""),
             ttl=req.get("ttl", None),
+            run_id=req.get("run_id", None),
         )
+
+    def _handle_api_forget(self, req: dict) -> dict:
+        """Evict cached API responses and scenario entries for a run or trace path."""
+        target = req.get("run", req.get("target", ""))
+        if not target:
+            return {"error": "Missing 'run' parameter"}
+        return _cache_forget_run(str(target).strip())
 
     # ─── Context Tracker IPCs ───────────────────────────────
 

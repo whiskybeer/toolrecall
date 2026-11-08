@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Added
+- **`toolrecall replay forget <run_id|trace_dir>` (CI failure recovery).**
+  Evicts cached API responses and scenario records associated with a run or key-trace directory.
+  Prevents replaying failed attempts in CI, so retries run live against the model. Runs are tagged
+  via `TOOLRECALL_RUN_ID` or HTTP header `X-ToolRecall-Run-Id` and recorded in `api_cache_runs`.
+- **`antigravity` canonicalization profile for forward proxy replay.**
+  Normalizes volatile `<ADDITIONAL_METADATA>` timestamps (`The current local time is: ...`),
+  conversation IDs, brain directory UUIDs, and test-runner durations, enabling headless Antigravity
+  reruns to replay deterministically.
+- **Benchmark reporting separation for replay.**
+  `ab_analyse.py` now reports task resolution on first runs only (independent trials) and reports
+  reruns as cost savings, latency reduction, and outcome fidelity (`same outcome as cached run: yes/no`),
+  preventing replay outcome freezing from distorting accuracy figures. Included measured 60-run
+  scenario benchmarks across new commits, prompt edits, and shuffle test seeds.
 - **Claude Code hook adapter (`toolrecall.adapters.claude_code`, `tr-cc-hook`, `toolrecall hook claude`).**
   `PostToolUse` staleness alert: records files Claude reads or edits and, after a `Bash` call changes
   one on disk, adds `additionalContext` asking Claude to re-read it. The agent's own edits never count

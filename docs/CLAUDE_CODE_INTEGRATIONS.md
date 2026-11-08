@@ -9,8 +9,9 @@ real local transcripts; methodology and raw figures are in
 > headless task runs again** (CI re-runs, eval/benchmark iteration, agent regression
 > tests). Forward-proxy replay then serves repeated calls from cache: identical warm
 > reruns cost **−96%** vs the cold run on a short task (n=8, 7 of 8 fully replayed).
-> On real SWE-bench tasks (Sonnet, official grading) reruns cost **−58.8%** vs native
-> Claude Code (n=10 per arm; 8 of 10 fully replayed), −30.9% including first runs.
+> On real SWE-bench tasks (Sonnet, official grading) every identical rerun replayed
+> completely (3–21 turns) and cost $0; with a first run at native cost it pays off from
+> run 2: −45% after 2 runs, −72% after 4 (5 tasks, 20 runs per arm).
 > For one-off and interactive sessions it saves ~0%: Claude Code already stubs
 > unchanged re-reads, and repeated tool output does not occur in real sessions
 > (0 of 3,015 tool results in 193 local sessions).

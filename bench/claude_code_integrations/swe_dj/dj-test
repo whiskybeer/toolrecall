@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# dj-test [runtests.py args] <module labels> — Django's test runner for the checkout in $PWD.
+set -e
+root=$(git rev-parse --show-toplevel)
+cd "$root/tests"
+PYTHONPATH="$root" exec /home/hermes/bench-data/swe-dj/env/bin/python runtests.py --parallel 1 "$@"

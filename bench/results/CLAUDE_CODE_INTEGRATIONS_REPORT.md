@@ -8,16 +8,15 @@ Every live run used an isolated daemon, proxy, DB and HOME; the live instance wa
 never touched.
 
 > **Verdict.** ToolRecall saves tokens for Claude Code when **the same headless task
-> runs again**. On real SWE-bench tasks (Sonnet, official hidden-test grading), reruns
-> cost **−58.8%** vs native Claude Code (10 reruns per arm) and **−30.9% overall**
-> including the first runs (15 runs per arm), with the same number of tasks solved.
-> A one-off run saves nothing (+19.2%, n=5, within noise). Getting there took three
-> fixes in this branch: Anthropic streams were never cached, Claude Code's `Bash` tool
-> schema flips per session, and parallel tool results arrive in completion order.
-> Replay returns the cached run's outcome: a rerun is a cheap repeat, not a new attempt.
-> For interactive sessions the saving is ~0%: there is no repeated tool output to
-> remove (0 of 3,015 tool results in 193 local sessions), and Claude Code already
-> handles unchanged re-reads and stale edits itself.
+> runs again**. On real SWE-bench tasks (Sonnet, official grading), with all fixes in
+> this branch, **every rerun replayed completely — sessions of 3 to 21 turns — and cost
+> $0**. The first run costs the same as native (+0.7%), so it **pays off from the second
+> run**: −45% after 2 runs, −65% after 3, −72% after 4 (5 tasks, 20 runs per arm).
+> Session length did not matter as long as the rerun was identical; what breaks replay
+> is any change to the request — see the repeat scenarios. Replay returns the cached
+> run's outcome: a rerun is a cheap repeat, not a new attempt. For interactive sessions
+> the saving is ~0% (0 of 3,015 tool results in 193 local sessions are repeats, and
+> Claude Code already handles unchanged re-reads and stale edits itself).
 
 This report replaces an earlier version whose headline figures (−33% turns, −38% and
 −58% prompt tokens) were constants in the benchmark script and a synthetic message
@@ -35,16 +34,46 @@ Billed cost = Claude Code's `total_cost_usd` with replayed calls counted as 0
 (1h cache writes weighted 2×). Harness: `ab_swe.py`, `ab_rig.sh`, `ab_analyse.py`;
 task set: `swe_dj/setup.sh`.
 
+**Run 3 — all fixes (stream cache, tool-schema default, parallel tool-result order);
+4 runs per task per arm:**
+
+| Runs of the same task | Native (cumulative) | ToolRecall (cumulative) | Δ |
+|---|---:|---:|---:|
+| 1 (cold) | $0.624 | $0.628 | +0.7% |
+| 2 | $1.136 | $0.628 | **−44.7%** |
+| 3 | $1.787 | $0.628 | **−64.8%** |
+| 4 | $2.249 | $0.628 | **−72.1%** |
+
+| Task | Native turns | Native $/rerun | ToolRecall $/rerun | Rerun calls replayed |
+|---|---:|---:|---:|---:|
+| 17087 | 3 | 0.024 | 0 | 3/3 ×3 |
+| 16595 | 4 | 0.034 | 0 | 3/3 ×3 |
+| 16820 | 9 | 0.087 | 0 | 5/5 ×3 |
+| 15996 | 9 | 0.057 | 0 | 7/7 ×3 |
+| 15738 | 30 (ToolRecall's cached run: 21) | 0.340 | 0 | 20/20 ×3 |
+
+- **All 15 reruns replayed every call** (114/114); survival at call 13 was 3/3.
+- **Wall time −49% on reruns** (78 s → 40 s): model latency disappears; the tools —
+  Django's test runner — still execute.
+- **Turns:** a replayed rerun has exactly the turns of the run it replays (9.0 mean
+  vs 11.2 native); the saving per rerun is the whole native cost of that session, so
+  longer sessions save more dollars (15738: $0.34 per rerun).
+- **Solved 16/20 vs 12/20 is not an accuracy gain:** ToolRecall's cold run solved
+  15738 and the three replays inherit that; native never solved it. Replay freezes
+  whatever the cached run did.
+- One-off cost per task varied −23%…+81% between arms (n=1 each): run-to-run
+  variance, not overhead — the five-task total is +0.7%.
+
 **Run 2 — with the tool-schema fix** (current profile minus the tool-order fix):
 
-| Scenario | Arm | Runs | Resolved | Total $ | $/run | Turns | Calls replayed |
-|---|---|---:|---:|---:|---:|---:|---:|
-| All | native | 15 | 10 | 1.529 | 0.102 | 10.3 | — |
-| All | ToolRecall | 15 | 9 | 1.056 | 0.070 | 10.8 | 62 / 137 |
-| One-off (run 1) | native | 5 | 4 | 0.547 | 0.109 | 9.8 | — |
-| One-off (run 1) | ToolRecall | 5 | 3 | 0.652 | 0.130 | 11.6 | 0 / 49 |
-| Reruns (runs 2–3) | native | 10 | 6 | 0.982 | 0.098 | 10.6 | — |
-| Reruns (runs 2–3) | ToolRecall | 10 | 6 | 0.404 | 0.040 | 10.4 | 62 / 88 |
+| Scenario | Arm | Runs | Solved (1st runs only) | Outcome frozen (reruns) | Total $ | $/run | Turns | Calls replayed |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| One-off (run 1) | native | 5 | **4 / 5** | — | $0.547 | $0.109 | 9.8 | 0 / 43 |
+| One-off (run 1) | ToolRecall | 5 | **3 / 5** | — | $0.652 | $0.130 | 11.6 | 0 / 49 |
+| Reruns (runs 2–3) | native | 10 | — (sampled live) | — | $0.982 | $0.098 | 10.6 | 0 / 90 |
+| Reruns (runs 2–3) | ToolRecall | 10 | — (inherited) | **10 / 10 (100%)** | $0.404 | $0.040 | 10.4 | **62 / 88** |
+| All (reference) | native | 15 | (10/15 across trials) | — | $1.529 | $0.102 | 10.3 | — |
+| All (reference) | ToolRecall | 15 | (9/15 across trials) | — | $1.056 | $0.070 | 10.8 | 62 / 137 |
 
 - **Reruns −58.8%, overall −30.9%.** 8 of 10 reruns replayed every call ($0); the
   other two broke after call 2 because Claude Code returned the results of parallel
@@ -54,9 +83,27 @@ task set: `swe_dj/setup.sh`.
   difference is run-to-run variance plus the hook.
 - **Wall time unchanged** (+1.6% on reruns): replay skips model calls, but the tools
   — here Django's test runner — still execute.
-- **Replay freezes outcomes.** Solved counts match because a replayed rerun returns
-  the cached run's fix (right or wrong). Reruns through replay are cheap repeats,
-  not independent attempts; do not use them to sample success rates.
+- **Replay freezes outcomes.** Solved counts on reruns reflect outcome freezing (10/10
+  identical to run 1), not independent attempts. Quality must only be evaluated on
+  first runs; reruns report cost reduction and outcome fidelity.
+
+## 0b. Repeat scenarios: what breaks replay (measured, 60 runs)
+
+5 SWE-bench Lite tasks run through 6 consecutive conditions per arm (`ab_scen.py`, 60 runs total):
+
+| Scenario | Native $ | ToolRecall $ | Δ Cost | Calls replayed | TR outcome | Replay held through |
+|---|---:|---:|---:|---:|---:|---|
+| **Cold run** (base r1) | $0.486 | $0.566 | +17% | 0 / 46 | 3/5 solved | 0/24, 0/10, 0/3, 0/8, 0/1 |
+| **Identical rerun** (base r2) | $0.489 | $0.127 | **−74%** | **38 / 45** | **5/5 frozen** | all, all, all, 1/7, 0/1 |
+| **Rerun, new commit** (docs commit) | $0.584 | $0.513 | −12% (noise) | 0 / 39 | 2/5 frozen (live) | 0/24, 0/5, 0/4, 0/5, 0/1 |
+| **Rerun, prompt edited** (+1 sentence) | $0.568 | $0.492 | −13% (noise) | 0 / 40 | 3/5 frozen (live) | 0/24, 0/4, 0/4, 0/7, 0/1 |
+| **Cold run, `--shuffle`** | $0.658 | $0.568 | −14% (noise) | 0 / 46 | 2/5 solved | 0/24, 0/10, 0/4, 0/7, 0/1 |
+| **Rerun, `--shuffle`** (volatile seed) | $0.467 | $0.310 | **−34%** | **29 / 48** | **4/5 frozen** | 19/26, 6/10, 3/4, 1/7, 0/1 |
+
+### Takeaways for loosening / normalizers:
+1. **New commit = 0% replay.** An unrelated docs commit changes git status and recent commit SHAs injected into Claude Code's first prompt. It breaks replay immediately at Call 1. For CI on consecutive commits, an opt-in profile that leaves git status out of the key is the only path to reuse.
+2. **Volatile test output (`--shuffle`) = 60% replay prefix preserved (−34% cost).** Even with randomized test seeds, replay survives the read/inspect/edit phase (19/26, 6/10, 3/4 turns) before the first random test output forks the conversation. Specialized shuffle normalizers have limited additional upside because seed differences also reorder test execution.
+3. **Prompt edit = 0% replay.** Inherent: the prompt defines the task and must go live.
 
 **Run 1 — before the tool-schema fix:** ToolRecall +16.6% overall (native $1.537,
 ToolRecall $1.792, n=15 per arm), 19 of 100 rerun calls replayed. Cause: Claude

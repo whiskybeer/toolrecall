@@ -523,7 +523,9 @@ def _init(schema: str = ""):
                 updated_at REAL DEFAULT 0,
                 PRIMARY KEY (agent_id, category)
             )""")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_stats_agent ON agent_cache_stats(agent_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_stats_agent ON agent_cache_stats(agent_id)"
+            )
         except (sqlite3.OperationalError, ValueError, Exception):
             pass
         # Migration: add agent_id column to access_log (nullable, backward compat)

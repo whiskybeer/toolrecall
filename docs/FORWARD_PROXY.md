@@ -90,6 +90,30 @@ an `error` event are never cached. To see why a rerun stopped replaying, set
 measured limits: [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md),
 [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code).
 
+### Antigravity (headless repeat runs)
+Antigravity injects volatile metadata (current local time in `<ADDITIONAL_METADATA>`,
+conversation IDs, and brain UUIDs) into prompts. To replay headless Antigravity runs:
+```bash
+export OPENAI_BASE_URL=http://localhost:8569/v1  # or provider-specific base URL
+# Pass header or set session default:
+export TOOLRECALL_CANONICALIZE=antigravity
+# or header: X-ToolRecall-Canonicalize: antigravity
+```
+
+### Run Scoping & CI Failure Recovery (`replay forget`)
+Tag proxy requests with a run ID via header or environment variable:
+```bash
+export TOOLRECALL_RUN_ID="ci-build-42"
+# or header: X-ToolRecall-Run-Id: ci-build-42
+```
+If the test/job fails, evict all cached responses created during that run so retries execute live:
+```bash
+toolrecall replay forget "$TOOLRECALL_RUN_ID"
+```
+Alternatively, pass a key-trace directory: `toolrecall replay forget /tmp/trace`.
+
+For individual fresh requests without evicting, send `X-ToolRecall-No-Cache: 1`.
+
 ### Direct HTTP
 ```bash
 # First call: MISS, forwards to upstream, caches response

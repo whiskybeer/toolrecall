@@ -163,6 +163,27 @@ Use cases: reproduce a failing IDE/CLI session deterministically; demo without
 API keys; CI replay of a recorded scenario (SDK headless mode). See
 [REPLAY_MODE.md](REPLAY_MODE.md).
 
+### Forward-Proxy Replay (`antigravity` profile)
+
+When routing Antigravity LLM calls through ToolRecall's forward proxy, Antigravity injects volatile metadata (current local time in `<ADDITIONAL_METADATA>`, conversation IDs, and brain directory paths). The `antigravity` canonicalization profile normalizes these so repeat runs can replay:
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8569/v1  # or target provider
+export TOOLRECALL_CANONICALIZE=antigravity
+```
+
+### CI Failure Recovery (`replay forget`)
+
+If an Antigravity benchmark or CI job fails, replaying the failed run reproduces the failure on every retry. Tag the run with `TOOLRECALL_RUN_ID` and evict on failure:
+
+```bash
+export TOOLRECALL_RUN_ID="ci-$JOB_ID"
+# Run Antigravity agent:
+run_antigravity_task.sh || { toolrecall replay forget "$TOOLRECALL_RUN_ID"; exit 1; }
+```
+
+This clears all cached responses created by the failed attempt, allowing the next attempt to query the model live.
+
 ### Full-text search over skills and rules
 
 ```bash

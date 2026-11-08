@@ -48,6 +48,8 @@ def cmd_replay(args: list[str]) -> None:
         _cmd_import(rest)
     elif sub == "delete":
         _cmd_delete(rest)
+    elif sub == "forget":
+        _cmd_forget(rest)
     elif sub == "tree":
         _cmd_tree(rest)
     elif sub == "fork":
@@ -76,6 +78,7 @@ Subcommands:
   export <scenario>    Export scenario as JSON (portable, git-committable)
   import <file.json>   Import scenario from exported JSON file
   delete <scenario>    Delete a scenario
+  forget <run>         Evict cached responses created during a run (CI failure recovery)
   tree                 List replay trees
   tree <tree_id>       Show nodes of a tree
   tree new <name>      Create a replay tree (prints tree_id + root node)
@@ -246,6 +249,36 @@ def _cmd_delete(rest: list[str]) -> None:
     replay = ReplayManager()
     count = replay.delete_scenario(scenario)
     print(f"Deleted scenario '{scenario}' ({count} calls removed).")
+
+
+def _cmd_forget(rest: list[str]) -> None:
+    if not rest or rest[0] in ("-h", "--help"):
+        print("Usage: toolrecall replay forget <run_id | trace_dir>")
+        print()
+        print("Evict cached API responses created during a run (e.g. after a failed CI attempt).")
+        print()
+        print("Arguments:")
+        print("  <run_id>      Run identifier (from TOOLRECALL_RUN_ID or X-ToolRecall-Run-Id)")
+        print("  <trace_dir>   Path to key-trace directory containing trace.jsonl")
+        print()
+        print("Examples:")
+        print("  toolrecall replay forget test-run-42")
+        print("  toolrecall replay forget /tmp/my-trace")
+        return
+
+    target = rest[0]
+    from toolrecall.client import forget_run
+
+    res = forget_run(target)
+    if "error" in res:
+        print(f"Error forgetting run '{target}': {res['error']}")
+        return
+    count = res.get("forgotten", 0)
+    scen = res.get("scenario_deleted", False)
+    msg = f"Forgot {count} cached API response(s) for run '{target}'."
+    if scen:
+        msg += " Deleted matching scenario from replay records."
+    print(msg)
 
 
 # ─── Tree / fork subcommands (G1) ──────────────────────────────────────────────
