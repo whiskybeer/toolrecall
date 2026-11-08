@@ -2,7 +2,7 @@
 
 Every number here is billed per request on OpenRouter (`usage.cost`). A proxy
 HIT replays the original body, bills $0 and counts as `cost_avoided`. Total
-spend for everything on this page: **$0.53**.
+spend for everything on this page: **$0.63**.
 
 ## 1. Real GEPA loop, equal work (`bench/run_gepa_real.py --design schedule`)
 
@@ -45,8 +45,34 @@ warmed. Reflection runs once and costs the same for both arms.
   executed.
 - **Cross-check:** a second estimate inside the toolrecall arm alone
   (cost_avoided / (billed + cost_avoided)) gives 65% / 39% mean, matching the
-  cross-arm numbers. Mean rollout scores are equal or higher with ToolRecall in
-  every run.
+  cross-arm numbers.
+- **No loss in score.** Deepseek scored identically in both arms in all 3 runs.
+  Mistral's ToolRecall arm scored +0.005 / +0.043 / +0.067 higher, which is
+  within the noise floor measured below.
+
+### Noise floor (A/A, `--aa`)
+
+To check whether the mistral score gaps mean anything, the same design was run
+with two PLAIN arms: one recorded GEPA schedule replayed twice, with no
+ToolRecall anywhere. Mistral-small-3.2, 3 seeds:
+
+| Seed | Mean score A / B | Difference | Rollouts with the same score | Agent LLM billed A / B |
+|---|---|---|---|---|
+| 0 | 0.628 / 0.700 | +0.072 | 77% | $0.0127 / $0.0137 (+8%) |
+| 1 | 0.540 / 0.492 | −0.048 | 79% | $0.0113 / $0.0109 (−4%) |
+| 2 | 0.630 / 0.640 | +0.011 | 84% | $0.0067 / $0.0067 (−1%) |
+
+- **Score:** identical arms differ by up to 0.07 (mean absolute difference
+  0.043), because mistral gives different answers to identical requests. The
+  ToolRecall-vs-baseline score gaps on mistral (mean 0.038) are the same size,
+  so they are noise, not an effect. ToolRecall does not make answers better; it
+  replays whatever the first answer was, good or bad. The proxy cached and
+  replayed mistral's empty replies too: 5 of 14 empty replies in s0 were HITs.
+- **Cost:** identical arms differ by −4% to +8%. ToolRecall's 21–78% savings
+  are far outside that range.
+
+Raw: `gepa_real_aa_<model>_s<seed>.{json,jsonl}`. These runs also log every
+rollout's score (`rollout_scores`).
 
 ### Why the saving varies by run
 
@@ -78,7 +104,7 @@ much of the repeated LLM work. The cross-prompt tool replay would remain.
 - Single OpenRouter key: spend is attributed per request (`usage.cost`); no
   per-key dashboard cross-check.
 
-Raw: `gepa_real_sched_<model>_s<seed>.{json,jsonl}`. The JSON holds the record
+Raw (equal-work runs): `gepa_real_sched_<model>_s<seed>.{json,jsonl}`. The JSON holds the record
 run (candidates, best prompt, reflection cost), both replay-arm summaries and
 the replay order.
 

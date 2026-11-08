@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **A/A noise floor for the GEPA benchmark (`run_gepa_real.py --aa`).** Replays
+  one recorded GEPA schedule into two plain arms to measure run-to-run noise;
+  every rollout's score is now logged. On mistral-small-3.2 (3 seeds), identical
+  arms differ by up to 0.07 in mean score and −4% to +8% in cost. So the small
+  mistral score gains seen with ToolRecall are noise, while its 21–78% cost
+  savings are well above it. Documented in `bench/results/GEPA_REAL_RESULTS.md`.
 - **Real GEPA benchmark (`bench/run_gepa_real.py`, `bench/gepa_real_rig.sh`).**
   Runs the real `gepa.optimize()` loop with GEPA's LLM reflection, a
   tool-calling agent over a pinned repo revision and a real scorer, in three

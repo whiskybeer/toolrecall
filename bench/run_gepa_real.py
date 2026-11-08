@@ -591,6 +591,7 @@ def summarize_replay(arm, args, ledger, counters, tool_requests, executions, sco
         "seed": args.seed,
         "rollouts": len(scores),
         "mean_rollout_score": round(sum(scores) / max(1, len(scores)), 4),
+        "rollout_scores": [round(x, 4) for x in scores],
         "task_llm_calls": len(task_rows),
         "task_llm_hits": sum(1 for r in task_rows if r["cache"] == "HIT"),
         "task_billed_usd": round(ledger.billed("task"), 6),
@@ -662,7 +663,8 @@ def run_schedule_design(args, corpus, train, val, key) -> tuple[list, list, dict
     rows.extend(ledger.rows)
     print(json.dumps(record, indent=2), flush=True)
 
-    order = ["baseline", "toolrecall"] if args.seed % 2 == 0 else ["toolrecall", "baseline"]
+    pair = ["baseline", "baseline-b"] if args.aa else ["baseline", "toolrecall"]
+    order = pair if args.seed % 2 == 0 else pair[::-1]
     arms = []
     for arm in order:
         print(f"\n=== replay arm {arm} ({len(rec.schedule)} evaluate calls) ===", flush=True)
@@ -720,6 +722,12 @@ def main() -> int:
         "arms drift apart, see GEPA_REAL_RESULTS.md)",
     )
     ap.add_argument("--arms", default="default,gepa-cache,toolrecall", help="--design arms only")
+    ap.add_argument(
+        "--aa",
+        action="store_true",
+        help="--design schedule only: replay into two PLAIN arms (baseline, baseline-b) "
+        "to measure the run-to-run noise floor of the score and cost numbers",
+    )
     ap.add_argument("--cost-cap", type=float, default=0.40, help="USD abort per arm")
     ap.add_argument("--out", default=None)
     ap.add_argument("--plan", action="store_true", help="print the plan, spend nothing")
