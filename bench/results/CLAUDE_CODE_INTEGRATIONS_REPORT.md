@@ -7,8 +7,11 @@ output 5). Harnesses: [`bench/claude_code_integrations/`](../claude_code_integra
 Every live run used an isolated daemon, proxy, DB and HOME; the live instance was
 never touched.
 
-> **Verdict.** ToolRecall saves tokens for Claude Code when **the same headless task
-> runs again**: identical warm reruns cost **−96%** vs the cold run (short task, n=8).
+> **Verdict.** ToolRecall saves tokens for Claude Code only when **the same headless
+> task runs again and the session stays deterministic**: identical warm reruns of a
+> short scripted task cost **−96%** vs the cold run (n=8). On real SWE-bench tasks it
+> did **not** save: +16.6% vs native (n=15 per arm), because replay rarely survives
+> past the first calls (section 0).
 > That only works since the Anthropic stream-cache fix in this branch: before it, the
 > proxy discarded every Claude Code stream. For one-off and interactive sessions the
 > saving is ~0%: there is no repeated tool output to remove (0 of 3,015 tool results in
@@ -19,6 +22,44 @@ This report replaces an earlier version whose headline figures (−33% turns, �
 −58% prompt tokens) were constants in the benchmark script and a synthetic message
 list priced without prompt caching; the one real run of that version showed the hook
 arm costing +88% (n=1).
+
+## 0. Head-to-head: native vs ToolRecall on real SWE-bench tasks
+
+5 SWE-bench Lite `django/db/migrations` issues, Sonnet, graded with the official
+hidden tests. Arm A = Claude Code straight to the API; arm B = the recommended
+ToolRecall setup (isolated proxy with the `claude-code` profile + staleness hook,
+dedup off). Same prompt, tool allowlist, fixed checkout path, base commit,
+`PYTHONHASHSEED=0`, pinned MCP; 3 runs per task per arm, arm order alternating.
+Billed cost = Claude Code's `total_cost_usd` with replayed calls counted as 0
+(1h cache writes weighted 2×). Harness: `ab_swe.py`, `ab_rig.sh`, `ab_analyse.py`.
+
+| Scenario | Arm | Runs | Resolved | Total $ | $/run | Turns | Calls replayed |
+|---|---|---:|---:|---:|---:|---:|---:|
+| All | native | 15 | 10 | 1.537 | 0.102 | 9.8 | — |
+| All | ToolRecall | 15 | 9 | 1.792 | 0.120 | 11.1 | 19 / 150 |
+| One-off (run 1) | native | 5 | 3 | 0.579 | 0.116 | 9.4 | — |
+| One-off (run 1) | ToolRecall | 5 | 3 | 0.723 | 0.145 | 11.2 | 0 / 50 |
+| Repeats (runs 2–3) | native | 10 | 7 | 0.958 | 0.096 | 10.0 | — |
+| Repeats (runs 2–3) | ToolRecall | 10 | 6 | 1.069 | 0.107 | 11.0 | 19 / 100 |
+
+**Result: no saving on this workload** (+16.6% overall; the gap is within run-to-run
+variance — one task, 15738, alone spans $0.20–$0.50 per run).
+
+Why replay barely helped:
+
+1. **Claude Code's `Bash` tool schema flips between two server-side variants**
+   (background timeout "default 600000 ms" vs "default 1800000 ms", ~50/50 per
+   session). It is part of every request, so a rerun replays only if an earlier run
+   drew the same variant: 4 of 10 reruns missed at call 1. This is the previously
+   unexplained ~13% first-call miss; `toolrecall keytrace` now names it.
+2. **After the first live call the model diverges** (e.g. a `grep` instead of a
+   `Read`), and the rest of the session cannot replay. Replay saves the prefix only.
+3. **Replay freezes earlier outcomes:** one rerun replayed a previous run's wrong fix
+   in full (cost $0, unresolved). Repeat runs through replay are not independent
+   samples.
+
+The hook fired only on 15738, when the agent edited a file through a Bash `python3`
+heredoc — its own change, which the hook cannot tell from external drift.
 
 ## 1. Forward-proxy replay of repeated runs
 

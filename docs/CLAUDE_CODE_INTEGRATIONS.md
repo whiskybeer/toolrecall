@@ -9,6 +9,9 @@ real local transcripts; methodology and raw figures are in
 > headless task runs again** (CI re-runs, eval/benchmark iteration, agent regression
 > tests). Forward-proxy replay then serves repeated calls from cache: identical warm
 > reruns cost **−96%** vs the cold run on a short task (n=8, 7 of 8 fully replayed).
+> On real SWE-bench tasks (Sonnet, n=15 per arm) it did **not** save (+16.6% vs native,
+> within noise): a server-side flip in Claude Code's `Bash` tool schema breaks call 1 of
+> about half the reruns, and the model diverges after the first live call.
 > For one-off and interactive sessions it saves ~0%: Claude Code already stubs
 > unchanged re-reads, and repeated tool output does not occur in real sessions
 > (0 of 3,015 tool results in 193 local sessions).
@@ -54,6 +57,9 @@ Replay holds only while the requests stay identical:
 - **Deterministic tool output.** The first output that differs (an `ls -l` mtime, a
   random port, unordered set printing) ends replay for the rest of the session.
 - **Not for evals that sample the model:** a replayed call returns the earlier answer.
+- **Claude Code's `Bash` tool schema varies per session** (background-timeout default
+  600000 vs 1800000 ms, server-side, ~50/50). Each variant needs its own cold run before
+  reruns replay from call 1.
 
 **Why did replay stop?** Start the proxy with `TOOLRECALL_KEY_TRACE_DIR=<dir>` and run
 `toolrecall keytrace <dir>`. For each miss it prints the first differing field against
