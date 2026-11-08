@@ -221,6 +221,10 @@ DEFAULT_CONFIG = {
         "file_ttl": -1,
         "terminal_default_ttl": 300,
         "terminal_ttls": {"whoami": 600, "hostname": 3600},
+        # sha256 default (2026-09-19): cache keys portable across
+        # implementations (SEP mcp.tool.request_key family); "md5" = legacy
+        # opt-out for a zero-rewarm rollback.
+        "hash_algorithm": "sha256",
     },
     "mcp": {
         "allowed_paths": ["~/projects", "~/.hermes/skills"],

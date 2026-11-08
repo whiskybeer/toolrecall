@@ -43,22 +43,27 @@ def _get_cached_config() -> Config:
 
 # ─── Hash Helper (pluggable algorithm) ─────────────────────
 # Controlled by [cache].hash_algorithm in config.toml.
-# "md5" (default) — fast, backward-compatible, fine for cache keying.
-# "sha256" — slightly slower, better cryptographic hygiene.
-_HASH_ALGORITHM = str(config.get("cache", "hash_algorithm", default="md5") or "md5").lower()
+# "sha256" (default, 2026-09-19) — collision-resistant; external identity
+#   derivations (SEP mcp.tool.request_key family) and daemon rows now agree
+#   on one algorithm. One-time cost: existing cache-table row keys miss once
+#   and re-warm under the new keys (TTL tables age out; mtime invalidation
+#   unaffected — file freshness never keyed on this hash).
+# "md5" — legacy opt-out for a zero-rewarm rollback; fast, non-cryptographic.
+_HASH_ALGORITHM = str(config.get("cache", "hash_algorithm", default="sha256") or "sha256").lower()
 
 
 def _hash(value: str) -> str:
     """Hash a string for cache keying using the configured algorithm.
     Algorithm is set via [cache].hash_algorithm in config.toml.
-    MD5 is the default — fast, non-cryptographic here, keeps cache keys valid.
-    SHA256 is available for stricter environments.
+    Default sha256 (2026-09-19): portable cache keys across implementations
+    (SEP identity contract) and collision hygiene; md5 selectable via
+    [cache].hash_algorithm = "md5" for a zero-rewarm rollback.
     """
-    if _HASH_ALGORITHM == "sha256":
-        return hashlib.sha256(value.encode()).hexdigest()
-    # nosemgrep: insecure-hash-algorithm-md5 — cache-key hashing, not crypto;
-    # keys pinned by tests/golden_keys.json; sha256 selectable via [cache].hash_algorithm
-    return hashlib.md5(value.encode()).hexdigest()  # nosemgrep
+    if _HASH_ALGORITHM != "sha256":
+        # nosemgrep: insecure-hash-algorithm-md5 — cache-key hashing, not crypto;
+        # keys pinned by tests/golden_keys.json; legacy opt-out via [cache].hash_algorithm
+        return hashlib.md5(value.encode()).hexdigest()  # nosemgrep
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 # ─── Sensitive File Blocklist ───────────────────────────────

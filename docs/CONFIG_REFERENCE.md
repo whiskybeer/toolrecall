@@ -114,7 +114,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_SYNC_TOKEN` | `storage.sync_token` | |
 | `TOOLRECALL_SYNC_INTERVAL` | `storage.sync_interval` | `TOOLRECALL_SYNC_INTERVAL=300` |
 | `TOOLRECALL_TURSO_API_BASE` | `storage.turso_api_base` | `TOOLRECALL_TURSO_API_BASE=https://turso.internal.example` |
-| `TOOLRECALL_HASH_ALGORITHM` | `cache.hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM=sha256` |
+| `TOOLRECALL_HASH_ALGORITHM` | `cache.hash_algorithm` | `TOOLRECALL_HASH_ALGORITHM=sha256` (default; `md5` = legacy opt-out) |
 | `TOOLRECALL_LOG_SHELL_FALLBACK` | `cache.log_shell_fallback` | |
 | `TOOLRECALL_RECALL_ENABLED` | `recall.enabled` | `TOOLRECALL_RECALL_ENABLED=true` |
 | `TOOLRECALL_NETWORK_ENABLED` | `network.enabled` | `TOOLRECALL_NETWORK_ENABLED=true` |

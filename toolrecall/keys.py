@@ -53,8 +53,10 @@ Known policy deltas, documented honestly:
 Phase 2 (2026-09) — routed ad-hoc sha256 sites through here: proxy
 api-cache/stream/log hashes (now via ``api_request_hash`` /
 ``content_digest``), daemon ping config_hash, mcp_bridge config-hash
-filename, replay._make_hash. Refused, with reasons: ``_db._hash`` and the
-daemon PID lock (md5 domains with persisted keys), ``cache.py`` MCP
+filename, replay._make_hash. Refused, with reasons: ``_db._hash`` (cache-table row keys — algorithm
+pluggable via ``[cache].hash_algorithm``, sha256 default since 2026-09-19;
+md5 = legacy opt-out) and the daemon PID lock (md5 domains with persisted
+keys), ``cache.py`` MCP
 preimages (legacy ``server://tool?args`` format ≠ tool_key), and
 ``adapters/warp.make_request_hash`` (stdlib-only edge that deploys without
 a toolrecall install — parity enforced by tests instead of import).

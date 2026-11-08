@@ -2473,7 +2473,20 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         content = req.get("content", "")
         if not key:
             return {"error": "Missing 'key' parameter"}
-        _cache_mcp_store(key, "_generic", "_store", {"key": key}, content)
+        # Address the row the CHECK reads: _handle_mcp_check looks up
+        # cached_mcp_check("_generic", "_lookup", {"key": <sent key>}), whose
+        # row key is _mcp_request_key of the WRAPPED dict — not the raw sent
+        # key. Storing under the raw key stranded every IPC store where the
+        # check could never reach it (found by the 2026-09-19 daemon-in-the-
+        # loop replay bench). Derivation lives in ONE place (cache.py) per
+        # its contract; never re-derive this formula at a call site.
+        _cache_mcp_store(
+            _cache_mcp_check("_generic", "_lookup", {"key": key})["key"],
+            "_generic",
+            "_store",
+            {"key": key},
+            content,
+        )
         return {"stored": True}
 
     # ─── Browser Cache IPCs ────────────────────────────────
