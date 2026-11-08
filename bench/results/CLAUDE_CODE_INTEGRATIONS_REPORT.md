@@ -107,6 +107,18 @@ The first pass lost 13 of the 60 runs to an API rate limit (HTTP 429): all 12 fo
 2. **Volatile test output (`--shuffle`) = 64% of calls replayed (−32% cost).** Even with randomized test seeds, replay survives the read/inspect/edit phase (19/26, 6/10, 3/4 turns) before the first random test output forks the conversation. Specialized shuffle normalizers have limited additional upside because seed differences also reorder test execution.
 3. **Prompt edit = 0% replay.** Inherent: the prompt defines the task and must go live.
 
+### New commit with `claude-code-nogit` (measured, 30 runs)
+
+Same 5 tasks, one run per task, arm and condition; code at `530101e`, ToolRecall arm keyed with the opt-in `claude-code-nogit` profile (`AB_PROFILE`, `AB_STEPS=base:1,base:2,newcommit:1`). No API errors or timeouts.
+
+| Scenario | Native $ | ToolRecall $ | Δ Cost | Calls replayed | TR outcome | Replay held through |
+|---|---:|---:|---:|---:|---:|---|
+| Cold run | $0.595 | $0.530 | −11% (noise) | 0 / 41 | 4/5 solved | 0/21, 0/9, 0/3, 0/5, 0/3 |
+| Identical rerun | $0.467 | $0.182 | **−61%** | 37 / 44 | 5/5 frozen | all, all, all, 1/8, all |
+| **Rerun, new commit** (docs commit) | $0.589 | $0.000 | **−100%** | **44 / 44** | 5/5 frozen | all, all, all, all, all |
+
+Only an unrelated docs commit is covered here. Replay also repeats failures across commits: task 16820 failed its hidden tests and replayed at $0, still failing, so CI use needs `replay forget` on failed runs. The 16820 identical rerun broke at its second call because `Grep` returned the same lines with files in a different order.
+
 **Run 1 — before the tool-schema fix:** ToolRecall +16.6% overall (native $1.537,
 ToolRecall $1.792, n=15 per arm), 19 of 100 rerun calls replayed. Cause: Claude
 Code's `Bash` tool schema states the background-timeout default as 600000 or 1800000
@@ -115,6 +127,21 @@ the previously unexplained ~13% first-call miss. `toolrecall keytrace` names it.
 
 The hook fired only on one task, when the agent edited a file through a Bash
 `python3` heredoc — its own change, which the hook cannot tell from external drift.
+
+### `Grep` order fix and a code-changing commit (measured, 40 runs)
+
+Same 5 tasks, one run per task, arm and condition, ToolRecall arm keyed with `claude-code-nogit`. Steps per task: cold run, two identical reruns, rerun after a commit that adds one comment line at the top of the file the fix edits (`AB_STEPS=base:1,base:2,base:3,codecommit:1`). The `Grep` fix sorts the lines of `Grep` results for the cache key only. No API errors or timeouts.
+
+| Scenario | Native $ | ToolRecall $ | Δ Cost | Calls replayed | TR outcome | Replay held through |
+|---|---:|---:|---:|---:|---:|---|
+| Cold run | $0.549 | $0.547 | 0% (noise) | 0 / 47 | 3/5 solved | 0/26, 0/4, 0/3, 0/10, 0/4 |
+| Identical rerun | $0.569 | $0.000 | **−100%** | **47 / 47** | 5/5 frozen | all, all, all, all, all |
+| Identical rerun, second | $0.574 | $0.000 | **−100%** | **47 / 47** | 5/5 frozen | all, all, all, all, all |
+| **Rerun, code commit** | $0.562 | $0.639 | +14% (noise) | 5 / 46 | 3/5 same as cold (live) | 1/26, 1/4, 1/3, 1/8, 1/5 |
+
+- Task 16820 had `Grep` results in a different file order in both identical reruns and still replayed all 10 calls; without the fix its identical rerun replayed 1 of 8.
+- After the code commit only call 1 replays, the call made before any tool output is returned. The comment shifts the line numbers in the next tool result, so the key changes there and the agent works live on the new code. This is the easiest change to detect; a code change the agent never sees would not fork the key.
+- Replay repeats failures: tasks 15738 and 16820 failed on the cold run and replayed as failures, so CI needs `replay forget` on failed runs.
 
 ## 1. Forward-proxy replay of repeated runs
 

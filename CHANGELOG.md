@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- **`claude-code` profile: `Grep` result order no longer forks the replay key.**
+  Lines of `Grep` tool results are sorted for the cache key only (matched by `tool_use_id`);
+  a changed, added or removed line still forks the key. Claude Code's `Grep` returned the same
+  lines with files in a different order between identical runs, which stopped replay at the next call.
 - **`toolrecall replay forget <run_id|trace_dir>` (CI failure recovery).**
   Evicts cached API responses and scenario records associated with a run or key-trace directory.
   Prevents replaying failed attempts in CI, so retries run live against the model. Runs are tagged

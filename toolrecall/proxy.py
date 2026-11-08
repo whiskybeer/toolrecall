@@ -457,6 +457,64 @@ def _cc_canon_message(msg):
     return {**msg, "content": content}
 
 
+def _cc_sort_lines(text):
+    return "\n".join(sorted(text.split("\n")))
+
+
+def _cc_sort_grep_block(block):
+    """Key-only: sort the lines of one Grep tool_result (string or text blocks)."""
+    content = block.get("content")
+    if isinstance(content, str):
+        return {**block, "content": _cc_sort_lines(content)}
+    if isinstance(content, list):
+        return {
+            **block,
+            "content": [
+                {**c, "text": _cc_sort_lines(c["text"])}
+                if isinstance(c, dict) and isinstance(c.get("text"), str)
+                else c
+                for c in content
+            ],
+        }
+    return block
+
+
+def _cc_canon_grep_results(messages):
+    """Key-only: make Grep tool_results independent of file order.
+
+    Measured on a SWE-bench A/B: Claude Code's Grep returned the same lines with
+    files in a different order between identical runs (ripgrep searches files in
+    parallel), so replay stopped at the next call. Only the order is dropped: a
+    changed, added or removed line still forks the key. Grep only, matched by
+    tool_use_id; other tools' output order can carry meaning.
+    """
+    grep_ids = {
+        b.get("id")
+        for m in messages
+        if isinstance(m, dict) and isinstance(m.get("content"), list)
+        for b in m["content"]
+        if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Grep"
+    }
+    if not grep_ids:
+        return messages
+    out = []
+    for m in messages:
+        if isinstance(m, dict) and isinstance(m.get("content"), list):
+            m = {
+                **m,
+                "content": [
+                    _cc_sort_grep_block(b)
+                    if isinstance(b, dict)
+                    and b.get("type") == "tool_result"
+                    and b.get("tool_use_id") in grep_ids
+                    else b
+                    for b in m["content"]
+                ],
+            }
+        out.append(m)
+    return out
+
+
 def _cc_canon_tools(node):
     """Replace per-session 'default <n> ms' values inside tool definitions."""
     if isinstance(node, dict):
@@ -578,7 +636,9 @@ def _canonicalize_body(profile: str, body: bytes, ignore_git: bool = False):
         if isinstance(envelope.get("tools"), list):
             envelope["tools"] = _cc_canon_tools(envelope["tools"])
         if isinstance(envelope.get("messages"), list):
-            envelope["messages"] = [_cc_canon_message(m) for m in envelope["messages"]]
+            envelope["messages"] = _cc_canon_grep_results(
+                [_cc_canon_message(m) for m in envelope["messages"]]
+            )
     envelope = walk(envelope)
     if ignore_git:
         envelope = _git_norm_walk(envelope)

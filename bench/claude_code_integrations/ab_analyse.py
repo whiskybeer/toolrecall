@@ -96,7 +96,7 @@ def summ(sel, label, is_rerun=False):
 
 print(f"{len(rows)} runs")
 if any(r.get("scenario", "legacy") != "legacy" for r in rows):
-    LABEL = {("base", 1): "cold run", ("base", 2): "identical rerun", ("newcommit", 1): "rerun, new commit",
+    LABEL = {("base", 1): "cold run", ("base", 2): "identical rerun", ("base", 3): "identical rerun 2", ("codecommit", 1): "rerun, code commit", ("newcommit", 1): "rerun, new commit",
              ("promptedit", 1): "rerun, prompt edited", ("shuffle", 1): "cold run, --shuffle",
              ("shuffle", 2): "rerun, --shuffle (volatile output)"}
     print("\n## Repeat scenarios: native vs ToolRecall (5 tasks each)")

@@ -18,6 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # python3 -I dro
 import ab_swe as ab  # noqa: E402
 
 STEPS = [("base", 1), ("base", 2), ("newcommit", 1), ("promptedit", 1), ("shuffle", 1), ("shuffle", 2)]
+if os.environ.get("AB_STEPS"):  # e.g. base:1,base:2,newcommit:1
+    STEPS = [(a, int(b)) for a, b in (x.split(":") for x in os.environ["AB_STEPS"].split(","))]
 
 
 def done():

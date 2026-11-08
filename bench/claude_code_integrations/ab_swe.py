@@ -70,6 +70,27 @@ def add_unrelated_commit(w):
     subprocess.run(["git", "-C", str(w), "commit", "-q", "-m", "Docs: unrelated note"], check=True, env=env)
 
 
+CODE_TARGET = {  # the file each task's fix edits, so the agent reads it
+    "django__django-15738": "django/db/migrations/autodetector.py",
+    "django__django-15996": "django/db/migrations/serializer.py",
+    "django__django-16595": "django/db/migrations/operations/fields.py",
+    "django__django-16820": "django/db/migrations/operations/models.py",
+    "django__django-17087": "django/db/migrations/serializer.py",
+}
+
+
+def add_code_commit(w, iid):
+    """codecommit scenario: a comment at the top of the file the fix edits; byte-identical in every run."""
+    f = Path(w) / CODE_TARGET[iid]
+    f.write_text("# Code change for the code-commit scenario.\n" + f.read_text())
+    ident = {"GIT_AUTHOR_NAME": "bench", "GIT_AUTHOR_EMAIL": "bench@example.invalid",
+             "GIT_COMMITTER_NAME": "bench", "GIT_COMMITTER_EMAIL": "bench@example.invalid",
+             "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z"}
+    env = {**os.environ, **ident}
+    subprocess.run(["git", "-C", str(w), "add", str(f)], check=True, env=env)
+    subprocess.run(["git", "-C", str(w), "commit", "-q", "-m", "Code: comment in the target file"], check=True, env=env)
+
+
 def git(*a, **kw):
     return subprocess.run(["git", "-C", str(REPO_DJ), *a], capture_output=True, text=True, **kw)
 
@@ -96,13 +117,15 @@ def run_one(iid, arm, rep, port, scenario="legacy", hook=True, allowed=None):
     fresh_worktree(w, base)
     if scenario == "newcommit":
         add_unrelated_commit(w)
+    if scenario == "codecommit":
+        add_code_commit(w, iid)
     env = {k: v for k, v in os.environ.items()
            if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
                         "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS")}
     env["PYTHONHASHSEED"] = "0"
     if arm == "B":
         env.update(ANTHROPIC_BASE_URL=f"http://127.0.0.1:{port}",
-                   ANTHROPIC_CUSTOM_HEADERS="X-ToolRecall-Canonicalize: claude-code",
+                   ANTHROPIC_CUSTOM_HEADERS="X-ToolRecall-Canonicalize: " + os.environ.get("AB_PROFILE", "claude-code"),
                    PYTHONPATH=str(TR), TOOLRECALL_CC_HOOK_DIR=str(OUT / "hookstate"),
                    TOOLRECALL_TRANSPORT=str(OUT / "no-daemon.sock"), TOOLRECALL_NO_AUTOSTART="1")
     cmd = [CLAUDE, "-p", prompt(iid, scenario), "--model", MODEL, "--output-format", "json",

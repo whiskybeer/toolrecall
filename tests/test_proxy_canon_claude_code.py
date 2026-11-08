@@ -180,3 +180,60 @@ def test_git_context_normalization_opt_in():
     assert _canonicalize_body("claude-code-nogit", b1) != _canonicalize_body(
         "claude-code-nogit", b3
     )
+
+
+def _grep_body(lines, name="Grep", as_blocks=False):
+    text = "\n".join(lines)
+    return json.dumps(
+        {
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "task"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "toolu_G", "name": name, "input": {}}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_G",
+                            "content": [{"type": "text", "text": text}] if as_blocks else text,
+                        }
+                    ],
+                },
+            ],
+        }
+    ).encode()
+
+
+def test_grep_file_order_does_not_fork_key():
+    # Measured: the same Grep came back with files in a different order.
+    a = _grep_body(["a.py:1:x", "b.py:2:y"])
+    b = _grep_body(["b.py:2:y", "a.py:1:x"])
+    assert _canonicalize_body("claude-code", a) == _canonicalize_body("claude-code", b)
+
+
+def test_grep_order_in_text_blocks_does_not_fork_key():
+    a = _grep_body(["a.py:1:x", "b.py:2:y"], as_blocks=True)
+    b = _grep_body(["b.py:2:y", "a.py:1:x"], as_blocks=True)
+    assert _canonicalize_body("claude-code", a) == _canonicalize_body("claude-code", b)
+
+
+def test_grep_changed_or_missing_line_still_forks_key():
+    a = _canonicalize_body("claude-code", _grep_body(["a.py:1:x", "b.py:2:y"]))
+    assert a != _canonicalize_body("claude-code", _grep_body(["a.py:2:x", "b.py:2:y"]))
+    assert a != _canonicalize_body("claude-code", _grep_body(["a.py:1:x"]))
+
+
+def test_other_tools_keep_output_order():
+    a = _grep_body(["a.py:1:x", "b.py:2:y"], name="Bash")
+    b = _grep_body(["b.py:2:y", "a.py:1:x"], name="Bash")
+    assert _canonicalize_body("claude-code", a) != _canonicalize_body("claude-code", b)
+
+
+def test_grep_order_kept_outside_claude_code_profile():
+    a = _grep_body(["a.py:1:x", "b.py:2:y"])
+    b = _grep_body(["b.py:2:y", "a.py:1:x"])
+    assert _canonicalize_body("hermes", a) != _canonicalize_body("hermes", b)

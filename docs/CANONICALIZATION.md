@@ -124,6 +124,7 @@ Opt-in via `X-ToolRecall-Canonicalize: claude-code` (Claude Code sends it with
 | `hermes` text rules (CR, blank lines, UUID, ISO timestamp) | shared harness noise |
 | top-level `metadata` dropped from the key | carries account + per-run session id; never shown to the model |
 | `in/took <n>(ms\|s\|sec\|seconds)` → `in <duration>` | test-runner wall time (`2 passed in 0.25s`) was the first divergence after a replayed call |
+| Lines of `Grep` tool results sorted (key only) | Grep returned the same lines with files in a different order between identical runs; a changed, added or removed line still forks the key |
 
 Deliberately **not** normalized: tool descriptions (a server-side flag flips the
 Bash tool text in ~1 of 4 runs — real model-visible text, so it forks the key),
