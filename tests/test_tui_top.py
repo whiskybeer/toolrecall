@@ -145,9 +145,10 @@ def test_render_plain_shows_context_when_daemon_up(seeded_db, monkeypatch):
         },
     )
     out = tui_top.render_plain(tui_top.snapshot_factory(seeded_db))
-    assert "checkpoint 3" in out
-    assert "stale 1" in out and "2.0K" in out
+    # Contract since 2026-09-16: the banked "ctx dropped" ledger is NOT
+    # rendered for end users; stale-file warnings still are.
     assert "/tmp/stale.py" in out
+    assert "ctx dropped" not in out
 
 
 def test_action_error_paths_are_soft(seeded_db, monkeypatch):

@@ -62,8 +62,8 @@ HELP_TEXT = [
     "METRIC TIERS (don't conflate):",
     "  IO      — hits/rate, tokens served cache vs disk: latency only,",
     "            NOT money. Content reaches the LLM either way.",
-    "  CONTEXT — tokens_not_sent_to_llm: input tokens dropped from the",
-    "            LLM context (checkpoint flow; 0 = flow inactive).",
+    "  CONTEXT — measured not-sent (dedup stubs): wire-verified tokens",
+    "            that never reached the LLM. Estimates: `toolrecall stats`.",
     "  MONEY   — billed input/output tokens: only from provider usage",
     "            via the API proxy. No proxy traffic = no data.",
     "",
@@ -461,25 +461,9 @@ def render_plain(snapshot: dict) -> str:
     ctx = context_via_daemon()
     if ctx:
         lines.append("")
-        dropped = ctx.get("ctx_dropped_tokens_total", 0)
-        lines.append(
-            "context: checkpoint %s  dirty %d  clean %d  stale %d (~%s tok reclaimable)"
-            % (
-                ctx.get("checkpoint", "-"),
-                ctx.get("total_dirty", 0),
-                ctx.get("total_clean", 0),
-                ctx.get("total_stale", len(ctx.get("stale", []))),
-                human_tokens(ctx.get("est_reclaimable_tokens", 0)),
-            )
-        )
-        _armed = ctx.get("agent_armed", False)
-        if dropped:
-            _drop_state = "potential; real if agent drops the files"
-        elif _armed:
-            _drop_state = "armed — flow driven, nothing banked yet"
-        else:
-            _drop_state = "INACTIVE — agent must call context_set_checkpoint"
-        lines.append("  ctx dropped %s tok (%s)" % (human_tokens(dropped), _drop_state))
+        # "ctx dropped" ledger intentionally omitted from the end-user stats
+        # strip (2026-09-16 — same rationale as the ctx view: bank-once
+        # estimate, reads as stale noise). Available via `toolrecall stats`.
         for e in ctx.get("stale", [])[:10]:
             lines.append("  stale: %s (~%s tok)" % (e["path"], human_tokens(e["est_tokens"])))
     money = money_today()
@@ -867,19 +851,12 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                         ctx.get("total_read", 0),
                     ),
                 )
-                dropped = ctx.get("ctx_dropped_tokens_total", 0)
-                _armed = ctx.get("agent_armed", False)
-                if dropped:
-                    _drop_state = "potential — real only if the agent drops these files"
-                elif _armed:
-                    _drop_state = "armed — flow driven, nothing banked yet"
-                else:
-                    _drop_state = "INACTIVE — agent must call context_set_checkpoint"
                 y = put(y, "", 0)  # section gap
-                y = put(
-                    y,
-                    "  ctx dropped: %s tok  (%s)" % (human_tokens(dropped), _drop_state),
-                )
+                # "ctx dropped" ledger intentionally NOT rendered for end
+                # users (2026-09-16): it is an event-driven, bank-once
+                # estimate that reads as stale noise without checkpoint-flow
+                # context. End users get the wire-verified measured line;
+                # the ledger stays available via `toolrecall stats`.
                 # MEASURED tier: wire-verified not-sent tokens (bridge dedup
                 # stubs). The number an end user can take to the bank —
                 # content was REPLACED on the wire, never an estimate.
