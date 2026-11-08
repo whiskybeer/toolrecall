@@ -79,6 +79,10 @@ class _TempDbSafety:
     def check():
         db = os.environ["TOOLRECALL_CACHE_DB"]
         assert tempfile.gettempdir() in os.path.realpath(db), f"refusing to clear non-temp DB: {db}"
+        # conftest force-pins a FRESH per-test DB (see _isolated_toolrecall_env);
+        # this file used to rely on its module-level env write keeping an
+        # already-initialized shared DB — bootstrap idempotent schema explicitly.
+        _cache_mod._init()
 
 
 class TestDirectCacheScopes(unittest.TestCase):

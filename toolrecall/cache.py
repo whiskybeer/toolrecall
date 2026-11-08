@@ -1656,9 +1656,18 @@ def cached_write(path: str, content: str, ns: str = "", client: str = "") -> dic
         except Exception as e:
             return {"error": str(e), "path": path}
 
-    # Read current content and compare
+    # Read current content and compare.
+    # Use the real open() to bypass the OS shim (if installed): a shimmed
+    # read here would re-enter cached_read transparently, which can refresh
+    # AND persist the disk bytes under the reader's (global) namespace —
+    # poisoning cross-namespace isolation (A6-7). Same rationale as the
+    # _original_open fallback in cached_read.
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        from toolrecall.shim import _original_open as _real_open
+    except ImportError:
+        _real_open = open
+    try:
+        with _real_open(path, "r", encoding="utf-8", errors="ignore") as f:
             current = f.read()
     except Exception as e:
         return {"error": str(e), "path": path}
@@ -1700,9 +1709,17 @@ def cached_patch(
 
     if not os.path.exists(path):
         return {"error": f"File not found: {path}", "path": path}
-    # Read current content
+    # Read current content.
+    # Use the real open() to bypass the OS shim (if installed): a shimmed
+    # read here would re-enter cached_read transparently and can persist
+    # the disk bytes under the global namespace (see cached_write comment;
+    # A6-7 namespace-isolation hazard).
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        from toolrecall.shim import _original_open as _real_open
+    except ImportError:
+        _real_open = open
+    try:
+        with _real_open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
     except Exception as e:
         return {"error": str(e), "path": path}

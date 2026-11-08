@@ -136,10 +136,25 @@ def pytest_runtest_setup(item):
 
 @pytest.fixture(autouse=True)
 def _isolated_toolrecall_env(monkeypatch, tmp_path, request):
-    """Point TOOLRECALL_* path env vars at per-test temp dirs.
+    """Point TOOLRECALL_* path env vars at a per-test temp DB — unconditionally.
 
-    Tests that set their own TOOLRECALL_* vars still win (we only set if
-    unset or already pointing at production home).
+    Why force-pin (no "only set if unset" leniency): pytest IMPORTS every
+    test module at collection time, and several modules set a raw
+    ``os.environ["TOOLRECALL_CACHE_DB"] = <fixed path>`` at module level
+    (e.g. test_coalescing_e2e.py, test_file_ttls.py, test_invalidate_scope.py,
+    test_ast_security.py, test_audit_fixes.py). That raw value survives
+    collection and is never undone, so the previous lenient pin ("we only
+    set if unset") silently left EVERY test without its own fixture on ONE
+    shared DB. Combined with cache keys that collide across tests (adapter
+    tools named ``tool`` with identical args, saver thread ids like ``t1``),
+    earlier tests' rows leak into later tests' lookups — order-dependent
+    failures that never reproduce when files run alone.
+
+    Tests that deliberately pin their own DB do so inside fixtures with
+    ``monkeypatch.setenv`` — those run AFTER this autouse fixture and still
+    win. The session-level Layer-0 guard above already aborts the whole run
+    when the operator pins a production path, so force-pinning here cannot
+    mask a misconfigured session.
 
     Also disables the docs auto-refresh (TOOLRECALL_DOCS_INDEX_TTL=0):
     a background refresh thread spawned by docs_search() resolves the DB
@@ -149,9 +164,7 @@ def _isolated_toolrecall_env(monkeypatch, tmp_path, request):
     exercise the refresh explicitly set their own TTL.
     """
     for var in ("TOOLRECALL_CACHE_DB", "TOOLRECALL_KNOWLEDGE_DB", "BENCH_DB_PATH"):
-        cur = os.environ.get(var)
-        if not cur or cur.startswith(os.path.expanduser("~/.toolrecall")):
-            monkeypatch.setenv(var, str(tmp_path / "hermetic.db"))
+        monkeypatch.setenv(var, str(tmp_path / "hermetic.db"))
     monkeypatch.setenv("TOOLRECALL_DOCS_INDEX_TTL", "0")
     # Auto-updater: disabled by default in tests (same rationale as the docs
     # refresh — a check_for_update() fired from main() under test would hit

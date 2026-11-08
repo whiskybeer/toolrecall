@@ -35,6 +35,10 @@ class TestCoalescingE2E(unittest.TestCase):
     def setUp(self):
         db = os.environ["TOOLRECALL_CACHE_DB"]
         assert tempfile.gettempdir() in os.path.realpath(db), f"non-temp DB: {db}"
+        # conftest pins a FRESH per-test DB (force-pin; see _isolated_toolrecall_env).
+        # This file used to rely on its module-level env write keeping a shared,
+        # already-initialized DB — bootstrap the idempotent schema explicitly now.
+        _cache_mod._init()
         with _db() as conn:
             conn.execute("DELETE FROM terminal_cache")
 

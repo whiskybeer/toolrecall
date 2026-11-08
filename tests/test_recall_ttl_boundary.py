@@ -27,19 +27,8 @@ class TestRecallTTLBoundaries(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.mkdtemp(prefix="tr_ttl_")
-        os.environ["TOOLRECALL_CACHE_DB"] = os.path.join(cls._tmp, "ttl.db")
-        import toolrecall._db as _db
-
-        # Close any shared singleton so it reopens against the temp path
-        with _db._db_lock:
-            if _db._db_real is not None:
-                _db._db_real.close()
-            _db._db_real = None
-            _db._db_path_cached = None
-            _db._cached_config = None
-        from toolrecall.cache import _init
-
-        _init()
+        cls._db_path = os.path.join(cls._tmp, "ttl.db")
+        os.environ["TOOLRECALL_CACHE_DB"] = cls._db_path  # standalone-mode pin
 
     @classmethod
     def tearDownClass(cls):
@@ -53,6 +42,35 @@ class TestRecallTTLBoundaries(unittest.TestCase):
             _db._cached_config = None
         os.environ.pop("TOOLRECALL_CACHE_DB", None)
         shutil.rmtree(cls._tmp, ignore_errors=True)
+
+    def setUp(self):
+        # conftest's autouse fixture force-pins a FRESH per-test DB AFTER
+        # setUpClass ran; re-assert the class pin so the one-DB-per-class
+        # design (and standalone runs, which skip conftest) still hold.
+        # Singleton must be closed so it reopens against the class path;
+        # _init() is idempotent.
+        os.environ["TOOLRECALL_CACHE_DB"] = self._db_path
+        import toolrecall._db as _db
+
+        with _db._db_lock:
+            if _db._db_real is not None:
+                _db._db_real.close()
+            _db._db_real = None
+            _db._db_path_cached = None
+            _db._cached_config = None
+        from toolrecall.cache import _init
+
+        _init()
+
+    def tearDown(self):
+        # Close the singleton so the next test's env pin takes effect.
+        import toolrecall._db as _db
+
+        with _db._db_lock:
+            if _db._db_real is not None:
+                _db._db_real.close()
+            _db._db_real = None
+            _db._db_path_cached = None
 
     # ── helpers ──────────────────────────────────────────────
 

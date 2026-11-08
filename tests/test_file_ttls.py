@@ -31,7 +31,11 @@ class _FileTtlEnv(unittest.TestCase):
         self.tree = self._tmp.name
         # Isolate the in-memory LRU between tests
         cache_mod._file_cache.clear()
-        # Fresh DB state per test (module-level DB is shared across cases)
+        # conftest force-pins a FRESH per-test DB (see _isolated_toolrecall_env);
+        # this file used to rely on its module-level env write keeping an
+        # already-initialized shared DB — bootstrap idempotent schema explicitly.
+        cache_mod._init()
+        # Fresh DB state per test (DELETE after _init; DB path is per-test now)
         with cache_mod._db() as conn:
             conn.execute("DELETE FROM file_cache")
         # Per-test [cache] section — cached_read resolves via `config.get("cache")`
