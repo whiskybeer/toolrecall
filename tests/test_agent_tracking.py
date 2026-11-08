@@ -252,3 +252,28 @@ class TestAgentTracking:
         assert "Active Agents" in captured.out
         assert "agent status-agent: 1 hits, 0 misses" in captured.out
         assert "tokens_saved=120" in captured.out
+
+    def test_mcp_bridge_passes_agent_id(self, monkeypatch):
+        """MCPBridge passes agent_id from env or clientInfo to UDS requests."""
+        from toolrecall.mcp_bridge import MCPBridge
+
+        sent_payloads = []
+
+        class DummyTransport:
+            def send(self, payload):
+                sent_payloads.append(payload)
+                return {"cached": True, "result": "ok"}
+
+        bridge = MCPBridge()
+        bridge.client = DummyTransport()
+
+        # 1. From environment
+        monkeypatch.setenv("TOOLRECALL_AGENT_ID", "mcp-env-agent")
+        bridge._uds_request("cached_read", path="/foo")
+        assert sent_payloads[-1]["agent_id"] == "mcp-env-agent"
+
+        # 2. From clientInfo when env is unset
+        monkeypatch.delenv("TOOLRECALL_AGENT_ID", raising=False)
+        bridge._client_name = "claude-code"
+        bridge._uds_request("cached_read", path="/bar")
+        assert sent_payloads[-1]["agent_id"] == "claude-code"

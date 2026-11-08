@@ -589,9 +589,16 @@ class MCPBridge:
             # the substring "token" in a log call as credential-disclosure.
             log.debug("measured-tier counter failed (path=%s)", log_path, exc_info=True)
 
+    def _resolve_agent_id(self) -> str:
+        """Resolve agent identity from environment or clientInfo handshake."""
+        return (os.environ.get("TOOLRECALL_AGENT_ID") or self._client_name or "").strip()
+
     def _uds_request(self, cmd: str, **kwargs) -> dict:
         """Send a request to the daemon and return parsed response."""
         payload = {"cmd": cmd, **kwargs}
+        agent_id = self._resolve_agent_id()
+        if agent_id and "agent_id" not in payload:
+            payload["agent_id"] = agent_id
         return self.client.send(payload)
 
     def _format_result(self, result) -> str:
@@ -772,47 +779,40 @@ class MCPBridge:
                 tool = arguments.get("tool", "")
                 tool_args = arguments.get("arguments", {})
                 bypass = arguments.get("bypass_cache", False)
-                payload = {
-                    "cmd": "mcp_call",
-                    "server": server,
-                    "tool": tool,
-                    "arguments": tool_args,
-                }
-                if bypass:
-                    payload["ttl"] = 0
-                resp = self.client.send(payload)
+                extra = {"ttl": 0} if bypass else {}
+                resp = self._uds_request(
+                    "mcp_call",
+                    server=server,
+                    tool=tool,
+                    arguments=tool_args,
+                    **extra,
+                )
             elif tool_name == "mcp_list_servers":
-                resp = self.client.send({"cmd": "mcp_list_servers"})
+                resp = self._uds_request("mcp_list_servers")
             else:
                 # cached_read with bypass_cache → translate to refresh_file
                 if tool_name in ("cached_read", "read_file") and arguments.get(
                     "bypass_cache", False
                 ):
-                    resp = self.client.send(
-                        {
-                            "cmd": "cache_refresh_file",
-                            "path": arguments.get("path", ""),
-                            "mcp_origin": True,
-                        }
+                    resp = self._uds_request(
+                        "cache_refresh_file",
+                        path=arguments.get("path", ""),
+                        mcp_origin=True,
                     )
                 elif tool_name == "write_file":
-                    resp = self.client.send(
-                        {
-                            "cmd": "cached_write",
-                            "path": arguments.get("path", ""),
-                            "content": arguments.get("content", ""),
-                            "mcp_origin": True,
-                        }
+                    resp = self._uds_request(
+                        "cached_write",
+                        path=arguments.get("path", ""),
+                        content=arguments.get("content", ""),
+                        mcp_origin=True,
                     )
                 elif tool_name == "patch":
-                    resp = self.client.send(
-                        {
-                            "cmd": "cached_patch",
-                            "path": arguments.get("path", ""),
-                            "old_string": arguments.get("old_string", ""),
-                            "new_string": arguments.get("new_string", ""),
-                            "mcp_origin": True,
-                        }
+                    resp = self._uds_request(
+                        "cached_patch",
+                        path=arguments.get("path", ""),
+                        old_string=arguments.get("old_string", ""),
+                        new_string=arguments.get("new_string", ""),
+                        mcp_origin=True,
                     )
                 else:
                     # Mark agent-tool reads so tokens_saved_to_llm counts.

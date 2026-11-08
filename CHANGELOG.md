@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- **MCP Bridge agent identity forwarding.** Forwards `TOOLRECALL_AGENT_ID` (or
+  handshake `clientInfo.name`) through the MCP bridge to the daemon on every
+  tool call, attributing MCP operations to the calling agent.
 - **Active agents summary in `toolrecall status`.** Displays an Active Agents block
   showing total hits, misses, hit rate, and tokens saved per agent identity when
   per-agent statistics are recorded.
