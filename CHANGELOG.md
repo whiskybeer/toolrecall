@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- **OpenEvolve LLM-judge memoization (`wrap_llm_feedback`, `admit_unique`).**
+  Memoizes OpenEvolve's `use_llm_feedback` judge in the work ledger, closing the
+  re-billing gap where evaluator memo hits still called the external LLM judge
+  for every child. Includes `admit_unique` population admission guard to skip
+  embedding and novelty checks on byte-identical island duplicates.
 - **Per-agent cache statistics tracking (`agent_cache_stats`, `toolrecall agent`).**
   Tracks cache hits, misses, and token savings per agent identity (e.g. `hermes`,
   `claude-code`, `antigravity`) across file, terminal, skill, and API cache.

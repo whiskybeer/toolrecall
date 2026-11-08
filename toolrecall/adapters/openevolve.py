@@ -109,7 +109,15 @@ from typing import Any, Callable
 from toolrecall import client as _client
 from toolrecall.keys import work_key as _work_key
 
-__all__ = ["wrap_evaluator", "reuse_after", "never_reuse", "policy_from_config", "MEMO_ENV_VAR"]
+__all__ = [
+    "wrap_evaluator",
+    "wrap_llm_feedback",
+    "admit_unique",
+    "reuse_after",
+    "never_reuse",
+    "policy_from_config",
+    "MEMO_ENV_VAR",
+]
 
 #: Opt-in switch. Without it wrapping is a pass-through (no behaviour change).
 MEMO_ENV_VAR = "TOOLRECALL_OPENEVOLVE_MEMO"
@@ -431,3 +439,312 @@ def wrap_evaluator(
     else:
         log.info("openevolve memo: wrapped %s (enabled=%s)", ", ".join(wrapped), is_enabled())
     return wrapped
+
+
+# ─── llm_feedback judge ───────────────────────────────────────────────────────
+#
+# ``evaluator.use_llm_feedback`` makes OpenEvolve call an LLM judge for every
+# child, from ``Evaluator.evaluate_program`` — *outside* the user's ``evaluate()``
+# that ``wrap_evaluator`` memoizes. A memo hit on the evaluator therefore still
+# bills the judge again (measured: 3 evaluations of 2 distinct candidates = 2
+# evaluator runs but 3 judge calls, identically on openevolve 0.3.2 and 0.4.0;
+# see workspace/openevolve-bench/compat_040/). This hook closes that gap.
+
+#: Stage name of the judge in the work ledger (disjoint from every evaluator stage).
+JUDGE_STAGE = "llm_feedback"
+
+#: Attributes of an OpenEvolve model config that change what the judge answers.
+#: ``api_base`` / ``api_key`` / ``timeout`` are deployment, not identity.
+_JUDGE_MODEL_FIELDS = ("name", "provider", "weight", "temperature", "top_p", "max_tokens")
+#: Attributes of the evaluator's prompt config that change the judge's prompt.
+_JUDGE_PROMPT_FIELDS = (
+    "evaluator_system_message",
+    "template_dir",
+    "include_artifacts",
+    "max_artifact_bytes",
+)
+
+
+def _judge_identity(evaluator: Any) -> dict[str, Any]:
+    """What the judge *is*, read from the live Evaluator — part of the ledger key.
+
+    A verdict is only reusable for the same judge. Reading the model list and the
+    evaluator prompt config off the instance means a changed model, temperature
+    or system message can never be served an older verdict. Anything this cannot
+    see (custom template files, a custom ``init_client``) must go through the
+    caller's ``params=``.
+    """
+    ensemble = getattr(evaluator, "llm_ensemble", None)
+    models = []
+    for cfg in getattr(ensemble, "models_cfg", None) or []:
+        models.append({f: getattr(cfg, f, None) for f in _JUDGE_MODEL_FIELDS})
+    sampler_cfg = getattr(getattr(evaluator, "prompt_sampler", None), "config", None)
+    prompt = {f: getattr(sampler_cfg, f, None) for f in _JUDGE_PROMPT_FIELDS}
+    return {"models": models, "prompt": prompt}
+
+
+def _result_parts(result: Any) -> tuple[dict, dict] | None:
+    """Split a judge result into ``(metrics, artifacts)``, or None if unusable.
+
+    OpenEvolve returns ``{}`` for any parse / API failure inside the judge. That
+    is a *failed attempt*, not an answer: recording it would freeze one transient
+    error as the permanent verdict for that program.
+    """
+    metrics = getattr(result, "metrics", result)
+    artifacts = getattr(result, "artifacts", None) or {}
+    if not isinstance(metrics, dict) or not metrics:
+        return None
+    if not isinstance(artifacts, dict):
+        return None
+    return metrics, artifacts
+
+
+def _rebuild_result(metrics: dict, artifacts: dict) -> Any:
+    """Re-create what the judge originally returned (an ``EvaluationResult``).
+
+    Looked up in ``sys.modules`` rather than imported: this module never imports
+    openevolve. Falls back to the bare metrics dict, which OpenEvolve's
+    ``_process_evaluation_result`` accepts as well.
+    """
+    import sys
+
+    module = sys.modules.get("openevolve.evaluation_result")
+    cls = getattr(module, "EvaluationResult", None)
+    if cls is None:
+        return dict(metrics)
+    return cls(metrics=dict(metrics), artifacts=dict(artifacts))
+
+
+def wrap_llm_feedback(
+    target: Any = None,
+    *,
+    allow_reuse: Callable[[int], bool] | None = None,
+    samples: int | None = None,
+    mode: str = MODE_SHADOW,
+    stats: dict[str, int] | None = None,
+    ttl: float = 0.0,
+    params: Any = None,
+    enabled: bool | None = None,
+) -> bool:
+    """Memoize OpenEvolve's ``llm_feedback`` judge on the work ledger.
+
+    Call it from the eval script, next to :func:`wrap_evaluator`. The eval script
+    is imported by ``Evaluator.__init__`` inside each worker process, so by then
+    ``openevolve.evaluator`` is already in ``sys.modules`` and ``target=None``
+    patches ``Evaluator._llm_evaluate`` on the class (found there, not imported —
+    the adapter keeps no openevolve import). Pass a class or an instance to patch
+    that one explicitly. Returns True when something was wrapped; idempotent.
+
+    **Default is ``mode="shadow"`` — deliberately not ``serve``.** The judge is a
+    *measurement* by a stochastic model, the same kind of stage the serving
+    policy never serves (a served timing stage froze a 22.3x "speedup" for a real
+    1.97x). Shadow mode pays every judge call and counts the would-be hits in
+    ``stats["judge_shadow_hits"]`` — the data to decide; ``mode="serve"`` is an explicit
+    opt-in, and ``samples=K`` then keeps the first K verdicts paid (a K-sample
+    judge average is a better measurement than one).
+
+    The key is the program bytes + the judge's identity (models, weights,
+    temperature, evaluator prompt config — see :func:`_judge_identity`) + the
+    caller's ``params``. A failed judge call (OpenEvolve returns ``{}``) is never
+    recorded.
+    """
+    if allow_reuse is not None and samples is not None:
+        raise ValueError(
+            "openevolve memo: pass either `samples` or `allow_reuse`, not both "
+            "(two answers to the same question is one too many)"
+        )
+    if mode not in MODES:
+        raise ValueError(f"openevolve memo: mode must be one of {MODES}, got {mode!r}")
+    allow = (
+        allow_reuse
+        if allow_reuse is not None
+        else reuse_after(samples)
+        if samples is not None
+        else _default_allow_reuse
+    )
+    threshold = getattr(allow, "__reuse_threshold__", None)
+    if enabled is None:
+        is_enabled: Callable[[], bool] = lambda: bool(os.environ.get(MEMO_ENV_VAR))  # noqa: E731
+    else:
+        is_enabled = lambda: bool(enabled)  # noqa: E731
+
+    if target is None:
+        import sys
+
+        module = sys.modules.get("openevolve.evaluator")
+        target = getattr(module, "Evaluator", None)
+        if target is None:
+            log.warning(
+                "openevolve memo: openevolve.evaluator is not loaded — llm_feedback "
+                "not wrapped; call wrap_llm_feedback from the eval script (imported by "
+                "the Evaluator) or pass the Evaluator class/instance explicitly"
+            )
+            return False
+    real = getattr(target, "_llm_evaluate", None)
+    if real is None or not callable(real):
+        log.warning("openevolve memo: %r has no _llm_evaluate — llm_feedback not wrapped", target)
+        return False
+    if getattr(real, "__toolrecall_memo__", False):
+        return False  # already wrapped — idempotent
+
+    is_class = isinstance(target, type)
+
+    async def _memoized(evaluator: Any, call_real: Callable, program_code: Any, *a, **kw) -> Any:
+        if not is_enabled() or not isinstance(program_code, str):
+            return await call_real(program_code, *a, **kw)
+        code = program_code.encode("utf-8")
+        key = _work_key(
+            code,
+            stage=JUDGE_STAGE,
+            params={"judge": _judge_identity(evaluator), "user": params},
+        )
+        try:
+            record = _client.work_lookup(key)
+        except Exception as exc:  # a memo must never break a paid run
+            log.warning("openevolve memo: judge ledger lookup failed (%s); judging live", exc)
+            record = None
+
+        if record is not None:
+            attempts = int(record.get("attempts", 0))
+            stored = record.get("metrics") or {}
+            if allow(attempts) and isinstance(stored.get("metrics"), dict):
+                if mode == MODE_SERVE:
+                    _bump(stats, "judge_hits")
+                    log.info(
+                        "openevolve memo: HIT %s stage=%s attempts=%s metrics=%s",
+                        key[:12],
+                        JUDGE_STAGE,
+                        attempts,
+                        _metrics_summary(stored["metrics"]),
+                    )
+                    return _rebuild_result(stored["metrics"], stored.get("artifacts") or {})
+                _bump(stats, "judge_shadow_hits")
+                log.info(
+                    "openevolve memo: SHADOW-HIT %s stage=%s attempts=%s metrics=%s "
+                    "— not served (mode=shadow)",
+                    key[:12],
+                    JUDGE_STAGE,
+                    attempts,
+                    _metrics_summary(stored["metrics"]),
+                )
+            elif not allow(attempts):
+                _bump(stats, "judge_withheld")
+                log.info(
+                    "openevolve memo: WITHHELD %s stage=%s attempts=%s "
+                    "(policy serves from attempt %s)",
+                    key[:12],
+                    JUDGE_STAGE,
+                    attempts,
+                    threshold if threshold is not None else "policy",
+                )
+
+        _bump(stats, "judge_calls")
+        started = time.perf_counter()
+        result = await call_real(program_code, *a, **kw)
+        elapsed = time.perf_counter() - started
+        parts = _result_parts(result)
+        if parts is None:
+            _bump(stats, "judge_unrecorded")
+            log.warning(
+                "openevolve memo: judge returned no usable metrics for %s; not recorded", key[:12]
+            )
+            return result
+        try:
+            _client.work_store(
+                key, {"metrics": parts[0], "artifacts": parts[1]}, eval_time=elapsed, ttl=ttl
+            )
+        except Exception as exc:  # recording is best-effort, never blocking
+            log.warning("openevolve memo: judge ledger store failed (%s)", exc)
+        return result
+
+    if is_class:
+
+        async def memoized(self: Any, program_code: Any = None, *a: Any, **kw: Any) -> Any:
+            async def call_real(code: Any, *ra: Any, **rkw: Any) -> Any:
+                return await real(self, code, *ra, **rkw)
+
+            return await _memoized(self, call_real, program_code, *a, **kw)
+
+    else:
+
+        async def memoized(program_code: Any = None, *a: Any, **kw: Any) -> Any:  # type: ignore[misc]
+            return await _memoized(target, real, program_code, *a, **kw)
+
+    memoized.__name__ = getattr(real, "__name__", "_llm_evaluate")
+    memoized.__doc__ = "ToolRecall work-ledger memo around OpenEvolve's `_llm_evaluate` judge."
+    setattr(memoized, "__toolrecall_memo__", True)
+    setattr(memoized, "__wrapped_evaluator__", real)
+    setattr(target, "_llm_evaluate", memoized)
+    log.info(
+        "openevolve memo: wrapped llm_feedback judge (mode=%s, enabled=%s)", mode, is_enabled()
+    )
+    return True
+
+
+# ─── duplicate admission guard ────────────────────────────────────────────────
+
+
+def admit_unique(
+    *, stats: dict[str, int] | None = None, enabled: bool | None = None
+) -> Callable[[Any, Any, int], bool]:
+    """``population_strategy.admit`` hook: refuse an exact copy of an island member.
+
+    OpenEvolve 0.4.0 filters near-duplicates with an embedding plus an LLM
+    "is this novel?" judge — both inside ``ProgramDatabase.add``, i.e. *after* the
+    child was evaluated. A byte-identical repeat has cosine similarity 1.0, so it
+    always reaches the judge, which is billed on the **mutation ensemble**. The
+    ``admit`` hook runs just before that check, so refusing the exact copy there
+    skips the embedding call and the judge call::
+
+        from openevolve.population import PopulationStrategy
+
+        strategy = PopulationStrategy(admit=tr_oe.admit_unique(stats=stats))
+        OpenEvolve(..., population_strategy=strategy)
+
+    Duck-typed on the snapshot (``programs``, ``islands``) and candidate (``id``,
+    ``code``): no openevolve import. Comparison is exact string equality *within
+    the target island* — the same notion of "duplicate" ``ProgramDatabase``
+    itself uses for migrants. It deliberately does **not** consult the work
+    ledger: a program evaluated in some earlier run is not a member of this
+    population, and refusing it would starve the search.
+
+    This changes what enters the population (duplicates stop being added), so it
+    is not byte-for-byte the same search as without it — an opt-in with a
+    measurable effect, not a free lunch. It saves nothing when
+    ``database.embedding_model`` is unset (there is then no novelty check to
+    skip). The seed program is never refused.
+    """
+    is_enabled: Callable[[], bool]
+    if enabled is None:
+        is_enabled = lambda: bool(os.environ.get(MEMO_ENV_VAR))  # noqa: E731
+    else:
+        is_enabled = lambda: bool(enabled)  # noqa: E731
+
+    def admit(snapshot: Any, candidate: Any, island_idx: int) -> bool:
+        if not is_enabled():
+            return True
+        try:
+            programs = snapshot.programs
+            if not programs:
+                return True  # the seed program: OpenEvolve forbids refusing it
+            members = snapshot.islands[island_idx % len(snapshot.islands)]
+            code = candidate.code
+            for pid in members:
+                if pid == candidate.id:
+                    continue
+                other = programs.get(pid)
+                if other is not None and other.code == code:
+                    _bump(stats, "duplicates_refused")
+                    log.info(
+                        "openevolve memo: DUPLICATE refused island=%s candidate=%s same as %s "
+                        "(embedding + novelty judge skipped)",
+                        island_idx,
+                        candidate.id,
+                        pid,
+                    )
+                    return False
+        except Exception as exc:  # a guard must never break a paid run
+            log.warning("openevolve memo: admit_unique failed (%s); admitting", exc)
+        return True
+
+    return admit

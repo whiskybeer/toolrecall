@@ -398,6 +398,17 @@ tr_oe.wrap_evaluator(globals())  # in the eval script, after evaluate() is defin
   placement — a harness-neutral key from `keys.work_key`, a persistent ledger,
   and an explicit policy. Details and sources: [`openevolve.py`](./openevolve.py).
 
+### OpenEvolve LLM-Judge Memoization & Duplicate Admission Guard
+
+- `wrap_llm_feedback(target=None, mode="shadow"|"serve", ...)`: Memoizes OpenEvolve's
+  `use_llm_feedback` judge calls in the work ledger. Outside user's `evaluate()`,
+  evaluator hits previously re-billed the judge per child. Keyed on candidate code
+  bytes + judge model ensemble/prompts + parameters. Default `mode="shadow"` counts
+  potential hits before opting into `mode="serve"`.
+- `admit_unique(stats=None)`: `population_strategy.admit` hook that refuses exact
+  byte-copies of island members. Skips both the embedding and the novelty judge call
+  on the mutation ensemble for duplicate candidates.
+
 ---
 
 ## GEPA — `evaluate` Adapter over the Replay Fork Tree
