@@ -93,6 +93,10 @@ class TestBridgeUpdateHint(unittest.TestCase):
             bridge._nudge_reads = 0
             bridge._nudge_emitted = False
             bridge._multiplexer_only = False
+            # __init__ derives this from TOOLRECALL_BRIDGE_STUB (default on);
+            # _present_read gates on it before the hint block runs, so a
+            # __new__-built bridge without it errors out of the whole tool call.
+            bridge._stub_enabled = True
             # stub_core delegation: the handler builds its own session via
             # _stubs; provide one with a null counter for the manual init.
             # (The old `_session_terminal` dict is gone — terminal dedup now

@@ -3039,7 +3039,10 @@ def record_local_hits(entries) -> int:
         try:
             _bump_file_hits(_hash(path))
         except Exception:
-            pass
+            # Hit counters are diagnostics, not the read path: never fail the
+            # drain. But a silently zeroed metric reads as "no hits", so log
+            # it — the swallow audit freezes `pass`-only handlers, not this.
+            log.debug("file-hits bump failed for %s", path, exc_info=True)
         counted += 1
     return counted
 
