@@ -911,12 +911,13 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             state["replay"] = None
         # trend reads the db directly (like log_fn); cheap + daemon-independent
         try:
-            from toolrecall.trend import coverage, daily_trend, miss_classes
+            from toolrecall.trend import coverage, daily_trend, miss_classes, savings_trend
 
             state["trend"] = {
                 "days": daily_trend(7),
                 "classes": miss_classes(min_reads=10),
                 "coverage": coverage(),
+                "savings": savings_trend(7),
             }
         except Exception:  # noqa: BLE001 — trend must never break the dashboard
             state["trend"] = None
@@ -1272,22 +1273,60 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                 )
         elif view == "trend":
             t = state.get("trend")
-            y = put(y, " daily hit-rate trend (file_cache, from access_log):", A_BOLD)
+            y = put(y, " daily savings trend (7d, from the usage log):", A_BOLD)
             if not t:
                 y = put(y + 1, "  trend data unavailable (db unreadable?)", A_DIM)
             else:
-                cov = t["coverage"]
+                # ── LLM savings (append-only usage CSV: real history) ──
                 y = put(y + 1, "", 0)  # section gap
                 y = put(
                     y,
-                    "  coverage: %s → %s" % (cov["oldest"], cov["newest"]),
+                    "  date          calls          sent      not sent   saved     cost",
                     A_DIM,
+                )
+                for s in t.get("savings") or []:
+                    pct = "%5.1f%%" % s["saved_pct"] if s["saved_pct"] is not None else "    -"
+                    y = put(
+                        y,
+                        "  %s  %6s  %12s  %12s  %s  $%6.2f"
+                        % (
+                            s["date"],
+                            f'{s["calls"]:,}',
+                            f'{s["sent"]:,}',
+                            f'{s["not_sent"]:,}',
+                            pct,
+                            s["cost_usd"],
+                        ),
+                        A_HIT if (s["saved_pct"] or 0) >= 1.0 else 0,
+                    )
+                if not (t.get("savings") or []):
+                    y = put(
+                        y,
+                        "  no model calls logged yet — this fills in as your agent works",
+                        A_DIM,
+                    )
+                y = put(y + 1, "", 0)  # section gap
+
+                # ── Disk I/O hit rate (rolling 50k access_log window) ──
+                cov = t["coverage"]
+                y = put(
+                    y,
+                    "  disk reads served from cache (I/O, not tokens):",
+                    A_BOLD,
                 )
                 y = put(
                     y,
-                    "  window: %d/%d entries" % (cov["window_entries"], cov["window_max"]),
+                    "  coverage: %s → %s  (%d/%d entries)"
+                    % (cov["oldest"], cov["newest"], cov["window_entries"], cov["window_max"]),
                     A_DIM,
                 )
+                if cov.get("infra_entries"):
+                    y = put(
+                        y,
+                        "  (%s agent-infrastructure reads excluded — never sent to a model)"
+                        % f'{cov["infra_entries"]:,}',
+                        A_DIM,
+                    )
                 y = put(y + 1, "  date        reads   hits  misses  hit%")
                 for d in t["days"]:
                     hp = "-" if d["hit_pct"] is None else "%5.1f" % d["hit_pct"]
