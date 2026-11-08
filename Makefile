@@ -143,9 +143,9 @@ lint:
 format:
 	$(PY_RUN) ruff format toolrecall/ tests/ bench/ scripts/
 
-# CI gate. Note: bench/ deliberately excluded from `check` — it contains scratch
-# + string-patch scripts (fix_clean.py, final_fix.py) whose embedded patch strings
-# ruff reformatting would corrupt; lint/format still cover them for dev hygiene.
+# CI gate. Note: bench/ deliberately excluded from `check` — scratch scripts
+# whose embedded patch strings / long literals ruff reformatting would corrupt;
+# lint/format still cover them for dev hygiene.
 .PHONY: check
 check:
 	$(PY_RUN) ruff check toolrecall/ tests/

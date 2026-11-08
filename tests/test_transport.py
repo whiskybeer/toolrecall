@@ -28,7 +28,6 @@ from toolrecall.transport import (
     _default_socket_path,
     _is_tcp,
     _parse_tcp,
-    _safe_bind_host,
     create_socket,
     bind_socket,
     connect_socket,
@@ -167,17 +166,20 @@ class TestTCPHelpers(unittest.TestCase):
         self.assertEqual(host, "127.0.0.1")  # wildcard coerced to loopback
         self.assertEqual(port, 9090)
 
-    def test_safe_bind_host_coerces_wildcards(self):
-        """Wildcard hosts ('' / 0.0.0.0 / ::) are coerced to loopback."""
-        self.assertEqual(_safe_bind_host(""), "127.0.0.1")
-        self.assertEqual(_safe_bind_host("   "), "127.0.0.1")
-        self.assertEqual(_safe_bind_host("0.0.0.0"), "127.0.0.1")
-        self.assertEqual(_safe_bind_host("::"), "127.0.0.1")
+    def test_parse_tcp_coerces_all_wildcards(self):
+        """Wildcard hosts ('' / '  ' / 0.0.0.0 / ::) coerce to loopback at
+        the parse boundary — the coercion the CodeQL bind-sink barrier
+        depends on (coverage migrated from the removed _safe_bind_host
+        helper; _parse_tcp is the single point every tcp:// path passes)."""
+        for path in ("tcp://:9090", "tcp://  :9090", "tcp://0.0.0.0:9090", "tcp://:::9090"):
+            host, port = _parse_tcp(path)
+            self.assertEqual(host, "127.0.0.1")
+            self.assertEqual(port, 9090)
 
-    def test_safe_bind_host_keeps_specific_interface(self):
-        """A specific loopback/fixed interface is left untouched."""
-        self.assertEqual(_safe_bind_host("127.0.0.1"), "127.0.0.1")
-        self.assertEqual(_safe_bind_host("127.0.0.2"), "127.0.0.2")
+    def test_parse_tcp_keeps_specific_interface(self):
+        """A specific loopback/known address passes through unmodified."""
+        host, port = _parse_tcp("tcp://127.0.0.2:9090")
+        self.assertEqual((host, port), ("127.0.0.2", 9090))
 
 
 class TestSocketLifecycle(unittest.TestCase):

@@ -2123,8 +2123,10 @@ def invalidate_all():
     api_cache is deliberately NOT cleared: its rows are billed LLM
     responses, so wiping them re-bills every replayed call, and in-flight
     proxy stores re-insert immediately, making a full wipe best-effort
-    anyway. Use invalidate_api_cache() (explicit, opt-in) or the
-    invalidate_api_host() / cache_invalidate(scope="api") scoped paths.
+    anyway. Reachable paths: cache_invalidate(scope="api") over IPC/the
+    MCP tool (full table) or programmatic invalidate_api_cache();
+    per-host targeting is programmatic-only via invalidate_api_host(host)
+    (the IPC scope enum has no host argument).
     """
     _file_cache.clear()
     with _skill_cache_lock:

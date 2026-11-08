@@ -100,19 +100,6 @@ _WILDCARD_HOSTS = {"", "0.0.0.0", "::", "::0"}
 _CONCRETE_HOST = re.compile(r"[0-9a-zA-Z._\[\]:-]+")
 
 
-def _safe_bind_host(host: str) -> str:
-    """Coerce a wildcard/all-interfaces host to loopback (127.0.0.1).
-
-    Binding to ``''`` or ``0.0.0.0`` accepts connections from any interface
-    (CodeQL ``py/bind-socket-all-network-interfaces``). Since the transport is
-    inherently local, map any wildcard host back to loopback so a
-    ``tcp://0.0.0.0:port`` or ``tcp://:port`` path can never listen publicly.
-    """
-    if host is None or host.strip() in _WILDCARD_HOSTS:
-        return "127.0.0.1"
-    return host
-
-
 def _parse_tcp(path: str) -> tuple:
     """Parse tcp://host:port into (host, port).
 
