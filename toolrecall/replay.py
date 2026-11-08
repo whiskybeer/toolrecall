@@ -153,21 +153,25 @@ class ReplayManager:
         args_json = normalize_tool_args(args)
         args_hash = _make_hash(tool_name, args)
         with _db() as conn:
-            call_index = self._next_index(conn, scenario)
-            conn.execute(
+            # The next index is computed inside the INSERT: the statement holds
+            # the write lock while it reads MAX, so concurrent writers (other
+            # processes on the same DB) cannot pick the same index.
+            row = conn.execute(
                 f"INSERT INTO {REPLAY_TABLE} "
                 f"(scenario_name, call_index, tool_name, args_hash, args_json, response_json, recorded_at) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?)",
+                f"SELECT ?, COALESCE(MAX(call_index), -1) + 1, ?, ?, ?, ?, ? "
+                f"FROM {REPLAY_TABLE} WHERE scenario_name = ? RETURNING call_index",
                 (
                     scenario,
-                    call_index,
                     tool_name,
                     args_hash,
                     args_json,
                     json.dumps(response, default=str),
                     time.time(),
+                    scenario,
                 ),
-            )
+            ).fetchall()[0]
+            call_index = int(row[0])
         return {
             "scenario": scenario,
             "call_index": call_index,
@@ -328,14 +332,6 @@ class ReplayManager:
 
     # ── Internal ────────────────────────────────────────────────────────────
 
-    def _next_index(self, conn, scenario: str) -> int:
-        row = conn.execute(
-            f"SELECT COALESCE(MAX(call_index), -1) + 1 as next_idx "
-            f"FROM {REPLAY_TABLE} WHERE scenario_name = ?",
-            (scenario,),
-        ).fetchone()
-        return row["next_idx"] if row else 0
-
     # ── Tree / fork primitives (G1) ────────────────────────────────────────
 
     def _ensure_tree_tables(self):
@@ -453,27 +449,28 @@ class ReplayManager:
         args_json = normalize_tool_args(args)
         args_hash = _make_hash(tool_name, args)
         with _db() as conn:
+            # Index computed inside the INSERT (atomic across processes), as
+            # in record_call().
             row = conn.execute(
-                f"SELECT COALESCE(MAX(call_index), -1) + 1 as next_idx "
-                f"FROM {REPLAY_TREE_CALLS} WHERE tree_id = ? AND node_id = ?",
-                (tree_id, node_id),
-            ).fetchone()
-            call_index = int(row["next_idx"]) if row else 0
-            conn.execute(
                 f"INSERT INTO {REPLAY_TREE_CALLS} "
                 f"(tree_id, node_id, call_index, tool_name, args_hash, args_json, "
-                f"response_json, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                f"response_json, recorded_at) "
+                f"SELECT ?, ?, COALESCE(MAX(call_index), -1) + 1, ?, ?, ?, ?, ? "
+                f"FROM {REPLAY_TREE_CALLS} WHERE tree_id = ? AND node_id = ? "
+                f"RETURNING call_index",
                 (
                     tree_id,
                     node_id,
-                    call_index,
                     tool_name,
                     args_hash,
                     args_json,
                     json.dumps(response, default=str),
                     time.time(),
+                    tree_id,
+                    node_id,
                 ),
-            )
+            ).fetchall()[0]
+            call_index = int(row[0])
         return {
             "tree_id": tree_id,
             "node_id": node_id,
