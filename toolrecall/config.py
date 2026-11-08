@@ -298,6 +298,8 @@ class Config:
                 "fuzzy_ttl_match",
                 "fuzzy_threshold",
                 "max_file_mb",
+                "access_log_keep",
+                "access_log_prune_interval",
             }
         ),
         "norm": frozenset({"enabled", "sort_lists", "strip_strings", "canonical_commands"}),

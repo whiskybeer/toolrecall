@@ -54,52 +54,100 @@ def _init():
 # Reset on each successful check so a single bad access doesn't cascade.
 _LAST_INTEGRITY_CHECK = 0.0
 _INTEGRITY_CHECK_INTERVAL = 600  # 10 minutes
+_INTEGRITY_CHECK_IN_PROGRESS = False  # only one background check at a time
+
+# Access-log retention. The prune used to run on EVERY read with a path, as
+# `DELETE ... WHERE id NOT IN (SELECT id FROM access_log ORDER BY cached_at DESC
+# LIMIT 50000)` — that subquery sorts the whole 50k-row table per read (measured
+# 45.3 ms for the subquery alone, 86.4 ms per read on a 1.1 GB live DB), which
+# made a cache HIT as expensive as a cold read. It now runs at most once per
+# interval and prunes by primary key (no sort). id order == insertion order ==
+# cached_at order, so the newest N rows are kept exactly as before.
+_LAST_ACCESS_PRUNE = 0.0
+_ACCESS_PRUNE_INTERVAL = 60.0  # seconds between prunes
+_ACCESS_LOG_KEEP = 50000  # rows to retain
 
 
 def _ensure_db_integrity():
-    """Run PRAGMA integrity_check periodically and attempt recovery on failure.
+    """Schedule the periodic DB integrity check OFF the request path.
 
-    Called from _record() on every cache access, but only actually runs
-    every _INTEGRITY_CHECK_INTERVAL seconds.  If the check reveals a
-    malformed database, attempts recovery via:
+    Called from _record() on every cache access, but only schedules work
+    every _INTEGRITY_CHECK_INTERVAL seconds. If the check reveals a
+    malformed database, recovery is attempted via:
       1. Dumping the DB content to a backup
       2. Deleting and recreating the DB
       3. Re-running schema init
 
+    Why it is off-path (2026-09-25): the check used to run inline here, on the
+    caller's thread and on the shared ``_db()`` connection. On a 1.1 GB DB
+    ``PRAGMA integrity_check`` measured 15.6-20.0 s, so the unlucky read that
+    triggered it froze the whole daemon request loop for that long (live log:
+    ``cached_read`` peaks at 30.5 s). It now runs in a daemon thread on its OWN
+    read-only connection, which (a) never blocks a caller, (b) never holds the
+    shared connection lock — WAL readers do not block writers — and (c) runs at
+    most one check at a time.
+
     This is intentionally conservative — it only acts when the DB itself
     reports corruption, not on transient SQL errors.
     """
-    global _LAST_INTEGRITY_CHECK
+    global _LAST_INTEGRITY_CHECK, _INTEGRITY_CHECK_IN_PROGRESS
     now = time.time()
     if now - _LAST_INTEGRITY_CHECK < _INTEGRITY_CHECK_INTERVAL:
         return
-    _LAST_INTEGRITY_CHECK = now
-
+    if _INTEGRITY_CHECK_IN_PROGRESS:
+        return
+    # Only the local sqlite backend has a file we can open read-only; a remote
+    # backend (libsql) must not be checked by path, and its recovery path
+    # differs. Read it via .get(): on Config, `storage_backend` is a plain
+    # string attribute (the same-named *method* lives on another class), so
+    # `config.storage_backend()` is a TypeError.
+    backend = config.get("storage", "backend", default="sqlite")
+    if str(backend or "sqlite").lower() != "sqlite":
+        _LAST_INTEGRITY_CHECK = now
+        return
     db_path = config.get("storage", "db_path", default="")
     if not db_path:
         return
 
+    _LAST_INTEGRITY_CHECK = now
+    _INTEGRITY_CHECK_IN_PROGRESS = True
+    threading.Thread(
+        target=_run_integrity_check,
+        args=(str(db_path),),
+        name="toolrecall-db-integrity",
+        daemon=True,
+    ).start()
+
+
+def _run_integrity_check(db_path: str):
+    """Background worker: PRAGMA integrity_check on a private read-only conn.
+
+    Must not use the shared ``_db()`` connection: the check runs for seconds and
+    would hold the singleton lock for its whole duration.
+    """
+    global _INTEGRITY_CHECK_IN_PROGRESS
     try:
-        with _db() as conn:
-            if conn is None:
-                return
-            cursor = conn.execute("PRAGMA integrity_check")
-            result = cursor.fetchone()
-            if result and result[0] != "ok":
-                warnings.warn(
-                    f"ToolRecall: DB integrity check FAILED: {result[0]}. Attempting recovery..."
-                )
-                conn.close()
-                _recover_database(str(db_path))
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30.0)
+        try:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            conn.close()
+        if row and row[0] != "ok":
+            warnings.warn(
+                f"ToolRecall: DB integrity check FAILED: {row[0]}. Attempting recovery..."
+            )
+            _recover_database(db_path)
     except Exception as e:
         msg = str(e)
-        if "database disk image is malformed" in msg or "malformed" in msg:
+        if "malformed" in msg:
             warnings.warn(
                 "ToolRecall: DB access triggered corruption detection. Attempting recovery..."
             )
             _recover_database(db_path)
         else:
             warnings.warn(f"ToolRecall: DB integrity check failed: {e}")
+    finally:
+        _INTEGRITY_CHECK_IN_PROGRESS = False
 
 
 def _recover_database(db_path: str):
@@ -488,9 +536,20 @@ def _record(
                         client,
                     ),
                 )
-                conn.execute(
-                    """                    DELETE FROM access_log WHERE id NOT IN (                        SELECT id FROM access_log ORDER BY cached_at DESC LIMIT 50000                    )                """
-                )
+                # Access-log prune: at most once per interval, by primary key.
+                # (Was a per-read `NOT IN (SELECT ... ORDER BY cached_at DESC
+                # LIMIT 50000)` — a full sort of the 50k-row table on every
+                # read; see the constants at the top of this module.)
+                global _LAST_ACCESS_PRUNE
+                _prune_now = time.time()
+                if _prune_now - _LAST_ACCESS_PRUNE >= _ACCESS_PRUNE_INTERVAL:
+                    _LAST_ACCESS_PRUNE = _prune_now
+                    keep = config.get("cache", "access_log_keep", default=_ACCESS_LOG_KEEP)
+                    conn.execute(
+                        "DELETE FROM access_log WHERE id <= "
+                        "(SELECT coalesce(max(id), 0) FROM access_log) - ?",
+                        (keep,),
+                    )
     except Exception as e:
         warnings.warn(f"ToolRecall: failed to record stats: {e}")
 
