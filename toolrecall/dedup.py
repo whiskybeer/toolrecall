@@ -3,17 +3,30 @@
 # Source: https://github.com/whiskybeer/toolrecall
 """toolrecall.dedup — request-level duplicate-content dedup (transport-neutral core).
 
-Scans a chat-completion ``messages`` list for large text blocks (and, opt-in,
-data-URL image parts) that appear more than once in the same request —
-typically repeated file reads / tool results in agent loops — and replaces
-every duplicate AFTER the first occurrence with a short stub.
+Scans a ``messages`` list for large text blocks (and, opt-in, image parts)
+that appear more than once in the same request — typically repeated file
+reads / tool results in agent loops — and replaces every duplicate AFTER
+the first occurrence with a short stub.
+
+Both message-carrying wire shapes are handled structurally, never by vendor
+branch: chat-completions (``content`` as a string or a list of ``text`` /
+``image_url`` parts) and messages-style payloads, where tool output arrives
+inside ``tool_result`` blocks with nested content (Anthropic; Claude Code).
+Blocks are shallow-copied and only their text leaf is replaced, so
+``cache_control``, ``tool_use_id`` and every other key survive byte-exact.
 
 Design properties
 -----------------
-* Keep-first, stub-later — earlier messages are never rewritten when a new
-  duplicate appears later, so the byte-prefix of the request stays stable
-  across turns. Provider-side prompt caching (Anthropic/OpenAI/DeepSeek)
-  keeps hitting.
+* Keep-first, stub-later — within a request, earlier messages are never
+  rewritten; the *new* duplicate is what gets stubbed. Across turns the
+  byte-prefix stays stable only when the duplicate is stubbed on its FIRST
+  send: with ``protect_last > 0`` a duplicate arriving inside the protected
+  tail goes out in full, gets cached, and is stubbed one turn later — which
+  rewrites already-cached bytes and forces everything after it to be written
+  again (~1.25x) instead of read (~0.1x). Use ``protect_last=0`` where the
+  provider does prefix caching; keep-first already keeps the full copy.
+  Pinned by tests/test_dedup_anthropic.py::TestPrefixStability and
+  ::TestProtectedTailVsCache.
 * Deterministic — same messages + same config → same output, every time.
 * Pure stdlib, no I/O, no globals — safe to call from any transport layer
   (LiteLLM hook, forward proxy, batch tools).
@@ -35,6 +48,8 @@ from toolrecall.keys import digest16
 
 # Roles whose content may be replaced with a stub. Assistant/system content is
 # registered (so later duplicates elsewhere can reference it) but never modified.
+# Messages-style payloads have no "tool" role — tool output rides inside
+# tool_result blocks of a "user" message, which is why "user" is stubbable.
 DEFAULT_STUB_ROLES = ("tool", "function", "user")
 
 STUB_TEMPLATE = (
@@ -86,12 +101,14 @@ def dedup_messages(
     """Return (new_messages, stats). Input objects are never mutated.
 
     ``media=True`` (experimental, off by default) extends dedup to image
-    parts (``{"type": "image_url", "image_url": {"url": ...}}``). Scope,
-    deliberately narrow to keep the replay guarantee:
+    parts — chat-completions ``image_url`` parts and messages-style
+    ``image`` blocks (``{"type": "image", "source": {"type": "base64",
+    ...}}``). Scope, deliberately narrow to keep the replay guarantee:
 
-    - data URLs only (``data:<mime>;base64,<payload>``) — tool-returned
-      screenshots. ``https://`` references are NOT deduped: their identity
-      is the URL, not the content.
+    - Base64 payloads only — chat-completions ``data:<mime>;base64,<payload>``
+      URLs and messages-style ``source.data``. Tool-returned screenshots.
+      ``https://`` references are NOT deduped: their identity is the URL,
+      not the content.
     - Hashed over the DECODED bytes, so the same image with different
       base64 wrapping/whitespace still hits.
     - One identity space with text: a digest means "these bytes appeared
@@ -159,6 +176,111 @@ def dedup_messages(
         chars_saved += len(url) - len(stub)
         return stub
 
+    def maybe_stub_image_data(source: dict, msg_index: int, can_stub: bool) -> Optional[str]:
+        """Same contract as maybe_stub, for messages-style image blocks.
+
+        ``{"type": "image", "source": {"type": "base64", "media_type": ...,
+        "data": <b64>}}`` — the shape a screenshot lands in on Anthropic's
+        wire. Identity is the digest of the DECODED bytes, in the same
+        keyspace as text and data-URL parts, so the same picture re-sent as
+        a tool result stubs down to a short reference. ``chars_saved``
+        counts the base64 payload actually sent on the wire.
+        """
+        nonlocal blocks, chars_saved
+        if source.get("type") != "base64" or not isinstance(source.get("data"), str):
+            return None
+        try:
+            decoded = base64.b64decode(source["data"], validate=False)
+        except (binascii.Error, ValueError):
+            return None
+        if not decoded or len(decoded) < min_chars:
+            return None
+        h = digest16(decoded)
+        first = seen.get(h)
+        if first is None:
+            seen[h] = msg_index
+            return None
+        if not can_stub:
+            return None
+        stub = IMAGE_STUB_TEMPLATE.format(nbytes=len(decoded), digest=h, index=first)
+        if len(stub) >= len(source["data"]):
+            return None
+        blocks += 1
+        chars_saved += len(source["data"]) - len(stub)
+        return stub
+
+    def walk_content(content: Any, msg_index: int, can_stub: bool):
+        """Dedup a content value; returns ``(value, changed)``.
+
+        Handles both message-carrying wire shapes STRUCTURALLY (no vendor
+        branch, no framework import):
+
+        - chat-completions: ``content`` is a string, or a list of parts
+          (``text``, ``image_url``);
+        - messages-style (Anthropic): ``content`` is a list of blocks
+          (``text``, ``tool_result`` with nested content, ``image``).
+
+        ``tool_result`` is where an agent loop's repeated payload actually
+        lives — one level below the block — so the walk recurses into it.
+        Blocks are shallow-copied and only the text leaf is replaced:
+        ``cache_control``, ``tool_use_id``, ``name`` and every other key
+        survive byte-exact, which is what an exact-prefix provider cache
+        (Claude Code) needs to keep hitting.
+        """
+        if isinstance(content, str):
+            stub = maybe_stub(content, msg_index, can_stub)
+            return (stub, True) if stub is not None else (content, False)
+        if not isinstance(content, list):
+            return content, False
+        new_parts = None
+        for j, part in enumerate(content):
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+            if ptype == "text" and isinstance(part.get("text"), str):
+                stub = maybe_stub(part["text"], msg_index, can_stub)
+                if stub is not None:
+                    if new_parts is None:
+                        new_parts = list(content)
+                    p2 = copy.copy(part)
+                    p2["text"] = stub
+                    new_parts[j] = p2
+            elif ptype == "tool_result" and isinstance(part.get("content"), (str, list)):
+                inner, inner_changed = walk_content(part["content"], msg_index, can_stub)
+                if inner_changed:
+                    if new_parts is None:
+                        new_parts = list(content)
+                    p2 = copy.copy(part)
+                    p2["content"] = inner
+                    new_parts[j] = p2
+            elif (
+                media
+                and ptype == "image_url"
+                and isinstance(part.get("image_url"), dict)
+                and isinstance(part["image_url"].get("url"), str)
+            ):
+                stub = maybe_stub_media(part["image_url"]["url"], msg_index, can_stub)
+                if stub is not None:
+                    if new_parts is None:
+                        new_parts = list(content)
+                    # Replace the ENTIRE image part with a text stub part.
+                    # Providers validate image_url.url as a URL (OpenRouter
+                    # 400 "Invalid URL format" — caught in the gate probe),
+                    # so the stub must live in a text part, which every
+                    # provider accepts and the model can read.
+                    new_parts[j] = {"type": "text", "text": stub}
+            elif media and ptype == "image" and isinstance(part.get("source"), dict):
+                stub = maybe_stub_image_data(part["source"], msg_index, can_stub)
+                if stub is not None:
+                    if new_parts is None:
+                        new_parts = list(content)
+                    # Same rule as image_url: a text block is valid on every
+                    # surface and readable by the model; the base64 is not.
+                    new_parts[j] = {"type": "text", "text": stub}
+        if new_parts is None:
+            return content, False
+        return new_parts, True
+
     for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
             continue
@@ -166,48 +288,11 @@ def dedup_messages(
         content = msg.get("content")
         can_stub = role in stub_roles and role != "system" and i < protect_from
 
-        if isinstance(content, str):
-            stub = maybe_stub(content, i, can_stub)
-            if stub is not None:
+        if isinstance(content, (str, list)):
+            new_content, changed = walk_content(content, i, can_stub)
+            if changed:
                 m2 = copy.copy(msg)
-                m2["content"] = stub
-                out[i] = m2
-        elif isinstance(content, list):  # OpenAI content-parts format
-            new_parts = None
-            for j, part in enumerate(content):
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(part.get("text"), str)
-                ):
-                    stub = maybe_stub(part["text"], i, can_stub)
-                    if stub is not None:
-                        if new_parts is None:
-                            new_parts = list(content)
-                        p2 = copy.copy(part)
-                        p2["text"] = stub
-                        new_parts[j] = p2
-                elif (
-                    media
-                    and isinstance(part, dict)
-                    and part.get("type") == "image_url"
-                    and isinstance(part.get("image_url"), dict)
-                    and isinstance(part["image_url"].get("url"), str)
-                ):
-                    url = part["image_url"]["url"]
-                    stub = maybe_stub_media(url, i, can_stub)
-                    if stub is not None:
-                        if new_parts is None:
-                            new_parts = list(content)
-                        # Replace the ENTIRE image part with a text stub part.
-                        # Providers validate image_url.url as a URL (OpenRouter
-                        # 400 "Invalid URL format" — caught in the gate probe),
-                        # so the stub must live in a text part, which every
-                        # provider accepts and the model can read.
-                        new_parts[j] = {"type": "text", "text": stub}
-            if new_parts is not None:
-                m2 = copy.copy(msg)
-                m2["content"] = new_parts
+                m2["content"] = new_content
                 out[i] = m2
 
     return out, {

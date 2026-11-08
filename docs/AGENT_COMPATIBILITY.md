@@ -134,6 +134,7 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 | Feature | Verdict | Evidence |
 |---------|---------|----------|
 | **Forward Proxy** | ✅ Verified — saves real cost | Orthogonal to tool loop |
+| **Request-body dedup** (proxy) | ⚠️ Mechanism-verified — no billed run on this path yet | Keep-first, prefix-stable stub of repeated `tool_result` payloads — the one compatible cost lever, see below |
 | **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
 | **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | Numbers and methodology in "The Numbers" and "Root causes" below |
 | **Context tracker** | ❌ No benefit — but now silent by default (see below) | Same report; opt-in mechanism in `c66b16c` |
@@ -214,7 +215,42 @@ file-level stale signal ToolRecall exposes to harnesses that *can* use it.
 ### What to Use Instead
 
 - **Forward proxy** — cache API responses via `:8569`. This is orthogonal to the tool loop and saves real money on repeat API calls in dev loops.
+- **Request-body dedup** — the one cost lever that is compatible with an append-only harness (see below).
 - **MCP multiplexer only** — if you run 5+ MCP servers, TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point, but **don't route file tools through it**.
+
+### The one cost lever that is compatible: request-body dedup
+
+Request-body dedup (`[forward_proxy] dedup`, default **off**) rewrites
+duplicate large text blocks *inside the request body* — the same file coming
+back as a `tool_result` again — to a short stub, before the provider sees it.
+It is compatible with an append-only harness because it never asks the model
+or the harness to drop anything retroactively; it only shortens what is sent
+*this* turn:
+
+- **Keep-first, stub-later** — within a request, earlier messages are never
+  rewritten. Across turns the byte-prefix stays stable only if the duplicate is
+  stubbed on its *first* send, so run with `TOOLRECALL_DEDUP_PROTECT_LAST=0`:
+  with the default (`2`) a duplicate arriving inside the protected tail goes out
+  in full, is cached, and is stubbed one turn later — rewriting already-cached
+  bytes and forcing the suffix to be cache-written again (~1.25×) instead of read
+  (~0.1×). Keep-first keeps the full copy either way, so nothing is lost
+  (`tests/test_dedup_anthropic.py::TestProtectedTailVsCache`).
+- **Marker-preserving** — blocks are shallow-copied and only the text leaf is
+  replaced, so `cache_control`, `tool_use_id` and every other key survive
+  byte-exact. This matters: a gateway that *strips* `cache_control` while
+  returning success makes the entire conversation history bill as uncached
+  input on every turn. ToolRecall never touches those markers.
+- **Tail-protected** — `TOOLRECALL_DEDUP_PROTECT_LAST` (default 2) keeps the
+  newest messages full, so the block carrying Claude Code's cache breakpoint
+  is never stubbed.
+
+**Honest scope — read before quoting a number.** The mechanism is tested on
+the Anthropic wire shape (`/v1/messages` dedup, prefix stability,
+`cache_control` preservation in `tests/test_dedup_anthropic.py`). The sibling
+chat-completions path is billing-verified at **−32.3% prompt tokens /
+−30.0% billed** (SWE-bench Lite × 8 turns, LiteLLM/OpenRouter). The
+`/v1/messages` path has **no billed measurement yet** — treat its saving as
+unquantified until an A/B run on your own Claude Code workload produces one.
 
 ### Config (multiplexer + proxy only, no file caching)
 
@@ -232,7 +268,25 @@ file-level stale signal ToolRecall exposes to harnesses that *can* use it.
 
 Then set `OPENAI_BASE_URL=http://localhost:8569/v1` for API response caching.
 
-> **Bottom line:** Add TR **only** for the forward proxy and MCP multiplex. File caching through MCP has been empirically tested and makes Claude Code sessions **2.4× more expensive**. Do not route file tools through ToolRecall with Claude Code. Context hints need no action: they're silent by default (checkpoint opt-in), so a stock TR install no longer appends any hint text to Claude Code sessions.
+Claude Code's own endpoint is Anthropic-shaped, so point `ANTHROPIC_BASE_URL`
+at the same proxy and opt in to request-body dedup:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8569
+export TOOLRECALL_FORWARD_DEDUP=1   # or [forward_proxy] dedup = true in toolrecall.toml
+```
+
+For an A/B baseline arm, per-request opt-out is the header
+`X-ToolRecall-No-Dedup: 1`.
+
+> **Bottom line:** Add TR **only** for the forward proxy, request-body dedup
+> and MCP multiplex. File caching through MCP has been empirically tested and
+> makes Claude Code sessions **2.4× more expensive**. Do not route file tools
+> through ToolRecall with Claude Code. Context hints need no action: they're
+> silent by default (checkpoint opt-in), so a stock TR install no longer
+> appends any hint text to Claude Code sessions. Request-body dedup is the one
+> lever that is compatible with the append-only transcript — measure it on
+> your own workload before trusting a number.
 
 ---
 

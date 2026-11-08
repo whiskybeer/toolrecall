@@ -49,11 +49,19 @@ _STREAM_RE = re.compile(rb'"stream"\s*:\s*true')
 # ─── Request-body dedup (opt-in, [forward_proxy] dedup) ─────────────────────
 # Reuses the transport-neutral core from toolrecall.dedup — the same proven
 # algorithm as the LiteLLM adapter (billing-verified −32.3% prompt tokens /
-# −30.0% cost on SWE-bench Lite × 8 turns). Applied to /v1/chat/completions
-# POST bodies BEFORE the cache key is computed, so identical message sets map
-# to identical keys whether or not dedup stubbed anything new — dedup output
-# is deterministic for identical inputs, and the keep-first design means the
-# stubbed form of turn N is a strict prefix-extension of turn N−1's.
+# −30.0% cost on SWE-bench Lite × 8 turns; that run used the chat-completions
+# path — the messages path has mechanism tests, no billed run yet). Applied to
+# message-carrying POST bodies — /v1/chat/completions and /v1/messages, see
+# _is_dedup_path — BEFORE the cache key is computed, so identical message sets
+# map to identical keys whether or not dedup stubbed anything new — dedup
+# output is deterministic for identical inputs, and with protect_last=0 the
+# keep-first design makes the stubbed form of turn N a strict prefix-extension
+# of turn N-1's. With the DEFAULT protect_last=2 that does not hold: a
+# duplicate that arrives inside the protected tail is sent in full (and cached)
+# and only stubbed one turn later, which rewrites already-cached bytes and
+# forces the whole suffix to be cache-written again at ~1.25x instead of read
+# at ~0.1x. Where the provider caches prefixes, run with
+# TOOLRECALL_DEDUP_PROTECT_LAST=0 (keep-first keeps the full copy anyway).
 #
 # The provider receives the REWRITTEN body (that is the point — fewer billed
 # prompt tokens). Failure of any kind rewrites nothing (fail-open, like the
@@ -101,8 +109,20 @@ def _canonicalize_default() -> str:
         return ""
 
 
+# Paths whose POST bodies carry a ``messages`` array the core understands:
+# OpenAI-style ``/chat/completions`` and Anthropic-style ``/messages``
+# (Claude Code's ANTHROPIC_BASE_URL traffic). ``/v1/messages/count_tokens``
+# ends with ``/count_tokens`` and is deliberately NOT deduped.
+_DEDUP_PATH_SUFFIXES = ("/chat/completions", "/messages")
+
+
+def _is_dedup_path(path: str) -> bool:
+    """True when a request path carries a dedupable ``messages`` array."""
+    return path.split("?", 1)[0].endswith(_DEDUP_PATH_SUFFIXES)
+
+
 def _maybe_dedup_body(body_bytes: bytes) -> tuple[bytes, dict | None]:
-    """Dedup duplicate large text blocks in a chat-completions request body.
+    """Dedup duplicate large text blocks in a chat-completions/messages body.
 
     Returns (body_bytes_out, stats_dict). stats is None when the body was
     left untouched (not JSON, not chat/completions shape, disabled, nothing
@@ -848,16 +868,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             body_bytes = self.rfile.read(content_length)
 
             # ── Request-body dedup ([forward_proxy] dedup, default OFF) ─────
-            # Rewrites duplicate large text blocks in chat-completions bodies
-            # to short stubs (keep-first). Runs BEFORE streaming detection and
-            # the cache key: streaming detection, canonicalization, hashing,
-            # forwarding and the stream tee all see the same body the provider
-            # will receive. Per-request opt-out: X-ToolRecall-No-Dedup
-            # (benchmark baseline arms use this).
+            # Rewrites duplicate large text blocks in chat-completions and
+            # messages bodies (keep-first; see _is_dedup_path). Runs BEFORE
+            # streaming detection and the cache key: streaming detection,
+            # canonicalization, hashing, forwarding and the stream tee all see
+            # the same body the provider will receive. Per-request opt-out:
+            # X-ToolRecall-No-Dedup (benchmark baseline arms use this).
             if (
                 method == "POST"
                 and body_bytes
-                and target_path.endswith("/chat/completions")
+                and _is_dedup_path(target_path)
                 and (self.headers.get("X-ToolRecall-No-Dedup") or "").strip()
                 not in ("1", "true", "yes")
             ):

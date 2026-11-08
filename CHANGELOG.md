@@ -187,6 +187,23 @@
 ## [Unreleased] — 2026-09-24
 
 ### Added
+- **Request-body dedup now covers Anthropic-shaped `/v1/messages` bodies.**
+  The forward proxy's opt-in dedup (`[forward_proxy] dedup`) previously applied
+  only to `/v1/chat/completions`. The transport-neutral core now walks
+  messages-style blocks structurally and recurses into `tool_result` content
+  (where an agent loop's repeated payload actually lives), plus messages-style
+  `image` blocks behind `TOOLRECALL_DEDUP_MEDIA`. Blocks are shallow-copied
+  and only the text leaf is replaced, so `cache_control` / `tool_use_id`
+  survive byte-exact. Prefix stability across turns holds only with
+  `protect_last=0`; the shipped default (`2`) defers a duplicate that arrives
+  inside the protected tail by one turn, and stubbing it then rewrites
+  already-cached bytes — see `toolrecall/dedup.py` and
+  `tests/test_dedup_anthropic.py::TestProtectedTailVsCache`. New
+  path gate `_is_dedup_path`; new suite `tests/test_dedup_anthropic.py`
+  (Anthropic shape, cross-turn prefix stability, marker preservation,
+  `/v1/messages` proxy round trip). Mechanism-tested on this path; the
+  chat-completions path remains the only billing-verified one (−32.3% prompt
+  tokens / −30.0% billed).
 - **`docs` built-in MCP server (`toolrecall/mcp_docs.py`).** Exposes the
   in-core FTS5 knowledge base (`docs_search`, `docs_get_page`) as a
   standalone multiplexer server — the same tools the `toolrecall mcp`
