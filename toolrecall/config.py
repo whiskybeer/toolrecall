@@ -319,6 +319,7 @@ class Config:
                 "access_log_keep",
                 "access_log_prune_interval",
                 "api_cache_max_body_mb",
+                "vacuum_min_free_mb",
             }
         ),
         "norm": frozenset({"enabled", "sort_lists", "strip_strings", "canonical_commands"}),

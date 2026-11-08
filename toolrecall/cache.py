@@ -130,6 +130,14 @@ _LAST_ACCESS_PRUNE = 0.0
 _ACCESS_PRUNE_INTERVAL = 60.0  # seconds between prunes
 _ACCESS_LOG_KEEP = 50000  # rows to retain
 
+# GC's VACUUM is gated, never unconditional. It rewrites the entire file while
+# holding the write lock, and its cost scales with FILE size rather than with what
+# it reclaims (measured on the live DB: 2,668 ms for a 98 MB file, ≈27 ms/MB). Run
+# every 4 h regardless, that is a multi-second freeze waiting to coincide with
+# traffic — so pay it only when the reclaimable share is worth the stall.
+_VACUUM_MIN_FREE_MB = 32  # absolute floor: never VACUUM to reclaim less than this
+_VACUUM_MIN_FREE_RATIO = 0.20  # ...nor when free pages are below this share of the file
+
 
 def _ensure_db_integrity():
     """Schedule the periodic DB integrity check OFF the request path.
@@ -2938,9 +2946,34 @@ def garbage_collect() -> int:
             """,
                 (now, now - ONE_DAY),
             ).rowcount
-        # VACUUM must run in its own connection (auto-commits, can't be in a transaction)
+        # VACUUM must run in its own connection (auto-commits, can't be in a transaction).
+        # Gated — see _VACUUM_MIN_FREE_*: a rewrite is only worth the write-lock stall
+        # when it returns a meaningful share of the file. The decision is logged either
+        # way so a skipped compaction is visible instead of silent.
         with _db() as conn:
-            conn.execute("VACUUM")
+            page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+            size_bytes = max(conn.execute("PRAGMA page_count").fetchone()[0] * page_size, 1)
+            free_bytes = conn.execute("PRAGMA freelist_count").fetchone()[0] * page_size
+            floor = int(
+                float(config.get("cache", "vacuum_min_free_mb", default=_VACUUM_MIN_FREE_MB))
+                * 1048576
+            )
+            threshold = max(floor, int(size_bytes * _VACUUM_MIN_FREE_RATIO))
+            if free_bytes >= threshold:
+                conn.execute("VACUUM")
+                log.info(
+                    "GC: VACUUM ran (free %.1f MB of %.1f MB, threshold %.1f MB)",
+                    free_bytes / 1048576,
+                    size_bytes / 1048576,
+                    threshold / 1048576,
+                )
+            else:
+                log.info(
+                    "GC: VACUUM skipped (free %.1f MB of %.1f MB, threshold %.1f MB)",
+                    free_bytes / 1048576,
+                    size_bytes / 1048576,
+                    threshold / 1048576,
+                )
         return c1 + c2 + c3 + c4 + c5 + c6
     except Exception as e:
         warnings.warn(f"ToolRecall GC failed: {e}")

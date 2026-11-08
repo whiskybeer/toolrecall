@@ -1501,8 +1501,11 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 time.sleep(1)
             try:
                 garbage_collect()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — never break the loop, but never hide it
+                # A silently failing GC is how dead rows accumulate unnoticed: the
+                # api_cache backlog this function now purges went unreported for weeks
+                # (12,281 expired rows, 1,103 MB of a 1,190 MB file).
+                self.logger.warning("periodic cache GC failed: %s", e)
 
     def _run_periodic_checkpoint(self):
         """Checkpoint the SQLite WAL into the main DB every 60 seconds.
