@@ -9,7 +9,13 @@ Two layers of protection:
 
 2. **Production-path guard (autouse fixture)** — fails the test (not silently
    skips) if the test or code under test touches real production state:
-   the live daemon socket, the live DB files, or port 8569 (forward proxy).
+   the live daemon socket, the live DB files, port 8569 (forward proxy), or
+   **writes a file inside the live state home**. The write arm was added
+   2026-09-26: the guard watched sqlite3.connect and socket.connect only, so
+   two HTTP harnesses appended fake rows to the billed-truth usage log
+   (~/.toolrecall/proxy_usage.csv) for weeks without a single failure —
+   2048 rows across api.deduptest.invalid and api.testretry.invalid. Live log
+   appends and the update-hint cache are carved out via `_PROD_WRITE_EXEMPT`.
    Exempt via ``@pytest.mark.allow_prod_paths`` — used only by tests that
    deliberately stub these (e.g. test_cli's shell-text assertions).
 """
@@ -111,6 +117,18 @@ _PROD_EXEMPT_FILES = {
     "exempt-placeholder-none-yet",
 }
 
+# Paths under the state home whose WRITES are legitimate test activity — exempt
+# from the write arm only (reads and connects to them stay guarded):
+#   - ``logs/`` — the logging rail is default-ON, so merely exercising a logged
+#     code path appends to the live log. Append-only diagnostics; no quoted
+#     number is derived from them.
+#   - ``last_update_check.json`` — atomic (``.tmp`` + rename) update-hint cache
+#     rewritten by the daemon update-hint tests; self-healing, not billed truth.
+# The write arm exists for the OPPOSITE case: a plain ``open(path, "a")``
+# appending rows to the billed-truth usage log (~/.toolrecall/proxy_usage.csv),
+# which two HTTP harnesses did for weeks whenever they ran.
+_PROD_WRITE_EXEMPT = ("/logs/", "last_update_check.json")
+
 
 def _exempt(item) -> bool:
     fname = os.path.basename(item.fspath)
@@ -181,21 +199,26 @@ def _isolated_toolrecall_env(monkeypatch, tmp_path, request):
 
 @pytest.fixture(autouse=True)
 def _production_path_guard(request):
-    """Fail any test that connects to the live daemon socket / live DB / :8569.
+    """Fail any test that connects to the live daemon socket / live DB / :8569,
+    or writes a file inside the live state home.
 
-    Implemented as a sqlite3 connect + socket connect audit rather than
-    patching every entry point: we wrap the actual escape hatches
-    (sqlite3.connect, socket.socket.connect) for the duration of the test.
+    Implemented as a sqlite3 connect + socket connect + open-for-write audit
+    rather than patching every entry point: we wrap the actual escape hatches
+    (sqlite3.connect, socket.socket.connect, builtins.open) for the duration of
+    the test. Writes are audited because the production usage log is written
+    with a plain ``open(path, "a")`` — a path sqlite/socket wrapping cannot see.
     """
     if _exempt(request.node):
         yield
         return
 
+    import builtins
     import socket as _socket
     import sqlite3 as _sqlite3
 
     orig_connect = _sqlite3.connect
     orig_socket_connect = _socket.socket.connect
+    orig_open = builtins.open
     violations = []
 
     def _is_prod(path_str: str) -> bool:
@@ -215,13 +238,33 @@ def _production_path_guard(request):
             violations.append(f"socket.connect({s!r})")
         return orig_socket_connect(self, address)
 
+    def guarded_open(file, mode="r", *a, **kw):
+        """Flag WRITES into production state. Reads are not flagged: a
+        diagnostic test may legitimately reference a live path, and string
+        assertions never open it. A write is what pollutes production.
+
+        ``_PROD_WRITE_EXEMPT`` carve-outs cover state that code-under-test
+        legitimately rewrites (live log appends, the update-hint cache).
+        """
+        try:
+            m = kw.get("mode", mode)
+            if isinstance(m, str) and any(ch in m for ch in "wax+"):
+                p = str(file)
+                if _is_prod(p) and not any(x in p for x in _PROD_WRITE_EXEMPT):
+                    violations.append(f"open({p!r}, mode={m!r})")
+        except Exception:  # noqa: BLE001 — the audit must never alter behaviour
+            pass
+        return orig_open(file, mode, *a, **kw)
+
     _sqlite3.connect = guarded_sqlite_connect
     _socket.socket.connect = guarded_socket_connect
+    builtins.open = guarded_open
     try:
         yield
     finally:
         _sqlite3.connect = orig_connect
         _socket.socket.connect = orig_socket_connect
+        builtins.open = orig_open
         if violations:
             pytest.fail(
                 "Test touched production state: " + "; ".join(sorted(violations)),

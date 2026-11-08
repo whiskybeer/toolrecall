@@ -24,6 +24,31 @@
   false "verified"; `shim --status` prints the venv-vs-install version pair and
   a `DRIFT` line with the fix command. 7 new tests in `tests/test_venvs.py`.
 
+- **Billed-truth hygiene: two test harnesses were writing fake rows into the
+  production usage log** (`tests/test_proxy_dedup.py`,
+  `tests/test_proxy_resilience.py`, `tests/conftest.py`).
+  `ForwardProxyHandler` appends one row per request to `_USAGE_LOG_PATH` — by
+  default `~/.toolrecall/proxy_usage.csv`, the billed-truth file every savings
+  figure is computed from. Two harnesses drive that real handler and never
+  pinned the path, so every run appended fake rows: **1106** from
+  `api.deduptest.invalid` and **942** from `api.testretry.invalid:80` (2057
+  fake-host rows total, ~1.9M bogus `dedup_tokens` — i.e. the file's dedup
+  totals were ~93% test junk). Both now pin the path to a per-class temp file
+  and restore it in `tearDownClass`, matching `tests/test_usage_dedup_column.py`.
+  Root fix in the same change: the autouse production-path guard wrapped
+  `sqlite3.connect` and `socket.connect` but **not file writes**, so a plain
+  `open(path, "a")` into `~/.toolrecall` was invisible to it — it now also wraps
+  `builtins.open` and records a violation on any write into production state
+  (reads stay unflagged), turning this whole leak class from silent to loud.
+  Writes that code-under-test legitimately makes — live log appends (the
+  logging rail is default-ON) and the atomic update-hint cache — are carved out
+  by path (`_PROD_WRITE_EXEMPT`); the billed-truth usage log is not, which is
+  the point. Verified: the two harnesses run (21 tests pass) with the fake-row
+  count in the production CSV unchanged (2057 → 2057), a probe writing into the
+  usage log fails the guard, and the four pre-existing tests that tripped the
+  new arm all pass. The pre-existing junk rows are **not**
+  removed — that is production data and a separate decision.
+
 ## [Unreleased] — 2026-09-24
 
 ### Added

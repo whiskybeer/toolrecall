@@ -231,6 +231,17 @@ class _ProxyHTTPTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Billed-truth hygiene: this harness drives the real ForwardProxyHandler,
+        # which appends one row per request to _USAGE_LOG_PATH — by default the
+        # PRODUCTION file ~/.toolrecall/proxy_usage.csv. Unpinned, every run of
+        # this class leaked fake rows into it (observed 2026-09-26: 1106 rows,
+        # host api.deduptest.invalid). Pin to a per-class temp file and restore
+        # on teardown — same contract as tests/test_usage_dedup_column.py.
+        import tempfile
+
+        cls._orig_usage_path = proxy_mod._USAGE_LOG_PATH
+        cls._usage_dir = tempfile.mkdtemp(prefix="tr_proxydedup_usage_")
+        proxy_mod._USAGE_LOG_PATH = os.path.join(cls._usage_dir, "proxy_usage.csv")
         cls._orig_allowed = proxy_mod._host_allowed
         proxy_mod._host_allowed = lambda h: h.startswith("api.deduptest.invalid")
         cls.upstream = http.server.HTTPServer(("127.0.0.1", 0), cls.upstream_cls)
@@ -247,8 +258,12 @@ class _ProxyHTTPTest(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        import shutil
+
         proxy_mod._host_allowed = cls._orig_allowed
         http.client.HTTPSConnection.connect = cls._orig_connect
+        proxy_mod._USAGE_LOG_PATH = cls._orig_usage_path
+        shutil.rmtree(cls._usage_dir, ignore_errors=True)
         cls.upstream.shutdown()
 
     def setUp(self):

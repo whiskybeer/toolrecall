@@ -96,6 +96,17 @@ def _forward(proxy_port, body=None):
 class TestForwardRetry(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Billed-truth hygiene: ForwardProxyHandler appends one row per request
+        # to _USAGE_LOG_PATH — by default the PRODUCTION file
+        # ~/.toolrecall/proxy_usage.csv. Unpinned, this harness leaked fake rows
+        # into it (observed 2026-09-26: 942 rows, host api.testretry.invalid:80).
+        # Pin to a per-class temp file and restore on teardown — same contract
+        # as tests/test_usage_dedup_column.py.
+        import tempfile
+
+        cls._orig_usage_path = proxy_mod._USAGE_LOG_PATH
+        cls._usage_dir = tempfile.mkdtemp(prefix="tr_proxyretry_usage_")
+        proxy_mod._USAGE_LOG_PATH = os.path.join(cls._usage_dir, "proxy_usage.csv")
         # Allowlist the test host for _forward's SSRF sink guard
         cls._orig_allowed = proxy_mod._host_allowed
         proxy_mod._host_allowed = lambda h: h.startswith("api.testretry.invalid")
@@ -116,8 +127,12 @@ class TestForwardRetry(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        import shutil
+
         proxy_mod._host_allowed = cls._orig_allowed
         http.client.HTTPSConnection.connect = cls._orig_connect
+        proxy_mod._USAGE_LOG_PATH = cls._orig_usage_path
+        shutil.rmtree(cls._usage_dir, ignore_errors=True)
 
     def setUp(self):
         _FlakyHandler.seen = 0

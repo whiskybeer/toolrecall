@@ -29,10 +29,20 @@ benchmark scripts under `bench/` are never swept up.
   and `BENCH_DB_PATH` point at per-test temp files; `TOOLRECALL_DOCS_INDEX_TTL=0`
   disables the background reindex thread (it resolves DB paths at thread-execution
   time, i.e. after teardown, and races the next test).
-- **Production-path guard (autouse)** — wraps `sqlite3.connect` and
-  `socket.socket.connect`; any touch of `~/.toolrecall`, `/run/user/*/toolrecall.sock`,
-  or `:8569` FAILS the test. Exempt via `@pytest.mark.allow_prod_paths` or
-  `_PROD_EXEMPT_FILES` (with a justifying comment).
+- **Production-path guard (autouse)** — wraps `sqlite3.connect`,
+  `socket.socket.connect` and `builtins.open`; any touch of `~/.toolrecall`,
+  `/run/user/*/toolrecall.sock`, or `:8569` FAILS the test, and so does any
+  **write** into `~/.toolrecall` (the write arm exists because two harnesses
+  appended fake rows to the billed-truth usage log for weeks: the guard watched
+  connections only, so a plain `open(path, "a")` was invisible). Reads of live
+  paths are not flagged. Exempt via `@pytest.mark.allow_prod_paths` or
+  `_PROD_EXEMPT_FILES` (with a justifying comment); `_PROD_WRITE_EXEMPT` carves
+  out the two paths code-under-test legitimately rewrites (live log appends,
+  the atomic update-hint cache).
+- **Usage-log pinning** — any test that drives the real `ForwardProxyHandler`
+  MUST pin `proxy._USAGE_LOG_PATH` to a temp file and restore it in
+  `tearDownClass` (see `test_usage_dedup_column.py`). Unpinned, one row per
+  request lands in the production CSV.
 - **Silent-swallow audit** (`test_silent_swallow_audit.py`) freezes the package's
   `except: pass` inventory — a new bare swallow breaks CI. Narrow + log the
   exception, or update `FROZEN_COUNTS` in the same commit with a justification.
@@ -102,7 +112,7 @@ Note: tests using the `capsys` fixture cannot run under `-p no:capture`
 | `test_toml_serializer.py` | 43 | Config | TOML escaping (incl. 0x7f/None regressions), round-trip |
 | `test_transport.py` | 26 | IPC | UDS/TCP lifecycle, framed protocol |
 | `test_turso_optin.py` | 16 | Storage | Turso opt-in semantics |
-| `test_venvs.py` | 10 | Setup | venv detection/install |
+| `test_venvs.py` | 19 | Setup | venv detection/install, shim content-drift detection |
 | `test_warp_adapter.py` | 20 | Adapters | Warp adapter |
 | `test_warp_fullchain.py` | 1 | E2E | Warp full chain |
 | `test_write_cache.py` | 16 | Cache | write-through cache |
