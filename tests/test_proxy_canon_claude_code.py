@@ -137,3 +137,43 @@ def test_hermes_profile_keeps_block_order():
     a = _canonicalize_body("hermes", _parallel_body(["toolu_A", "toolu_B"], marker_last=False))
     b = _canonicalize_body("hermes", _parallel_body(["toolu_B", "toolu_A"], marker_last=False))
     assert a != b
+
+
+def _git_body(commit_sha: str, email: str, prompt: str = "solve issue"):
+    text = (
+        f"<system-reminder>\n"
+        f"# gitStatus\n"
+        f"Current branch: main\n"
+        f"Recent commits:\n"
+        f"{commit_sha} commit title\n\n"
+        f"# userEmail\n"
+        f"{email}\n\n"
+        f"Claude Code attached\n"
+        f"</system-reminder>\n"
+        f"{prompt}"
+    )
+    return json.dumps(
+        {
+            "model": "m",
+            "messages": [{"role": "user", "content": text}],
+        }
+    ).encode()
+
+
+def test_git_context_normalization_opt_in():
+    b1 = _git_body("aaaaaaa", "user1@example.com")
+    b2 = _git_body("bbbbbbb", "user2@example.com")
+
+    # Default claude-code profile preserves git status: distinct keys
+    assert _canonicalize_body("claude-code", b1) != _canonicalize_body("claude-code", b2)
+
+    # With ignore_git=True or claude-code-nogit profile: identical keys
+    assert _canonicalize_body("claude-code", b1, ignore_git=True) == _canonicalize_body(
+        "claude-code", b2, ignore_git=True
+    )
+    assert _canonicalize_body("claude-code-nogit", b1) == _canonicalize_body("claude-code-nogit", b2)
+
+    # Actual prompt changes still produce different keys
+    b3 = _git_body("aaaaaaa", "user1@example.com", prompt="different prompt")
+    assert _canonicalize_body("claude-code-nogit", b1) != _canonicalize_body("claude-code-nogit", b3)
+

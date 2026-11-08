@@ -509,7 +509,31 @@ def _ag_canon_walk(node):
     return node
 
 
-def _canonicalize_body(profile: str, body: bytes):
+_RE_CANON_GIT_STATUS = re.compile(
+    r"# gitStatus\b[\s\S]*?(?=(?:\n# [A-Za-z]+|\n?Claude Code attached|</system-reminder>|\n\n\S|\Z))"
+)
+_RE_CANON_USER_EMAIL = re.compile(
+    r"# userEmail\b[\s\S]*?(?=(?:\n# [A-Za-z]+|\n?Claude Code attached|</system-reminder>|\n\n\S|\Z))"
+)
+
+
+def _normalize_git_context(text: str) -> str:
+    """Normalize volatile git commit SHAs, status, and user email."""
+    text = _RE_CANON_GIT_STATUS.sub("# gitStatus\n<git-context-normalized>\n", text)
+    return _RE_CANON_USER_EMAIL.sub("# userEmail\n<user-email-normalized>\n", text)
+
+
+def _git_norm_walk(node):
+    if isinstance(node, dict):
+        return {k: _git_norm_walk(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_git_norm_walk(x) for x in node]
+    if isinstance(node, str):
+        return _normalize_git_context(node)
+    return node
+
+
+def _canonicalize_body(profile: str, body: bytes, ignore_git: bool = False):
     """Canonicalized body for cache-key hashing under `profile`, or None.
 
     Profile `warp`: strips volatile fields observed in Warp's server-side
@@ -526,7 +550,15 @@ def _canonicalize_body(profile: str, body: bytes):
     top-level `metadata` object (session/account ids) is dropped.
 
     Profile `antigravity`: volatile local time in <ADDITIONAL_METADATA>,
-    conversation IDs, brain paths, plus hermes rules + test-runner durations."""
+    conversation IDs, brain paths, plus hermes rules + test-runner durations.
+
+    When `ignore_git` is True (or profile suffix `-nogit`, or env
+    `TOOLRECALL_IGNORE_GIT_CONTEXT=1`, or header `X-ToolRecall-Ignore-Git-Context: 1`),
+    agent-injected `# gitStatus` (recent commit SHAs, branch, status) and `# userEmail`
+    are normalized, allowing identical runs across unrelated commits to replay."""
+    if profile.endswith("-nogit"):
+        profile = profile[:-6]
+        ignore_git = True
     if profile == "warp":
         walk = _canon_walk
     elif profile == "hermes":
@@ -548,6 +580,8 @@ def _canonicalize_body(profile: str, body: bytes):
         if isinstance(envelope.get("messages"), list):
             envelope["messages"] = [_cc_canon_message(m) for m in envelope["messages"]]
     envelope = walk(envelope)
+    if ignore_git:
+        envelope = _git_norm_walk(envelope)
     return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
@@ -1209,9 +1243,21 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             canonical_profile = _canonicalize_default()
         if sampled:
             canonical_profile = ""  # no stream cache either
+        ignore_git = (
+            (
+                self.headers.get("X-ToolRecall-Ignore-Git-Context")
+                or self.headers.get("X-ToolRecall-Ignore-Git")
+                or ""
+            ).strip().lower()
+            in ("1", "true", "yes")
+            or os.environ.get("TOOLRECALL_IGNORE_GIT_CONTEXT", "").strip().lower()
+            in ("1", "true", "yes")
+        )
         hash_body = body_bytes
         if canonical_profile and body_bytes:
-            canonical = _canonicalize_body(canonical_profile, body_bytes)
+            canonical = _canonicalize_body(
+                canonical_profile, body_bytes, ignore_git=ignore_git
+            )
             if canonical is not None:
                 hash_body = canonical
 
