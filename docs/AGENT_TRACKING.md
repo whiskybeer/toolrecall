@@ -74,6 +74,62 @@ toolrecall agent show hermes     # Detailed per-category stats
 toolrecall agent prune hermes    # Delete an agent's stats (keeps cache entries)
 ```
 
+### JSON output (monitoring / dashboards)
+
+`agent ls` and `agent show` accept `--json` for machine-readable output on stdout.
+Counters are integers; `updated_at` is a Unix timestamp (float, seconds).
+
+`toolrecall agent ls --json` — array of per-agent totals, sorted by `agent_id`;
+`[]` when no stats are recorded:
+
+```json
+[
+  {
+    "agent_id": "hermes",
+    "hits": 42,
+    "misses": 7,
+    "tokens_saved": 18350,
+    "tokens_read_from_disk": 2210,
+    "context_tokens_saved": 9100,
+    "categories": 3,
+    "updated_at": 1793876543.21
+  }
+]
+```
+
+`categories` is the number of cache categories the agent has rows for;
+`updated_at` is the latest update across them.
+
+`toolrecall agent show hermes --json` — one object with per-category rows and totals:
+
+```json
+{
+  "agent_id": "hermes",
+  "categories": [
+    {
+      "category": "file_cache",
+      "hits": 40,
+      "misses": 5,
+      "tokens_saved": 18000,
+      "tokens_read_from_disk": 2000,
+      "context_tokens_saved": 9100,
+      "updated_at": 1793876543.21
+    }
+  ],
+  "totals": {
+    "hits": 40,
+    "misses": 5,
+    "tokens_saved": 18000,
+    "tokens_read_from_disk": 2000,
+    "context_tokens_saved": 9100
+  }
+}
+```
+
+An unknown agent returns the same shape with `"categories": []` and all-zero
+`totals`, so consumers never need a separate "not found" branch. Both commands
+exit 0 either way.
+
 ## Cross-host aggregation with Turso
 
 When Turso Cloud sync is enabled, `agent_cache_stats` is a regular table in the synced database. You can query across all machines:

@@ -16,6 +16,8 @@
   `TOOLRECALL_AGENT_ID` env var, `X-ToolRecall-Agent` HTTP header, or explicit
   `agent_id` parameter. Inspected via `toolrecall stats --by-agent`, `toolrecall stats --agent-id <id>`,
   and `toolrecall agent ls/show/prune`. Documented in `docs/AGENT_TRACKING.md`.
+  `agent ls --json` / `agent show <id> --json` emit a JSON array / object for
+  monitoring and dashboards.
 - **`claude-code` canonicalization profile for the forward proxy.** Claude Code
   always streams, so without a profile its requests were relayed but never
   cached (0 hits). The new profile drops the per-run `metadata` (session id)

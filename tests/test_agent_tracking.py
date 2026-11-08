@@ -12,6 +12,7 @@ from toolrecall.client import _resolve_agent_id, _add_agent_id
 
 # ─── Fixtures ────────────────────────────────────────
 
+
 @pytest.fixture(autouse=True)
 def _ensure_schema():
     """Ensure agent_cache_stats table exists before each test."""
@@ -28,8 +29,8 @@ def _clean_agent_stats():
 
 # ─── Tests ───────────────────────────────────────────
 
-class TestAgentTracking:
 
+class TestAgentTracking:
     def test_record_hit_with_agent_id(self, _clean_agent_stats):
         """Record a cache hit WITH agent_id → agent_cache_stats row appears."""
         _record(
@@ -161,3 +162,81 @@ class TestAgentTracking:
         captured = capsys.readouterr()
         assert "Per-Agent Cache Stats" in captured.out
         assert "cli-agent" in captured.out
+
+    def test_cli_agent_ls_json(self, _clean_agent_stats, monkeypatch, capsys):
+        """`toolrecall agent ls --json` prints a JSON array of per-agent totals."""
+        import json
+
+        from toolrecall.cli import cmd_agent
+
+        _record("file_cache", hit=True, tokens_saved=100, context_tokens=40, agent_id="json-b")
+        _record("terminal_cache", hit=False, tokens_read=50, agent_id="json-b")
+        _record("file_cache", hit=True, tokens_saved=7, agent_id="json-a")
+
+        monkeypatch.setattr(sys, "argv", ["toolrecall", "agent", "ls", "--json"])
+        cmd_agent()
+        data = json.loads(capsys.readouterr().out)
+
+        assert isinstance(data, list)
+        assert [a["agent_id"] for a in data] == ["json-a", "json-b"]
+        b = data[1]
+        assert b["hits"] == 1
+        assert b["misses"] == 1
+        assert b["tokens_saved"] == 100
+        assert b["tokens_read_from_disk"] == 50
+        assert b["context_tokens_saved"] == 40
+        assert b["categories"] == 2
+        assert b["updated_at"] > 0
+
+    def test_cli_agent_ls_json_empty(self, _clean_agent_stats, monkeypatch, capsys):
+        """`agent ls --json` with no stats prints `[]`, not the text hint."""
+        import json
+
+        from toolrecall.cli import cmd_agent
+
+        monkeypatch.setattr(sys, "argv", ["toolrecall", "agent", "ls", "--json"])
+        cmd_agent()
+        assert json.loads(capsys.readouterr().out) == []
+
+    def test_cli_agent_show_json(self, _clean_agent_stats, monkeypatch, capsys):
+        """`toolrecall agent show <id> --json` prints one object with categories + totals."""
+        import json
+
+        from toolrecall.cli import cmd_agent
+
+        _record("file_cache", hit=True, tokens_saved=100, agent_id="json-x")
+        _record("terminal_cache", hit=False, tokens_read=50, agent_id="json-x")
+
+        # --json accepted before the agent id as well
+        monkeypatch.setattr(sys, "argv", ["toolrecall", "agent", "show", "--json", "json-x"])
+        cmd_agent()
+        data = json.loads(capsys.readouterr().out)
+
+        assert isinstance(data, dict)
+        assert data["agent_id"] == "json-x"
+        cats = {c["category"]: c for c in data["categories"]}
+        assert set(cats) == {"file_cache", "terminal_cache"}
+        assert "agent_id" not in cats["file_cache"]
+        assert cats["file_cache"]["hits"] == 1
+        assert cats["terminal_cache"]["misses"] == 1
+        assert cats["terminal_cache"]["tokens_read_from_disk"] == 50
+        assert data["totals"] == {
+            "hits": 1,
+            "misses": 1,
+            "tokens_saved": 100,
+            "tokens_read_from_disk": 50,
+            "context_tokens_saved": 0,
+        }
+
+    def test_cli_agent_show_json_unknown(self, _clean_agent_stats, monkeypatch, capsys):
+        """Unknown agent → same object shape, empty categories, zero totals."""
+        import json
+
+        from toolrecall.cli import cmd_agent
+
+        monkeypatch.setattr(sys, "argv", ["toolrecall", "agent", "show", "nobody", "--json"])
+        cmd_agent()
+        data = json.loads(capsys.readouterr().out)
+        assert data["agent_id"] == "nobody"
+        assert data["categories"] == []
+        assert set(data["totals"].values()) == {0}

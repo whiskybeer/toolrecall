@@ -417,84 +417,128 @@ def cmd_stats():
     print(_json.dumps(stats, indent=2, default=str))
 
 
+_AGENT_COUNTERS = (
+    "hits",
+    "misses",
+    "tokens_saved",
+    "tokens_read_from_disk",
+    "context_tokens_saved",
+)
+
+
+def _agent_totals(rows: list[dict]) -> dict:
+    """Sum the per-category counters of agent_cache_stats rows."""
+    return {k: sum(r.get(k) or 0 for r in rows) for k in _AGENT_COUNTERS}
+
+
 def cmd_agent():
     """List known agents and show per-agent cache stats.
 
     Subcommands:
-      ls            List all agents with recorded stats
-      show <id>     Show stats for a specific agent
-      prune <id>    Delete stats for a specific agent
+      ls [--json]          List all agents with recorded stats
+      show <id> [--json]   Show stats for a specific agent
+      prune <id>           Delete stats for a specific agent
 
     Examples:
       toolrecall agent ls
-      toolrecall agent show hermes
+      toolrecall agent ls --json
+      toolrecall agent show hermes --json
       toolrecall agent prune obsolete-agent
     """
+    import json as _json
+
     from toolrecall.cache import get_agent_stats
 
-    args = sys.argv[2:]
+    raw = sys.argv[2:]
+    as_json = "--json" in raw
+    args = [a for a in raw if a != "--json"]
     if not args or args[0] in ("--help", "-h"):
-        print("Usage: toolrecall agent <subcommand>")
+        print("Usage: toolrecall agent <subcommand> [--json]")
         print()
         print("Subcommands:")
         print("  ls              List all agents with cache stats")
         print("  show <id>       Show detailed stats for one agent")
         print("  prune <id>      Delete an agent's stats rows")
         print()
+        print("Options:")
+        print("  --json          Machine-readable output (ls: array, show: object)")
+        print()
         print("Examples:")
         print("  toolrecall agent ls")
-        print("  toolrecall agent show hermes")
+        print("  toolrecall agent show hermes --json")
         return
 
     sub = args[0]
 
     if sub == "ls":
         stats = get_agent_stats()
+        agents = sorted(set(r["agent_id"] for r in stats))
+        if as_json:
+            out = []
+            for agent_id in agents:
+                agent_rows = [r for r in stats if r["agent_id"] == agent_id]
+                out.append(
+                    {
+                        "agent_id": agent_id,
+                        **_agent_totals(agent_rows),
+                        "categories": len(agent_rows),
+                        "updated_at": max((r.get("updated_at") or 0) for r in agent_rows),
+                    }
+                )
+            print(_json.dumps(out, indent=2))
+            return
         if not stats:
             print("No per-agent stats recorded. Set TOOLRECALL_AGENT_ID to enable tracking.")
             return
-        agents = sorted(set(r["agent_id"] for r in stats))
         print("Known Agents")
         print("=" * 40)
         for agent_id in agents:
-            agent_rows = [r for r in stats if r["agent_id"] == agent_id]
-            total_hits = sum(r["hits"] for r in agent_rows)
-            total_misses = sum(r["misses"] for r in agent_rows)
-            total_saved = sum(r["tokens_saved"] for r in agent_rows)
-            total_read = sum(r["tokens_read_from_disk"] for r in agent_rows)
+            t = _agent_totals([r for r in stats if r["agent_id"] == agent_id])
             print(
-                f"  {agent_id:<20}  hits={total_hits}  misses={total_misses}  "
-                f"tokens_saved={total_saved}  tokens_read={total_read}"
+                f"  {agent_id:<20}  hits={t['hits']}  misses={t['misses']}  "
+                f"tokens_saved={t['tokens_saved']}  tokens_read={t['tokens_read_from_disk']}"
             )
 
     elif sub == "show":
         if len(args) < 2:
-            print("Usage: toolrecall agent show <agent-id>")
+            print("Usage: toolrecall agent show <agent-id> [--json]")
             return
         agent_id = args[1]
         stats = get_agent_stats(agent_id=agent_id)
+        if as_json:
+            # Unknown agent → empty categories + zero totals, so dashboards
+            # always get the same object shape.
+            out = {
+                "agent_id": agent_id,
+                "categories": [
+                    {
+                        "category": r["category"],
+                        **{k: r.get(k) or 0 for k in _AGENT_COUNTERS},
+                        "updated_at": r.get("updated_at") or 0,
+                    }
+                    for r in stats
+                ],
+                "totals": _agent_totals(stats),
+            }
+            print(_json.dumps(out, indent=2))
+            return
         if not stats:
             print(f"No stats recorded for agent '{agent_id}'.")
             return
         print(f"Agent: {agent_id}")
         print("=" * 50)
-        total_hits = total_misses = total_saved = total_read = total_context = 0
         for row in stats:
             print(
                 f"  {row['category']:<20}  hits={row['hits']:<5}  misses={row['misses']:<5}  "
                 f"tokens_saved={row['tokens_saved']:<6}  tokens_read={row['tokens_read_from_disk']:<6}  "
                 f"context_tokens_saved={row['context_tokens_saved']}"
             )
-            total_hits += row["hits"]
-            total_misses += row["misses"]
-            total_saved += row["tokens_saved"]
-            total_read += row["tokens_read_from_disk"]
-            total_context += row["context_tokens_saved"]
+        t = _agent_totals(stats)
         print("=" * 50)
         print(
-            f"  TOTAL{'':<16}  hits={total_hits:<5}  misses={total_misses:<5}  "
-            f"tokens_saved={total_saved:<6}  tokens_read={total_read:<6}  "
-            f"context_tokens_saved={total_context}"
+            f"  TOTAL{'':<16}  hits={t['hits']:<5}  misses={t['misses']:<5}  "
+            f"tokens_saved={t['tokens_saved']:<6}  tokens_read={t['tokens_read_from_disk']:<6}  "
+            f"context_tokens_saved={t['context_tokens_saved']}"
         )
 
     elif sub == "prune":
@@ -507,7 +551,9 @@ def cmd_agent():
 
             with _db() as conn:
                 conn.execute("DELETE FROM agent_cache_stats WHERE agent_id = ?", (agent_id,))
-                conn.execute("UPDATE access_log SET agent_id = NULL WHERE agent_id = ?", (agent_id,))
+                conn.execute(
+                    "UPDATE access_log SET agent_id = NULL WHERE agent_id = ?", (agent_id,)
+                )
             print(f"Deleted stats for agent '{agent_id}'.")
         except Exception as e:
             print(f"Failed to prune stats: {e}")

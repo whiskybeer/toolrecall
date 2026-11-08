@@ -79,8 +79,11 @@ Most commands accept `--help` / `-h` for per-command usage and options
 - **File:** `cli.py : cmd_agent()`
 - **Purpose:** Manage per-agent cache statistics (see `docs/AGENT_TRACKING.md`).
 - **Subcommands:**
-  - `toolrecall agent ls`: List all known agents with hit/miss and token counts.
-  - `toolrecall agent show <id>`: Detailed breakdown per category for an agent.
+  - `toolrecall agent ls [--json]`: List all known agents with hit/miss and token counts.
+    `--json` prints a JSON array (one object per agent; `[]` when nothing is recorded).
+  - `toolrecall agent show <id> [--json]`: Detailed breakdown per category for an agent.
+    `--json` prints one object `{agent_id, categories, totals}`; an unknown agent yields
+    empty `categories` and zero `totals`.
   - `toolrecall agent prune <id>`: Delete stats rows for an agent (preserves cached content).
 
 ### `toolrecall trend`
