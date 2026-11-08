@@ -100,6 +100,13 @@ def explain(trace_dir: str) -> List[Dict[str, Any]]:
                 row["why"] = "identical canonical body was seen before (entry expired or evicted)"
             elif not seen:
                 row["why"] = "first request seen (nothing to replay from)"
+            elif row["messages"] > max(
+                (len(x.get("messages") or []) for x in seen if _same_frame(x, body)), default=0
+            ):
+                # Longer than anything seen with this system/tools: a step no
+                # earlier run reached, so a live call is expected (agents also
+                # move cache markers between turns, so a prefix diff is noise).
+                row["why"] = "new step: no earlier request this long (nothing to replay)"
             else:
                 n_msgs = len(body.get("messages") or [])
                 best = max(

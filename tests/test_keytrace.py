@@ -43,6 +43,7 @@ class TestKeyTrace(unittest.TestCase):
         rows = keytrace.explain(self.dir)
         self.assertEqual([r["hit"] for r in rows], [False, False, True, False])
         self.assertIn("first request", rows[0]["why"])
+        self.assertIn("new step", rows[1]["why"])
         self.assertEqual(rows[3]["path"], ".messages[1].content")
         self.assertIn("10:19", rows[3]["earlier"])
         self.assertIn("10:21", rows[3]["now"])
