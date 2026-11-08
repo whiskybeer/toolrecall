@@ -19,6 +19,21 @@
   shows an `MCP server replays` section. Kept separate from the file_cache
   series on purpose: an MCP replay is I/O saving only (the body still reaches
   the model), so summing the two would overstate cache value.
+- **Session view: unchanged stubs, diffs and line ranges — one state machine.**
+  The bridge's session state now lives entirely in `stub_core` (the shim keeps
+  the stub-only `maybe_stub`; the bridge uses `present`, which adds a unified
+  diff when a file changed, and `read_file` gained `offset`/`limit`). Freshness
+  is the TTL *plus* a session budget (tool calls and emitted tokens since the
+  full copy was sent — `stub_core.DEFAULT_MAX_CALLS` / `DEFAULT_MAX_TOKENS`,
+  derived from the same 396-run measurement as the 240s TTL) *plus* the
+  consecutive-suppression armor; terminal stubs now expire on that budget
+  instead of never. A diff is always computed against the agent's last FULL
+  copy, never against a diff we previously sent: the bridge cannot know whether
+  a harness applied one, and a wrong assumption would compound silently.
+- **Compaction signal.** `context_compacted` (MCP tool, or
+  `toolrecall context compacted` from a PreCompact hook) bumps a daemon-wide
+  epoch; bridges pick it up on their next read and re-send full content. An
+  exact signal beats guessing at the compaction horizon.
 
 ### Fixed
 - **`test_ast_performance` is no longer load-flaky.** The single 1000-call mean
@@ -26,6 +41,53 @@
   standalone (2026-09-28, 14x swing from the suite's own interpreter state) and
   failed unrelated merges. It now measures best-of-5 batches with GC disabled —
   a real regression raises every batch.
+- **`mcp_call` `bypass_cache` was ignored.** The bridge sends `ttl=0` for a
+  bypass; the daemon read only the server config, so a caller explicitly asking
+  for a fresh read was served the cached body and had no way to tell. A
+  per-request `ttl` now wins over the server TTL.
+- **Side-effecting MCP tools were cached.** No read/write classification
+  existed, so a repeated `create_issue` inside the TTL returned the stored reply
+  and *never reached the server*. Tools are now classified by the server's
+  `readOnlyHint`/`destructiveHint` annotations, else by read/write verbs in the
+  name (`cache.mcp_tool_is_cacheable`); a write is never served from nor stored
+  in the cache, and its call invalidates that server's cached reads. The
+  residual risk — an unannotated mutating tool with an opaque name — is
+  documented on the classifier and self-heals through that invalidation.
+- **`browser_cache` rows never expired and were never purged.**
+  `BROWSER_CACHE_TTL` existed but nothing read it, so a cached page was served
+  for the lifetime of the DB (a silent stale delivery) and the table only ever
+  grew. The check now expires rows and the GC reclaims them.
+- **`browser_cache` and `terminal_cache` hits recorded `io_tokens_saved=0`.**
+  Both computed the token estimate and then dropped it, so the TUI IO-offload
+  column read 0 despite real replays — the same class as the api_cache
+  (2026-09-21) and mcp_cache (2026-09-24) fixes.
+- **`toolrecall setup` crashed on a non-tty stdin.** `cmd_setup` decided
+  "interactive" from `--yes` / `TOOLRECALL_NONINTERACTIVE` alone, so a scripted
+  or CI run printed the API-proxy question and then died with `OSError:
+  reading from stdin while output is captured` — the prompt sites caught
+  `EOFError`, but a non-tty stdin raises `OSError`. The flag now also requires
+  a tty, and every prompt site treats an unreadable stdin as "no answer"
+  (its documented default) instead of crashing. Same class fixed in
+  `toolrecall cache reset` and the Claude Code install prompt.
+- **`test_shim_installed_pkg` failed instead of skipping in a bare checkout.**
+  Its documented skip contract ("skipped if toolrecall is not pip-installed")
+  was enforced only on the system-python branch, so a venv without
+  `pip install -e .` failed with `ModuleNotFoundError` — a false gate failure
+  on exactly the environment the docstring names. The probe now runs
+  unconditionally AND from a neutral cwd, since the repo root shadows the
+  installed package (the very blindspot the test exists to catch).
+- **A config typo could silently discard the ENTIRE config.** The unknown-key
+  checker runs inside the try/except that falls back to package defaults, and
+  under `warnings.simplefilter("error")` (`-W error`, some CI) a plain
+  `warn()` raises — so an unknown key escalated into `CONFIG IGNORED`,
+  dropping `[mcp] allowed_paths` and `[network] tokens` and leaving the
+  instance on package defaults. Those diagnostics are now advisory: they still
+  print, but can never abort the load.
+- **`[[sources.knowledge]]` was reported as an unknown key.** The table is read
+  by `docs.py` and documented in `docs/KNOWLEDGE_DB.md`, but `knowledge` was
+  missing from the `[sources]` key list, so following the docs produced a
+  false "unknown key (key ignored)" warning — the same false-positive class
+  the file's own comments record fixing for `[network.clients]`.
 
 ### Changed
 - **Savings counters split into two unmistakable names (`cache_stats`).**

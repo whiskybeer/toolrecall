@@ -92,9 +92,11 @@ class TestBridgeUpdateHint(unittest.TestCase):
             bridge._nudge_reads = 0
             bridge._nudge_emitted = False
             bridge._multiplexer_only = False
-            bridge._session_terminal = {}
             # stub_core delegation: the handler builds its own session via
             # _stubs; provide one with a null counter for the manual init.
+            # (The old `_session_terminal` dict is gone — terminal dedup now
+            # runs through the same stub_core session as file reads.)
+            bridge._compaction_epoch = None
             from toolrecall.stub_core import FileStubSession, note_mcp
 
             bridge._stubs = FileStubSession(

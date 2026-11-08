@@ -55,6 +55,8 @@ from toolrecall.cache import (
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_serve as _cache_mcp_serve,
     cached_mcp_store as _cache_mcp_store,
+    mcp_tool_is_cacheable as _mcp_tool_is_cacheable,
+    invalidate_mcp_server as _cache_invalidate_mcp_server,
     _heal_poisoned_mcp_row as _heal_poisoned_mcp_row,
     revalidate_mcp_entry as _revalidate_mcp_entry,
     cached_browser_check as _cache_browser_check,
@@ -898,6 +900,11 @@ class MCPMultiplexer:
         self._lock = threading.Lock()
         self._idle_timeout = cfg.mcp_multiplex_idle_minutes or 15  # minutes
         self._last_use: dict[str, float] = {}
+        # Tool annotations per server (server → tool_lower → annotations), captured
+        # from tools/list when the server starts. Lets the transparent cache decide
+        # read vs write from the server's own readOnlyHint instead of guessing from
+        # the tool name. Empty for a server that has never started.
+        self._annotations: dict[str, dict[str, dict]] = {}
         self._reaper_running = False
         # Gateway discovery data (server → tools) lives outside the process so
         # an MCP tools/list never has to spawn a server; see mcp_catalog.
@@ -952,6 +959,11 @@ class MCPMultiplexer:
                     return f"{name_lower}: init failed — {init_resp['error'].get('message', 'unknown')}"
                 # Fetch tools for warmup
                 tools = session.list_tools()
+                self._annotations[name_lower] = {
+                    t["name"].lower(): t.get("annotations") or {}
+                    for t in tools
+                    if isinstance(t, dict) and t.get("name")
+                }
                 self._sessions[name_lower] = session
                 # A running server is the only place tool schemas can come
                 # from (the registry carries command lines, not schemas) —
@@ -962,6 +974,20 @@ class MCPMultiplexer:
             except Exception as e:
                 return f"{name_lower}: start failed — {e}"
         return None
+
+    def tool_annotations(self, server: str, tool: str) -> dict | None:
+        """Annotations for a tool from the last tools/list of ``server``.
+
+        None when the server has not started (or does not list the tool) —
+        the caller then falls back to name-based classification. Never starts
+        a server: a cache check must not pay a cold start to decide
+        cacheability (a HIT is supposed to avoid that start entirely).
+        """
+        with self._lock:
+            per_server = self._annotations.get(server.lower())
+        if not per_server:
+            return None
+        return per_server.get(tool.lower())
 
     # ─── Gateway Catalog ──────────────────────────────
 
@@ -1398,6 +1424,15 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 name="tr-mcp-warmup",
             ).start()
         self._context = ContextTracker(ignore_prefixes=self.cfg.tracker_ignore_read_prefixes)
+        # Compaction epoch: a monotone counter bumped when a harness tells us
+        # it compacted its transcript (cmd "context_compacted" — e.g. a
+        # PreCompact hook). Bridges read it on their next tool response and
+        # drop their session-scoped "the agent already holds this" state: the
+        # signal is exact, where the stub TTL/call budget can only guess at
+        # the compaction horizon. Daemon-wide on purpose — one bridge's
+        # compaction invalidates every bridge's assumption.
+        self._compaction_epoch = 0
+        self._compaction_lock = threading.Lock()
         # Restore persisted tracker state (option A): keeps the checkpoint
         # flow alive across daemon restarts instead of resetting it. TTL
         # gated ([tracker].persist_ttl, default 6h — a read set from a
@@ -2100,6 +2135,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_context_get_stats(request)
             elif cmd == "context_reset":
                 return self._handle_context_reset(request)
+            elif cmd == "context_compacted":
+                return self._handle_context_compacted(request)
             elif cmd == "recall_store":
                 return self._handle_recall_store(request)
             elif cmd == "recall_get":
@@ -2244,6 +2281,15 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             # content from context.
             if source == "agent_tool":
                 self._context.mark_read(path)
+            # Stamp the compaction epoch: the bridge drops its session stub/diff
+            # state when this differs from the value it last saw (see __init__).
+            # getattr, not self._compaction_epoch: this is auxiliary signalling
+            # and must never turn a file read into an error. Handlers are also
+            # driven from partially-built servers (tests construct one via
+            # __new__), where an AttributeError here would fail the read itself
+            # — the same "a counter must never break a tool call" rule that
+            # _count_measured follows.
+            result["compaction_epoch"] = getattr(self, "_compaction_epoch", 0)
         return result
 
     def _handle_shell_exec(self, req: dict) -> dict:
@@ -2294,6 +2340,11 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         # Record mcp_cache stats when request originates from MCP bridge
         if req.get("mcp_origin"):
             _cache_record("mcp_cache", hit=result.get("cached", False), path=command)
+        # Compaction epoch (see __init__): same signal as the read path, so a
+        # terminal-only turn cannot miss a compaction. Defensive read for the
+        # same reason as the read stamp.
+        if isinstance(result, dict) and not result.get("error"):
+            result["compaction_epoch"] = getattr(self, "_compaction_epoch", 0)
         return result
 
     def _handle_skill(self, req: dict) -> dict:
@@ -2519,12 +2570,25 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             print(f"[ToolRecall] AST injection blocked MCP call: {server}/{tool}")
             return {"error": ast_err}
 
-        # Check cache (only when transparent cache is enabled)
+        # Cache eligibility: transparent cache ON *and* the tool is a read.
+        # A side-effecting tool is never served from (or written to) the cache:
+        # a repeated create_issue inside the TTL used to return the stored
+        # reply and never reach the server. Classification prefers the server's
+        # own readOnlyHint annotation and falls back to read/write verbs in the
+        # tool name (cache.mcp_tool_is_cacheable).
         cached = {"key": f"{server}:{tool}"}  # default for type checker
         cache_enabled = self.multiplexer.cfg.mcp_multiplex_transparent_cache
         server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
         ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
-        if cache_enabled:
+        # A per-request TTL wins over the server config. The bridge sends
+        # ttl=0 for bypass_cache; the daemon used to read only the server
+        # config, so "bypass" was silently ignored and a fresh read was
+        # served from cache with no way for the caller to tell.
+        req_ttl = req.get("ttl")
+        if isinstance(req_ttl, (int, float)) and not isinstance(req_ttl, bool):
+            ttl = int(req_ttl)
+        cacheable = cache_enabled and self._mcp_tool_cacheable(server, tool)
+        if cacheable:
             cached = _cache_mcp_check(server, tool, arguments, ttl=ttl)
             if cached.get("cached"):
                 # Forward the staleness flag alongside the hit: the bridge
@@ -2547,7 +2611,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         # with the fresh body. Any other outcome → fall through to the
         # normal live call + store below.
         if (
-            cache_enabled
+            cacheable
             and cached.get("key")
             and server == "fetch"
             and tool == "fetch_url"
@@ -2594,17 +2658,36 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         # Found live 2026-09-22: a daemon-env fetch failure was stored and
         # then served from cache on the second call. Poisoned rows from
         # before this fix are healed below (delete + re-stamp stats).
-        if cache_enabled and not self._mcp_result_is_error(result):
-            import json as _json
+        if cache_enabled:
+            # Re-evaluate eligibility AFTER the call: the live call is what
+            # starts a cold server, and a running server is what carries the
+            # tool annotations. Without this, the first call to a write tool
+            # on a cold server would be classified by name alone and stored.
+            if not self._mcp_tool_cacheable(server, tool):
+                # A side-effecting tool: its reply is not an answer to reuse,
+                # and the call may have changed state the cache still
+                # describes from before it. Drop this server's cached reads
+                # (this also clears any legacy row for the tool itself, held
+                # over from when writes were cached). Invalidating after a
+                # FAILED write costs only a refetch — the safe direction.
+                _cache_invalidate_mcp_server(server)
+            elif self._mcp_result_is_error(result):
+                # The poisoned row (if any) must not survive its TTL as
+                # "truth". StaleWhileRevalidate would keep serving it
+                # otherwise.
+                _heal_poisoned_mcp_row(cached.get("key", f"{server}:{tool}"))
+            else:
+                import json as _json
 
-            result_json = _json.dumps(result)
-            _cache_mcp_store(
-                cached.get("key", f"{server}:{tool}"), server, tool, arguments, result_json, ttl=ttl
-            )
-        elif cache_enabled:
-            # The poisoned row (if any) must not survive its TTL as "truth".
-            # StaleWhileRevalidate would keep serving it otherwise.
-            _heal_poisoned_mcp_row(cached.get("key", f"{server}:{tool}"))
+                result_json = _json.dumps(result)
+                _cache_mcp_store(
+                    cached.get("key", f"{server}:{tool}"),
+                    server,
+                    tool,
+                    arguments,
+                    result_json,
+                    ttl=ttl,
+                )
 
         return {"result": result, "cached": False}
 
@@ -2632,6 +2715,18 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             if isinstance(parsed, dict) and "error" in parsed:
                 return True
         return False
+
+    def _mcp_tool_cacheable(self, server: str, tool: str) -> bool:
+        """True when this tool's result may be cached (see _handle_mcp_call).
+
+        Single classification point: the pre-check (may we SERVE a stored
+        row?) and the post-call decision (may we STORE this reply?) must
+        never disagree, or a write could still be pinned by the other path.
+        Annotations come from the running server's tools/list; a cold server
+        has none yet, so the call is name-classified until it has started —
+        which is why the store decision re-runs this after the live call.
+        """
+        return _mcp_tool_is_cacheable(tool, self.multiplexer.tool_annotations(server, tool))
 
     def _handle_mcp_list_servers(self, req: dict) -> dict:
         """List available multiplexed MCP servers with their tools."""
@@ -2978,6 +3073,23 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             {reset: True, checkpoint: 0}
         """
         return self._context.reset()
+
+    def _handle_context_compacted(self, req: dict) -> dict:
+        """Record that a harness compacted its transcript (see __init__).
+
+        Bumps the epoch; every bridge that reads it afterwards drops its
+        session-scoped stub/diff state and re-sends full content once. Called
+        by a harness PreCompact hook (`toolrecall context compacted`) or by
+        the MCP tool `context_compacted`. Idempotent per call: N compactions
+        are N new epochs, which is exactly what the bridges want.
+
+        Returns:
+            {compacted: True, compaction_epoch: N}
+        """
+        with self._compaction_lock:
+            self._compaction_epoch += 1
+            epoch = self._compaction_epoch
+        return {"compacted": True, "compaction_epoch": epoch}
 
 
 # ─── Entry Points ─────────────────────────────────────────

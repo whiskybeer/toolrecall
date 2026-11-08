@@ -29,23 +29,27 @@ _IS_VENV_RUN = os.environ.get("TR_SHIM_INSTALL_TEST") == "1"
 @unittest.skipIf(_IS_VENV_RUN, "already running inside the isolated venv child")
 class TestShimFromInstalledPackage(unittest.TestCase):
     def _venv_python(self) -> str | None:
-        """Return the venv python used for testing, building it if needed.
+        """Return the interpreter whose site-packages must be tested, or None.
 
-        Uses the CURRENT interpreter's venv (this suite already runs inside
-        the project venv), so 'installed' = site-packages copy of toolrecall.
+        Uses the CURRENT interpreter (this suite already runs inside the
+        project venv), so 'installed' = site-packages copy of toolrecall — and
+        gates on toolrecall actually being IMPORTABLE from it, which is the
+        skip contract this module documents. The venv branch used to return
+        the interpreter UNCONDITIONALLY while only the system-python branch
+        ran the probe, so a bare checkout (venv, no ``pip install -e .``)
+        FAILED with ModuleNotFoundError instead of SKIPPING — a false gate
+        failure on exactly the environment the docstring names (2026-09-28).
         """
         exe = sys.executable
-        # If we're in a venv, use it directly; otherwise build a throwaway one
-        if hasattr(sys, "real_prefix") or (
-            hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix
-        ):
-            return exe
-        # Interpreter is the system python — check if toolrecall is importable
+        # Neutral cwd: with the repo root as cwd, ``import toolrecall``
+        # resolves the SOURCE tree and the probe would pass on exactly the
+        # bare checkout it is meant to detect.
         r = subprocess.run(
             [exe, "-c", "import toolrecall; print(toolrecall.__file__)"],
             capture_output=True,
             text=True,
             timeout=60,
+            cwd=tempfile.gettempdir(),
         )
         if r.returncode != 0:
             return None

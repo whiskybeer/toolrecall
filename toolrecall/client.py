@@ -511,6 +511,24 @@ def context_reset() -> dict:
     return resp
 
 
+def context_compacted() -> dict:
+    """Report that the harness compacted its transcript.
+
+    Bumps the daemon's compaction epoch, which every MCP bridge picks up on
+    its next tool response: content this session believed the agent still
+    holds (stubs/diffs) is dropped, so the next read re-sends the whole file
+    instead of referencing a tool result the compaction removed. Wire this
+    into a harness compaction hook (e.g. Hermes/Claude Code PreCompact).
+
+    Returns:
+        {"compacted": True, "compaction_epoch": N}
+    """
+    client = _get_client()
+    payload = {"cmd": "context_compacted"}
+    resp = client.send(payload)
+    return resp
+
+
 def recall_store(
     *,
     fingerprint: str,

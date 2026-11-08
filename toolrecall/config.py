@@ -395,8 +395,13 @@ class Config:
             }
         ),
         "docs": frozenset({"index_ttl"}),
+        # "knowledge" is read verbatim by docs.py (_index_config_sources on
+        # [[sources.knowledge]], documented in docs/KNOWLEDGE_DB.md) and was
+        # missing from this list — so a user following the docs got a FALSE
+        # "unknown key (key ignored)", and under -W error that escalated into
+        # the whole config being discarded (2026-09-28).
         "sources": frozenset(
-            {"scan_dirs", "scan_extensions", "scan_ignore", "max_file_kb", "memory"}
+            {"scan_dirs", "scan_extensions", "scan_ignore", "max_file_kb", "memory", "knowledge"}
         ),
         "nginx": frozenset({"domain", "site_name", "ssl", "ssl_cert", "ssl_key", "github"}),
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
@@ -447,13 +452,33 @@ class Config:
         per-server configs, terminal TTL patterns) where sub-keys are
         user-defined names. Typos then fail loudly instead of silently
         falling back to restrictive defaults.
+
+        Every emission here is ADVISORY and can never abort the load. This
+        method is called from INSIDE the try/except that discards the whole
+        config on any exception, and under ``warnings.simplefilter("error")``
+        (tests, ``-W error``, some CI) a plain ``warn()`` raises — so a config
+        typo escalated into "CONFIG IGNORED": the entire file dropped,
+        including ``[mcp] allowed_paths`` and ``[network] tokens``, leaving the
+        instance silently on package defaults (2026-09-28). A diagnostic must
+        not be able to do that.
         """
         import warnings
+
+        def _advisory(msg: str) -> None:
+            # Emitted under an explicit filter: catch_warnings means the
+            # caller's error escalation cannot turn a config typo into a fatal
+            # load, and it needs NO except-pass swallow to achieve that (the
+            # swallow audit forbids silent ones). "default" keeps the
+            # once-per-location dedup a plain warn() would have had — the
+            # diagnostic still reaches the user, it just cannot abort the load.
+            with warnings.catch_warnings():
+                warnings.simplefilter("default")
+                warnings.warn(msg)
 
         for section, sec_val in user.items():
             valid_keys = self._KNOWN.get(section)
             if valid_keys is None:
-                warnings.warn(
+                _advisory(
                     f"ToolRecall: unknown config section [{section}] in {source} — "
                     f"typo? Known sections: {sorted(self._KNOWN)}"
                 )
@@ -476,12 +501,12 @@ class Config:
                                     continue
                                 for sub in entry:
                                     if sub not in entry_keys:
-                                        warnings.warn(
+                                        _advisory(
                                             f"ToolRecall: unknown key [{section}.{key}.*] {sub} "
                                             f"in {source} — typo? (field ignored)"
                                         )
                     continue
-                warnings.warn(
+                _advisory(
                     f"ToolRecall: unknown config key [{section}] {key} in {source} — "
                     f"typo? (key ignored, default in effect)"
                 )

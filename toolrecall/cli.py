@@ -26,6 +26,23 @@ import os
 import sys
 
 
+def _stdin_is_interactive() -> bool:
+    """True only when a prompt could actually get an answer.
+
+    Non-tty stdin (CI, cron, a closed fd, pytest's capture) cannot answer a
+    question, and it makes ``input()`` raise ``OSError`` where callers used to
+    catch only ``EOFError`` — which crashed ``toolrecall setup`` on a scripted
+    run instead of taking its documented non-interactive default. This is the
+    gate for DECIDING whether to offer a prompt; prompt sites additionally
+    treat an unreadable stdin as "no answer" (see ``_confirm_install``) so that
+    a piped ``yes | toolrecall shim --install`` keeps working.
+    """
+    try:
+        return sys.stdin.isatty()
+    except (ValueError, OSError):  # detached or closed stdin
+        return False
+
+
 def cmd_init():
     """Create boilerplate config and .env for users with interactive setup."""
     import os
@@ -469,7 +486,9 @@ def cmd_reset_stats():
     if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
         try:
             resp = input("Wipe hits/misses/token counters + access_log trend window? [y/N] ")
-        except (EOFError, KeyboardInterrupt):
+        except (EOFError, OSError, KeyboardInterrupt):
+            # OSError = non-tty stdin (captured/closed); treat as "no answer"
+            # and keep the counters rather than crashing the command.
             print("\naborted")
             return
         if resp.strip().lower() not in ("y", "yes"):
@@ -1378,7 +1397,11 @@ def _confirm_install(v) -> bool:
         print("  Benefits: zero-config cache, ~99% hit rate, terminal dedup, token savings.")
         print()
         resp = input("  Enable shim? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, OSError, KeyboardInterrupt):
+        # OSError is the non-tty case: "reading from stdin while output is
+        # captured" (pytest, CI, a closed fd). Catching it here — rather than
+        # gating on isatty() — keeps a piped `yes | toolrecall shim --install`
+        # working while never crashing on stdin that cannot answer.
         return False
     return resp in ("y", "yes")
 
@@ -1601,7 +1624,10 @@ def cmd_setup():
 
     if _shutil_step5.which("hermes"):
         yes = "--yes" in sys.argv
-        interactive = "TOOLRECALL_NONINTERACTIVE" not in os.environ
+        # isatty too: without it a scripted/CI run printed an interactive
+        # question and then hit the prompt's OSError (2026-09-28). The env
+        # var remains the explicit opt-out; this makes the flag honest.
+        interactive = "TOOLRECALL_NONINTERACTIVE" not in os.environ and _stdin_is_interactive()
         if yes:
             ok, msg = _attach_hermes_to_proxy()
             (steps_ok if ok else errors).append(f"API proxy: {msg}")
@@ -1813,8 +1839,8 @@ def _ensure_agent_integration():
                 claude_choice = input("  Install [F/m]: ").strip().lower()
                 if claude_choice == "m":
                     claude_multiplexer_only = True
-            except (EOFError, KeyboardInterrupt):
-                pass  # Non-interactive → default to full
+            except (EOFError, OSError, KeyboardInterrupt):
+                pass  # Non-interactive (or non-tty stdin) → default to full
         # Automatic: uses Claude's own CLI to register the MCP server
         mcp_args = ["toolrecall", "mcp"]
         if claude_multiplexer_only:
@@ -2553,6 +2579,7 @@ def cmd_context():
         print("Commands:")
         print("  status              Checkpoint, dirty/clean/stale counts")
         print("  stale               Files read then overwritten (stale in context)")
+        print("  compacted           Report a harness transcript compaction (call from a hook)")
         print("")
         print("Options for 'stale':")
         print("  --format json|table   Output format (default: table)")
@@ -2571,6 +2598,14 @@ def cmd_context():
             print(f"  \u26a0\ufe0f  {resp['error']}", file=sys.stderr)
             sys.exit(2)
         return resp
+
+    if sub == "compacted":
+        resp = _call(client.context_compacted)
+        print(
+            f"  recorded transcript compaction (epoch {resp.get('compaction_epoch', '?')}); "
+            "bridges re-send full content on their next read"
+        )
+        return
 
     if sub == "status":
         stats = _call(client.context_get_stats)

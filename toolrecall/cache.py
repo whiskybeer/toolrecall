@@ -1358,7 +1358,15 @@ def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None
                         "UPDATE terminal_cache SET hits = hits + 1, hit_streak = hit_streak + 1 WHERE command_hash = ?",
                         (cmd_hash,),
                     )
-                    _record("terminal_cache", hit=True)
+                    # io_tokens_saved was never passed (2026-09-28): terminal_cache
+                    # hits showed io_tokens_saved=0, so the TUI IO-offload column
+                    # read 0 despite real replays — same class as the api_cache
+                    # (2026-09-21) and mcp_cache (2026-09-24) fixes.
+                    _record(
+                        "terminal_cache",
+                        hit=True,
+                        io_tokens_saved=_estimate_tokens(row["output"] or ""),
+                    )
                     return {
                         "output": row["output"],
                         "stderr": row["stderr"],
@@ -1367,7 +1375,11 @@ def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None
                     }
                 if tier == ttl_policy.SWR_SERVE_STALE:
                     # SWR: serve stale immediately, revalidate in background
-                    _record("terminal_cache", hit=True)
+                    _record(
+                        "terminal_cache",
+                        hit=True,
+                        io_tokens_saved=_estimate_tokens(row["output"] or ""),
+                    )
                     _maybe_revalidate_terminal(cmd_hash, cmd, exec_cwd, cacheable_ttl or 300)
                     return {
                         "output": row["output"],
@@ -1932,6 +1944,123 @@ def _require_validator() -> bool:
     delivered ~29% wrong results; validate-before-serve delivered 0%.
     """
     return bool(config.get("mcp", "require_validator", default=False))
+
+
+# Verb tokens that mark a tool as having side effects. Matched against the tool
+# name split on non-alphanumerics and camelCase boundaries, so "create_issue",
+# "createIssue" and "issues.create" all classify as writes.
+_MCP_WRITE_VERBS = frozenset(
+    {
+        "add",
+        "append",
+        "approve",
+        "archive",
+        "assign",
+        "cancel",
+        "close",
+        "comment",
+        "commit",
+        "create",
+        "delete",
+        "deploy",
+        "disable",
+        "dismiss",
+        "edit",
+        "enable",
+        "exec",
+        "execute",
+        "fork",
+        "insert",
+        "invite",
+        "kill",
+        "label",
+        "lock",
+        "merge",
+        "move",
+        "navigate",
+        "patch",
+        "post",
+        "publish",
+        "push",
+        "put",
+        "rename",
+        "reopen",
+        "remove",
+        "replace",
+        "reset",
+        "restart",
+        "revert",
+        "run",
+        "send",
+        "set",
+        "start",
+        "stop",
+        "submit",
+        "sync",
+        "trigger",
+        "unlock",
+        "update",
+        "upload",
+        "upsert",
+        "write",
+    }
+)
+
+# A leading read verb settles it: "get_commit", "list_labels" and
+# "read_query" contain write-looking nouns but only read.
+_MCP_READ_VERBS = frozenset(
+    {
+        "get",
+        "list",
+        "search",
+        "read",
+        "find",
+        "fetch",
+        "query",
+        "describe",
+        "show",
+        "view",
+        "lookup",
+        "count",
+        "resolve",
+        "convert",
+        "diff",
+        "inspect",
+    }
+)
+
+
+def mcp_tool_is_cacheable(tool: str, annotations: dict | None = None) -> bool:
+    """True when an MCP tool's result may be served from cache.
+
+    Caching a side-effecting tool is a correctness bug, not a missed saving:
+    a repeated ``create_issue`` inside the TTL would return the stored reply
+    and never reach the server. The server's own annotations win when present
+    (``readOnlyHint`` decides either way; ``destructiveHint`` blocks caching);
+    otherwise a leading read verb marks the tool cacheable and any write verb
+    in the name marks it uncacheable. Names with neither stay cacheable —
+    the pre-existing behaviour, which preserves caching for servers whose
+    tools are read-only but named opaquely (e.g. ``docs_search``).
+
+    Residual risk (documented, not hidden): a mutating tool whose name carries
+    no write verb AND which the server does not annotate is still classified
+    cacheable. A write served from cache is possible in that case, which is
+    why the daemon also invalidates a server's cached reads whenever a
+    non-cacheable tool is called (see DaemonServer._handle_mcp_call).
+    """
+    if annotations:
+        hint = annotations.get("readOnlyHint")
+        if hint is not None:
+            return bool(hint)
+        if annotations.get("destructiveHint"):
+            return False
+    import re as _re
+
+    words = _re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", tool or "").lower()
+    tokens = [t for t in _re.split(r"[^a-z0-9]+", words) if t]
+    if tokens and tokens[0] in _MCP_READ_VERBS:
+        return True
+    return not (set(tokens) & _MCP_WRITE_VERBS)
 
 
 def cached_mcp_serve(
@@ -2710,6 +2839,19 @@ def garbage_collect() -> int:
                     "DELETE FROM api_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
                     (now,),
                 ).rowcount
+            # browser_cache had NO reclaimer at all: nothing purged it and the
+            # check did not expire rows either, so a cached page lived as long
+            # as the DB and the table only grew. Purge on the same TTL the
+            # check enforces (_browser_row_expired), so an expired page is
+            # neither served nor kept. Same guard style as above: a
+            # pre-migration DB must never abort the whole GC.
+            browser_cols = {row[1] for row in conn.execute("PRAGMA table_info(browser_cache)")}
+            c6 = 0
+            if "cached_at" in browser_cols:
+                c6 = conn.execute(
+                    "DELETE FROM browser_cache WHERE cached_at IS NULL OR cached_at < ?",
+                    (now - BROWSER_CACHE_TTL,),
+                ).rowcount
             c3 = conn.execute(
                 """
                 UPDATE cache_stats SET
@@ -2725,7 +2867,7 @@ def garbage_collect() -> int:
         # VACUUM must run in its own connection (auto-commits, can't be in a transaction)
         with _db() as conn:
             conn.execute("VACUUM")
-        return c1 + c2 + c3 + c4 + c5
+        return c1 + c2 + c3 + c4 + c5 + c6
     except Exception as e:
         warnings.warn(f"ToolRecall GC failed: {e}")
         return -1
@@ -2736,10 +2878,28 @@ def garbage_collect() -> int:
 BROWSER_CACHE_TTL = 3600  # 1 hour default for browser page cache
 
 
+def _browser_row_expired(cached_at: float | None, now: float) -> bool:
+    """True when a browser_cache row is past its TTL.
+
+    Used by BOTH the check and the GC so an expired page is neither served
+    nor kept. Export was the bug: the constant existed but nothing read it,
+    so a cached page was served for the lifetime of the DB while the table
+    only ever grew. A NULL cached_at is treated as expired — the
+    conservative direction is a refetch, never a stale serve.
+    """
+    if cached_at is None:
+        return True
+    return (now - cached_at) > BROWSER_CACHE_TTL
+
+
 def cached_browser_check(
     cache_key: str,
 ) -> dict:
     """Check if browser page content is cached by key.
+
+    Expired rows are a miss (see ``_browser_row_expired``): a browser page is
+    point-in-time content, so serving one past the TTL is a stale delivery,
+    not a saving.
 
     Args:
         cache_key: e.g. ``browser:page:https_example_com:snapshot``
@@ -2750,17 +2910,20 @@ def cached_browser_check(
     """
     try:
         with _db() as conn:
+            now = time.time()
             row = conn.execute(
-                "SELECT content, hits FROM browser_cache WHERE cache_key = ?",
+                "SELECT content, hits, cached_at FROM browser_cache WHERE cache_key = ?",
                 (cache_key,),
             ).fetchone()
-            if row:
+            if row is not None and not _browser_row_expired(row["cached_at"], now):
                 conn.execute(
                     "UPDATE browser_cache SET hits = hits + 1 WHERE cache_key = ?",
                     (cache_key,),
                 )
-                _record("browser_cache", True)
+                # io_tokens_saved was computed but never passed (2026-09-28):
+                # the TUI IO-offload column read 0 for browser hits.
                 io_tokens_saved = _estimate_tokens(row["content"])
+                _record("browser_cache", True, io_tokens_saved=io_tokens_saved)
                 return {
                     "cached": True,
                     "content": row["content"],

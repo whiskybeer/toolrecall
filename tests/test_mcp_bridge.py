@@ -184,10 +184,11 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         self.assertIn("context_get_dirty", names)
         self.assertIn("context_get_stats", names)
         self.assertIn("context_reset", names)
+        self.assertIn("context_compacted", names)
         # Recall tier
         self.assertIn("recall_store", names)
         self.assertIn("recall_get", names)
-        self.assertEqual(len(tools), 19)
+        self.assertEqual(len(tools), 20)
 
     def test_tools_list_hides_terminal_when_disabled(self):
         """terminal is hidden when daemon has allow_terminal=False."""
@@ -720,9 +721,9 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 class TestToolDefinitions(unittest.TestCase):
     """TOOL_DEFINITIONS contains valid schemas for all 19 tools."""
 
-    def test_has_all_19_tools(self):
-        """There are exactly 19 tool definitions."""
-        self.assertEqual(len(TOOL_DEFINITIONS), 19)
+    def test_has_all_20_tools(self):
+        """There are exactly 20 tool definitions."""
+        self.assertEqual(len(TOOL_DEFINITIONS), 20)
 
     def test_each_tool_has_valid_schema(self):
         """Every tool has name, description, and inputSchema with properties."""

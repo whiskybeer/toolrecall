@@ -29,6 +29,7 @@ from toolrecall import __version__
 from toolrecall import mcp_catalog
 from toolrecall.context_tracker import format_stale_block
 from toolrecall.keys import content_digest
+from toolrecall.stub_core import slice_lines
 
 log = logging.getLogger("toolrecall.mcp_bridge")
 
@@ -41,7 +42,8 @@ TOOL_DEFINITIONS = [
         "name": "read_file",
         "description": "Read a file through ToolRecall's cache. "
         "Cached until file modification time (mtime) changes. "
-        "Set bypass_cache=true to force a fresh read from disk.",
+        "Set bypass_cache=true to force a fresh read from disk. "
+        "Use offset/limit for a line window (1-based) instead of the whole file.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -49,6 +51,14 @@ TOOL_DEFINITIONS = [
                 "bypass_cache": {
                     "type": "boolean",
                     "description": "Skip cache and force fresh read from disk",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "First line to read (1-based). Omit for the whole file.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of lines to read from offset.",
                 },
             },
             "required": ["path"],
@@ -233,6 +243,13 @@ TOOL_DEFINITIONS = [
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "context_compacted",
+        "description": "Tell ToolRecall your harness compacted its transcript, so earlier "
+        "file content is no longer in your context. Call it from a compaction hook; the next "
+        "read then returns full content instead of a stub/diff.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "recall_store",
         "description": "Persist a non-reproducible content block out-of-band and return a "
         "node_id to keep in context. Use for web/API/ephemeral output that cannot "
@@ -306,7 +323,33 @@ CMD_TO_MCP = {
     "context_reset": "context_reset",
     "recall_store": "recall_store",
     "recall_get": "recall_get",
+    "context_compacted": "context_compacted",
 }
+
+
+def _as_int(value: object) -> int | None:
+    """Coerce a JSON-schema integer argument, or None when absent/invalid."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _range_key(path: str, offset: int | None, limit: int | None) -> str:
+    """Stub/diff key for a read.
+
+    The whole file and any line window of it are DIFFERENT content to the
+    agent, so they must never share suppression state: a 40-line window can
+    be stubbed against a previous window, but never against the full file.
+    """
+    real = os.path.realpath(os.path.expanduser(path))
+    if not offset and not limit:
+        return real
+    return f"{real}#{offset or 1}-{limit or 'end'}"
 
 
 # ─── MCP Bridge ───────────────────────────────────────────
@@ -343,7 +386,12 @@ class MCPBridge:
         # provably still held. 240s sits just under the median horizon
         # (288s) and well below p75 — conservative on the stranding risk,
         # while max_consecutive stays the hard armor.
-        from toolrecall.stub_core import FileStubSession, note_mcp
+        from toolrecall.stub_core import (
+            DEFAULT_MAX_CALLS,
+            DEFAULT_MAX_TOKENS,
+            FileStubSession,
+            note_mcp,
+        )
 
         self._stubs = FileStubSession(
             ttl_s=240.0,
@@ -351,11 +399,19 @@ class MCPBridge:
             min_chars=0,
             note_fn=note_mcp,
             counter_fn=self._count_measured,
+            # The same horizon as the TTL, expressed in what actually pushes
+            # old results out of a transcript — calls emitted and tokens
+            # emitted since the full copy was sent. Wall clock alone over-keeps
+            # in a burst and under-keeps in a slow session; see
+            # stub_core.DEFAULT_MAX_CALLS for the evidence behind the numbers.
+            max_calls=DEFAULT_MAX_CALLS,
+            max_tokens=DEFAULT_MAX_TOKENS,
         )
-        # Terminal output dedup: command string -> sha256 of output.
-        # Native Bash tool does NOT deduplicate; repeated identical output
-        # (git status, test runs, ls) re-enters context at full cost.
-        self._session_terminal: dict[str, str] = {}
+        # Compaction epoch last seen from the daemon (None = never seen). A
+        # change means a harness reported a transcript compaction, so every
+        # stub/diff assumption in this session is void (daemon cmd
+        # context_compacted). The exact signal beats guessing the horizon.
+        self._compaction_epoch: int | None = None
         # Context hints (drop-clean-files) are only useful in harnesses that
         # own their message array (Hermes, ADK).  Append-only harnesses
         # (Claude Code, Cursor) cannot act on them — disable by default.
@@ -390,70 +446,120 @@ class MCPBridge:
         # daemon round-trip per session emits it after the first tool call.
         self._update_hint_done = False
 
-    def _maybe_stub(self, path: str, resp: dict) -> dict:
-        """Replace content with a stub when this session already holds it.
+    def _sync_epoch(self, body: dict) -> None:
+        """Honour a compaction signal carried on a tool response.
+
+        The daemon stamps ``compaction_epoch`` on read/terminal responses. When
+        it changes, a harness reported that it compacted its transcript, so
+        anything this session believes the agent still holds is void: drop the
+        lot and let the next read re-send full content. The field never reaches
+        the agent (callers pop it before presenting).
+        """
+        epoch = body.get("compaction_epoch") if isinstance(body, dict) else None
+        if epoch is None:
+            return
+        if self._compaction_epoch is not None and epoch != self._compaction_epoch:
+            self._stubs.reset_all()
+        self._compaction_epoch = epoch
+
+    def _present_read(self, arguments: dict, resp: dict) -> dict:
+        """Stub / diff a file read, with line-range support.
 
         Harnesses with append-only transcripts (Claude Code, Cursor, Cline)
         cannot drop an earlier tool_result, so re-sending identical content
-        costs full tokens every time.  Their native read tools deduplicate;
+        costs full tokens every time. Their native read tools deduplicate;
         without this we are strictly more expensive than the tool we replace.
 
-        Every stub IS a measured context saving: the file content is
-        REPLACED on the wire by a one-line note, so those tokens provably
+        Every suppression IS a measured context saving: the content is
+        REPLACED on the wire by a note or a diff, so those tokens provably
         never reach the LLM. Counted in cache_stats.tokens_not_sent_measured
-        (category "mcp_dedup") via daemon cmd `dedup_tokens`.
+        (category "mcp_dedup") via stub_core's counter_fn → daemon cmd
+        `dedup_tokens`.
 
-        Delegates the state machine to the shared stub_core.FileStubSession
-        (one contract, one test surface — bridge policy: ttl 60s, cap 3,
-        floor 0). The return shape {"result": {"unchanged": True, ...}} is
-        byte-identical to the pre-core behavior, pinned by test_mcp_bridge.
+        A line-range read is its own key (``<real>#start-end``), so a 40-line
+        window and the whole file are different views to the agent; only the
+        whole-file read offers a diff (a window is not a copy of the file).
         """
-        if not path or "error" in resp:
+        if "error" in resp:
             return resp
         body = resp.get("result", resp)
         if not isinstance(body, dict):
             return resp
+        self._sync_epoch(body)
+        # Internal signalling only — never part of the payload the agent sees.
+        body.pop("compaction_epoch", None)
         content = body.get("content")
-        if not isinstance(content, str):
+        path = arguments.get("path", "")
+        if not isinstance(content, str) or not isinstance(path, str) or not path:
             return resp
 
-        note = self._stubs.maybe_stub(path, content, is_agent=True, lossless=True)
-        if note is None:
+        offset = _as_int(arguments.get("offset"))
+        limit = _as_int(arguments.get("limit"))
+        ranged = bool(offset or limit)
+        looked = dict(body)
+        if ranged:
+            looked.update(slice_lines(content, offset, limit))
+        window = looked.get("content", "")
+        if not isinstance(window, str):
+            return resp
+
+        key = _range_key(path, offset, limit)
+        if arguments.get("bypass_cache"):
+            # An explicit fresh read is the agent saying "my copy is gone":
+            # forget the view so this read is a full send, not a stub.
+            self._stubs.reset_key(key)
+        decision = self._stubs.present(key, window, allow_diff=not ranged)
+        presented = decision if decision is not None else looked
+        self._stubs.tick(self._format_result(presented))
+        if decision is None:
+            return {"result": looked} if ranged else resp
+        if decision.get("unchanged"):
+            out = {"unchanged": True, "note": decision["note"]}
+            for field in ("path", "start_line", "end_line", "total_lines"):
+                if field in looked:
+                    out[field] = looked[field]
+            return {"result": out}
+        return {
+            "result": {
+                "changed": True,
+                "path": looked.get("path", path),
+                "diff": decision["diff"],
+                "note": (
+                    "File changed since your last full read; apply this diff to your "
+                    "copy. Pass bypass_cache=true for the whole file."
+                ),
+            }
+        }
+
+    def _present_terminal(self, command: str, resp: dict) -> dict:
+        """Replace terminal output with a stub when identical to last run.
+
+        Native Bash tool does NOT deduplicate command output. Repeated runs of
+        idempotent commands (git status, which, pip list) re-send identical
+        output at full token cost. This catches them — now under the same
+        session budget as file reads, instead of never expiring.
+        """
+        if not command or "error" in resp:
+            return resp
+        body = resp.get("result", resp)
+        if not isinstance(body, dict):
+            return resp
+        self._sync_epoch(body)
+        body.pop("compaction_epoch", None)
+        content = body.get("output")
+        if not isinstance(content, str):
+            return resp
+        decision = self._stubs.present(f"$ {command}", content, allow_diff=False)
+        presented = decision if decision is not None else content
+        self._stubs.tick(self._format_result(presented))
+        if decision is None:
             return resp
         return {
             "result": {
                 "unchanged": True,
-                "note": note,
+                "note": f'Command "{command}" returned identical output; see earlier result.',
             }
         }
-
-    def _maybe_stub_terminal(self, command: str, resp: dict) -> dict:
-        """Replace terminal output with a stub when identical to last run.
-
-        Native Bash tool does NOT deduplicate command output.  Repeated
-        runs of idempotent commands (git status, which, pip list) re-send
-        identical output at full token cost.  This catches them.
-        """
-        if not command or "error" in resp:
-            return resp
-        content = (
-            resp.get("result", resp).get("output")
-            if isinstance(resp.get("result", resp), dict)
-            else None
-        )
-        if not isinstance(content, str):
-            return resp
-        digest = content_digest(content)
-        if self._session_terminal.get(command) == digest:
-            self._count_measured(len(content) // 4, f"<terminal: {command[:80]}>")
-            return {
-                "result": {
-                    "unchanged": True,
-                    "note": f'Command "{command}" returned identical output; see earlier result.',
-                }
-            }
-        self._session_terminal[command] = digest
-        return resp
 
     def _count_measured(self, tokens: int, log_path: str, note: str = "") -> None:
         """Fire-and-forget daemon counter for MEASURED not-sent tokens.
@@ -715,17 +821,23 @@ class MCPBridge:
             if tool_name == "context_set_checkpoint" and not self._hints_opted_in:
                 self._hints_opted_in = True
 
-            # Session-scoped dedup: identical content → stub (saves tokens in
-            # append-only harnesses like Claude Code where content can't be
-            # dropped from the transcript after it enters)
-            if tool_name in ("cached_read", "read_file") and not arguments.get(
-                "bypass_cache", False
-            ):
-                resp = self._maybe_stub(arguments.get("path", ""), resp)
+            if tool_name == "context_compacted":
+                # The daemon bumped the epoch. Drop this session's views
+                # immediately so the next read is a full send; the epoch
+                # carried on read responses covers every OTHER session.
+                self._stubs.reset_all()
+
+            # Session-scoped view: identical content → stub, changed content →
+            # diff (saves tokens in append-only harnesses like Claude Code
+            # where content can't be dropped from the transcript after it
+            # enters). bypass_cache is handled INSIDE: an explicit fresh read
+            # forgets the view and always returns full content.
+            if tool_name in ("cached_read", "read_file"):
+                resp = self._present_read(arguments, resp)
             # Terminal dedup: identical command output → stub (native Bash
             # tool does not deduplicate; this is a genuine win)
             if tool_name in ("cached_terminal", "terminal"):
-                resp = self._maybe_stub_terminal(arguments.get("command", ""), resp)
+                resp = self._present_terminal(arguments.get("command", ""), resp)
 
             # Extract result for presentation
             content = resp.get("result", resp)
