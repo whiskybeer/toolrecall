@@ -457,6 +457,55 @@ def _canonicalize_body(profile: str, body: bytes):
     return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
+def _sse_complete(raw: str) -> bool:
+    """True when an SSE stream reached its provider end-of-stream marker.
+
+    OpenAI-style streams end with ``data: [DONE]``; Anthropic Messages streams
+    end with a ``message_stop`` event and never send ``[DONE]``. Checking only
+    ``[DONE]`` discarded every Claude Code stream as "truncated" (measured
+    2026-11-07: 0 of 9 streamed calls stored, so replay never fired).
+    """
+    if "[DONE]" in raw:
+        return True
+    for line in raw.splitlines():
+        line = line.strip()
+        if line == "event: message_stop":
+            return True
+        if line.startswith("data:") and '"message_stop"' in line:
+            try:
+                if json.loads(line[5:].strip()).get("type") == "message_stop":
+                    return True
+            except (json.JSONDecodeError, AttributeError):
+                continue
+    return False
+
+
+def _key_trace(profile: str, request_hash: str, canonical: bytes, hit: bool) -> None:
+    """Opt-in replay diagnostics: TOOLRECALL_KEY_TRACE_DIR=<dir>.
+
+    Writes the canonical body that was hashed to ``<dir>/<request_hash>.json``
+    and appends ``{"ts", "request_hash", "profile", "hit"}`` to
+    ``<dir>/trace.jsonl``. ``toolrecall keytrace <dir>`` then explains each
+    miss (first differing field vs the closest earlier request). Bodies hold
+    prompts and tool output: local only, off by default, never affects keys.
+    Fail-open: tracing errors never touch the request.
+    """
+    d = os.environ.get("TOOLRECALL_KEY_TRACE_DIR")
+    if not d:
+        return
+    try:
+        os.makedirs(d, exist_ok=True)
+        body_path = os.path.join(d, f"{request_hash}.json")
+        if not os.path.exists(body_path):
+            with open(body_path, "wb") as fh:
+                fh.write(canonical)
+        line = {"ts": time.time(), "request_hash": request_hash, "profile": profile, "hit": hit}
+        with open(os.path.join(d, "trace.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(line) + "\n")
+    except OSError:
+        log.debug("key trace write failed", exc_info=True)
+
+
 # Upstream HTTPS connection timeout. Configurable via TOOLRECALL_FORWARD_TIMEOUT
 # env var (seconds). Default: 30s for normal API calls, 300s for streaming SSE.
 _FORWARD_TIMEOUT = int(os.environ.get("TOOLRECALL_FORWARD_TIMEOUT", "30"))
@@ -1069,6 +1118,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 if agent_id:
                     check_cmd["agent_id"] = agent_id
                 cached = self._client.send(check_cmd)
+                _key_trace(
+                    canonical_profile,
+                    request_hash,
+                    hash_body,
+                    bool(cached.get("cached") and 200 <= cached.get("status", 200) < 300),
+                )
                 if cached.get("cached") and 200 <= cached.get("status", 200) < 300:
                     n = self._replay_stream_from_cache(
                         cached, target_host, target_path, request_hash
@@ -1736,8 +1791,8 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             raw = cached.get("body", "")
             if not isinstance(raw, str) or "data:" not in raw:
                 return None
-            if "[DONE]" not in raw:
-                log.warning("STREAM REPLAY: refusing truncated cached stream (no [DONE])")
+            if not _sse_complete(raw):
+                log.warning("STREAM REPLAY: refusing truncated cached stream (no end marker)")
                 return None
             # usage extraction for the usage log
             prompt_tokens = 0
@@ -1746,9 +1801,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 if line.startswith("data: ") and line != "data: [DONE]":
                     try:
                         obj = json.loads(line[6:])
-                        u = obj.get("usage")
+                        u = obj.get("usage") or (obj.get("message") or {}).get("usage")
                         if u and u.get("prompt_tokens"):
                             prompt_tokens = u["prompt_tokens"]
+                        elif u and obj.get("type") == "message_start":
+                            # Anthropic: prompt = input + cache read + cache write
+                            prompt_tokens = (
+                                int(u.get("input_tokens") or 0)
+                                + int(u.get("cache_read_input_tokens") or 0)
+                                + int(u.get("cache_creation_input_tokens") or 0)
+                            )
                     except json.JSONDecodeError:
                         continue
             self.send_response(200)
@@ -1797,6 +1859,19 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     continue
                 resp_id = obj.get("id") or resp_id
                 model = obj.get("model") or model
+                # Anthropic Messages SSE: typed events instead of choices[].
+                etype = obj.get("type") if isinstance(obj, dict) else None
+                if etype == "error":
+                    log.warning("STREAM TEE: discarding stream with an error event")
+                    return
+                if etype == "content_block_start":
+                    block = obj.get("content_block") or {}
+                    if block.get("type") == "tool_use":
+                        tool_calls_acc.append(block)
+                elif etype == "content_block_delta":
+                    delta = obj.get("delta") or {}
+                    if delta.get("type") == "text_delta" and delta.get("text"):
+                        content_parts.append(delta["text"])
                 u = obj.get("usage")
                 if u:
                     usage = u  # noqa: F841  (kept for parity with non-stream path)
@@ -1838,9 +1913,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # 2026-09-03/04) risks dropping fields the harness client's
             # assembler expects (role-anchoring, content:null deltas,
             # tool_call fragments). The stored body IS the stream.
-            if "[DONE]" not in raw:
+            if not _sse_complete(raw):
                 log.warning(
-                    "STREAM TEE: discarding truncated stream (%d bytes, no [DONE])",
+                    "STREAM TEE: discarding truncated stream (%d bytes, no end marker)",
                     len(raw),
                 )
                 return
@@ -1864,7 +1939,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
                 return
             body = raw
-            self._client.send(
+            resp = self._client.send(
                 {
                     "cmd": "cached_api_store",
                     "request_hash": request_hash,
@@ -1878,6 +1953,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     "ttl": int(os.environ.get("TOOLRECALL_API_TTL", "300")),
                 }
             )
+            if isinstance(resp, dict) and resp.get("error"):
+                # Fail-open, but say so: logging "stored" here hid a dead
+                # daemon behind a stream cache that never filled.
+                log.warning("STREAM TEE: store failed (%s) — nothing cached", resp.get("error"))
+                return
             log.info(
                 "STREAM TEE: stored %d bytes under canonical hash %s…",
                 len(body),
