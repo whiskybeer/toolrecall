@@ -269,6 +269,7 @@ Full detail: [Recall Tier](docs/RECALL_TIER.md)
 | Enable | `[forward_proxy] dedup = true` (or env `TOOLRECALL_FORWARD_DEDUP=1`), restart daemon | `litellm_settings: callbacks: toolrecall.adapters.litellm.handler` in LiteLLM's `proxy_config.yaml` |
 | Streaming requests | ✅ rewritten before the stream relay | ⚠️ LiteLLM bypasses `async_pre_call_hook` on some paths (see adapter docstring) |
 | Extra process | none | LiteLLM Proxy |
+| Attribution stats | `toolrecall dedup-stats` | — |
 
 The built-in path was verified end-to-end against live OpenRouter billing through `:8569`: a two-turn conversation re-pasting a ~1,141-token tool result billed 1,245 prompt tokens on turn 2 with dedup vs 2,217+ without — turn 2's *billed cost* stayed ≈ turn 1's because the keep-first prefix remains byte-identical to provider prompt caching.
 

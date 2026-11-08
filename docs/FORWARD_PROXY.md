@@ -157,6 +157,9 @@ provider just never bills for the copies after the first.
   OpenRouter's `/api/v1/...` included). Bodies that aren't JSON, have no
   `messages` list, or contain no stubbable duplicate pass through unchanged.
 - Each stub event is logged: `DEDUP: stubbed N duplicate block(s), saved ~X chars`.
+- **Per-tool attribution:** Run `toolrecall dedup-stats` to view which tools'
+  outputs are being stubbed and the breakdown of saved tokens per tool. See
+  [CLI Reference](CLI.md#toolrecall-dedup-stats).
 
 ## Starting
 

@@ -22,6 +22,7 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall trend` | `cmd_trend()` | `toolrecall/cli.py` |
 | `toolrecall invalidate` | `cmd_invalidate()` | `toolrecall/cli.py` |
 | `toolrecall reset-stats` | `cmd_reset_stats()` | `toolrecall/cli.py` |
+| `toolrecall dedup-stats` | `cmd_dedup_stats()` | `toolrecall/cli.py` |
 | `toolrecall index` | `cmd_index()` | `toolrecall/cli.py` |
 | `toolrecall index-compact` | `cmd_index_compact()` | `toolrecall/cli.py` |
 | `toolrecall index-memory` | `cmd_index_memory()` | `toolrecall/cli.py` |
@@ -90,6 +91,21 @@ Most commands accept `--help` / `-h` for per-command usage and options
   (`cache_stats_banked`, `access_log_banked`) instead of being deleted, so
   `toolrecall stats` keeps its `lifetime_*` values and `toolrecall trend` still
   reaches back past the reset. Cache entries are never touched. Useful for benchmarking.
+
+### `toolrecall dedup-stats`
+
+- **File:** `cli.py : cmd_dedup_stats()`, ledger in `toolrecall/dedup_stats.py`
+- **Purpose:** Prints a per-tool breakdown of request-body deduplication savings.
+  While the proxy usage log records aggregate `dedup_tokens` per request,
+  `dedup-stats` attributes stubbed duplicates to the specific tool that produced
+  them (e.g. `skills_list`, `read_file`, `git_status`) via the OpenAI `tool_call_id`
+  or `name` field.
+- **Output:** Columns for `tool`, `stubs` (duplicate blocks stubbed), `tokens saved`
+  (estimated as `chars // 4` matching `proxy_usage.csv`), `share` percentage,
+  `requests` affected, and timestamp of the `last` stub event.
+- **Fail-safe:** Reads from the lazy `dedup_by_tool` table. If no duplicate blocks
+  have been stubbed yet, explains that dedup only stubs identical blocks (≥800 chars)
+  and notes that an empty table is not proof of breakage.
 
 ### `toolrecall index`
 
