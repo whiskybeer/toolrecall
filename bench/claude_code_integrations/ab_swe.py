@@ -126,6 +126,9 @@ def run_one(iid, arm, rep, port, scenario="legacy", hook=True, allowed=None):
     tag = f"{iid}_{arm}_r{rep}" + ("" if scenario == "legacy" else f"_{scenario}")
     (OUT / f"{tag}.diff").write_text(diff)
     (OUT / f"{tag}.json").write_text(json.dumps(j))
+    if j.get("is_error"):  # rate limit / API failure: not a measurement, so no row; a restart redoes it
+        print(f"ABORT {tag}: status={j.get('api_error_status')} {str(j.get('result'))[:120]}", flush=True)
+        sys.exit(3)
     g = WORK / "grade"
     fresh_worktree(g, base)
     ap = subprocess.run(["git", "-C", str(g), "apply", "--whitespace=nowarn", str(OUT / f"{tag}.diff")],
