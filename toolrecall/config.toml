@@ -293,26 +293,30 @@ strip_strings = true
 # server (toolrecall.mcp_github) can read/write repos via your
 # GITHUB_TOKEN from ~/.toolrecall/.env — any agent with MCP access
 # could call list_repos, push_files, create_repository, etc.
-# To enable: uncomment the line below (and set GITHUB_TOKEN in env).
+# To enable: add "github" to servers below (and set GITHUB_TOKEN in env).
 #
-# hermes-docs requires Hermes Agent ($AGENT_HOME) — commented out by default.
-# Uncomment if you use Hermes.
 [mcp_multiplex]
 enabled = true
 transparent_cache = true
 default_ttl = 60
+# ETag revalidation for fetch: a stale cached response is revalidated with
+# one conditional GET (304 → free reuse) instead of blind staleness.
+fetch_revalidate = true
 # Server names: auto-resolved via built-in registry or uvx by default.
-# Built-in (no external deps): time, github, sequential-thinking, fetch
+# Built-in (stdlib, no deps): docs, fetch, cache-fs, sequential-thinking,
+#   github (opt-in — write access), time
 # External (needs uvx): filesystem, git, memory, brave-search, playwright, slack
 # Custom: define command/args in [mcp_multiplex.servers_config] (overrides auto-resolve)
-servers = ["time", "sequential-thinking", "cache-fs"]
+# Per-server TTLs: docs (static index) and fetch (idempotent GET) are safe to
+# cache; for any mutating server set ttl = 0 (see servers_config below).
+servers = ["docs", "fetch", "cache-fs"]
 idle_minutes = 15
 
 # Custom server overrides (optional — auto-resolve is the default).
 # Uncomment and customize to override auto-resolved servers:
 # [mcp_multiplex.servers_config]
 # github = { command = "npx", args = ["-y", "@modelcontextprotocol/server-github"] }
-# hermes-docs = { command = "uv", args = ["run", "$AGENT_HOME/scripts/docs_mcp/server.py"] }
+# docs = { command = "python3", args = ["-m", "toolrecall.mcp_docs"], ttl = 3600 }
 
 # ─── Hermes Integration ─────────────────────
 # Hermes uses the OS-level .pth shim (toolrecall/shim.py) for transparent caching.

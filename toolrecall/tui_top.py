@@ -1291,9 +1291,9 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                         "  %s  %6s  %12s  %12s  %s  $%6.2f"
                         % (
                             s["date"],
-                            f'{s["calls"]:,}',
-                            f'{s["sent"]:,}',
-                            f'{s["not_sent"]:,}',
+                            f"{s['calls']:,}",
+                            f"{s['sent']:,}",
+                            f"{s['not_sent']:,}",
                             pct,
                             s["cost_usd"],
                         ),
@@ -1324,7 +1324,7 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
                     y = put(
                         y,
                         "  (%s agent-infrastructure reads excluded — never sent to a model)"
-                        % f'{cov["infra_entries"]:,}',
+                        % f"{cov['infra_entries']:,}",
                         A_DIM,
                     )
                 y = put(y + 1, "  date        reads   hits  misses  hit%")

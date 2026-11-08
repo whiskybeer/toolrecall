@@ -1,6 +1,20 @@
 # Changelog
 
-## [Unreleased] — 2026-09-21
+## [Unreleased] — 2026-09-24
+
+### Added
+- **`docs` built-in MCP server (`toolrecall/mcp_docs.py`).** Exposes the
+  in-core FTS5 knowledge base (`docs_search`, `docs_get_page`) as a
+  standalone multiplexer server — the same tools the `toolrecall mcp`
+  bridge offers natively, now auto-resolvable via the registry. Zero
+  runtime dependencies (stdlib + SQLite FTS5).
+
+### Changed
+- **Default multiplexer server set:** `["time", "sequential-thinking",
+  "cache-fs"]` → `["docs", "fetch", "cache-fs"]` in the shipped
+  `config.toml` template. `fetch_revalidate = true` enabled by default.
+  `time` remains registered and opt-in; `github` remains opt-in
+  (write access). Docs examples updated accordingly.
 
 ### Fixed
 - **TMPDIR-nested agent-home hosts: 6 pre-existing test failures + 3 source

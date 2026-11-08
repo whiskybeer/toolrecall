@@ -65,7 +65,16 @@ FROZEN_COUNTS = {
     # debug log by the stub_core split (dedup_tokens counter); the three
     # hint/update round-trip swallows are now logged, leaving the two
     # config-hash-store OSError guards.
-    "mcp_bridge.py": 2,
+    # 4 as of 2026-09-24 (baseline sync): +2 config-hash continuity store
+    # handlers (read + write around the "config changed since last
+    # connection" warning, cache-instrument merges). Pure advisory
+    # bookkeeping: a failed read/write only skips one warning header.
+    "mcp_bridge.py": 4,
+    # 2 as of 2026-09-24 (baseline sync): numeric parse guards in the TUI
+    # stats formatting path (TypeError/ValueError -> pass) — malformed
+    # stat values fall back to the row rendering without them; the
+    # continue/assignment siblings are not counted (non-pass bodies).
+    "trend.py": 2,
     "mcp_cache_fs.py": 3,
     "normalizer.py": 1,
     # 4 as of 2026-09-10 (stream usage truth): +1 in _parse_sse_usage_tail —

@@ -57,6 +57,15 @@ class TestMCPRegistry:
         _, _, source = result
         assert source == "builtin"
 
+    def test_resolve_builtin_docs(self):
+        """Docs is a built-in server (stdlib FTS5 knowledge search)."""
+        result = resolve_server("docs")
+        assert result is not None
+        cmd, args, source = result
+        assert source == "builtin"
+        assert "toolrecall.mcp_docs" in args
+        assert "-m" in args
+
     def test_resolve_external_filesystem(self):
         """Filesystem is an external (uvx-based) server."""
         result = resolve_server("filesystem")

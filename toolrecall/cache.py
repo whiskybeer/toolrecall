@@ -28,6 +28,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 
 import os
 import re
+import sqlite3
 import time
 import logging
 from typing import Any, Callable

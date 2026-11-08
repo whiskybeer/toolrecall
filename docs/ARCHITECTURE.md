@@ -324,6 +324,7 @@ that every `toolrecall/*.py` path cited in `docs/` exists.
 | `toolrecall/mcp_github.py` | stdlib-only GitHub MCP server (no npm) |
 | `toolrecall/mcp_seqthink.py` | stdlib-only sequential-thinking MCP server |
 | `toolrecall/mcp_time.py` | stdlib-only time MCP server |
+| `toolrecall/mcp_docs.py` | stdlib-only FTS5 knowledge-search MCP server (docs_search, docs_get_page) |
 
 **Framework adapters**
 

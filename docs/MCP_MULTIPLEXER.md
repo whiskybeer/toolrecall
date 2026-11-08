@@ -80,9 +80,9 @@ enabled = true
 transparent_cache = true
 default_ttl = 60
 # Server names: auto-resolved via built-in registry.
-# Built-in (stdlib, no deps): time, github, sequential-thinking, fetch, cache-fs
+# Built-in (stdlib, no deps): docs, fetch, cache-fs, sequential-thinking, github (opt-in), time
 # External (needs uvx): filesystem, git, memory, brave-search, playwright, slack
-servers = ["time", "sequential-thinking", "cache-fs"]
+servers = ["docs", "fetch", "cache-fs"]
 idle_minutes = 15
 ```
 
@@ -90,7 +90,7 @@ Server names are auto-resolved:
 
 | Type | Source | Example |
 |------|--------|---------|
-| **Built-in** | Ships with ToolRecall (stdlib, zero deps) | `time`, `github`, `sequential-thinking`, `fetch`, `cache-fs` |
+| **Built-in** | Ships with ToolRecall (stdlib, zero deps) | `docs`, `fetch`, `cache-fs`, `sequential-thinking`, `github` (opt-in), `time` |
 | **External (registry)** | Auto-resolved via `uvx <package>` | `filesystem`, `git`, `memory` |
 | **Custom** | Explicit `servers_config` override | Any user-defined command |
 
@@ -99,7 +99,7 @@ Server names are auto-resolved:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `true` | Activates multiplexer |
-| `servers` | `["time", "github", "sequential-thinking"]` | Server names to enable — auto-resolved from registry |
+| `servers` | `["docs", "fetch", "cache-fs"]` | Server names to enable — auto-resolved from registry |
 | `idle_minutes` | `15` | Minutes before idle server is killed (RAM saver) |
 | `default_ttl` | `60` | Default cache TTL (seconds) for responses |
 | `transparent_cache` | `true` | Cache responses transparently (same key = same result) |
@@ -136,6 +136,7 @@ Shipped with ToolRecall, no external dependencies:
 | `github` | `create_repository`, `create_or_update_file`, `push_files`, `list_commits` | GitHub API via stdlib `urllib`. Needs `GITHUB_TOKEN` in `.env`. |
 | `sequential-thinking` | `think_step`, `analyze`, `validate_reasoning` | Reasoning step validation, contradiction detection. No network. |
 | `fetch` | `fetch_url`, `fetch_head`, `fetch_headers` | Fetch URLs — stdlib only (`urllib.request`). 500KB limit configurable via `TOOLRECALL_FETCH_MAX_BYTES` env var. |
+| `docs` | `docs_search`, `docs_get_page` | Full-text search over the FTS5 knowledge index (BM25). Uses the same engine as the bridge's native docs tools. |
 | `cache-fs` | `read_file`, `write_file`, `patch`, `terminal` | File/terminal tools backed by the daemon cache. Most useful as a standalone MCP tool set for agents without the OS-level shim — the bridge server (`toolrecall mcp`) already provides these tools natively. |
 
 ### External Servers
@@ -155,7 +156,7 @@ Auto-resolved via `uvx` when listed in `servers`:
 > **Note:** External servers require `uvx` (part of `uv`, installable via `curl -LsSf https://astral.sh/uv/install.sh | sh`). Built-in servers need no extra dependencies.
 
 The registry is defined in [`toolrecall/mcp_registry.py`](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/mcp_registry.py) — extend it by sending a PR.  
-The built-in servers (`toolrecall/mcp_time.py`, `toolrecall/mcp_github.py`, `toolrecall/mcp_seqthink.py`, `toolrecall/mcp_fetch.py`, `toolrecall/mcp_cache_fs.py`) are all pure Python stdlib — no external packages needed.
+The built-in servers (`toolrecall/mcp_time.py`, `toolrecall/mcp_github.py`, `toolrecall/mcp_seqthink.py`, `toolrecall/mcp_fetch.py`, `toolrecall/mcp_cache_fs.py`, `toolrecall/mcp_docs.py`) are all pure Python stdlib — no external packages needed.
 
 ## Secrets: `~/.toolrecall/.env`
 

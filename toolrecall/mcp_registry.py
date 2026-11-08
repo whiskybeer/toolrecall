@@ -20,6 +20,7 @@ from pathlib import Path
 
 BUILTIN_SERVERS: dict[str, tuple[str, list[str]]] = {
     "time": (sys.executable, ["-m", "toolrecall.mcp_time"]),
+    "docs": (sys.executable, ["-m", "toolrecall.mcp_docs"]),
     "sequential-thinking": (sys.executable, ["-m", "toolrecall.mcp_seqthink"]),
     "github": (sys.executable, ["-m", "toolrecall.mcp_github"]),
     "fetch": (sys.executable, ["-m", "toolrecall.mcp_fetch"]),
