@@ -272,7 +272,7 @@ Full detail: [Recall Tier](docs/RECALL_TIER.md)
 
 The built-in path was verified end-to-end against live OpenRouter billing through `:8569`: a two-turn conversation re-pasting a ~1,141-token tool result billed 1,245 prompt tokens on turn 2 with dedup vs 2,217+ without — turn 2's *billed cost* stayed ≈ turn 1's because the keep-first prefix remains byte-identical to provider prompt caching.
 
-Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) · ready-to-use config: [litellm-proxy-config.yaml](docs/examples/litellm-proxy-config.yaml)
+Full benchmark & methodology: [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md)
 
 ---
 
@@ -527,7 +527,7 @@ port = 8570
 - [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
 - [Benchmark](docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
 - [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) — gateway dedup hook: −32.3% prompt tokens / −30% cost, billing-verified
-- [LiteLLM Proxy Example Config](docs/examples/litellm-proxy-config.yaml) — ready-to-use `litellm_settings.callbacks` hook wiring
+- [LiteLLM Adapter](toolrecall/adapters/README.md) — `litellm_settings.callbacks` hook wiring and sample proxy config
 - [Go Dedup Reference](go/dedup/README.md) — pure-Go request-level `dedup_messages` reference implementation
 - [Bench Infrastructure](bench/README.md) — reproduce the three-arm benchmark
 - [Test Suite](tests/README.md) — test runner documentation

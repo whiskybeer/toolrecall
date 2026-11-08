@@ -267,11 +267,20 @@ toolrecall mcp              # Exposes cached tools via MCP
 > and stubs later repeats. Only redundant copies are removed — nothing the model
 > hasn't already seen is dropped (keep-first preserves provider prefix caching).
 
-```python
-# proxy_config.yaml
+```yaml
+# proxy_config.yaml — the config used for the benchmark
+model_list:
+  - model_name: deepseek
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-flash
+      api_key: os.environ/OR_KEY
 litellm_settings:
   callbacks: toolrecall.adapters.litellm.handler
+general_settings:
+  master_key: sk-bench
 ```
+
+Only the `litellm_settings.callbacks` line is required; the rest is a sample model setup.
 
 Deduplicates repeated large content blocks within a single chat completion request.
 Typically hits when agent loops re-send identical tool output or file contents every
@@ -286,7 +295,7 @@ turn. Keep-first strategy preserves provider prefix caching.
 **Measured (billing-verified, OpenRouter):** on an accumulating agent loop over
 10 real SWE-bench Lite instances (80 requests/arm, DeepSeek V4 Flash), the hook
 cut **−32.3% prompt tokens / −30% billed cost**, with prefix caching preserved
-(effective $/M unchanged). See the [benchmark & methodology](../../bench/litellm_dedup/README.md) and ready-to-use [litellm-proxy-config.yaml](../../docs/examples/litellm-proxy-config.yaml).
+(effective $/M unchanged). See the [benchmark & methodology](../../bench/litellm_dedup/README.md); the config above is what it ran.
 
 > **Honesty:** the −32% is token/cost savings. Task quality (pass@1) is
 > **unverified** — the hook stubs content, and a quality A/B requires a model

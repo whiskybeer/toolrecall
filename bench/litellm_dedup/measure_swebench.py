@@ -89,16 +89,17 @@ Output
 
 Usage
 -----
-    # 1. Start LiteLLM proxy with the hook:
+    # 1. Save the proxy_config.yaml from toolrecall/adapters/README.md (LiteLLM section),
+    #    then start the LiteLLM proxy with the hook:
     export OR_KEY=sk-or-v1-...
-    litellm --config docs/examples/litellm-proxy-config.yaml --port 4000
+    litellm --config proxy_config.yaml --port 4000
 
     # 2. Run with dedup:
     python3 measure_swebench.py --json > result_with.json
 
     # 3. Restart proxy without dedup:
     TOOLRECALL_DEDUP_DISABLED=1 OR_KEY=sk-or-v1-... \\
-      litellm --config docs/examples/litellm-proxy-config.yaml --port 4000
+      litellm --config proxy_config.yaml --port 4000
 
     # 4. Run without dedup:
     python3 measure_swebench.py --disabled --json > result_without.json

@@ -251,7 +251,7 @@ Full detail: [Recall Tier](https://github.com/whiskybeer/toolrecall/blob/main/do
 
 The built-in path was verified end-to-end against live OpenRouter billing through `:8569`: a two-turn conversation re-pasting a ~1,141-token tool result billed 1,245 prompt tokens on turn 2 with dedup vs 2,217+ without — turn 2's *billed cost* stayed ≈ turn 1's because the keep-first prefix remains byte-identical to provider prompt caching.
 
-Full benchmark & methodology: [LiteLLM Dedup Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/bench/litellm_dedup/README.md) · ready-to-use config: [litellm-proxy-config.yaml](https://github.com/whiskybeer/toolrecall/blob/main/docs/examples/litellm-proxy-config.yaml)
+Full benchmark & methodology: [LiteLLM Dedup Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/bench/litellm_dedup/README.md)
 
 ---
 
@@ -506,7 +506,7 @@ port = 8570
 - [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
 - [Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
 - [LiteLLM Dedup Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/bench/litellm_dedup/README.md) — gateway dedup hook: −32.3% prompt tokens / −30% cost, billing-verified
-- [LiteLLM Proxy Example Config](https://github.com/whiskybeer/toolrecall/blob/main/docs/examples/litellm-proxy-config.yaml) — ready-to-use `litellm_settings.callbacks` hook wiring
+- [LiteLLM Adapter](https://github.com/whiskybeer/toolrecall/blob/main/toolrecall/adapters/README.md) — `litellm_settings.callbacks` hook wiring and sample proxy config
 - [Go Dedup Reference](https://github.com/whiskybeer/toolrecall/blob/main/go/dedup/README.md) — pure-Go request-level `dedup_messages` reference implementation
 - [Bench Infrastructure](https://github.com/whiskybeer/toolrecall/blob/main/bench/README.md) — reproduce the three-arm benchmark
 - [Test Suite](https://github.com/whiskybeer/toolrecall/blob/main/tests/README.md) — test runner documentation
