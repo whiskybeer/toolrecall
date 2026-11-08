@@ -1,0 +1,150 @@
+{
+  "bench": "gepa_real",
+  "design": "schedule",
+  "model": "deepseek/deepseek-v4-flash",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 0,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `open_backend` defined, and what is its first parameter?",
+      "path": "toolrecall/storage/__init__.py",
+      "line": 76,
+      "param": "cfg"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `stats_via_sqlite` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 191,
+      "param": "db"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `cached_patch` defined, and what is its first parameter?",
+      "path": "toolrecall/client.py",
+      "line": 258,
+      "param": "path"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `miss_classes` defined, and what is its first parameter?",
+      "path": "toolrecall/trend.py",
+      "line": 109,
+      "param": "min_reads"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `is_retryable_status` defined, and what is its first parameter?",
+      "path": "toolrecall/resilience.py",
+      "line": 98,
+      "param": "status"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `blocked_reads_today` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 305,
+      "param": "log_path"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `recv_exact` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 197,
+      "param": "sock"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `client_greeting` defined, and what is its first parameter?",
+      "path": "toolrecall/network_auth.py",
+      "line": 135,
+      "param": "token"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `restrict_db_perms` defined, and what is its first parameter?",
+      "path": "toolrecall/storage/__init__.py",
+      "line": 66,
+      "param": "db_path"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `parse_greeting` defined, and what is its first parameter?",
+      "path": "toolrecall/network_auth.py",
+      "line": 140,
+      "param": "data"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `canonicalize` defined, and what is its first parameter?",
+      "path": "toolrecall/jcs.py",
+      "line": 206,
+      "param": "value"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `create_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 125,
+      "param": "path"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "baseline",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 0,
+      "rollouts": 60,
+      "mean_rollout_score": 0.7944,
+      "task_llm_calls": 152,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.010896,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 156122,
+      "task_cached_tokens": 111104,
+      "tool_calls_requested": 101,
+      "tool_executions": 101,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 321.5
+    },
+    {
+      "arm": "toolrecall",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 0,
+      "rollouts": 60,
+      "mean_rollout_score": 0.7944,
+      "task_llm_calls": 153,
+      "task_llm_hits": 68,
+      "task_billed_usd": 0.006013,
+      "task_cost_avoided_usd": 0.005019,
+      "task_prompt_tokens": 159132,
+      "task_cached_tokens": 122368,
+      "tool_calls_requested": 102,
+      "tool_executions": 59,
+      "tool_calls_replayed": 43,
+      "errors": 0,
+      "wall_s": 155.6
+    }
+  ],
+  "record": {
+    "arm": "record",
+    "evaluate_calls": 19,
+    "rollouts": 60,
+    "candidates": 3,
+    "seed_val_score": 0.0,
+    "best_val_score": 1.0,
+    "best_prompt": "You are a helpful assistant with access to a code repository. When asked a question of the form \"Where is the function `FUNCTION_NAME` defined, and what is its first parameter?\", you must:\n\n- Locate the function definition in the repository.\n- Provide the repository-relative file path, the line number of the `def` statement, and the name of the first parameter.\n- End your response with a final line in the exact format:\n\nANSWER: <repo-relative path>:<line> <first parameter name>\n\nFor example, if the function `is_retryable_status` is defined at `toolrecall/resilience.py` line 98 with first parameter `status`, your final line must be:\n\nANSWER: toolrecall/resilience.py:98 status\n\nEnsure that this line is the very last line of your response (no trailing text). You may include explanatory text before it, but the final line must be exactly as specified. The path must be relative to the repository root, and the line number must be the line of the function definition.",
+    "task_billed_usd": 0.010838,
+    "reflection_calls": 4,
+    "reflection_billed_usd": 0.005729,
+    "wall_s": 540.8
+  },
+  "replay_order": [
+    "baseline",
+    "toolrecall"
+  ]
+}

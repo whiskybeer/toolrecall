@@ -1,0 +1,150 @@
+{
+  "bench": "gepa_real",
+  "design": "schedule",
+  "model": "mistralai/mistral-small-3.2-24b-instruct",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 1,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `bind_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 132,
+      "param": "sock"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `content_digest` defined, and what is its first parameter?",
+      "path": "toolrecall/keys.py",
+      "line": 76,
+      "param": "data"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `cached_exec` defined, and what is its first parameter?",
+      "path": "toolrecall/cache.py",
+      "line": 1532,
+      "param": "code"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `run_debug_server` defined, and what is its first parameter?",
+      "path": "toolrecall/proxy.py",
+      "line": 1794,
+      "param": "bind"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `mcp_content_digest_v1` defined, and what is its first parameter?",
+      "path": "toolrecall/keys.py",
+      "line": 227,
+      "param": "content"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `client_context` defined, and what is its first parameter?",
+      "path": "toolrecall/network_tls.py",
+      "line": 57,
+      "param": "verify"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `normalize_command` defined, and what is its first parameter?",
+      "path": "toolrecall/normalizer.py",
+      "line": 148,
+      "param": "cmd"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `make_request_hash` defined, and what is its first parameter?",
+      "path": "toolrecall/adapters/warp.py",
+      "line": 117,
+      "param": "method"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `run_forward_proxy` defined, and what is its first parameter?",
+      "path": "toolrecall/proxy.py",
+      "line": 1679,
+      "param": "bind"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `start_recording` defined, and what is its first parameter?",
+      "path": "toolrecall/replay.py",
+      "line": 651,
+      "param": "scenario"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `money_today` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 240,
+      "param": "usage_csv"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `run_update_cli` defined, and what is its first parameter?",
+      "path": "toolrecall/updater.py",
+      "line": 326,
+      "param": "force_check"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "toolrecall",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 1,
+      "rollouts": 63,
+      "mean_rollout_score": 0.3968,
+      "task_llm_calls": 126,
+      "task_llm_hits": 32,
+      "task_billed_usd": 0.005768,
+      "task_cost_avoided_usd": 0.001853,
+      "task_prompt_tokens": 82181,
+      "task_cached_tokens": 0,
+      "tool_calls_requested": 63,
+      "tool_executions": 47,
+      "tool_calls_replayed": 16,
+      "errors": 0,
+      "wall_s": 111.8
+    },
+    {
+      "arm": "baseline",
+      "model": "mistralai/mistral-small-3.2-24b-instruct",
+      "seed": 1,
+      "rollouts": 63,
+      "mean_rollout_score": 0.3545,
+      "task_llm_calls": 126,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.007323,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 79637,
+      "task_cached_tokens": 0,
+      "tool_calls_requested": 64,
+      "tool_executions": 64,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 146.6
+    }
+  ],
+  "record": {
+    "arm": "record",
+    "evaluate_calls": 20,
+    "rollouts": 63,
+    "candidates": 4,
+    "seed_val_score": 0.0,
+    "best_val_score": 0.5,
+    "best_prompt": "You are a helpful assistant that provides information about Python function definitions in a codebase.\n\nFor any given function name, you will:\n1. Locate the file and line number where the function is defined (using repo-relative paths)\n2. Identify the function's first parameter name\n3. Format your response with both a detailed explanation and a specific ANSWER line\n\nResponse format requirements:\n- First provide a natural language explanation of the function definition including:\n  - The file location (repo-relative path) and line number\n  - The first parameter name and its type (if applicable)\n  - Any additional relevant details like default values\n- End with an exact ANSWER line in this format: \"ANSWER: <repo-relative path>:<line> <first parameter name>\"\n\nImportant notes:\n- The codebase appears to be named \"toolrecall\" based on the examples\n- Common file locations include:\n  - `toolrecall/proxy.py`\n  - `toolrecall/keys.py`\n  - `toolrecall/network_tls.py`\n- The ANSWER line must match exactly the expected format shown in the examples\n- Parameter types may include:\n  - `BytesLike` (for binary data)\n  - `bool` (for boolean values)\n  - String parameters will typically be shown as type \"string\" or just the name\n\nExample correct response:\nThe function `run_debug_server` is defined in `toolrecall/proxy.py` at line 1794. Its first parameter is `bind`, which is a string with a default value of \"127.0.0.1\".\nANSWER: toolrecall/proxy.py:1794 bind",
+    "task_billed_usd": 0.007893,
+    "reflection_calls": 8,
+    "reflection_billed_usd": 0.001789,
+    "wall_s": 562.8
+  },
+  "replay_order": [
+    "toolrecall",
+    "baseline"
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "bench": "gepa_real",
+  "design": "schedule",
+  "model": "deepseek/deepseek-v4-flash",
+  "rev": "08d9725562c30aef04c5a252df395b7f401380e8",
+  "seed": 2,
+  "questions": [
+    {
+      "id": "q0",
+      "question": "Where is the function `resolve_server` defined, and what is its first parameter?",
+      "path": "toolrecall/mcp_registry.py",
+      "line": 54,
+      "param": "name"
+    },
+    {
+      "id": "q1",
+      "question": "Where is the function `send_message` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 185,
+      "param": "sock"
+    },
+    {
+      "id": "q2",
+      "question": "Where is the function `normalize_provider` defined, and what is its first parameter?",
+      "path": "toolrecall/adapters/warp.py",
+      "line": 134,
+      "param": "provider"
+    },
+    {
+      "id": "q3",
+      "question": "Where is the function `create_socket` defined, and what is its first parameter?",
+      "path": "toolrecall/transport.py",
+      "line": 125,
+      "param": "path"
+    },
+    {
+      "id": "q4",
+      "question": "Where is the function `check_path_allowed` defined, and what is its first parameter?",
+      "path": "toolrecall/path_utils.py",
+      "line": 33,
+      "param": "path"
+    },
+    {
+      "id": "q5",
+      "question": "Where is the function `canonicalize` defined, and what is its first parameter?",
+      "path": "toolrecall/jcs.py",
+      "line": 206,
+      "param": "value"
+    },
+    {
+      "id": "q6",
+      "question": "Where is the function `get_saver` defined, and what is its first parameter?",
+      "path": "toolrecall/adapters/langgraph.py",
+      "line": 438,
+      "param": "ttl"
+    },
+    {
+      "id": "q7",
+      "question": "Where is the function `render_plain` defined, and what is its first parameter?",
+      "path": "toolrecall/tui_top.py",
+      "line": 432,
+      "param": "snapshot"
+    },
+    {
+      "id": "q8",
+      "question": "Where is the function `setup_from_config` defined, and what is its first parameter?",
+      "path": "toolrecall/logging_setup.py",
+      "line": 208,
+      "param": "cfg"
+    },
+    {
+      "id": "q9",
+      "question": "Where is the function `sanitize_path_for_hint` defined, and what is its first parameter?",
+      "path": "toolrecall/context_tracker.py",
+      "line": 54,
+      "param": "path"
+    },
+    {
+      "id": "q10",
+      "question": "Where is the function `set_socket_path` defined, and what is its first parameter?",
+      "path": "toolrecall/client.py",
+      "line": 376,
+      "param": "path"
+    },
+    {
+      "id": "q11",
+      "question": "Where is the function `cached_exec` defined, and what is its first parameter?",
+      "path": "toolrecall/cache.py",
+      "line": 1532,
+      "param": "code"
+    }
+  ],
+  "max_steps": 6,
+  "max_tokens": 400,
+  "arms": [
+    {
+      "arm": "baseline",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 2,
+      "rollouts": 60,
+      "mean_rollout_score": 0.85,
+      "task_llm_calls": 168,
+      "task_llm_hits": 0,
+      "task_billed_usd": 0.0104,
+      "task_cost_avoided_usd": 0.0,
+      "task_prompt_tokens": 141848,
+      "task_cached_tokens": 102400,
+      "tool_calls_requested": 108,
+      "tool_executions": 108,
+      "tool_calls_replayed": 0,
+      "errors": 0,
+      "wall_s": 323.3
+    },
+    {
+      "arm": "toolrecall",
+      "model": "deepseek/deepseek-v4-flash",
+      "seed": 2,
+      "rollouts": 60,
+      "mean_rollout_score": 0.85,
+      "task_llm_calls": 173,
+      "task_llm_hits": 126,
+      "task_billed_usd": 0.002746,
+      "task_cost_avoided_usd": 0.008373,
+      "task_prompt_tokens": 149133,
+      "task_cached_tokens": 107520,
+      "tool_calls_requested": 113,
+      "tool_executions": 46,
+      "tool_calls_replayed": 67,
+      "errors": 0,
+      "wall_s": 92.5
+    }
+  ],
+  "record": {
+    "arm": "record",
+    "evaluate_calls": 19,
+    "rollouts": 60,
+    "candidates": 2,
+    "seed_val_score": 0.0,
+    "best_val_score": 1.0,
+    "best_prompt": "Answer the question about where a function is defined and what its first parameter is. Provide the repository-relative path, line number, and first parameter name in your answer. Then, end your response with a final line in the exact format: 'ANSWER: <repo-relative path>:<line> <first parameter name>'. For example, if the function is defined in 'path/to/file.py' at line 42 and the first parameter is 'data', you should end with 'ANSWER: path/to/file.py:42 data'. Ensure that your response includes this final line.",
+    "task_billed_usd": 0.010408,
+    "reflection_calls": 1,
+    "reflection_billed_usd": 0.000422,
+    "wall_s": 278.5
+  },
+  "replay_order": [
+    "baseline",
+    "toolrecall"
+  ]
+}
