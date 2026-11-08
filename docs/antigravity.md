@@ -41,7 +41,7 @@ decorator wraps them exactly like the ADK/LangGraph adapters.
 | SDK custom-tool caching (`@cached_tool`) | ✅ | Plain callables — no wrapper class needed |
 | `tr` binary in the Antigravity CLI terminal | ⚠️ one-liner | Works for repeatable/expensive commands; instruction-dependent |
 | Recall Tier pointers | ⚠️ rules-snippet | Requires the agent to follow drop-keep-pointer instructions — no savings claim without a measured demo |
-| Forward proxy / API caching for **Antigravity's own inference** | ❌ impossible | No base-URL override on any surface — inference is Google-hosted by design. (The proxy stays useful on the same machine for agents that *do* honor `base_url`.) |
+| Forward proxy / API caching for **Antigravity's own inference** | ❌ impossible (interactive) / ✅ opt-in (headless SDK/eval) | The interactive IDE and CLI chat sessions have no base-URL override (inference is Google-hosted). Headless SDK runs, evaluation harnesses, and proxy-routed pipelines can replay repeat runs using `X-ToolRecall-Canonicalize: antigravity` ([Forward Proxy](FORWARD_PROXY.md#antigravity-headless-repeat-runs)). |
 | File cache / Python shim (`cached_read`, context tracker) | ❌ do not enable | Antigravity manages its own context (stateful agent line). MCP-based file caching measurably *increases* cost for stateful, edit-heavy agents (2.4×, see AGENT_COMPATIBILITY.md — Claude Code row). |
 
 > **Rating: Selective.** Strong for SDK tool caching + replay + MCP multiplex.
@@ -229,7 +229,7 @@ mechanisms apply:
 | Context management | **Stateless** — every `run_async()` sends the full history fresh; no app-side context manager | **Stateful** — Antigravity manages its own context (compaction, artifact memory) |
 | File cache / Python shim | ✅ Applies — `open()`/`subprocess` inside ADK tools are cached transparently (`.pth` shim) | ❌ Do not pitch — stateful edit-heavy harness, same measured 2.4× trap as Claude Code |
 | `@cached_tool` decorator | ✅ (`toolrecall.adapters.google_adk`) | ✅ (`toolrecall.adapters.antigravity`, plus `freshness=True`) |
-| Forward proxy / LLM API caching | ✅ ADK respects `GEMINI_BASE_URL` → point it at `toolrecall serve` — **billed-token savings are measurable here** | ❌ N/A — no endpoint override on any surface; inference is Google-hosted |
+| Forward proxy / LLM API caching | ✅ ADK respects `GEMINI_BASE_URL` → point it at `toolrecall serve` — **billed-token savings are measurable here** | ❌ Interactive N/A (no endpoint override); ✅ Headless/eval only via `X-ToolRecall-Canonicalize: antigravity` |
 | MCP bridge value | Limited: ADK brings its own MCP client, the bridge can't intercept it | ✅ Full: Antigravity consumes `mcp_config.json` externally → bridge, multiplex, replay, `docs_search`, `fetch_revalidate` |
 | Value story | Token savings (proxy + file cache) | External-call avoidance + replay + freshness |
 

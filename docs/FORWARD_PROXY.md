@@ -106,6 +106,10 @@ export TOOLRECALL_CANONICALIZE=antigravity
 # or header: X-ToolRecall-Canonicalize: antigravity
 ```
 
+> [!IMPORTANT]
+> **Headless and SDK runs only — not interactive Antigravity chat.**
+> The interactive Antigravity IDE and CLI chat UI (`agy`) routes model inference directly to Google with no HTTP base-URL override; ToolRecall cannot intercept or cache prompts in interactive Antigravity chat sessions. This canonical profile applies to headless evaluation harnesses, automated pipelines, and custom agents using the `google-antigravity` SDK or Gemini API routed through the proxy.
+
 ### Run Scoping & CI Failure Recovery (`replay forget`)
 Tag proxy requests with a run ID via header or environment variable:
 ```bash

@@ -19,7 +19,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Codex CLI** | ⚠️ Multiplex only (static tools) | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only; skip file caching. |
 | **Cursor** | ✅ Multiplexer only (`~/.cursor/mcp.json`) | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages context natively. `toolrecall setup` configures `~/.cursor/mcp.json` with `--multiplexer-only` to pool MCP servers host-wide, plus :8569 for proxy dedup. |
 | **Warp** | ❌ N/A | ✅ via [warp adapter](#warp-⚠️-selective--strong-for-platform-workloads) | ❌ N/A (Rust) | **Selective** | Strong for platform workloads (agent fleets, Factories replay, cross-model evals); skip the file cache — Warp manages its own context. Requires a public HTTPS endpoint (Warp's backend calls your endpoint; localhost is rejected). |
-| **Antigravity** | ✅ Bridge + replay + FTS | ❌ N/A (no endpoint override) | ⚠️ SDK only, opt-in | **Selective** | SDK tools are plain callables → `@cached_tool` dedups expensive external calls; bridge unlocks replay + `docs_search` + MCP multiplex. No LLM caching ever (inference is Google-hosted, no base-URL). Do NOT enable MCP file caching — stateful edit-heavy agent, same 2.4× trap as Claude Code. Contrast with [Google ADK](#google-adk--✅-high-value): same vendor, opposite end of the statefulness spectrum — ADK is the stateless case (shim + proxy apply), Antigravity the stateful one. Both adapters can share one daemon (separate namespaces). |
+| **Antigravity** | ✅ Bridge + replay + FTS | ❌ N/A interactive (Google-hosted); ✅ headless/eval | ⚠️ SDK only, opt-in | **Selective** | SDK tools are plain callables → `@cached_tool` dedups expensive external calls; bridge unlocks replay + `docs_search` + MCP multiplex. Interactive CLI/IDE has no base-URL override; proxy canonical profile (`antigravity`) works for headless SDK runs and eval pipelines. Do NOT enable MCP file caching — stateful edit-heavy agent, same 2.4× trap as Claude Code. Contrast with [Google ADK](#google-adk--✅-high-value): same vendor, opposite end of the statefulness spectrum — ADK is the stateless case (shim + proxy apply), Antigravity the stateful one. Both adapters can share one daemon (separate namespaces). |
 
 ---
 
@@ -479,9 +479,10 @@ bridge (`toolrecall replay record`), FTS over skills/rules
 (`toolrecall index-dir ~/.gemini/skills`), opt-in MCP multiplex response
 cache (`ttl = 0` on write-tool servers).
 
-**Doesn't:** No forward proxy / API caching — Antigravity has no base-URL
-override on any surface; inference is Google-hosted by design. Do NOT enable
-MCP file caching: Antigravity manages its own context (stateful, edit-heavy)
+**Doesn't:** No forward proxy / API caching for interactive chat — Antigravity has no base-URL
+override on its IDE/CLI chat surfaces; inference is Google-hosted by design. (The proxy's
+`antigravity` canonical profile applies only to headless eval harnesses and SDK pipelines).
+Do NOT enable MCP file caching: Antigravity manages its own context (stateful, edit-heavy)
 — the same measured 2.4× cost trap as Claude Code.
 
 [Full docs →](antigravity.md)
