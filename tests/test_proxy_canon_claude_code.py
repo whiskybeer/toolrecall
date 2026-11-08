@@ -92,3 +92,48 @@ def test_other_profiles_keep_tool_text():
     a = _canonicalize_body("hermes", _tool_body(600000))
     b = _canonicalize_body("hermes", _tool_body(1800000))
     assert a != b
+
+
+def _parallel_body(order, marker_last=True):
+    results = {
+        "toolu_A": {"type": "tool_result", "tool_use_id": "toolu_A", "content": "read output"},
+        "toolu_B": {"type": "tool_result", "tool_use_id": "toolu_B", "content": "grep output"},
+    }
+    blocks = [dict(results[k]) for k in order]
+    if marker_last:
+        blocks[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+    return json.dumps(
+        {
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "task"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_A", "name": "Read", "input": {}},
+                        {"type": "tool_use", "id": "toolu_B", "name": "Grep", "input": {}},
+                    ],
+                },
+                {"role": "user", "content": blocks},
+            ],
+        }
+    ).encode()
+
+
+def test_parallel_tool_result_order_does_not_fork_key():
+    # Measured: Claude Code returns parallel tool results in completion order.
+    a = _canonicalize_body("claude-code", _parallel_body(["toolu_A", "toolu_B"]))
+    b = _canonicalize_body("claude-code", _parallel_body(["toolu_B", "toolu_A"]))
+    assert a == b
+
+
+def test_parallel_tool_result_content_still_keyed():
+    a = _canonicalize_body("claude-code", _parallel_body(["toolu_A", "toolu_B"]))
+    c = _parallel_body(["toolu_A", "toolu_B"]).replace(b"grep output", b"other output")
+    assert a != _canonicalize_body("claude-code", c)
+
+
+def test_hermes_profile_keeps_block_order():
+    a = _canonicalize_body("hermes", _parallel_body(["toolu_A", "toolu_B"], marker_last=False))
+    b = _canonicalize_body("hermes", _parallel_body(["toolu_B", "toolu_A"], marker_last=False))
+    assert a != b

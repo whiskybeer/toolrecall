@@ -418,6 +418,37 @@ _RE_CANON_DURATION = re.compile(r"\b(in|took) \d+(?:\.\d+)?\s?(?:ms|s|sec|second
 _RE_CANON_TOOL_DEFAULT_MS = re.compile(r"\bdefault \d+ ms\b")
 
 
+def _cc_strip_cache_control(node):
+    """Drop ``cache_control`` markers (provider caching hints, not model input)."""
+    if isinstance(node, dict):
+        return {k: _cc_strip_cache_control(v) for k, v in node.items() if k != "cache_control"}
+    if isinstance(node, list):
+        return [_cc_strip_cache_control(x) for x in node]
+    return node
+
+
+def _cc_canon_message(msg):
+    """Key-only: order the tool_result blocks of a message by tool_use_id.
+
+    Measured on a SWE-bench A/B: Claude Code appends the results of parallel
+    tool calls (e.g. Read + Grep in one turn) in completion order, so the same
+    turn came back as [Read, Grep] in one run and [Grep, Read] in the next and
+    replay stopped there. Each result is bound to its call by tool_use_id, so
+    the order carries no meaning for the model. cache_control is dropped first:
+    Claude Code puts it on the last block, which moves with the order.
+    """
+    if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+        return msg
+    content = _cc_strip_cache_control(msg["content"])
+    slots = [i for i, b in enumerate(content) if isinstance(b, dict) and b.get("type") == "tool_result"]
+    if len(slots) > 1:
+        ordered = sorted((content[i] for i in slots), key=lambda b: str(b.get("tool_use_id", "")))
+        content = list(content)
+        for i, b in zip(slots, ordered):
+            content[i] = b
+    return {**msg, "content": content}
+
+
 def _cc_canon_tools(node):
     """Replace per-session 'default <n> ms' values inside tool definitions."""
     if isinstance(node, dict):
@@ -473,6 +504,8 @@ def _canonicalize_body(profile: str, body: bytes):
         envelope.pop("metadata", None)
         if isinstance(envelope.get("tools"), list):
             envelope["tools"] = _cc_canon_tools(envelope["tools"])
+        if isinstance(envelope.get("messages"), list):
+            envelope["messages"] = [_cc_canon_message(m) for m in envelope["messages"]]
     envelope = walk(envelope)
     return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
