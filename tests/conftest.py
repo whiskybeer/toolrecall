@@ -47,6 +47,15 @@ os.environ["TOOLRECALL_NO_AUTOSTART"] = "1"
 # two apart at a glance (test-suite "tracker snapshot saved: 0 read paths"
 # lines were twice misread as a dead production flow — 2026-09-15).
 os.environ["TOOLRECALL_HERMETIC"] = "1"
+# Hermetic DBs at collection time: avoid importing cache.py against live ~/.toolrecall
+os.environ.setdefault(
+    "TOOLRECALL_CACHE_DB",
+    os.path.join(tempfile.gettempdir(), "toolrecall-hermetic-import.db"),
+)
+os.environ.setdefault(
+    "TOOLRECALL_KNOWLEDGE_DB",
+    os.path.join(tempfile.gettempdir(), "toolrecall-hermetic-import-knowledge.db"),
+)
 
 
 def _points_at_prod_state(val: str) -> bool:

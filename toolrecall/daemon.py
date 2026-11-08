@@ -2360,8 +2360,13 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             invalidate_file(path, ns=req.get("_ns", ""))
         # If source is "agent_tool", pass it through so context tokens are tracked
         source = req.get("source", "")
+        agent_id = req.get("agent_id") or req.get("client")
         result = _cache_read(
-            path, source=source, ns=req.get("_ns", ""), client=req.get("client", "")
+            path,
+            source=source,
+            ns=req.get("_ns", ""),
+            client=req.get("client", ""),
+            agent_id=agent_id,
         )
         if result and not result.get("error"):
             # Echo the source tag back: the shim's stub gate needs to know
@@ -2431,11 +2436,12 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             return {"error": err}
         if not command:
             return {"error": "Missing 'command'"}
+        agent_id = req.get("agent_id") or client
         ttl = req.get("ttl")
         # Pass the client-reported cwd through so the terminal cache key is
         # directory-scoped. The daemon never fabricates its own cwd — it may
         # run as a service with a different working directory than the caller.
-        result = _cache_terminal(command, ttl=ttl, cwd=req.get("cwd"))
+        result = _cache_terminal(command, ttl=ttl, cwd=req.get("cwd"), agent_id=agent_id)
         # Record mcp_cache stats when request originates from MCP bridge
         if req.get("mcp_origin"):
             _cache_record("mcp_cache", hit=result.get("cached", False), path=command)
@@ -2450,7 +2456,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         name = req.get("name", "")
         if not name:
             return {"error": "Missing 'name'"}
-        return _cache_skill(name)
+        agent_id = req.get("agent_id") or req.get("client")
+        return _cache_skill(name, agent_id=agent_id)
 
     def _handle_write(self, req: dict) -> dict:
         path = req.get("path", "")
@@ -3025,7 +3032,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         request_hash = req.get("request_hash", req.get("key", ""))
         if not request_hash:
             return {"error": "Missing 'request_hash' parameter"}
-        return _cache_api_check(request_hash)
+        agent_id = req.get("agent_id") or req.get("client")
+        return _cache_api_check(request_hash, agent_id=agent_id)
 
     def _handle_api_store(self, req: dict) -> dict:
         """Store an API response in cache."""

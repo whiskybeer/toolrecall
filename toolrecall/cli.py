@@ -378,7 +378,34 @@ def _context_flow_snapshot() -> dict:
 
 
 def cmd_stats():
-    """Detailed statistics as JSON."""
+    """Detailed statistics as JSON.
+
+    Flags:
+      --by-agent         Show per-agent breakdown from agent_cache_stats
+      --agent-id <id>    Show stats for a specific agent only
+    """
+    if "--by-agent" in sys.argv or "--agent-id" in sys.argv:
+        from toolrecall.cache import get_agent_stats
+
+        agent_filter = None
+        if "--agent-id" in sys.argv:
+            idx = sys.argv.index("--agent-id")
+            if idx + 1 < len(sys.argv):
+                agent_filter = sys.argv[idx + 1]
+        stats = get_agent_stats(agent_id=agent_filter)
+        if not stats:
+            print("No per-agent stats recorded. Set TOOLRECALL_AGENT_ID to enable tracking.")
+            return
+        print("Per-Agent Cache Stats")
+        print("=" * 50)
+        for row in stats:
+            print(
+                f"{row['agent_id']:<20} {row['category']:<20} "
+                f"hits={row['hits']:<5} misses={row['misses']:<5} "
+                f"tokens_saved={row['tokens_saved']}"
+            )
+        return
+
     from toolrecall.cache import get_stats
     import json as _json
 
@@ -388,6 +415,106 @@ def cmd_stats():
     # been misread as "flow inactive" by downstream summarizers.
     stats["context_flow"] = _context_flow_snapshot()
     print(_json.dumps(stats, indent=2, default=str))
+
+
+def cmd_agent():
+    """List known agents and show per-agent cache stats.
+
+    Subcommands:
+      ls            List all agents with recorded stats
+      show <id>     Show stats for a specific agent
+      prune <id>    Delete stats for a specific agent
+
+    Examples:
+      toolrecall agent ls
+      toolrecall agent show hermes
+      toolrecall agent prune obsolete-agent
+    """
+    from toolrecall.cache import get_agent_stats
+
+    args = sys.argv[2:]
+    if not args or args[0] in ("--help", "-h"):
+        print("Usage: toolrecall agent <subcommand>")
+        print()
+        print("Subcommands:")
+        print("  ls              List all agents with cache stats")
+        print("  show <id>       Show detailed stats for one agent")
+        print("  prune <id>      Delete an agent's stats rows")
+        print()
+        print("Examples:")
+        print("  toolrecall agent ls")
+        print("  toolrecall agent show hermes")
+        return
+
+    sub = args[0]
+
+    if sub == "ls":
+        stats = get_agent_stats()
+        if not stats:
+            print("No per-agent stats recorded. Set TOOLRECALL_AGENT_ID to enable tracking.")
+            return
+        agents = sorted(set(r["agent_id"] for r in stats))
+        print("Known Agents")
+        print("=" * 40)
+        for agent_id in agents:
+            agent_rows = [r for r in stats if r["agent_id"] == agent_id]
+            total_hits = sum(r["hits"] for r in agent_rows)
+            total_misses = sum(r["misses"] for r in agent_rows)
+            total_saved = sum(r["tokens_saved"] for r in agent_rows)
+            total_read = sum(r["tokens_read_from_disk"] for r in agent_rows)
+            print(
+                f"  {agent_id:<20}  hits={total_hits}  misses={total_misses}  "
+                f"tokens_saved={total_saved}  tokens_read={total_read}"
+            )
+
+    elif sub == "show":
+        if len(args) < 2:
+            print("Usage: toolrecall agent show <agent-id>")
+            return
+        agent_id = args[1]
+        stats = get_agent_stats(agent_id=agent_id)
+        if not stats:
+            print(f"No stats recorded for agent '{agent_id}'.")
+            return
+        print(f"Agent: {agent_id}")
+        print("=" * 50)
+        total_hits = total_misses = total_saved = total_read = total_context = 0
+        for row in stats:
+            print(
+                f"  {row['category']:<20}  hits={row['hits']:<5}  misses={row['misses']:<5}  "
+                f"tokens_saved={row['tokens_saved']:<6}  tokens_read={row['tokens_read_from_disk']:<6}  "
+                f"context_tokens_saved={row['context_tokens_saved']}"
+            )
+            total_hits += row["hits"]
+            total_misses += row["misses"]
+            total_saved += row["tokens_saved"]
+            total_read += row["tokens_read_from_disk"]
+            total_context += row["context_tokens_saved"]
+        print("=" * 50)
+        print(
+            f"  TOTAL{'':<16}  hits={total_hits:<5}  misses={total_misses:<5}  "
+            f"tokens_saved={total_saved:<6}  tokens_read={total_read:<6}  "
+            f"context_tokens_saved={total_context}"
+        )
+
+    elif sub == "prune":
+        if len(args) < 2:
+            print("Usage: toolrecall agent prune <agent-id>")
+            return
+        agent_id = args[1]
+        try:
+            from toolrecall._db import _db
+
+            with _db() as conn:
+                conn.execute("DELETE FROM agent_cache_stats WHERE agent_id = ?", (agent_id,))
+                conn.execute("UPDATE access_log SET agent_id = NULL WHERE agent_id = ?", (agent_id,))
+            print(f"Deleted stats for agent '{agent_id}'.")
+        except Exception as e:
+            print(f"Failed to prune stats: {e}")
+
+    else:
+        print(f"Unknown subcommand: {sub}")
+        print("Available: ls, show, prune")
 
 
 def cmd_trend():
@@ -3065,6 +3192,7 @@ def main():
         print("  update          Check PyPI for a newer version / apply upgrade (--check/--status)")
         print("  replay          Record/replay tool call scenarios (Replay mode)")
         print("  turso           Turso Cloud sync: init, status")
+        print("  agent           Per-agent cache stats: ls, show, prune")
         print("  healthcheck     One-shot daemon/cache health (exit 0 healthy / 1 warn / 2 error)")
         return
 
@@ -3127,6 +3255,7 @@ def main():
         "context": cmd_context,
         "top": cmd_top,
         "proxy": cmd_proxy,
+        "agent": cmd_agent,
     }
 
     if cmd in commands:

@@ -50,6 +50,27 @@ def _get_direct_docs():
     return _direct_docs
 
 
+# ─── Agent Identity Resolution ──────────────────────────────────
+
+
+def _resolve_agent_id(agent_id: str | None = None) -> str | None:
+    """Resolve agent identity: explicit param > TOOLRECALL_AGENT_ID env var.
+
+    Returns None when neither is set (no per-agent tracking, backward compat).
+    """
+    if agent_id:
+        return agent_id
+    return os.environ.get("TOOLRECALL_AGENT_ID") or os.environ.get("TOOLRECALL_AGENT")
+
+
+def _add_agent_id(payload: dict, agent_id: str | None = None) -> dict:
+    """Add agent_id to a payload dict if resolved, no-op otherwise."""
+    aid = _resolve_agent_id(agent_id)
+    if aid:
+        payload["agent_id"] = aid
+    return payload
+
+
 # ─── Shared Connection ───────────────────────────────────────
 
 _client: TransportClient | None = None  # Shared transport connection
@@ -114,7 +135,11 @@ def _probe_socket_alive(socket_path: str) -> bool:
 
 
 def mcp_call(
-    server: str, tool: str, arguments: dict | None = None, bypass_cache: bool = False
+    server: str,
+    tool: str,
+    arguments: dict | None = None,
+    bypass_cache: bool = False,
+    agent_id: str | None = None,
 ) -> dict:
     """Call a tool on a multiplexed MCP server via the daemon.
 
@@ -126,6 +151,7 @@ def mcp_call(
         tool: Tool name on that server
         arguments: Tool arguments dict
         bypass_cache: If True, skip cache and force a fresh call
+        agent_id: Optional agent identity for per-agent stats tracking
     """
     client = _get_client()
     payload: dict[str, Any] = {
@@ -134,6 +160,7 @@ def mcp_call(
         "tool": tool,
         "arguments": arguments or {},
     }
+    _add_agent_id(payload, agent_id)
     if bypass_cache:
         payload["ttl"] = 0
 
@@ -155,7 +182,7 @@ def mcp_list_servers() -> dict:
     return resp
 
 
-def cached_read(path: str, source: str = "agent_tool") -> dict:
+def cached_read(path: str, source: str = "agent_tool", agent_id: str | None = None) -> dict:
     """Read file via daemon (UDS) or direct SQLite.
 
     Daemon-first: sends path to the running daemon over Unix Domain Socket.
@@ -167,10 +194,13 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
         source: "agent_tool" for agent-initiated reads, "shim" for
                 infrastructure/interception reads. Controls whether
                 tokens count toward tokens_saved_to_llm.
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     path = _abs_path(path)
     client = _get_client()
-    resp = client.send({"cmd": "cached_read", "path": path, "source": source})
+    payload = {"cmd": "cached_read", "path": path, "source": source}
+    _add_agent_id(payload, agent_id)
+    resp = client.send(payload)
     if not _is_daemon_down(resp):
         return resp  # Success or real error from Daemon
     # Fallback: check allowed_paths ourselves, then read directly
@@ -187,10 +217,10 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
             getattr(cfg, "mcp_allow_symlink_escapes", False),
         ):
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
-    return _get_direct_cache().cached_read(path, source=source)
+    return _get_direct_cache().cached_read(path, source=source, agent_id=agent_id)
 
 
-def cached_shell_exec(command: str) -> dict:
+def cached_shell_exec(command: str, agent_id: str | None = None) -> dict:
     """Execute a wrapped shell command, stripping infrastructure, caching the inner command.
 
     Agent-agnostic: detects common shell wrappers (source, cd, eval, printf markers, exit)
@@ -198,9 +228,14 @@ def cached_shell_exec(command: str) -> dict:
     command through cached_terminal with allowlist security.
 
     Falls back to direct cached_terminal when daemon is unavailable.
+
+    Args:
+        command: Shell command string (may include agent wrapper noise).
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     client = _get_client()
     payload = {"cmd": "cached_shell_exec", "command": command, "cwd": os.getcwd()}
+    _add_agent_id(payload, agent_id)
     resp = client.send(payload)
     if not _is_daemon_down(resp):
         return resp
@@ -210,11 +245,16 @@ def cached_shell_exec(command: str) -> dict:
     return _direct_shell_exec(command, cwd=os.getcwd())
 
 
-def cached_terminal(command: str, ttl: int | None = None) -> dict:
+def cached_terminal(command: str, ttl: int | None = None, agent_id: str | None = None) -> dict:
     """Run command via daemon or direct SQLite.
 
     Sends command to daemon for execution caching with optional TTL.
     Falls back to local execution with same TTL logic when daemon is down.
+
+    Args:
+        command: Terminal command to execute/cache.
+        ttl: Cache TTL in seconds. 0 = bypass cache.
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     client = _get_client()
     payload: dict[str, Any] = {
@@ -222,6 +262,7 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
         "command": command,
         "cwd": os.getcwd(),
     }
+    _add_agent_id(payload, agent_id)
     if ttl is not None:
         payload["ttl"] = ttl
     resp = client.send(payload)
@@ -236,29 +277,42 @@ def cached_terminal(command: str, ttl: int | None = None) -> dict:
     }
 
 
-def cached_skill(name: str) -> dict:
+def cached_skill(name: str, agent_id: str | None = None) -> dict:
     """View skill via daemon or direct SQLite.
 
     Loads skill content through the daemon's file cache.
     Falls back to direct SQLite lookup when daemon is unavailable.
+
+    Args:
+        name: Skill name.
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     client = _get_client()
-    resp = client.send({"cmd": "cached_skill", "name": name})
+    payload = {"cmd": "cached_skill", "name": name}
+    _add_agent_id(payload, agent_id)
+    resp = client.send(payload)
     if not _is_daemon_down(resp):
         return resp
-    return _get_direct_cache().cached_skill(name)
+    return _get_direct_cache().cached_skill(name, agent_id=agent_id)
 
 
-def cached_write(path: str, content: str) -> dict:
+def cached_write(path: str, content: str, agent_id: str | None = None) -> dict:
     """Write file via daemon or fail closed.
 
     Uses daemon's diff-check to skip writes when file content is unchanged.
     When daemon is unavailable, returns an error (fail-closed) — the daemon
     is the single source of truth for the path allowlist.
+
+    Args:
+        path: File path to write.
+        content: Content to write.
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     path = _abs_path(path)
     client = _get_client()
-    resp = client.send({"cmd": "cached_write", "path": path, "content": content})
+    payload = {"cmd": "cached_write", "path": path, "content": content}
+    _add_agent_id(payload, agent_id)
+    resp = client.send(payload)
     if not _is_daemon_down(resp):
         return resp
     # SECURITY: fail-closed on daemon unavailable — write is a gated
@@ -270,18 +324,31 @@ def cached_write(path: str, content: str) -> dict:
     }
 
 
-def cached_patch(path: str, old_string: str, new_string: str) -> dict:
+def cached_patch(
+    path: str, old_string: str, new_string: str, agent_id: str | None = None
+) -> dict:
     """Apply patch via daemon or fail closed.
 
     Uses daemon's diff engine for idempotent patching.
     When daemon is unavailable, returns an error (fail-closed) — the daemon
     is the single source of truth for the path allowlist.
+
+    Args:
+        path: File path to patch.
+        old_string: String to find.
+        new_string: String to replace with.
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     path = _abs_path(path)
     client = _get_client()
-    resp = client.send(
-        {"cmd": "cached_patch", "path": path, "old_string": old_string, "new_string": new_string}
-    )
+    payload = {
+        "cmd": "cached_patch",
+        "path": path,
+        "old_string": old_string,
+        "new_string": new_string,
+    }
+    _add_agent_id(payload, agent_id)
+    resp = client.send(payload)
     if not _is_daemon_down(resp):
         return resp
     # SECURITY: fail-closed on daemon unavailable — patch is a gated

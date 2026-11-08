@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- **Per-agent cache statistics tracking (`agent_cache_stats`, `toolrecall agent`).**
+  Tracks cache hits, misses, and token savings per agent identity (e.g. `hermes`,
+  `claude-code`, `antigravity`) across file, terminal, skill, and API cache.
+  Agent identity is strictly stats-only metadata and never enters cache keys: all
+  agents share one cache (Agent A warms the cache for Agent B). Configured via
+  `TOOLRECALL_AGENT_ID` env var, `X-ToolRecall-Agent` HTTP header, or explicit
+  `agent_id` parameter. Inspected via `toolrecall stats --by-agent`, `toolrecall stats --agent-id <id>`,
+  and `toolrecall agent ls/show/prune`. Documented in `docs/AGENT_TRACKING.md`.
 - **`claude-code` canonicalization profile for the forward proxy.** Claude Code
   always streams, so without a profile its requests were relayed but never
   cached (0 hits). The new profile drops the per-run `metadata` (session id)

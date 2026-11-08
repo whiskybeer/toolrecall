@@ -526,6 +526,7 @@ port = 8570
 - [Replay Mode](docs/REPLAY_MODE.md) — record/replay tool calls for deterministic CI
 - [Security Architecture](SECURITY.md) — policy gate, trust boundary
 - [Agent Compatibility](docs/AGENT_COMPATIBILITY.md) — per-agent value, config, caveats
+- [Agent Tracking](docs/AGENT_TRACKING.md) — per-agent cache stats, multi-agent attribution
 - [Benchmark](docs/BENCHMARK.md) — three-arm controlled measurement (naive vs prefix vs toolrecall), context efficiency, billed cost
 - [LiteLLM Dedup Benchmark](bench/litellm_dedup/README.md) — gateway dedup hook: −32.3% prompt tokens / −30% cost, billing-verified
 - [LiteLLM Adapter](toolrecall/adapters/README.md) — `litellm_settings.callbacks` hook wiring and sample proxy config

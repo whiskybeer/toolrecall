@@ -510,3 +510,21 @@ def _init(schema: str = ""):
             # the lifetime view — the same silent-loss class as above.
             _add_column(conn, "cache_stats_banked", "tokens_read_uncacheable INTEGER DEFAULT 0")
             _add_column(conn, "cache_stats_banked", "tokens_not_sent_measured INTEGER DEFAULT 0")
+        # Migration: add agent_cache_stats table
+        try:
+            conn.execute("""CREATE TABLE IF NOT EXISTS agent_cache_stats (
+                agent_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                hits INTEGER DEFAULT 0,
+                misses INTEGER DEFAULT 0,
+                tokens_read_from_disk INTEGER DEFAULT 0,
+                tokens_saved INTEGER DEFAULT 0,
+                context_tokens_saved INTEGER DEFAULT 0,
+                updated_at REAL DEFAULT 0,
+                PRIMARY KEY (agent_id, category)
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_stats_agent ON agent_cache_stats(agent_id)")
+        except (sqlite3.OperationalError, ValueError, Exception):
+            pass
+        # Migration: add agent_id column to access_log (nullable, backward compat)
+        _add_column(conn, "access_log", "agent_id TEXT DEFAULT NULL")

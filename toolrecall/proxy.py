@@ -1008,6 +1008,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             self.headers.get("X-ToolRecall-Cache-Sampled") or ""
         ).strip() in ("1", "true", "yes")
 
+        agent_id = (
+            (self.headers.get("X-ToolRecall-Agent") or "").strip()
+            or os.environ.get("TOOLRECALL_AGENT_ID")
+            or os.environ.get("TOOLRECALL_AGENT")
+            or ""
+        )
+
         sampled = (
             method == "POST"
             and bypass_sampled_active
@@ -1043,9 +1050,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # requests we (a) serve cache HITs as synthesized SSE and
             # (b) tee MISS streams into a non-stream cache entry.
             if canonical_profile:
-                cached = self._client.send(
-                    {"cmd": "cached_api_check", "request_hash": request_hash}
-                )
+                check_cmd = {"cmd": "cached_api_check", "request_hash": request_hash}
+                if agent_id:
+                    check_cmd["agent_id"] = agent_id
+                cached = self._client.send(check_cmd)
                 if cached.get("cached") and 200 <= cached.get("status", 200) < 300:
                     n = self._replay_stream_from_cache(
                         cached, target_host, target_path, request_hash
@@ -1066,9 +1074,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 #    race: r2 fired right after r1's stream end);
                 #  - genuinely absent → go live.
                 if tee_settle.wait_settled(request_hash):
-                    cached = self._client.send(
-                        {"cmd": "cached_api_check", "request_hash": request_hash}
-                    )
+                    cached = self._client.send(check_cmd)
                     if cached.get("cached") and 200 <= cached.get("status", 200) < 300:
                         n = self._replay_stream_from_cache(
                             cached, target_host, target_path, request_hash
@@ -1142,12 +1148,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # Check cache — only serve cached 2xx responses
-        cached = self._client.send(
-            {
-                "cmd": "cached_api_check",
-                "request_hash": request_hash,
-            }
-        )
+        check_cmd = {"cmd": "cached_api_check", "request_hash": request_hash}
+        if agent_id:
+            check_cmd["agent_id"] = agent_id
+        cached = self._client.send(check_cmd)
         if cached.get("cached"):
             status = cached.get("status", 200)
             # Don't replay non-2xx responses even if cached

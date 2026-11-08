@@ -458,7 +458,8 @@ CREATE TABLE IF NOT EXISTS access_log (
     hit INTEGER NOT NULL,
     tokens INTEGER DEFAULT 0,
     cached_at REAL NOT NULL,
-    client TEXT DEFAULT ''
+    client TEXT DEFAULT '',
+    agent_id TEXT DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_time ON access_log(cached_at DESC);
 -- Compacted remainders of access_log windows that reset_stats() moved aside.
@@ -554,6 +555,18 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     first_at REAL,
     last_at  REAL
 );
+CREATE TABLE IF NOT EXISTS agent_cache_stats (
+    agent_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    hits INTEGER DEFAULT 0,
+    misses INTEGER DEFAULT 0,
+    tokens_read_from_disk INTEGER DEFAULT 0,
+    tokens_saved INTEGER DEFAULT 0,
+    context_tokens_saved INTEGER DEFAULT 0,
+    updated_at REAL DEFAULT 0,
+    PRIMARY KEY (agent_id, category)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_stats_agent ON agent_cache_stats(agent_id);
 """
 
 
@@ -566,6 +579,66 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
+def _upsert_agent_stats(
+    conn,
+    agent_id: str,
+    category: str,
+    hit: bool,
+    tokens_saved: int,
+    context_tokens: int,
+    tokens_read: int,
+) -> None:
+    """Upsert per-agent cache stats inside an existing DB transaction.
+
+    Args:
+        conn: Active DB connection (must be within a _db() context).
+        agent_id: Agent identity string.
+        category: Cache category (e.g. 'file_cache', 'terminal_cache').
+        hit: True if cache hit, False if miss.
+        tokens_saved: Tokens saved on cache hit (disk-read avoidance).
+        context_tokens: Context tokens saved on cache hit.
+        tokens_read: Tokens read from disk on cache miss.
+    """
+    mid_saved = tokens_saved if hit else 0
+    mid_context = context_tokens if hit else 0
+    mid_miss = 0 if hit else 1
+    mid_hit = 1 if hit else 0
+    mid_tokens_read = tokens_read
+    now = time.time()
+    conn.execute(
+        """
+        INSERT INTO agent_cache_stats (
+            agent_id, category, hits, misses,
+            tokens_read_from_disk, tokens_saved, context_tokens_saved, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(agent_id, category) DO UPDATE SET
+            hits = hits + ?,
+            misses = misses + ?,
+            tokens_read_from_disk = tokens_read_from_disk + ?,
+            tokens_saved = tokens_saved + ?,
+            context_tokens_saved = context_tokens_saved + ?,
+            updated_at = ?
+        """,
+        (
+            agent_id,
+            category,
+            mid_hit,
+            mid_miss,
+            mid_tokens_read,
+            mid_saved,
+            mid_context,
+            now,
+            mid_hit,
+            mid_miss,
+            mid_tokens_read,
+            mid_saved,
+            mid_context,
+            now,
+        ),
+    )
+
+
 def _record(
     category,
     hit: bool,
@@ -575,6 +648,8 @@ def _record(
     context_tokens: int = 0,
     client: str = "",
     tokens_not_sent_measured: int = 0,
+    agent_id: str | None = None,
+    tokens_saved: int = 0,
 ):
     """Track cache statistics + access log.
 
@@ -590,9 +665,15 @@ def _record(
       the LLM context. This is a subset of io_tokens_saved — only counts
       reads that originate from agent tools (read_file, skill_view),
       not internal infrastructure reads (config, cron, cwd files).
+    - agent_id: optional agent identity for per-agent stats tracking.
+      When provided, also upserts agent_cache_stats.
+    - tokens_saved: back-compat synonym for io_tokens_saved.
 
     Also triggers periodic DB integrity checks.
     """
+    if tokens_saved and not io_tokens_saved:
+        io_tokens_saved = tokens_saved
+
     _ensure_db_integrity()
     try:
         with _db() as conn:
@@ -651,13 +732,27 @@ def _record(
                 """,
                     (category, tokens_read, time.time(), tokens_read, time.time()),
                 )
+
+            # Per-agent stats (optional — explicit param or TOOLRECALL_AGENT_ID env var)
+            resolved_agent_id = agent_id or os.environ.get("TOOLRECALL_AGENT_ID") or os.environ.get("TOOLRECALL_AGENT")
+            if resolved_agent_id:
+                _upsert_agent_stats(
+                    conn,
+                    agent_id=resolved_agent_id,
+                    category=category,
+                    hit=hit,
+                    tokens_saved=io_tokens_saved,
+                    context_tokens=context_tokens,
+                    tokens_read=tokens_read,
+                )
+
             # Access log — only record entries with a meaningful path
             # (skip noise like terminal, mcp, api, browser cache hits without paths)
             if path:
                 conn.execute(
                     """
-                    INSERT INTO access_log (category, path, hit, tokens, cached_at, client)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO access_log (category, path, hit, tokens, cached_at, client, agent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         category,
@@ -672,6 +767,7 @@ def _record(
                         else (tokens_read if tokens_read else tokens_not_sent_measured),
                         time.time(),
                         client,
+                        resolved_agent_id,
                     ),
                 )
                 # Access-log prune: at most once per interval, by primary key.
@@ -693,7 +789,11 @@ def _record(
 
 
 def _record_tokens_read_from_disk(
-    category: str, tokens: int, is_new_file: bool = True, uncacheable: bool = False
+    category: str,
+    tokens: int,
+    is_new_file: bool = True,
+    uncacheable: bool = False,
+    agent_id: str | None = None,
 ):
     """Record tokens read from disk.
 
@@ -709,6 +809,7 @@ def _record_tokens_read_from_disk(
                       have served them, so counting them in the cacheable
                       denominator produced bogus savings ratios (the
                       2026-09 "2%" artifact).
+        agent_id: Optional agent identity for per-agent stats tracking.
     """
     if tokens <= 0:
         return
@@ -726,6 +827,21 @@ def _record_tokens_read_from_disk(
                 """,
                     (category, tokens, tokens, time.time()),
                 )
+                resolved_agent_id = agent_id or os.environ.get("TOOLRECALL_AGENT_ID") or os.environ.get("TOOLRECALL_AGENT")
+                if resolved_agent_id and not uncacheable:
+                    conn.execute(
+                        """
+                        INSERT INTO agent_cache_stats (
+                            agent_id, category, hits, misses, tokens_read_from_disk,
+                            tokens_saved, context_tokens_saved, updated_at
+                        )
+                        VALUES (?, ?, 0, 0, ?, 0, 0, ?)
+                        ON CONFLICT(agent_id, category) DO UPDATE SET
+                            tokens_read_from_disk = tokens_read_from_disk + ?,
+                            updated_at = ?
+                        """,
+                        (resolved_agent_id, category, tokens, time.time(), tokens, time.time()),
+                    )
             else:
                 conn.execute(
                     f"""
@@ -840,6 +956,7 @@ def cached_read(
     source: str = "",
     ns: str = "",
     client: str = "",
+    agent_id: str | None = None,
 ) -> dict:
     """Read file with hybrid cache.
 
@@ -925,6 +1042,7 @@ def cached_read(
             io_tokens_saved=tokens,
             context_tokens=context_tokens,
             client=client,
+            agent_id=agent_id,
         )
         # LRU key == DB row key for the common local caller (ns == ""); a
         # namespaced caller's own-ns row hashes the same way (A6-7). The rare
@@ -1003,6 +1121,7 @@ def cached_read(
             io_tokens_saved=tokens,
             context_tokens=context_tokens,
             client=client,
+            agent_id=agent_id,
         )
         _bump_file_hits(matched_hash)
         # lossless derivation mirrors the memory-hit path: row["size"] holds
@@ -1019,7 +1138,7 @@ def cached_read(
     # stagnation: ~28% of all reads were never-cacheable session transcripts
     # recorded as misses, capping the global rate at ~71%).
     if not never_cache:
-        _record("file_cache", hit=False, path=path, client=client)
+        _record("file_cache", hit=False, path=path, client=client, agent_id=agent_id)
     # Count tokens_read_from_disk only for truly new content:
     # - brand new file (never in SQLite) → row is None
     # - file was modified (mtime changed) → row exists but stale
@@ -1075,7 +1194,11 @@ def cached_read(
         # so it must NOT sit in the cacheable miss denominator (the 2026-09
         # "2% savings" artifact came from exactly this inflation).
         _record_tokens_read_from_disk(
-            "file_cache", _estimate_tokens(content), is_new_file=True, uncacheable=True
+            "file_cache",
+            _estimate_tokens(content),
+            is_new_file=True,
+            uncacheable=True,
+            agent_id=agent_id,
         )
         return {"cached": False, "content": content, "path": path}
 
@@ -1089,7 +1212,12 @@ def cached_read(
             "lossless": lossless,
         },
     )
-    _record_tokens_read_from_disk("file_cache", _estimate_tokens(content), is_new_file=_is_new_file)
+    _record_tokens_read_from_disk(
+        "file_cache",
+        _estimate_tokens(content),
+        is_new_file=_is_new_file,
+        agent_id=agent_id,
+    )
 
     # Large files go to SQLite only if they're "static data"
     # Small files always persist for cross-session reuse
@@ -1106,7 +1234,11 @@ _skill_cache: dict[str, dict] = {}
 _skill_cache_lock = Lock()
 
 
-def cached_skill(skill_name: str, skill_dirs: list | None = None) -> dict:
+def cached_skill(
+    skill_name: str,
+    skill_dirs: list | None = None,
+    agent_id: str | None = None,
+) -> dict:
     """Load skill + linked files with cache."""
     if skill_dirs is None:
         skill_dirs = load_config().skill_dirs
@@ -1148,7 +1280,7 @@ def cached_skill(skill_name: str, skill_dirs: list | None = None) -> dict:
     with _skill_cache_lock:
         mem = _skill_cache.get(skill_name)
         if mem and mem.get("cached_at", 0) >= max_mtime:
-            _record("skill_cache", hit=True)
+            _record("skill_cache", hit=True, agent_id=agent_id)
             return {
                 "cached": True,
                 "content": mem["content"],
@@ -1168,7 +1300,7 @@ def cached_skill(skill_name: str, skill_dirs: list | None = None) -> dict:
     if row and row.get("cached_at", 0) >= max_mtime:
         with _skill_cache_lock:
             _skill_cache[skill_name] = {"content": row["content"], "cached_at": row["cached_at"]}
-        _record("skill_cache", hit=True)
+        _record("skill_cache", hit=True, agent_id=agent_id)
         return {
             "cached": True,
             "content": row["content"],
@@ -1176,7 +1308,7 @@ def cached_skill(skill_name: str, skill_dirs: list | None = None) -> dict:
             "files": len(skill_files),
         }
 
-    _record("skill_cache", hit=False)
+    _record("skill_cache", hit=False, agent_id=agent_id)
     parts = []
     for sf in skill_files:
         try:
@@ -1429,7 +1561,12 @@ def _maybe_revalidate_terminal(
     threading.Thread(target=_run, daemon=True, name="tr-swr-terminal").start()
 
 
-def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None) -> dict:
+def cached_terminal(
+    command: str,
+    ttl: int | None = None,
+    cwd: str | None = None,
+    agent_id: str | None = None,
+) -> dict:
     """Run command OR return cached result (TTL-based, SQLite-backed).
 
     Only commands that match a known-cacheable pattern exactly are cached.
@@ -1574,6 +1711,7 @@ def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None
                         "terminal_cache",
                         hit=True,
                         io_tokens_saved=_estimate_tokens(row["output"] or ""),
+                        agent_id=agent_id,
                     )
                     return {
                         "output": row["output"],
@@ -1587,6 +1725,7 @@ def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None
                         "terminal_cache",
                         hit=True,
                         io_tokens_saved=_estimate_tokens(row["output"] or ""),
+                        agent_id=agent_id,
                     )
                     _maybe_revalidate_terminal(cmd_hash, cmd, exec_cwd, cacheable_ttl or 300)
                     return {
@@ -1600,7 +1739,7 @@ def cached_terminal(command: str, ttl: int | None = None, cwd: str | None = None
     except Exception as e:
         warnings.warn(f"ToolRecall: SQLite terminal read failed: {e}")
 
-    _record("terminal_cache", hit=False)
+    _record("terminal_cache", hit=False, agent_id=agent_id)
 
     # Request coalescing (opt-in): concurrent identical misses share ONE
     # execution. Waiters get the winner's process result directly — no
@@ -3081,6 +3220,35 @@ def get_stats() -> dict:
     return stats
 
 
+def get_agent_stats(agent_id: str | None = None) -> list[dict]:
+    """Query per-agent cache stats from agent_cache_stats.
+
+    Args:
+        agent_id: Optional filter — return only this agent's rows.
+                  When None, returns all agents.
+
+    Returns:
+        List of dicts with keys: agent_id, category, hits, misses,
+        tokens_read_from_disk, tokens_saved, context_tokens_saved, updated_at.
+        Empty list when no agent stats have been recorded.
+    """
+    try:
+        with _db() as conn:
+            if agent_id:
+                rows = conn.execute(
+                    "SELECT * FROM agent_cache_stats WHERE agent_id = ? ORDER BY category",
+                    (agent_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM agent_cache_stats ORDER BY agent_id, category"
+                ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        warnings.warn(f"ToolRecall: failed to query agent stats: {e}")
+        return []
+
+
 #: Every cache_stats column that accumulates over the window. reset_stats()
 #: moves all of them into cache_stats_banked before zeroing the live row.
 #: This is deliberately a superset of what garbage_collect() banks: the GC
@@ -3652,11 +3820,12 @@ API_CACHE_TTL = 300  # 5 minutes default for API responses
 API_CACHE_MAX_BODY_MB = 2.0
 
 
-def cached_api_check(request_hash: str) -> dict:
+def cached_api_check(request_hash: str, agent_id: str | None = None) -> dict:
     """Check if an API response is cached by request hash.
 
     Args:
         request_hash: SHA256 hash of ``method:host:path:body``
+        agent_id: Optional agent identity for per-agent stats tracking.
 
     Returns:
         ``{"cached": True, "status": 200, "headers": {...}, "body": "..."}`` on hit,
@@ -3690,7 +3859,7 @@ def cached_api_check(request_hash: str) -> dict:
                     # api_cache showed 122 hits with io_tokens_saved=0, hiding a
                     # whole-call saving — the strongest one there is, since the
                     # model is not called at all.
-                    _record("api_cache", True, io_tokens_saved=io_tokens_saved)
+                    _record("api_cache", True, io_tokens_saved=io_tokens_saved, agent_id=agent_id)
                     return {
                         "cached": True,
                         "status": row["response_status"],
@@ -3706,7 +3875,7 @@ def cached_api_check(request_hash: str) -> dict:
                         "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    _record("api_cache", True, io_tokens_saved=io_tokens_saved)
+                    _record("api_cache", True, io_tokens_saved=io_tokens_saved, agent_id=agent_id)
                     return {
                         "cached": True,
                         "status": row["response_status"],
@@ -3724,7 +3893,7 @@ def cached_api_check(request_hash: str) -> dict:
         else:
             warnings.warn(f"ToolRecall: api_cache check failed: {e}")
 
-    _record("api_cache", False)
+    _record("api_cache", False, agent_id=agent_id)
     return {"cached": False}
 
 

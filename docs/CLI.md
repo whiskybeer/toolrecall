@@ -37,6 +37,7 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall nginx` | `cmd_nginx()` | `toolrecall/cli.py` |
 | `toolrecall replay` | `cmd_replay()` → dispatches subcommands | `toolrecall/replay_cli.py` |
 | `toolrecall turso` | `cmd_turso()` → dispatches subcommands | `toolrecall/turso_cli.py` |
+| `toolrecall agent` | `cmd_agent()` → dispatches subcommands | `toolrecall/cli.py` |
 | `toolrecall context` | `cmd_context()` → dispatches subcommands | `toolrecall/cli.py` |
 | `toolrecall logs` | `cmd_logs()` | `toolrecall/cli.py` |
 | `toolrecall update` | `cmd_update()` | `toolrecall/cli.py` |
@@ -69,6 +70,18 @@ Most commands accept `--help` / `-h` for per-command usage and options
 
 - **File:** `cli.py : cmd_stats()`
 - **Purpose:** Same as `status` but returns JSON-formatted detailed statistics.
+- **Flags:**
+  - `--by-agent`: Print human-readable per-agent breakdown from `agent_cache_stats`.
+  - `--agent-id <id>`: Filter per-agent breakdown to a specific agent identity.
+
+### `toolrecall agent`
+
+- **File:** `cli.py : cmd_agent()`
+- **Purpose:** Manage per-agent cache statistics (see `docs/AGENT_TRACKING.md`).
+- **Subcommands:**
+  - `toolrecall agent ls`: List all known agents with hit/miss and token counts.
+  - `toolrecall agent show <id>`: Detailed breakdown per category for an agent.
+  - `toolrecall agent prune <id>`: Delete stats rows for an agent (preserves cached content).
 
 ### `toolrecall trend`
 
