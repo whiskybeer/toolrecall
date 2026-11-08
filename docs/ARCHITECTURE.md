@@ -804,7 +804,9 @@ Result: Full token cost. SSE relayed with accurate usage logging from final even
 | Each tool call spawns a new MCP process | **MCP Multiplexer** keeps persistent sessions |
 
 > MCP Multiplex and forward proxy are safe with these agents. File/terminal caching
-> can conflict with native state tracking. See [Agent Compatibility](AGENT_COMPATIBILITY.md).
+> can conflict with native state tracking. Claude Code streams every request, so the
+> proxy only caches it under the `claude-code` canonicalization profile — useful for
+> headless repeat runs, not interactive sessions. See [Agent Compatibility](AGENT_COMPATIBILITY.md#claude-code).
 
 ### 6.5 CI/CD
 | Today | Daemon Architecture |

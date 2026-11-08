@@ -16,7 +16,13 @@ Both cache file reads but at fundamentally different layers.
 | **Auto-heal** | Manual restart | systemd + watchdog + IPC shutdown/restart |
 | **Security** | OS-level only | WAF: path allowlist, `.env` air-gap, terminal blackhole, cognitive scan |
 
-**Cost comparison:** 13-file project, 10 re-reads, 100 turns per session → 81% fewer file-read tokens, 67% faster MCP startup, ~$40 saved per 100 sessions.
+**Cost comparison — scope matters.** The 13-file / 10-re-read model (81% fewer
+file-read tokens, ~$40 per 100 sessions) applies to **stateless agents that
+re-send file content** (Hermes, ADK). It does **not** apply to Claude Code:
+Claude Code stubs unchanged re-reads natively, and routing its file reads
+through ToolRecall measured **2.4× more expensive**. For Claude Code the
+measured lever is forward-proxy replay of headless repeat runs — see
+[AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code).
 
 ## B. CTO Questions & Resolutions
 

@@ -75,6 +75,16 @@ export OPENAI_BASE_URL=http://localhost:8569/v1
 export ANTHROPIC_BASE_URL=http://localhost:8569
 ```
 
+### Claude Code (headless repeat runs)
+Claude Code streams every request; streaming requests are cached only under a
+canonicalization profile. Without it you get relay and usage logging, but 0 hits.
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8569
+export ANTHROPIC_CUSTOM_HEADERS="X-ToolRecall-Canonicalize: claude-code"
+```
+Pin MCP servers (`--strict-mcp-config`) for stable keys. Scope and measured
+limits: [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code).
+
 ### Direct HTTP
 ```bash
 # First call: MISS, forwards to upstream, caches response

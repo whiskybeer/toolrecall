@@ -8,7 +8,7 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 
 **−36% on a 450-turn session — verified with separate billed API keys, not estimates.** Additive to any model's prefix caching. Under 1MB install. Python 3.11+ stdlib only.
 
-> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), the forward proxy and MCP multiplexer still save real money, but file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
+> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), expect no token saving in interactive sessions: the forward proxy pays off for **headless repeat runs** (Claude Code with the `claude-code` profile: −69% on short repeated tasks, −18% on long sessions), the MCP multiplexer shares server processes, and file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
 ```bash
 pipx install toolrecall

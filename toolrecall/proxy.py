@@ -392,6 +392,27 @@ def _hermes_canon_walk(node):
     return node
 
 
+# Test-runner wall-clock durations ("2 passed in 0.25s", "Ran 4 tests in
+# 0.003s", "took 120ms"): measured 2026-10-22 as the first point where two
+# otherwise byte-identical headless Claude Code runs diverge, which breaks the
+# replay chain right after the first tool call. Only "in/took <number><unit>"
+# phrases are touched — counts and pass/fail stay in the key.
+_RE_CANON_DURATION = re.compile(r"\b(in|took) \d+(?:\.\d+)?\s?(?:ms|s|sec|seconds)\b")
+
+
+def _cc_canon_walk(node):
+    """claude-code profile: hermes text rules + duration placeholder; the
+    top-level ``metadata`` object (account/session identifiers, sent on every
+    request, never semantic for the model) is dropped from the key."""
+    if isinstance(node, dict):
+        return {k: _cc_canon_walk(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_cc_canon_walk(x) for x in node]
+    if isinstance(node, str):
+        return _RE_CANON_DURATION.sub(r"\1 <duration>", _hermes_canon_text(node))
+    return node
+
+
 def _canonicalize_body(profile: str, body: bytes):
     """Canonicalized body for cache-key hashing under `profile`, or None.
 
@@ -403,17 +424,24 @@ def _canonicalize_body(profile: str, body: bytes):
 
     Profile `hermes`: volatile fields observed in Hermes WebUI system prompts
     (session id, conversation-start date) + shared UUID/timestamp/CR/
-    blank-line rules. Same envelope contract as `warp`."""
+    blank-line rules. Same envelope contract as `warp`.
+
+    Profile `claude-code`: `hermes` rules + test-runner durations, and the
+    top-level `metadata` object (session/account ids) is dropped."""
     if profile == "warp":
         walk = _canon_walk
     elif profile == "hermes":
         walk = _hermes_canon_walk
+    elif profile == "claude-code":
+        walk = _cc_canon_walk
     else:
         return None
     try:
         envelope = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
+    if profile == "claude-code" and isinstance(envelope, dict):
+        envelope.pop("metadata", None)
     envelope = walk(envelope)
     return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
 

@@ -15,7 +15,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
-| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ✅ | ❌ | **Selective** | Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Context hints now silent by default: emitted only after a client calls `context_set_checkpoint`, which Claude Code never does → zero hint overhead, no config needed. Distinct from provider prefix caching, which complements TR on stateless agents. |
+| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ⚠️ Headless repeats only (`claude-code` profile) | ❌ | **Selective** | Interactive sessions: no measurable token saving — Claude Code already dedups unchanged re-reads natively, and 76 local transcripts showed 0 redundant reads/outputs. Headless repeats (CI re-runs): proxy replay with the `claude-code` canonical profile: −69% usage on warm repeats of short real SWE-bench tasks that run tests, −18% on a 5-issue session (replay stops at the first non-deterministic tool output). Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Context hints now silent by default: emitted only after a client calls `context_set_checkpoint`, which Claude Code never does → zero hint overhead, no config needed. Distinct from provider prefix caching, which complements TR on stateless agents. |
 | **Codex CLI** | ⚠️ Multiplex only | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only. |
 | **Cursor** | ⚠️ Optional | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages its own tool state. |
 | **Warp** | ❌ N/A | ✅ via [warp adapter](#warp-⚠️-selective--strong-for-platform-workloads) | ❌ N/A (Rust) | **Selective** | Strong for platform workloads (agent fleets, Factories replay, cross-model evals); skip the file cache — Warp manages its own context. Requires a public HTTPS endpoint (Warp's backend calls your endpoint; localhost is rejected). |
@@ -130,13 +130,15 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 
 ---
 
-## Claude Code — ❌ File caching costs more than it saves
+<a id="claude-code"></a>
+
+## Claude Code — ⚠️ Headless repeats only; no saving in interactive sessions
 
 | Feature | Verdict | Evidence |
 |---------|---------|----------|
-| **Forward Proxy** | ✅ Verified — saves real cost | Orthogonal to tool loop |
-| **Request-body dedup** (proxy) | ⚠️ Compatible but idle — measured 0 tokens removed in 11 real sessions | Keep-first, prefix-stable stub of repeated `tool_result` payloads; Claude Code sessions produce no byte-identical repeats (see "Measured 2026-10") |
-| **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
+| **Forward Proxy replay** | ⚠️ Headless repeats only — needs the `claude-code` profile | Claude Code always streams; without a canonical profile its requests bypass the cache (**0 hits**). With it: −69% on short real tasks, −18% on a long multi-issue session. See [Measured](#measured-where-toolrecall-can-and-cannot-save) |
+| **Request-body dedup** (proxy) | ⚠️ Mechanism-verified — nothing to stub on measured workloads | 0 identical large tool outputs in 76 local transcripts |
+| **Read gate / unchanged re-read stub** | ❌ Redundant | Claude Code returns a native `file_unchanged` result for unchanged re-reads || **MCP Multiplexer** | ✅ Verified — shares subprocesses across sessions | Works as documented |
 | **File/terminal cache via MCP** | ❌ Tested: **2.4× cost increase** | Numbers and methodology in "The Numbers" and "Root causes" below |
 | **Context tracker** | ❌ No benefit — but now silent by default (see below) | Same report; opt-in mechanism in `c66b16c` |
 
@@ -213,13 +215,74 @@ tracker's value stays in harnesses where the agent prunes its own context
 (e.g. Hermes). See also [CONTEXT_STALE.md](CONTEXT_STALE.md) for the
 file-level stale signal ToolRecall exposes to harnesses that *can* use it.
 
+### Measured: where ToolRecall can and cannot save
+
+Full numbers and method: [bench/claude_code_replay/RESULTS.md](../bench/claude_code_replay/RESULTS.md).
+
+**Interactive sessions — no saving available.** Across 76 local Claude Code
+transcripts (1,307 API calls), 68% of cost was cache reads of the ~100k-token
+context and only ~15% came from tool results at all. There were 0 unchanged
+re-reads (Claude Code answers those natively with a ~90-char `file_unchanged`
+result), 0 identical large Bash outputs, and 1 compaction. The largest fixed
+cost is the session baseline (system prompt + tools + instruction files, 30% of
+all context tokens) — that is trimmed in your own config, not by a cache.
+
+**Headless repeats — replay works with the `claude-code` profile.** Same task,
+8 runs through a hermetic proxy:
+
+| Profile | Calls replayed | Runs fully replayed | Usage vs cold run |
+|---|---:|---:|---:|
+| `hermes` (generic) | 6 / 24 | 0 / 8 | −24% |
+| `claude-code` | 16 / 24 | 4 / 8 | **−62%** |
+
+On real tasks (Sonnet, official hidden-test grading), the saving shrinks with
+session length:
+
+| Workload (warm repeats) | Usage saved |
+|---|---:|
+| Short task, agent only reads and edits (3–4 calls) | −100% |
+| Short task, agent runs tests (5–8 calls) | −69% |
+| 5-issue backlog in one session (33–38 calls) | **−18%** |
+
+Every request carries the whole conversation, so the first non-deterministic
+tool output (pytest temp-dir numbers, `grep -r` order, Python `set` order) ends
+replay for the **rest of the session**. Replay saves the prefix before that point.
+
+Two conditions decide whether replay pays off, both measured: **same commit**
+(Claude Code sends the 5 most recent commits with the first message, so any new
+commit — even an empty one — gets 0 replay; reruns of that commit replay fully),
+and **deterministic tool output** (with `PYTHONHASHSEED=0`, the 5-issue session
+went from −18% to −65%; 2 of 3 repeats replayed all 38 calls).
+
+Safety controls for the profile passed (other checkout dir, edited source,
+other model → no false replay; 79 replayed calls audited, 0 false matches), and a
+same-proxy no-cache baseline gives −61% / −67% on two short django tasks.
+
+Limits, all measured:
+- **Replay returns the earlier answer.** Right for CI re-runs on unchanged
+  inputs, harness regression tests, demos. Wrong for evals that sample the model
+  (pass@k, variance) — replay hides the variance being measured.
+- **The first run is always paid in full.** Savings over N runs approach
+  1 − 1/N only when every warm run replays completely; quote warm-run figures.
+- **Tool-output determinism sets the ceiling.** Any time-dependent byte in a
+  tool result (`ls -l` mtimes in a fresh checkout) forks the chain from that call.
+- **Pin MCP servers** (`--strict-mcp-config`): claude.ai connector tools load
+  asynchronously and change the tool list between runs.
+- Claude Code's `total_cost_usd` counts replayed calls as billed; read the
+  proxy's `HIT` rows instead.
+
 ### What to Use Instead
 
-- **Forward proxy** — cache API responses via `:8569`. This is orthogonal to the tool loop and saves real money on repeat API calls in dev loops.
+- **Forward proxy replay for headless repeats** — CI re-runs and regression runs of `claude -p` with the `claude-code` profile (config below). Not for interactive sessions and not for sampling evals.
 - **Request-body dedup** — the one cost lever that is compatible with an append-only harness (see below).
 - **MCP multiplexer only** — if you run 5+ MCP servers, TR's multiplexer shares one subprocess per server across all sessions. Add TR as the single MCP entry point, but **don't route file tools through it**.
 
-### The one cost lever that is compatible: request-body dedup
+### Request-body dedup: compatible, but little to stub
+
+Measured on 76 local transcripts: 0 identical large tool outputs, and Claude
+Code already stubs unchanged re-reads itself — expect a near-zero saving in
+interactive sessions. The mechanism below stays correct for workloads that do
+repeat large payloads.
 
 Request-body dedup (`[forward_proxy] dedup`, default **off**) rewrites
 duplicate large text blocks *inside the request body* — the same file coming
@@ -292,7 +355,17 @@ older proxy.
 }
 ```
 
-Then set `OPENAI_BASE_URL=http://localhost:8569/v1` for API response caching.
+For headless repeat runs (CI, regression), route Claude Code through the proxy
+with the `claude-code` canonicalization profile and pinned MCP servers:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8569
+export ANTHROPIC_CUSTOM_HEADERS="X-ToolRecall-Canonicalize: claude-code"
+claude -p "..." --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+```
+
+Without the header, Claude Code's (always streaming) requests are relayed but
+never cached.
 
 Claude Code's own endpoint is Anthropic-shaped, so point `ANTHROPIC_BASE_URL`
 at the same proxy and opt in to request-body dedup:
@@ -305,16 +378,17 @@ export TOOLRECALL_FORWARD_DEDUP=1   # or [forward_proxy] dedup = true in toolrec
 For an A/B baseline arm, per-request opt-out is the header
 `X-ToolRecall-No-Dedup: 1`.
 
-> **Bottom line:** Add TR **only** for the forward proxy, request-body dedup
-> and MCP multiplex. File caching through MCP has been empirically tested and
-> makes Claude Code sessions **2.4× more expensive**. Do not route file tools
-> through ToolRecall with Claude Code. Context hints need no action: they're
-> silent by default (checkpoint opt-in), so a stock TR install no longer
-> appends any hint text to Claude Code sessions. Request-body dedup is the one
-> lever that is compatible with the append-only transcript, but on measured
-> Claude Code sessions it found nothing to remove (0 tokens in 11 sessions), so
-> it is not worth routing Claude Code through the proxy for.
-
+> **Bottom line:** For interactive Claude Code sessions ToolRecall does not
+> reduce token cost — Claude Code already handles redundant reads itself, and
+> measured transcripts had nothing left to remove. Its Claude Code value is
+> **headless repeat runs** (forward-proxy replay with the `claude-code`
+> profile: −69% on warm repeats of short real tasks that run tests, but
+> only −18% on a 5-issue session — savings stop at the first
+> non-deterministic tool output), **MCP multiplexing**, and
+> **caching expensive external tools**. File caching through MCP has been
+> empirically tested and makes sessions **2.4× more expensive** — do not route
+> file tools through ToolRecall with Claude Code. Context hints are silent by
+> default (checkpoint opt-in).
 ---
 
 ## Codex CLI — ⚠️ Use selectively

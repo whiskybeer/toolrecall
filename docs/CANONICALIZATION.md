@@ -1,4 +1,4 @@
-# Request Canonicalization (warp profile)
+# Request Canonicalization (warp, hermes, claude-code profiles)
 
 > **Status: experiment — controls passed 2026-09-08, still profile-scoped and opt-in.**
 > The `warp` canonicalization profile ships behind an explicit opt-in header
@@ -112,6 +112,42 @@ TOOLRECALL_EDGE_CANONICALIZE=auto   # edge adds X-ToolRecall-Canonicalize: warp
 ```
 
 Custom agents can set the header per request: `X-ToolRecall-Canonicalize: warp`.
+
+## `claude-code` profile
+
+Opt-in via `X-ToolRecall-Canonicalize: claude-code` (Claude Code sends it with
+`ANTHROPIC_CUSTOM_HEADERS`). Built from a raw-body diff of identical headless
+`claude -p` runs; each rule removes one measured source of key divergence:
+
+| Rule | Why |
+|---|---|
+| `hermes` text rules (CR, blank lines, UUID, ISO timestamp) | shared harness noise |
+| top-level `metadata` dropped from the key | carries account + per-run session id; never shown to the model |
+| `in/took <n>(ms\|s\|sec\|seconds)` → `in <duration>` | test-runner wall time (`2 passed in 0.25s`) was the first divergence after a replayed call |
+
+Deliberately **not** normalized: tool descriptions (a server-side flag flips the
+Bash tool text in ~1 of 4 runs — real model-visible text, so it forks the key),
+and `ls -l` mtimes (too broad to strip safely). Both fork the replay chain at that
+point; the forked branch is cached and replays on later runs.
+
+Measured (n=8 repeats of one toy task, Haiku): 16/24 calls replayed, 4/8 runs fully
+replayed, −62% usage vs the cold run; the `hermes` profile reached 6/24 and −24%.
+On 2 real SWE-bench Lite tasks (Sonnet, 5 runs each): warm runs −69% when tests
+are run, −100% when not; on a 5-issue session (33–38 calls): −18%. Remaining breakers: pytest's numbered temp dirs (a
+candidate rule, not added to avoid fitting the bench) and `grep -r` output order.
+Details: [bench/claude_code_replay/RESULTS.md](../bench/claude_code_replay/RESULTS.md).
+
+**Controls (2026-10-22) — passed.** 22 runs on two SWE-bench Lite django tasks:
+same prompt from another checkout dir → 0 hits; source edit visible in `git status`
+→ 0 hits; the same edit hidden from `git status` → replay stopped at the first tool
+output containing it; other model → 0 hits; Pass@1 6/6 fresh vs 8/8 replay arm.
+An audit of all 79 replayed calls across every experiment found only intended
+differences (test durations), 0 false matches. Known collision risks (different
+accounts share entries because `metadata` is dropped; timing-sensitive work;
+semantic UUIDs/timestamps) and details: [RESULTS.md](../bench/claude_code_replay/RESULTS.md).
+
+Same caveat as every profile: replay serves the **earlier answer** — use it for
+CI re-runs and regression runs, never for evals that sample the model.
 
 ## See also
 

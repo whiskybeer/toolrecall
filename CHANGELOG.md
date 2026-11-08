@@ -3,6 +3,23 @@
 ## [Unreleased]
 
 ### Added
+- **`claude-code` canonicalization profile for the forward proxy.** Claude Code
+  always streams, so without a profile its requests were relayed but never
+  cached (0 hits). The new profile drops the per-run `metadata` (session id)
+  from the cache key and replaces test-runner durations with a placeholder.
+  On 8 headless repeats of a toy task: −62% usage vs the cold run (generic
+  `hermes` profile: −24%). On 2 real SWE-bench Lite tasks (Sonnet, 5 runs each,
+  all resolved): warm runs −100% when the agent runs no tests, −69% when it
+  runs them (chain breaks at pytest temp-dir numbers and `grep -r` order).
+  On a 5-issue backlog in one session (33–38 calls, 4 chains): −18% — replay
+  ends for the rest of the session at the first non-deterministic output.
+  Safety controls passed on 22 django runs (other checkout dir, edited source
+  visible or hidden from `git status`, other model: no false replay; Pass@1
+  6/6 vs 8/8); an audit of all 79 replayed calls found 0 false matches.
+  When it pays off: only on the same commit (an empty extra commit → 0 replay,
+  because Claude Code sends recent commits with the first message), and with
+  deterministic tool output (`PYTHONHASHSEED=0`: 5-issue session −18% → −65%).
+  Method, limits and scripts in `bench/claude_code_replay/`.
 - **A/A noise floor for the GEPA benchmark (`run_gepa_real.py --aa`).** Replays
   one recorded GEPA schedule into two plain arms to measure run-to-run noise;
   every rollout's score is now logged. On mistral-small-3.2 (3 seeds), identical
@@ -36,6 +53,14 @@
   `X-ToolRecall-Bypass-Sampled: 1`. When active, `X-ToolRecall-Cache-Sampled: 1`
   allows re-enabling cache for exact replay. Documented in `docs/FORWARD_PROXY.md`
   and `docs/CONFIG_REFERENCE.md`. Tests: `tests/test_proxy_sampling_no_cache.py` (16).
+
+### Changed
+- **Claude Code positioning corrected to measured results.** Interactive
+  sessions: no token saving available (Claude Code already stubs unchanged
+  re-reads; 76 local transcripts had 0 redundant reads or outputs). The proxy's
+  Claude Code verdict changes from "verified, saves real cost" to "headless
+  repeats only, with the `claude-code` profile". The Appendix cost model is now
+  scoped to stateless agents.
 
 ### Documentation
 - **GEPA / fork-tree docs caught up with what shipped in 0.8.21.**
