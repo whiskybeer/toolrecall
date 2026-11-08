@@ -58,7 +58,9 @@ def _api(method, path, data=None):
     req = urllib.request.Request(url, data=body, headers=_HEADERS, method=method)
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(req) as r:
+        # nosemgrep: dynamic-urllib-use-detected — fixed https://api.github.com
+        # base (API_BASE), no user-supplied URL
+        with urllib.request.urlopen(req) as r:  # nosemgrep
             resp = json.loads(r.read())
         elapsed = (time.perf_counter() - t0) * 1000
         _LOG.info(f"{method:>6} /{path} => {r.status}  {elapsed:.0f}ms")

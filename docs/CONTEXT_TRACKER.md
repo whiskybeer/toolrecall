@@ -130,9 +130,9 @@ The gate lives in `daemon.py::_handle_read` (only `agent_tool` calls `mark_read`
 | `cached_patch(path, ...)` | ✅ Yes | File was patched by the agent |
 | `read_file(path)` / `cached_read(path)` | ❌ No | Read-only — cannot change file state |
 | `cached_terminal("git commit")` | ⚠️ No (limitation) | TR can't know which files the command changed |
-| `os.system()`, direct file writes | ⚠️ No (limitation) | Outside TR's IPC — TR would detect the mtime change on the *next* read, but the write isn't tracked as dirty because it bypassed the daemon |
+| Agent-native writes (`write_file`, `patch` tools, plain `open('w')`) | ⚠️ Not in `dirty` — **but detected**: `get_dirty`/`get_stale` re-stat read-set mtimes and report them as `externally_modified` (stale entries carry `external: True`) | Outside TR's IPC — the read-set mtime comparison catches any out-of-band rewrite at query time (2026-09-17); a re-read clears the flag |
 
-**Key insight:** The tracker is conservative. It tracks only writes that go through ToolRecall's IPC (`cached_write`, `cached_patch`). Writes via terminal commands or external editors are not reflected in the dirty list. This is a documented limitation — the agent should call `context_set_checkpoint()` after such an operation to acknowledge the state change.
+**Key insight:** The tracker is conservative. `dirty` itself tracks only writes that go through ToolRecall's IPC (`cached_write`, `cached_patch`) — that contract is unchanged. But out-of-band writes are no longer *invisible*: since 2026-09-17, files that were read and then modified outside the daemon surface as `externally_modified` (with `externals_detail`: read-time vs current mtime, size, est_tokens), and in `get_stale` as ordinary stale entries marked `external: True, write_seq: 0`. Dropping decisions should treat them exactly like dirty files — the context copy is provably outdated. Terminal-command writes (`git commit` etc.) remain a genuine limitation: TR cannot attribute individual files to a command, so call `context_set_checkpoint()` after such operations.
 
 ### Dirty + Clean: The Critical Distinction
 

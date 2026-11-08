@@ -1,0 +1,331 @@
+{
+  "spec": {
+    "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",
+    "requestKey": "sha256 over utf8(\"mcp-request-key-v1\") || 0x00 || utf8(JCS({\"tool\": t, \"arguments\": a})) — rendered \"sha256:\" || lowercase-hex",
+    "contentDigest": "sha256 over utf8(\"mcp-content-digest-v1\") || 0x00 || utf8(JCS({\"content\": c, \"structuredContent\": s, \"isError\": e})) — rendered \"sha256:\" || lowercase-hex",
+    "version": "v1",
+    "generated_by": "toolrecall keys.mcp_request_key_v1 / mcp_content_digest_v1 (reference implementation)",
+    "note": "F20 preimage (2026-09-16): contentDigest covers {content, structuredContent, isError}; F19: integers with |n| >= 2^53 rejected. Regenerating requires a version-tag bump (mcp-*-v2); vectors are frozen otherwise. Lone surrogates (U+D800–U+DFFF) are rejected with an error for keys and values alike. Rejection payloads are JSON documents: parse payload_json first (that is how a hostile payload arrives), then assert your canonicalizer raises. Non-string object keys cannot occur in parsed JSON (names are always strings) but are likewise rejected for in-memory callers."
+  },
+  "request_keys": [
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "/tmp/x",
+        "head": 50
+      },
+      "requestKey": "sha256:4c6a00841d887ced2504cd767f6d3877c0e81f3348153fe0d12dd2f3af987a8a"
+    },
+    {
+      "tool": "terminal",
+      "arguments": {
+        "cmd": [
+          "grep",
+          "-n",
+          "def main"
+        ],
+        "cwd": "/x"
+      },
+      "requestKey": "sha256:666cbde42f7f15f2be29e93c0d7603f00eef9839178b8c6e0cec893d20e50608"
+    },
+    {
+      "tool": "search",
+      "arguments": {
+        "q": "héllo wörld — ünïcode",
+        "limit": 10
+      },
+      "requestKey": "sha256:aff1a1794e4ebffb5259ca4a24d3da232d4cfeab6fdcd5520504e4683fefbca6"
+    },
+    {
+      "tool": "t",
+      "arguments": {},
+      "requestKey": "sha256:ced69a7e414db762b02912830bc7542336b0ea2d2549f657390eab1b61c1b034",
+      "note": "empty arguments"
+    },
+    {
+      "tool": "t",
+      "arguments": {
+        "opts": {
+          "b": 2,
+          "a": 1
+        }
+      },
+      "requestKey": "sha256:fa79f96d6ef63e82eacd7edb91ac00f5fd954b96e389ef8caf454798b3165e21",
+      "note": "nested keys are JCS-sorted recursively"
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "/tmp/x",
+        "head": 50,
+        "extra": null
+      },
+      "requestKey": "sha256:834017ef970e75885aa2023807e51ea4ccfa297b36301815ac47c90be62d2c2e",
+      "note": "null argument preserved"
+    },
+    {
+      "tool": "t",
+      "arguments": {
+        "n": 10
+      },
+      "requestKey": "sha256:0b6afe83b843a3226e6086a1e8e2e1c39e3ac22f0f88323130e8826b22a21a9b",
+      "note": "int 10 and float 10.0 MUST produce this same key (I-JSON doubles)"
+    },
+    {
+      "tool": "t",
+      "arguments": {
+        "n": 10.0
+      },
+      "requestKey": "sha256:0b6afe83b843a3226e6086a1e8e2e1c39e3ac22f0f88323130e8826b22a21a9b",
+      "note": "must equal the int-10 key above"
+    },
+    {
+      "tool": "sort_demo",
+      "arguments": {
+        "�": 1,
+        "😀": 2
+      },
+      "requestKey": "sha256:72a2f974f3dbb82a911c8ddeed082d467db22c451c3c6f8b8b811451851ecd53",
+      "note": "UTF-16 code-unit ordering: astral U+1F600 sorts BEFORE U+FFFD (code-point order would reverse)"
+    },
+    {
+      "tool": "t",
+      "arguments": null,
+      "requestKey": "sha256:ced69a7e414db762b02912830bc7542336b0ea2d2549f657390eab1b61c1b034",
+      "note": "F18: arguments absent/None == empty arguments object (same key)"
+    },
+    {
+      "tool": "fmt",
+      "arguments": {
+        "small": 1e-27
+      },
+      "note": "ES positional floor (1e-27)",
+      "requestKey": "sha256:e0c9b086a1eb96f2c3e209e5eac24c9125ccc66b6f8ff190848691d5c03920d4"
+    },
+    {
+      "tool": "fmt",
+      "arguments": {
+        "trailing": 4.5
+      },
+      "note": "trailing-zero strip (4.50 -> 4.5)",
+      "requestKey": "sha256:2da26644e8603641447cba0dcf5868327ea95643d76e19f64290c8cdc3846ecf"
+    },
+    {
+      "tool": "big",
+      "arguments": {
+        "n": 9007199254740991
+      },
+      "note": "I-JSON boundary: 2^53-1 accepted",
+      "requestKey": "sha256:b6988baf2a1da3a7425ee8d41e880fdd9ca643351f0b971d738eeb6976cd236f"
+    }
+  ],
+  "content_digests": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "contentDigest": "sha256:2e557d2bff10025ae9b8107f91358b0584872432f075337f3ddc72bbb07da796",
+      "note": "typical text tool result"
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "héllo — em dash ünïcode"
+        }
+      ],
+      "contentDigest": "sha256:99748dc53cac79ad4871c5746d0d1df68c5c5c12cfca6a9de2b4d9599e5f2718",
+      "note": "non-ASCII emitted literally (no \\u escapes)"
+    },
+    {
+      "content": [],
+      "contentDigest": "sha256:2f723b7453b06a29fc099ae053fe31fd56df360db307ca421c9eafa3a1ec1c40",
+      "note": "empty content array"
+    },
+    {
+      "content": [
+        {
+          "type": "image",
+          "data": "iVBORw0KGgo="
+        }
+      ],
+      "contentDigest": "sha256:18e4499e5ca4502a477a27374be4dae3338196f9401bb4afd917fff19e7891a9",
+      "note": "binary-ish base64 payload"
+    },
+    {
+      "content": {
+        "structured": {
+          "b": 1,
+          "a": [
+            true,
+            null,
+            1.5
+          ]
+        }
+      },
+      "contentDigest": "sha256:a7ffe7f874ff48dc947df7fe4287def7805ee9cacedb68c49d4f5366391a8909",
+      "note": "content is any JSON value, not only arrays"
+    },
+    {
+      "content": "plain string",
+      "contentDigest": "sha256:e4f90456f529287df8444736189b4825f70e83e4c95e7e84758aa556509cbbdf",
+      "note": "top-level string content"
+    },
+    {
+      "content": {
+        "b": 1,
+        "a": 2
+      },
+      "contentDigest": "sha256:a5b567f83e9b1444572c66a990073fa1be9503c450f771cc412cde953236ebe3",
+      "note": "key order is irrelevant — must equal the reversed-order case"
+    },
+    {
+      "content": {
+        "a": 2,
+        "b": 1
+      },
+      "contentDigest": "sha256:a5b567f83e9b1444572c66a990073fa1be9503c450f771cc412cde953236ebe3",
+      "note": "must equal the {b:1,a:2} digest above"
+    },
+    {
+      "content": [
+        {
+          "n": 10
+        }
+      ],
+      "contentDigest": "sha256:b7dd21cd1f0224dcbc87986d3520e597c5acd9b1a365afc57f3d3dacfc5040cd",
+      "note": "int/float identical under JCS"
+    },
+    {
+      "content": [
+        {
+          "n": 10.0
+        }
+      ],
+      "contentDigest": "sha256:b7dd21cd1f0224dcbc87986d3520e597c5acd9b1a365afc57f3d3dacfc5040cd",
+      "note": "must equal the int-10 digest above"
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "structuredContent": {
+        "rows": 1
+      },
+      "contentDigest": "sha256:02053524dcfb2e69dbf2c5d8adccfe899c4d3593f976280d8bc5d52c68c5ee11",
+      "note": "F20: same content, structuredContent set — digest MUST differ from the bare-content case"
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ],
+      "isError": true,
+      "contentDigest": "sha256:5efb22751d6de1b5ab226512082929128a43eb8dd9dee980bf46b221082e3139",
+      "note": "F20: same content, isError=true — digest MUST differ (an error result is never a cache hit for the ok result)"
+    }
+  ],
+  "rejection_cases": [
+    {
+      "payload_json": "{\"\\ud800\": 1}",
+      "expected": "error",
+      "note": "lone surrogate KEY, single-key object (formerly canonicalized — policy: reject)",
+      "error_class": "encoding"
+    },
+    {
+      "payload_json": "{\"\\ud800\": 1, \"a\": 2}",
+      "expected": "error",
+      "note": "lone surrogate KEY, multi-key (formerly UnicodeEncodeError in the UTF-16 sort)",
+      "error_class": "encoding"
+    },
+    {
+      "payload_json": "{\"a\": \"\\ud800\"}",
+      "expected": "error",
+      "note": "lone surrogate VALUE (formerly escaped ES-style — bytes no other impl reproduces)",
+      "error_class": "encoding"
+    },
+    {
+      "payload_json": "[1, {\"x\": \"\\udbff\"}]",
+      "expected": "error",
+      "note": "lone surrogate escape (no trailing low surrogate) nested in array — rejects",
+      "error_class": "encoding"
+    },
+    {
+      "payload_json": "\"\\udbff\"",
+      "expected": "error",
+      "note": "top-level lone surrogate document — rejects",
+      "error_class": "encoding"
+    },
+    {
+      "payload_json": "{\"n\": NaN}",
+      "expected": "error",
+      "note": "NaN — invalid JSON, but lax decoders accept it; canonicalization must reject",
+      "error_class": "number"
+    },
+    {
+      "payload_json": "{\"big\": 9007199254740993}",
+      "expected": "error",
+      "note": "integer beyond IEEE-754 exact range (I-JSON rule)",
+      "error_class": "encoding"
+    },
+    {
+      "payload_json": "{\"n\": 9007199254740992}",
+      "expected": "error",
+      "note": "2^53 rejected (I-JSON safe boundary, F19)",
+      "error_class": "number"
+    },
+    {
+      "payload_json": "{\"a\": 1, \"a\": 2}",
+      "expected": "error",
+      "error_class": "structure",
+      "note": "duplicate object keys — must be rejected at parse time (raw-JSON mode)"
+    }
+  ],
+  "edge_cases": [
+    {
+      "payload_json": "\"\\udbff\\udfff\"",
+      "expected": "success",
+      "note": "escaped surrogate PAIR combines to a VALID astral char (U+10FFFF) — must canonicalize, NOT reject"
+    }
+  ],
+  "raw_json_vectors": [
+    {
+      "raw_json": "{\"n\": 4.50}",
+      "canonical": "{\"n\":4.5}",
+      "requestKey": "sha256:a9eafbe251f44e48ddb6fed976be1ffc752080ba38481ea5bdd6cb36a3392b24",
+      "note": "raw-JSON input: formatting must happen in the canonicalizer"
+    },
+    {
+      "raw_json": "{\"n\": 1e-27}",
+      "canonical": "{\"n\":1e-27}",
+      "requestKey": "sha256:09f7f381d11dbd21ca31ac439ff1facef9a58f1f502723a0c85c2ea31cd3cfd6",
+      "note": "raw-JSON input: formatting must happen in the canonicalizer"
+    },
+    {
+      "raw_json": "{\"n\": 1.0}",
+      "canonical": "{\"n\":1}",
+      "requestKey": "sha256:21e0cf17a34ea05ce65fa804936caf291aa63aac2418fb1e74587920d839bbf2",
+      "note": "raw-JSON input: formatting must happen in the canonicalizer"
+    },
+    {
+      "raw_json": "{\"n\": 0.002}",
+      "canonical": "{\"n\":0.002}",
+      "requestKey": "sha256:95dcd5f79d799d74173740d2aee7cd382a57abf16b4e90e5296a47c48e81e18a",
+      "note": "raw-JSON input: formatting must happen in the canonicalizer"
+    },
+    {
+      "raw_json": "{\"a\": 1.50, \"b\": 2.250}",
+      "canonical": "{\"a\":1.5,\"b\":2.25}",
+      "requestKey": "sha256:08b2ba6d1b66539a7b8d949fc2ac64ae688e0beb5253c9dfbaefb1fbb5b0aaa1",
+      "note": "raw-JSON input: formatting must happen in the canonicalizer"
+    }
+  ]
+}

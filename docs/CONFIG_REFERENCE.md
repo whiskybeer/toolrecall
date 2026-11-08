@@ -130,6 +130,8 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_UDS_PATH` | (not in config.toml) | `TOOLRECALL_UDS_PATH=/tmp/tc.sock` |
 | `TOOLRECALL_TRANSPORT` | (not in config.toml) | `TOOLRECALL_TRANSPORT=tcp` (Windows fallback) |
 | `TOOLRECALL_SHIM_DISABLE` | (not in config.toml) | `TOOLRECALL_SHIM_DISABLE=1` (disable OS-level shim per-process) |
+| `TOOLRECALL_SHIM_STUB` | (not in config.toml) | `TOOLRECALL_SHIM_STUB=0` (kill switch for the shim's unchanged-file stub) |
+| `TOOLRECALL_SHIM_STUB_TTL` | `shim.stub_ttl` | `TOOLRECALL_SHIM_STUB_TTL=600` |
 | `AGENT_HOME` | `paths.agent_home` (resolution) | `AGENT_HOME=~/.hermes` |
 | `TOOLRECALL_AGENT_HOME` | `paths.agent_home` (resolution) | |
 
@@ -154,6 +156,45 @@ Clients not listed fall back to `[mcp].emit_context_hints`. Additionally,
 hints are only emitted **after** a client calls `context_set_checkpoint`
 once — the bridge stays passive until an agent demonstrates the checkpoint
 pattern, so context-managing agents never see hint text even without config.
+
+## Unchanged-file stub TTL (`[shim].stub_ttl`)
+
+The shim's unchanged-file stub (Lever 1) replaces a byte-identical re-read
+with a one-line note — "file unchanged since HH:MM:SS, agent holds it from
+the earlier read". `stub_ttl` bounds how old that claim may be:
+
+```toml
+[shim]
+stub_ttl = 300   # seconds; 0 = stubbing off (cache still serves)
+```
+
+**What this TTL is NOT:** a staleness guard. Every shim cache hit is
+re-validated against the file's mtime+size before it is served, so a stub
+can never reference different bytes than the disk holds. Disk staleness is
+already impossible.
+
+**What it IS:** a guard on the *agent-memory* axis. A stub works by
+claiming the agent already holds the content from an earlier full read.
+Agent harnesses compact old tool results out of the context window; after
+compaction the stub references content the agent no longer has, which
+strands it for a recovery turn. The TTL bounds that risk: after `stub_ttl`
+seconds since the last full send, full content is re-sent instead of a
+stub (and the consecutive-streak restarts). The consecutive cap (2 stubs,
+then a forced full send) is the second, independent piece of compaction
+armor — the TTL covers *lapsed* re-reads, the cap covers hot loops.
+
+In short: **mtime+size proves the disk is current; the TTL bounds how much
+ToolRecall trusts the agent's memory.** They are independent validators and
+both are required — disabling the TTL re-opens the
+read → compaction → re-read stranding case. Tuning: higher = more measured
+savings, higher stranding risk after harness compactions; the optimal value
+tracks the harness's compaction cadence (start at the 300s default, adjust
+from observed behavior). The MCP bridge stub keeps its own shorter TTL (60s)
+deliberately — append-only harnesses like Claude Code compact aggressively,
+and any tool result there may be referenced.
+
+Kill switch: `TOOLRECALL_SHIM_STUB=0` disables the shim stub per-process at
+call time (state never arms; a later re-enable starts fresh).
 
 ## Per-Path File TTLs
 

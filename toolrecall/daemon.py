@@ -127,7 +127,8 @@ def _instance_lock_path(socket_path: str) -> str:
     """
     import hashlib
 
-    digest = hashlib.md5(socket_path.encode("utf-8")).hexdigest()[:16]
+    # nosemgrep: insecure-hash-algorithm-md5 — non-crypto lockfile name, socket path only
+    digest = hashlib.md5(socket_path.encode("utf-8")).hexdigest()[:16]  # nosemgrep
     return os.path.join(os.path.dirname(PID_FILE), f"daemon-{digest}.lck")
 
 
@@ -2019,6 +2020,11 @@ class DaemonServer:
             path, source=source, ns=req.get("_ns", ""), client=req.get("client", "")
         )
         if result and not result.get("error"):
+            # Echo the source tag back: the shim's stub gate needs to know
+            # whether THIS read was agent-visible (2026-09-18 live incident —
+            # a stub served to the gateway's own config re-read corrupted
+            # its YAML parse; the shim must only stub agent_tool reads).
+            result["source"] = source
             # Context-tracker gate (2026-09-12): track ONLY agent-tool reads.
             # The shim tags infra reads "shim" (its size/binary/library gates),
             # and gateway processes (cron scripts, TUI, healthcheck, the Hermes

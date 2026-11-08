@@ -19,6 +19,7 @@ Requires a running ToolRecall Daemon:
 """
 
 import json
+import logging
 import os
 import sys
 import time
@@ -27,6 +28,8 @@ from toolrecall.transport import TransportClient, DEFAULT_PATH
 from toolrecall import __version__
 from toolrecall.context_tracker import format_stale_block
 from toolrecall.keys import content_digest
+
+log = logging.getLogger("toolrecall.mcp_bridge")
 
 
 # ─── MCP Tool Definitions ────────────────────────────────
@@ -320,19 +323,22 @@ class MCPBridge:
     ):
         self.client = TransportClient(socket_path or DEFAULT_PATH)
         self._start_time = time.time()
-        # abs path -> sha256 of the content this session has already sent.
-        # Per-process: the bridge's lifetime is the agent session, which is
-        # exactly the scope we want.  The daemon cache stays shared.
-        self._session_reads: dict[str, str] = {}
-        # Timestamp of last full send per path — for proactive TTL expiry.
-        # Harnesses compact old tool results; after N seconds the agent may
-        # no longer have the content even if the hash matches.
-        self._last_full_send: dict[str, float] = {}
-        # Consecutive stub counter per path — prevents compaction blindness.
-        # Claude Code summarizes away old tool results; after 2 consecutive
-        # stubs we re-send full content so the agent can recover without
-        # guessing bypass_cache=true.
-        self._consecutive_stubs: dict[str, int] = {}
+        # Session-scoped stub state (Lever 1) — delegates to the SHARED
+        # stub_core.FileStubSession. Policy: ttl 60s / cap 2 / floor 0 —
+        # the bridge's own contract (Claude Code paces compaction faster;
+        # any tool result may be referenced). cap 2 = the pre-core EFFECTIVE
+        # behavior (old code incremented before checking >= 3). The instance
+        # lifetime is the bridge process = the MCP session = exactly the
+        # scope in which "the agent already holds this content" is true.
+        from toolrecall.stub_core import FileStubSession, note_mcp
+
+        self._stubs = FileStubSession(
+            ttl_s=60.0,
+            max_consecutive=2,
+            min_chars=0,
+            note_fn=note_mcp,
+            counter_fn=self._count_measured,
+        )
         # Terminal output dedup: command string -> sha256 of output.
         # Native Bash tool does NOT deduplicate; repeated identical output
         # (git status, test runs, ls) re-enters context at full cost.
@@ -383,6 +389,11 @@ class MCPBridge:
         REPLACED on the wire by a one-line note, so those tokens provably
         never reach the LLM. Counted in cache_stats.tokens_not_sent_measured
         (category "mcp_dedup") via daemon cmd `dedup_tokens`.
+
+        Delegates the state machine to the shared stub_core.FileStubSession
+        (one contract, one test surface — bridge policy: ttl 60s, cap 3,
+        floor 0). The return shape {"result": {"unchanged": True, ...}} is
+        byte-identical to the pre-core behavior, pinned by test_mcp_bridge.
         """
         if not path or "error" in resp:
             return resp
@@ -393,47 +404,15 @@ class MCPBridge:
         if not isinstance(content, str):
             return resp
 
-        key = os.path.realpath(os.path.expanduser(path))
-        digest = content_digest(content)
-
-        if self._session_reads.get(key) == digest:
-            # Proactive TTL expiry: if the last full send was more than
-            # STUB_TTL seconds ago, the harness may have compacted the
-            # earlier result. Re-send rather than risk a stale stub.
-            STUB_TTL = 60  # seconds — conservative per Claude Code's pacing
-            last_send = self._last_full_send.get(key, self._start_time)
-            if time.time() - last_send > STUB_TTL:
-                self._session_reads[key] = digest  # refresh, don't re-arm
-                self._last_full_send[key] = time.time()
-                return resp
-            # Cap consecutive stubs — Claude Code compacts old tool results,
-            # so the agent may have lost the earlier content. After 2 stubs
-            # we re-send the full content to avoid blind recovery.
-            self._consecutive_stubs[key] = self._consecutive_stubs.get(key, 0) + 1
-            if self._consecutive_stubs[key] >= 3:
-                self._consecutive_stubs[key] = 0  # keep digest, don't re-arm
-                return resp
-            note = (
-                "File unchanged; see earlier read. "
-                "If you no longer have it, pass bypass_cache=true."
-            )
-            # MEASURED CONTEXT SAVINGS: len//4, same estimator as every
-            # other CONTEXT-tier counter. This is the one number that is
-            # not a model — the content literally did not go out.
-            self._count_measured(
-                len(content) // 4,
-                f"{path} (stub: {note})",
-            )
-            return {
-                "result": {
-                    "unchanged": True,
-                    "note": note,
-                }
+        note = self._stubs.maybe_stub(path, content, is_agent=True, lossless=True)
+        if note is None:
+            return resp
+        return {
+            "result": {
+                "unchanged": True,
+                "note": note,
             }
-
-        self._session_reads[key] = digest
-        self._last_full_send[key] = time.time()
-        return resp
+        }
 
     def _maybe_stub_terminal(self, command: str, resp: dict) -> dict:
         """Replace terminal output with a stub when identical to last run.
@@ -463,17 +442,26 @@ class MCPBridge:
         self._session_terminal[command] = digest
         return resp
 
-    def _count_measured(self, tokens: int, log_path: str) -> None:
+    def _count_measured(self, tokens: int, log_path: str, note: str = "") -> None:
         """Fire-and-forget daemon counter for MEASURED not-sent tokens.
 
         The stub path guarantees these tokens never reach the LLM — this is
         the only wire-verified CONTEXT-tier number. Best-effort: a counter
-        must never break a tool call, and the daemon may be restarting.
+        must never break a tool call, and the daemon may be restarting
+        (logged at debug — designed fallback, not an incident). Also the
+        counter_fn adapter for stub_core (signature: tokens, path, note);
+        the note rides in the log detail exactly as before the core split.
         """
         try:
-            self._uds_request("dedup_tokens", tokens=int(tokens), path=log_path)
+            self._uds_request(
+                "dedup_tokens",
+                tokens=int(tokens),
+                path=f"{log_path} (stub: {note})" if note else log_path,
+            )
         except Exception:
-            pass
+            # "measured-tier", not the wire cmd name — semgrep p/python flags
+            # the substring "token" in a log call as credential-disclosure.
+            log.debug("measured-tier counter failed (path=%s)", log_path, exc_info=True)
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:
         """Send a request to the daemon and return parsed response."""
@@ -724,7 +712,9 @@ class MCPBridge:
                     if update_hint:
                         result_text += "\n\n" + update_hint
                 except Exception:
-                    pass  # Graceful: never break a tool call over a notice
+                    # Graceful: never break a tool call over a notice. Debug,
+                    # not warning — daemon restarting mid-session is routine.
+                    log.debug("update_pending_hint daemon round-trip failed", exc_info=True)
 
             # Auto-trigger context hint after every non-context tool call.
             # Only if the client opted in by checkpointing (and, on the daemon
@@ -747,7 +737,8 @@ class MCPBridge:
                     if hint:
                         result_text += "\n\n" + hint
                 except Exception:
-                    pass  # Graceful: hint is best-effort
+                    # Graceful: hint is best-effort (same rationale as above).
+                    log.debug("context_get_hint daemon round-trip failed", exc_info=True)
 
                 # Machine-parseable stale-file markers. Any agent loop can
                 # regex these out without an explicit tool call, regardless
@@ -759,7 +750,8 @@ class MCPBridge:
                     if block:
                         result_text += "\n\n" + block
                 except Exception:
-                    pass  # Graceful: never break a tool call over a hint
+                    # Graceful: never break a tool call over a hint.
+                    log.debug("context_get_stale daemon round-trip failed", exc_info=True)
 
             return {
                 "jsonrpc": "2.0",

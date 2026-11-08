@@ -92,10 +92,18 @@ class TestBridgeUpdateHint(unittest.TestCase):
             bridge._nudge_reads = 0
             bridge._nudge_emitted = False
             bridge._multiplexer_only = False
-            bridge._session_reads = {}
-            bridge._last_full_send = {}
-            bridge._consecutive_stubs = {}
             bridge._session_terminal = {}
+            # stub_core delegation: the handler builds its own session via
+            # _stubs; provide one with a null counter for the manual init.
+            from toolrecall.stub_core import FileStubSession, note_mcp
+
+            bridge._stubs = FileStubSession(
+                ttl_s=60.0,
+                max_consecutive=2,
+                min_chars=0,
+                note_fn=note_mcp,
+                counter_fn=lambda tokens, path, note="": None,
+            )
             return bridge
 
     def test_first_tool_call_carries_hint(self):

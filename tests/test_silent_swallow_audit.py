@@ -27,13 +27,19 @@ PACKAGE_DIR = pathlib.Path(__file__).resolve().parent.parent / "toolrecall"
 # Baseline measured 2026-09-01 across toolrecall/*.py (62 total).
 # Rule: decreases are always welcome (just edit the number). Increases fail CI.
 FROZEN_COUNTS = {
-    "_db.py": 8,
+    # 1 as of 2026-09-17 (baseline sync): the lazy-init rewrite (ba1a594 era)
+    # replaced seven swallows with real handling; the remaining one guards
+    # the config re-read around the backend switch (fallback path below it).
+    "_db.py": 1,
     # 8 as of 2026-09-11: pre-existing drift found when make validate re-ran
     # after e89a5b6 — counted Exception-pass sites (daemon ping probes,
     # shim-optional fallback) predate the baseline; WIP added none.
+    "cache.py": 0,
     "cli.py": 8,
     "client.py": 1,
-    "config.py": 3,
+    # 2 as of 2026-09-17 (baseline sync): 1d33b12 (update hint channel)
+    # returned errors instead of swallowing on one path.
+    "config.py": 2,
     # 22 as of 2026-09-08 (was 18): +4 best-effort socket/PID closes added by
     # the 956b25a network-honesty commit without a baseline bump (found when
     # the flock-sweep work re-ran validate). All four are resource-release
@@ -47,36 +53,38 @@ FROZEN_COUNTS = {
     # and the update_pending_hint handler both tolerate that), and a network
     # hiccup must never take the daemon down.
     "daemon.py": 24,
-    "docs.py": 4,
+    # 2 as of 2026-09-17 (baseline sync): 3573f4d (agent-agnostic scan_dirs)
+    # refactored two swallows away.
+    "docs.py": 2,
     "healthcheck.py": 2,
-    # 5 as of 2026-09-15 (auto_apply=false hint channel): +1 around the
-    # update_pending_hint daemon round-trip — a notice must never break the
-    # tool call it rides on (same contract as the context-hint appends).
-    # 6 as of 2026-09-16 (measured dedup tier): +1 in _count_measured —
-    # fire-and-forget daemon counter for wire-verified not-sent tokens; a
-    # counter must never break a tool call and the daemon may be restarting
-    # mid-session. The stub itself is already returned to the harness.
-    "mcp_bridge.py": 6,
+    # 5 as of 2026-09-17 (baseline sync): 6 pre-sync minus one converted to a
+    # debug log by the stub_core split (dedup_tokens counter); the three
+    # hint/update round-trip swallows are now logged, leaving the two
+    # config-hash-store OSError guards.
+    "mcp_bridge.py": 2,
     "mcp_cache_fs.py": 3,
     "normalizer.py": 1,
     # 4 as of 2026-09-10 (stream usage truth): +1 in _parse_sse_usage_tail —
     # best-effort parse of the final SSE chunk's usage block. Any malformed
     # tail must degrade to {} so the caller falls back to the byte estimate;
     # the swallow carries no signal (usage absence is a normal provider case).
-    "proxy.py": 4,
-    "shim.py": 4,
-    "tui_top.py": 5,  # TUI fail-soft (was 2): 9f1a0d5 added WAL-snapshot fallback
-    # handlers without a baseline bump — OSError on sidecar copy (missing -wal
-    # is the normal case), sqlite3.Error on snapshot probe + connect (snapshot
-    # is a best-effort fallback; main path already returned None honestly), and
-    # Exception on con.close() in the probe failure path. All degrade to the
-    # documented "db unreadable" TUI state, none carry actionable signal.
+    # 5 as of 2026-09-17 (baseline sync): +1 in the extra_hosts loader
+    # (3fc2ca0) — config unavailable (tests/embedding) must degrade to the
+    # hardcoded list; the fallback is the documented behavior.
+    "proxy.py": 5,
+    "shim.py": 3,
+    # 3 as of 2026-09-17 (stub_core split): was 4 — the big cache-path
+    # fall-through now logs a warning instead of passing silently.
+    # 0 as of 2026-09-17: env-TTL parse + config resolution failures are
+    # logged at debug (shim never owns a log file; lastResort carries them).
+    "shim_stub.py": 0,
+    # 5 as of 2026-09-17 (baseline sync): c1237bb headline render dropped one.
+    "tui_top.py": 5,
     "transport.py": 0,
-    "updater.py": 2,  # auto-updater: network-fetch fail-soft + optional metadata probe (see module docstrings)
-    # 4 as of e89a5b6 (request-body dedup): +1 OSError pass in scan_root's
-    # os.walk loop — venv-discovery directory skip; fs-scan fail-soft with
-    # no signal (errors surface as missing candidates, not wrong results).
-    "venvs.py": 4,
+    # 1 as of 2026-09-17 (baseline sync): 71ebf9f SAST pass fixed one.
+    "updater.py": 1,
+    # 3 as of 2026-09-17 (baseline sync): c2d516d venv upgrade pass dropped one.
+    "venvs.py": 3,
 }
 
 # Narrow exception types that are ALWAYS acceptable to swallow silently —

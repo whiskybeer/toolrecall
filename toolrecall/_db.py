@@ -56,7 +56,9 @@ def _hash(value: str) -> str:
     """
     if _HASH_ALGORITHM == "sha256":
         return hashlib.sha256(value.encode()).hexdigest()
-    return hashlib.md5(value.encode()).hexdigest()
+    # nosemgrep: insecure-hash-algorithm-md5 — cache-key hashing, not crypto;
+    # keys pinned by tests/golden_keys.json; sha256 selectable via [cache].hash_algorithm
+    return hashlib.md5(value.encode()).hexdigest()  # nosemgrep
 
 
 # ─── Sensitive File Blocklist ───────────────────────────────

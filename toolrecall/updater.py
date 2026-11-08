@@ -111,7 +111,9 @@ def _pypi_latest() -> str | None:
     """Fetch the latest published version from PyPI (None on any failure)."""
     try:
         req = urllib.request.Request(_PYPI_URL, headers={"User-Agent": f"toolrecall/{_VERSION}"})
-        with urllib.request.urlopen(req, timeout=_CHECK_TIMEOUT_S) as r:
+        # nosemgrep: dynamic-urllib-use-detected — fixed _PYPI_URL constant,
+        # no user-supplied URL
+        with urllib.request.urlopen(req, timeout=_CHECK_TIMEOUT_S) as r:  # nosemgrep
             data = json.load(r)
         v = data.get("info", {}).get("version")
         return v if isinstance(v, str) and v else None

@@ -33,7 +33,7 @@ import os
 import unittest
 
 from toolrecall import keys
-from toolrecall.jcs import JCSTypeError, canonicalize
+from toolrecall.jcs import JCSTypeError, canonicalize, canonicalize_str
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "rfc8785")
 VECTOR_NAMES = ["arrays", "french", "structures", "unicode", "values", "weird"]
@@ -221,7 +221,7 @@ class TestV1Derivation(unittest.TestCase):
 
     def test_f20_content_digest_covers_three_fields(self):
         # The preimage is {content, structuredContent, isError} — two
-        # NOT share a digest (a cache keying on contentDigest alone would
+        # results differing ONLY in structuredContent or error status MUST
         # otherwise serve the wrong structured payload / hide an error).
         content = [{"type": "text", "text": "hello"}]
         d0 = keys.mcp_content_digest_v1(content)
@@ -250,6 +250,16 @@ class TestV1Derivation(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaises(TypeError):
                     keys.mcp_content_digest_v1(content, None, bad)
+
+    def test_canonicalize_str_rejects_duplicate_keys(self):
+        # Review round 3 item 4: json.loads silently collapses duplicates;
+        # canonicalize_str (object_pairs_hook) enforces the I-JSON rule.
+        with self.assertRaises(JCSTypeError):
+            canonicalize_str('{"a": 1, "a": 2}')
+        with self.assertRaises(JCSTypeError):
+            canonicalize_str('{"o": {"x": 1, "x": 2}}')  # nested
+        self.assertEqual(canonicalize_str('{"a": 1}'), '{"a":1}')
+        self.assertEqual(canonicalize_str('{"b":1,"a":2}'), '{"a":2,"b":1}')
 
 
 class TestSurrogatePolicy(unittest.TestCase):
@@ -368,7 +378,14 @@ class TestGoldenVectors(unittest.TestCase):
     def test_payload_json_vectors(self):
         for case in self.golden["rejection_cases"]:
             with self.subTest(note=case["note"]):
-                payload = json.loads(case["payload_json"])
+                raw = case["payload_json"]
+                if "duplicate" in case.get("note", "").lower():
+                    # Duplicate keys survive json.loads (silently collapsed);
+                    # they are only detectable in raw-JSON mode (canonicalize_str).
+                    with self.assertRaises(JCSTypeError):
+                        canonicalize_str(raw)
+                    continue
+                payload = json.loads(raw)
                 if case["expected"] == "error":
                     with self.assertRaises(JCSTypeError):
                         keys.mcp_request_key_v1("t", payload)
@@ -376,6 +393,9 @@ class TestGoldenVectors(unittest.TestCase):
                     # e.g. an escaped surrogate PAIR is a valid astral char:
                     # must canonicalize, not reject.
                     keys.mcp_request_key_v1("t", payload)
+        for case in self.golden.get("raw_json_vectors", []):
+            with self.subTest(raw=case["raw_json"]):
+                self.assertEqual(canonicalize_str(case["raw_json"]), case["canonical"])
 
     def test_spec_block_pins_the_preimages(self):
         spec = self.golden["spec"]

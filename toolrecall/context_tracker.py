@@ -534,6 +534,71 @@ class ContextTracker:
             self._seq += 1
             self._read_seq[abs_path] = self._seq
 
+    def _externally_modified(self) -> list[dict]:
+        """Read-set paths whose on-disk mtime differs from the recorded one.
+
+        Caller MUST hold ``self._lock`` (both query methods call this while
+        holding it; ``threading.Lock`` is not reentrant).
+
+        Closes the native-write blindness: ``mark_dirty`` only fires for
+        writes through the daemon (cached_write/cached_patch) — an agent
+        writing via its own native tools (Hermes write_file/patch, any
+        ``open(path, 'w')`` in-process) never touched ``_dirty``, so the
+        tracker kept reporting such files as "clean" although the context
+        copy was provably outdated.
+
+        The read set stores the mtime AT READ TIME (mark_read); comparing
+        it against the live mtime detects any out-of-band modification
+        without knowing who wrote it. restore() has re-validated read-set
+        mtimes exactly this way since persistence shipped — same logic,
+        moved to query time. Pure at query time: no state mutation, so
+        repeated polls are stable and a later mark_read naturally clears
+        the flag (it refreshes the stored mtime).
+
+        Exclusions (all deliberate):
+          - paths with write_seq > read_seq: the DAEMON wrote these after
+            the read (cached_write/patch) — already covered by the normal
+            dirty/stale paths, not "external".
+          - paths that have disappeared: deletion is not a content change
+            we can validate — the context copy was correct at read time
+            and a re-read errors loudly on its own; temp-file cleanup
+            churn would make deleted-file reports noise. (get_stale's
+            deleted-file OSError branch covers only files the daemon
+            wrote before deletion — those iterate via write_seq.)
+          - sensitive paths: defense in depth, same egress rule as
+            get_stale (results are echoed to a possibly-injected agent).
+        """
+        out: list[dict] = []
+        for path, r_mtime in self._read_set.items():
+            r_seq = self._read_seq.get(path, 0)
+            w_seq = self._write_seq.get(path, 0)
+            if w_seq > r_seq:
+                continue  # daemon wrote it — normal dirty/stale path
+            try:
+                cur = os.path.getmtime(path)
+            except OSError:
+                continue  # deleted — get_stale's OSError branch reports it
+            if _is_sensitive(path):
+                # Defense in depth, same rule as get_stale: this result is
+                # echoed to a possibly-injected agent; re-check at egress
+                # rather than trust upstream filters.
+                continue
+            if abs(cur - float(r_mtime)) > 1e-6:
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = 0
+                out.append(
+                    {
+                        "path": path,
+                        "read_mtime": float(r_mtime),
+                        "current_mtime": cur,
+                        "size": size,
+                        "est_tokens": size // 4,
+                    }
+                )
+        return out
+
     def get_dirty(self, checkpoint: int | None = None) -> dict:
         """Get dirty and clean files since a checkpoint.
 
@@ -545,10 +610,22 @@ class ContextTracker:
             {
                 "dirty": ["/abs/path", ...],
                 "clean": ["/abs/path", ...],
+                "externally_modified": ["/abs/path", ...],
+                "externals_detail": [{path, read_mtime, current_mtime,
+                                      size, est_tokens}, ...],
+                "total_externally_modified": int,
                 "checkpoint": int,
                 "total_dirty": int,
                 "total_clean": int,
             }
+
+        ``externally_modified``: read-set files whose on-disk mtime moved
+        after the read — rewritten OUTSIDE the daemon (agent native tools,
+        other processes). The context copy is outdated exactly as if the
+        write had come through cached_write; treat them as dirty. They are
+        listed separately (the "dirty" contract stays daemon-write-scoped)
+        and re-reading the path clears the flag (mark_read refreshes the
+        stored mtime).
         """
         with self._lock:
             target = checkpoint if checkpoint is not None else self._checkpoint_counter
@@ -591,9 +668,20 @@ class ContextTracker:
                 self._ctx_dropped_tokens += size // 4
                 self._banked.add(p)
 
+            # Native-write detection: read-set paths whose on-disk mtime
+            # moved after the read were rewritten OUTSIDE the daemon (agent
+            # native tools, other processes). These were invisible to
+            # mark_dirty and used to hide in "clean" with outdated context
+            # copies. Reported separately — not merged into "dirty", whose
+            # checkpoint contract stays daemon-write-scoped; the full list
+            # rides in the response (cap on hint TEXT happens daemon-side).
+            externals = self._externally_modified()
             return {
                 "dirty": sorted(dirty_list),
                 "clean": sorted(clean_list),
+                "externally_modified": sorted((e["path"] for e in externals), key=str),
+                "externals_detail": externals,
+                "total_externally_modified": len(externals),
                 "checkpoint": self._checkpoint_counter,
                 "total_dirty": len(dirty_list),
                 "total_clean": len(clean_list),
@@ -627,14 +715,19 @@ class ContextTracker:
             {
                 "stale": [
                     {"path", "read_seq", "write_seq",
-                     "size", "est_tokens", "mtime"}, ...
+                     "size", "est_tokens", "mtime", "external"}, ...
                 ],
                 "paths": ["/abs/path", ...],
                 "total_stale": int,
                 "est_reclaimable_tokens": int,
+                "externally_modified": ["/abs/path", ...],
                 "checkpoint": int,
                 "seq": int,
             }
+
+        Entries written OUTSIDE the daemon (native agent tools) carry
+        ``external: True`` and ``write_seq: 0`` — their staleness is proven
+        by the mtime-vs-read-set comparison instead of the write sequence.
         """
         with self._lock:
             entries = []
@@ -671,12 +764,33 @@ class ContextTracker:
                     }
                 )
 
+            # Native-write staleness: same mtime-vs-read_set comparison as
+            # get_dirty, surfaced in the SAME shape as daemon-write staleness
+            # so a native `open('w')` after a read reports exactly like a
+            # cached_write after a read. A path appears in BOTH lists only
+            # when it was deleted-and-recreated (the OSError branch above
+            # keeps the deleted entry; the recreated file shows up here with
+            # a new mtime) — union semantics, both true.
+            externals = self._externally_modified()
+            for e in externals:
+                entries.append(
+                    {
+                        "path": e["path"],
+                        "read_seq": self._read_seq.get(e["path"], 0),
+                        "write_seq": 0,  # no daemon write — external one
+                        "size": e["size"],
+                        "est_tokens": e["est_tokens"],
+                        "mtime": e["current_mtime"],
+                        "external": True,
+                    }
+                )
             entries.sort(key=lambda e: str(e["path"]))
             return {
                 "stale": entries,
                 "paths": [e["path"] for e in entries],
                 "total_stale": len(entries),
                 "est_reclaimable_tokens": sum(e["est_tokens"] for e in entries),
+                "externally_modified": sorted((e["path"] for e in externals), key=str),
                 "checkpoint": self._checkpoint_counter,
                 "seq": self._seq,
             }

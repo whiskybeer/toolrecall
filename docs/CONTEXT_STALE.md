@@ -40,6 +40,8 @@ stale  ⟺  read_seq[path] < write_seq[path]
 
 A read after a write clears staleness. A write after that re-read sets it again. It is a live property, not a latch.
 
+**Native writes (2026-09-17):** `write_seq` only sees daemon writes. Files rewritten outside the daemon (agent-native `write_file`/`patch` tools, any `open('w')`) are detected by re-stating the read set's mtimes at query time — the same re-validation `restore()` applies at boot. They appear in `stale` with `external: true, write_seq: 0` (staleness proven by the mtime delta instead of the sequence) and are listed in `externally_modified`. Deleted files are NOT reported (deletion is not a content change TR can validate); daemon-written paths are excluded from the external set (the normal `write_seq` path owns them).
+
 ---
 
 ## Four entry points, one signal
@@ -66,11 +68,15 @@ Plus the **auto-hint**: after every non-context tool call the MCP bridge appends
 {
   "stale": [
     {"path": "/abs/auth.py", "read_seq": 3, "write_seq": 7,
-     "size": 3616, "est_tokens": 904, "mtime": 1784583313.29}
+     "size": 3616, "est_tokens": 904, "mtime": 1784583313.29},
+    {"path": "/abs/utils.py", "read_seq": 5, "write_seq": 0,
+     "size": 1200, "est_tokens": 300, "mtime": 1784583400.10,
+     "external": true}
   ],
-  "paths": ["/abs/auth.py"],
-  "total_stale": 1,
-  "est_reclaimable_tokens": 904,
+  "paths": ["/abs/auth.py", "/abs/utils.py"],
+  "total_stale": 2,
+  "est_reclaimable_tokens": 1204,
+  "externally_modified": ["/abs/utils.py"],
   "checkpoint": 2,
   "seq": 9
 }

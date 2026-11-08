@@ -1,0 +1,11 @@
+# Semgrep ignore — product-code scan scope (toolrecall/).
+# tests/ is DELIBERATELY excluded: it contains real attack fixtures for the
+# security suite (injection payloads, jailbreak patterns) that must keep
+# matching their own tests, not trip scanners.
+build/
+dist/
+.vscode/
+.venv/
+bench/
+tests/
+docs/

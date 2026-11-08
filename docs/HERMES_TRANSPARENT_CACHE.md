@@ -23,6 +23,21 @@ The shim monkey-patches `builtins.open` for read-only file access at the Python
 interpreter level. The agent still calls native tools — but file reads are served
 from the cache. **The agent never notices.**
 
+### Unchanged-file stub (Lever 1)
+
+A second+ read of a **byte-identical** file within `[shim].stub_ttl` (default
+300s) serves a one-line note instead of full content — "file unchanged since
+HH:MM:SS; agent holds it from the earlier read". This is a *measured* context
+saving (the content provably never reaches the LLM; counted in the same
+`mcp_dedup` tier as the bridge stub). Safety rails: agent-process gate, cache
+hits only, 800-char floor, max 2 consecutive stubs before a forced full send
+(compaction armor), mtime+size re-validation upstream of every candidate, and
+kill switch `TOOLRECALL_SHIM_STUB=0` (call-time, per process). What the TTL
+does and does not guard is documented in
+[CONFIG_REFERENCE](CONFIG_REFERENCE.md#unchanged-file-stub-ttl-shimstub_ttl);
+the state machine is shared with the MCP bridge via `toolrecall/stub_core.py`
+(one contract, two surfaces).
+
 ### Tools intercepted (via the shim)
 
 | Native Call | Cache Backend | Benefit |

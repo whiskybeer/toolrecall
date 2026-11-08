@@ -35,6 +35,7 @@ Config:
 
 import os
 import builtins
+import logging
 import sys
 import threading
 
@@ -60,6 +61,22 @@ def _marker_disabled() -> bool:
 
 
 _ENABLED = not (os.environ.get("TOOLRECALL_SHIM_DISABLE", "") or _marker_disabled())
+
+# ─── Unchanged-file stub (Lever 1, 2026-09-17) ──────────────────────────────
+# Second+ native read of an UNCHANGED file in an agent process -> serve a
+# one-line stub instead of full content. Wire-verified not-sent (the content
+# provably never reaches the LLM), counted in the same mcp_dedup measured
+# tier as the bridge stub. Contract + safety rails live in shim_stub.py.
+try:
+    from toolrecall.shim_stub import (  # noqa: E402
+        maybe_stub as _stub_maybe,
+        reset_path as _stub_reset_path,
+        reset_all as _stub_reset_all,
+    )
+except Exception:  # noqa: BLE001 — stub is an enhancement, never a gate
+    _stub_maybe = None  # type: ignore[assignment]
+    _stub_reset_path = None  # type: ignore[assignment]
+    _stub_reset_all = None  # type: ignore[assignment]
 
 # ─── Re-entrancy guard ───
 # Prevents infinite recursion when the shim's own code path (importing
@@ -545,6 +562,51 @@ def _shim_open(path, mode="r", *args, **kwargs):
                     # NOT re-encodable — the caller gets the real file.
                     and (mode_kind == "text" or result.get("lossless", False))
                 ):
+                    content = result["content"]
+                    # ── Unchanged-file stub (Lever 1): second+ agent read of
+                    # an unchanged file within TTL -> one-line note instead
+                    # of full content. Wire-verified not-sent, counted in
+                    # the mcp_dedup measured tier. Fail-open: None = serve.
+                    #
+                    # GATE (2026-09-18, live incident): stub ONLY when the
+                    # read was tagged agent_tool. A stub claims "the agent
+                    # holds this content from an earlier read" — for
+                    # infra/library reads (source="shim": config.yaml,
+                    # gateway-internal files, tooling) that claim is FALSE:
+                    # the same process re-reads its own config for CORRECT
+                    # bytes every time, and serving the note corrupted the
+                    # Hermes gateway's YAML parse ("did not find expected
+                    # <document start>" in the shim tmp file) and sent it
+                    # into config-recovery backups. The mtime+size cache
+                    # gate is not enough here: the CACHED content is
+                    # correct; the STUB replaces it with a pointer the
+                    # consumer never asked for.
+                    if _stub_maybe is not None and result.get("source") == "agent_tool":
+                        _stub_note = _stub_maybe(
+                            path_str,
+                            content,
+                            is_agent=_process_is_agent(),
+                            lossless=bool(result.get("lossless", mode_kind == "text")),
+                        )
+                        if _stub_note is not None:
+                            # Wire-verified not-sent (mcp_dedup measured tier).
+                            # Counting lives in shim_stub's FileStubSession
+                            # (counter_fn → daemon cmd dedup_tokens) since the
+                            # stub_core split — exactly one send per stub, and
+                            # the old inline send here is gone.
+                            stub_content = _stub_note
+                            # NOTE: always pass the STR note —
+                            # _open_cached_content writes text ('w') into the
+                            # temp file; passing bytes here raised TypeError,
+                            # the outer except swallowed it, and the caller
+                            # got FULL content while the counter had already
+                            # counted (caught live by the Lever-1 e2e).
+                            return _open_cached_content(
+                                stub_content,
+                                "rb" if mode_kind == "binary" else mode,
+                                *args,
+                                **kwargs,
+                            )
                     if mode_kind == "binary":
                         serve_mode = "rb"
                         # encoding/errors/newline are invalid on a binary
@@ -559,7 +621,19 @@ def _shim_open(path, mode="r", *args, **kwargs):
                         serve_mode = mode
                     return _open_cached_content(result["content"], serve_mode, *args, **kwargs)
             except Exception:
-                pass
+                # The big invisible one: a shim-internal failure (daemon RPC
+                # error, decode issue, temp-file failure) used to vanish and
+                # every subsequent read of the path silently bypassed the
+                # cache. WARNING → stderr via lastResort (the shim never
+                # calls setup_logging — per-process file writes from every
+                # open() on the box would be wrong); the gateway journal
+                # captures it. Logging calls never raise (logging's own
+                # handler errors go through handleError), so no guard needed.
+                logging.getLogger("toolrecall.shim").warning(
+                    "shim cache path failed; falling through to real open: %s",
+                    path_str,
+                    exc_info=True,
+                )
         return _original_open(path_str, mode, *args, **kwargs)
     finally:
         _exit_shim(prev)

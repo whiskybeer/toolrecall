@@ -1816,7 +1816,9 @@ def _proxy_alive(timeout: float = 3.0) -> bool:
 
     port = os.environ.get("TOOLRECALL_FORWARD_PORT", "8569")
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=timeout)
+        # nosemgrep: dynamic-urllib-use-detected — loopback-only probe of our own
+        # proxy; port from env, no user URL
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=timeout)  # nosemgrep
         return True
     except urllib.error.HTTPError:
         return True  # proxy answered (upstream auth error) — it's alive

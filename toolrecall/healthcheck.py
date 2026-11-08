@@ -60,6 +60,30 @@ class HealthInfo(TypedDict):
 TOOLRECALL = os.environ.get("TOOLRECALL_BIN", "toolrecall")
 
 
+def _validated_toolrecall_bin() -> list[str]:
+    """TOOLRECALL_BIN is a documented override for cron environments that do
+    not inherit ~/.local/bin PATH. It is env-tainted input reaching
+    subprocess, so validate it strictly before use: allow absolute/relative
+    paths to an existing executable file, or a bare name that resolves on
+    PATH and points to a regular file. Fail closed otherwise."""
+    raw = TOOLRECALL
+    if not raw or any(c in raw for c in ("\x00", "\n")):
+        return [TOOLRECALL]  # fall through; FileNotFoundError handler catches it
+    if os.path.sep in raw:
+        # Path form: must exist, be a regular file, and be executable by us.
+        if os.path.isfile(raw) and os.access(raw, os.X_OK):
+            return [raw]
+        return [TOOLRECALL]
+    # Bare name: must resolve on PATH to a regular executable file.
+    for dir_ in os.environ.get("PATH", "").split(os.pathsep):
+        if not dir_:
+            continue
+        candidate = os.path.join(dir_, raw)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return [raw]
+    return [TOOLRECALL]
+
+
 def _default_socket_path() -> str:
     """Resolve the default UDS socket from the real transport helper."""
     try:
@@ -232,7 +256,7 @@ def gather() -> HealthInfo:
     # Best-effort shim state (probe via the CLI, cheap + bounded).
     try:
         r = subprocess.run(
-            [TOOLRECALL, "shim", "--status", "--all"],
+            _validated_toolrecall_bin() + ["shim", "--status", "--all"],
             capture_output=True,
             text=True,
             timeout=20,
@@ -245,7 +269,7 @@ def gather() -> HealthInfo:
     # Best-effort hit rate from stats (bounded; direct mode trace is fine).
     try:
         r = subprocess.run(
-            [TOOLRECALL, "stats"],
+            _validated_toolrecall_bin() + ["stats"],
             capture_output=True,
             text=True,
             timeout=25,

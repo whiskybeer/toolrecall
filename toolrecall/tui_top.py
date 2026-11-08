@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import curses
+import logging
 import os
 import re
 import sqlite3
@@ -158,8 +159,8 @@ def _open_ro(db: str):
     except sqlite3.Error:
         try:
             con.close()
-        except Exception:
-            pass
+        except Exception as _close_err:  # noqa: BLE001 — close-failure carries no signal
+            logging.getLogger("toolrecall.tui").debug("snapshot con.close failed: %s", _close_err)
     import shutil
     import tempfile
 
@@ -243,7 +244,9 @@ def money_today(usage_csv: str | None = None) -> dict | None:
     Returns None when the CSV is absent or has no rows today — the honest
     'no proxy traffic' state. Fields:
       requests, prompt, completion, replays (cache_status=HIT),
-      median (prompt-token median — the re-sent-history diagnostic).
+      median (prompt-token median — the re-sent-history diagnostic),
+      dedup_tokens (wire-verified tokens removed from requests pre-billing
+      — the per-request Y in "sent X, not sent Y").
     """
     path = usage_csv or os.path.join(os.path.expanduser("~"), ".toolrecall", "proxy_usage.csv")
     if not os.path.isfile(path):
@@ -253,6 +256,7 @@ def money_today(usage_csv: str | None = None) -> dict | None:
 
     requests = prompt = completion = replays = 0
     sizes = []
+    dedup_tokens = 0
     cost = 0.0
     cost_rows = 0
     day_start = (
@@ -276,6 +280,10 @@ def money_today(usage_csv: str | None = None) -> dict | None:
                 if p > 0:
                     sizes.append(p)
                 try:
+                    dedup_tokens += int(row.get("dedup_tokens") or 0)
+                except (TypeError, ValueError):
+                    pass
+                try:
                     c = float(row.get("cost_usd") or 0.0)
                 except (TypeError, ValueError):
                     c = 0.0
@@ -295,6 +303,7 @@ def money_today(usage_csv: str | None = None) -> dict | None:
         "completion": completion,
         "replays": replays,
         "median": median,
+        "dedup_tokens": dedup_tokens,
         # Provider-reported dollars summed over rows that carried a cost.
         # cost_rows == 0 means the column held no provider cost at all
         # (pre-v2 rows, estimate fallbacks) — report None, not $0.00.
@@ -463,10 +472,20 @@ def render_plain(snapshot: dict) -> str:
     money = money_today()
     if money:
         lines.append("")
+        # ── THE headline: sent X, not sent Y (end-user order, 2026-09-16) ──
         lines.append(
-            "money [billed via proxy, today]: requests %d  billed-prompt %s  completions %s  replays %d"
+            "sent to LLM today: %s tok  (%d requests)"
+            % (human_tokens(money["prompt"]), money["requests"])
+        )
+        _dy = money.get("dedup_tokens", 0)
+        if _dy:
+            _pct = (100.0 * _dy / money["prompt"]) if money["prompt"] else 0.0
+            lines.append(
+                "  not sent (dedup): %s tok  (%.1f%% of billed)" % (human_tokens(_dy), _pct)
+            )
+        lines.append(
+            "money [billed via proxy, today]: %s prompt / %s completion tok  replays %d"
             % (
-                money["requests"],
                 human_tokens(money["prompt"]),
                 human_tokens(money["completion"]),
                 money["replays"],
@@ -650,14 +669,33 @@ def run_curses(scr, snapshot_fn, log_fn, interval: float) -> int:
             money = state.get("money")
             if money:
                 y = put(y + 1, "", 0)  # section gap
+                # ── THE headline: sent X, not sent Y (Robin's ask) ──
                 y = put(
                     y,
-                    "  billed via proxy today: %d requests, %s prompt / %s completion tok"
-                    % (
-                        money["requests"],
-                        human_tokens(money["prompt"]),
-                        human_tokens(money["completion"]),
-                    ),
+                    "  sent to LLM today:      %s tok  (%d requests)"
+                    % (human_tokens(money["prompt"]), money["requests"]),
+                    A_BOLD,
+                )
+                _dy = money.get("dedup_tokens", 0)
+                if _dy:
+                    _pct = (100.0 * _dy / money["prompt"]) if money["prompt"] else 0.0
+                    y = put(
+                        y,
+                        "  not sent (dedup):       %s tok  (%.1f%% of billed)"
+                        % (human_tokens(_dy), _pct),
+                        A_HIT,
+                    )
+                else:
+                    y = put(
+                        y,
+                        "  not sent (dedup):       0 tok  (no duplicate blocks in requests)",
+                        A_DIM,
+                    )
+                y = put(y, "", 0)
+                y = put(
+                    y,
+                    "  billed via proxy today: %s prompt / %s completion tok"
+                    % (human_tokens(money["prompt"]), human_tokens(money["completion"])),
                 )
                 y = put(y, "  replays (identical prompt served from cache): %d" % money["replays"])
                 if money.get("cost_usd") is not None:

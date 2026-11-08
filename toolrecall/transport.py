@@ -156,7 +156,9 @@ def bind_socket(sock: socket.socket, path: str):
             pass
         os.makedirs(os.path.dirname(path), exist_ok=True)
         sock.bind(path)
-        os.chmod(path, 0o700)
+        # nosemgrep: insecure-file-permissions — Unix socket: owner-only IS the
+        # strictest sane mode; the rule's 0o644 advice targets world-readable files
+        os.chmod(path, 0o700)  # nosemgrep
 
 
 def connect_socket(sock: socket.socket, path: str):

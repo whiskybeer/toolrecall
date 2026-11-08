@@ -57,7 +57,12 @@ help:
 	@echo "  make type           Run mypy (if installed)"
 	@echo ""
 	@echo "Pre-push Gate"
-	@echo "  make validate       check + type + test-unit in one command"
+	@echo "  make validate       check + type + zero-deps + sec + test-unit"
+	@echo ""
+	@echo "Security"
+	@echo "  make sec            SAST (semgrep) + secrets (gitleaks)"
+	@echo "  make sec-scan       semgrep over product code (configs/semgrep.yml)"
+	@echo "  make sec-secrets    gitleaks full-history secrets scan"
 	@echo ""
 	@echo "Benchmarks"
 	@echo "  make bench-env      Create/install /tmp/bench-env harness venv"
@@ -111,9 +116,13 @@ test: test-dedup
 
 # Selection mirrors the release gate (scripts/release.sh stage 6). Single
 # source of truth for what ships — used by both `make validate` and the release.
+# faulthandler_timeout: a hung test dumps ALL thread stacks after 120s and
+# fails, instead of freezing the gate silently (2026-09-18 full-suite
+# self-deadlock froze 3 validate runs at #969 before faulthandler caught it —
+# see commit 48d0ea1). Zero-deps: CPython stdlib faulthandler, no pytest-timeout.
 .PHONY: test-unit
 test-unit:
-	$(PY_RUN) -m pytest tests/ -q --tb=short -p no:capture -k "not test_client_without_daemon and not e2e and not adk and not gemini"
+	$(PY_RUN) -m pytest tests/ -q --tb=short -p no:capture -o faulthandler_timeout=120 -k "not test_client_without_daemon and not e2e and not adk and not gemini"
 
 .PHONY: test-fast
 test-fast: test-dedup
@@ -173,12 +182,39 @@ check-zero-deps:
 	@python3 -c "import tomllib, sys; deps = tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; sys.exit(f'dependencies must be [], got {deps}' if deps else 0)" \
 		&& echo "✓ zero-deps identity intact (dependencies = [])"
 
+# ─── Security gates ─────────────────────────────────────────────
+# SAST (semgrep) + secrets (gitleaks). Wired into `validate` (the pre-push
+# gate); standalone via make sec. Scope: product code only — tests/ is
+# excluded on purpose (.semgrepignore): attack fixtures must keep matching
+# the security test-suite, not trip scanners. Baseline policy: ZERO findings
+# on toolrecall/ — justified suppressions carry an inline reason.
+# Rulesets live here (semgrep config FILES can't reference registries):
+# p/python + p/security-audit.
+SEMGREP  := $(shell command -v semgrep 2>/dev/null || echo "$(HOME)/.local/bin/semgrep")
+GITLEAKS := $(shell command -v gitleaks 2>/dev/null || echo "$(HOME)/.local/bin/gitleaks")
+
+.PHONY: sec-scan
+sec-scan:
+	set -e
+	@if [ ! -x "$(SEMGREP)" ]; then echo "✗ semgrep not found — pipx install semgrep"; exit 1; fi
+	$(SEMGREP) scan --config p/python --config p/security-audit toolrecall/
+
+.PHONY: sec-secrets
+sec-secrets:
+	set -e
+	@if [ ! -x "$(GITLEAKS)" ]; then echo "✗ gitleaks not found — install from github.com/gitleaks/gitleaks/releases"; exit 1; fi
+	$(GITLEAKS) detect --source . --no-git -v --redact
+
+.PHONY: sec
+sec: sec-scan sec-secrets
+	@echo "✓ security gates passed (sast + secrets)"
+
 # ─── Pre-push gate ─────────────────────────────────────────────
-# One command combining lint + format-check + type-check + the release test
-# selection. This is what CI / a pre-push hook should run.
+# One command combining lint + format-check + type-check + security + the
+# release test selection. This is what CI / a pre-push hook should run.
 .PHONY: validate
-validate: check type check-zero-deps test-unit
-	@echo "✓ validate passed (lint + format + type + zero-deps + unit tests)"
+validate: check type check-zero-deps sec test-unit
+	@echo "✓ validate passed (lint + format + type + zero-deps + security + unit tests)"
 
 # ─── Benchmarks ─────────────────────────────────────────────────
 # Three-arm benchmark (naive / prefix / toolrecall), see bench/README.md.

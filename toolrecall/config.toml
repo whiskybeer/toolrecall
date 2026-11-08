@@ -350,6 +350,20 @@ enabled = true
 # cache DB, and it is unaffected. Setting this list REPLACES the default
 # (/proc/, /sys/, /dev/) — re-list those when overriding.
 # exclude_prefixes = ["/proc/", "/sys/", "/dev/", "/home/you/.agent/.env"]
+#
+# Unchanged-file stub TTL (Lever 1). Second+ read of a byte-identical file
+# within this window serves a one-line note instead of full content.
+# NOT a staleness guard — every cache hit is already mtime+size re-validated,
+# so a stub can never reference different bytes than the disk holds. It
+# bounds the AGENT-memory axis: how old a "you already hold this from the
+# earlier read" claim may be before harness compaction could have dropped
+# that earlier copy (a wrong stub strands the agent for a recovery turn).
+# Higher = more measured savings, higher stranding risk after compactions;
+# the optimal value tracks the harness's compaction cadence. 0 = stubbing
+# off (cache still serves). The MCP bridge stub keeps its own shorter TTL
+# (60s) deliberately — append-only harnesses compact aggressively.
+# Kill switch: TOOLRECALL_SHIM_STUB=0 (per process, at call time).
+# stub_ttl = 300
 # ─── Per-Path File TTLs (trust windows) ──────────────
 # Override the global file_ttl for specific files, folders, or file types.
 # Pattern semantics (fnmatch globs, matched against the absolute path):

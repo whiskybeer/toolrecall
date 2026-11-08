@@ -52,7 +52,9 @@ def _api_req(method: str, path: str, token: str, body: dict | None = None) -> di
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # nosemgrep: dynamic-urllib-use-detected — fixed https://api.turso.tech
+        # base, no user-supplied URL
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         detail = e.read().decode() if e.fp else ""

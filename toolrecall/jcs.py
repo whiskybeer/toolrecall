@@ -208,6 +208,34 @@ def _reject_lone_surrogates(s: str, what: str) -> None:
             )
 
 
+def canonicalize_str(raw: str) -> str:
+    """Canonicalize a raw JSON *string* (round-3 item 4: duplicate keys).
+
+    Standard ``json.loads`` silently collapses duplicate object keys
+    (``'{"a":1,"a":2}'`` → ``{"a": 2}``), so a downstream consumer cannot
+    tell whether the preimage was well-formed. This variant detects
+    duplicates at parse time and rejects them with :class:`JCSTypeError`,
+    making the I-JSON duplicate-key rule enforceable, not just asserted.
+
+    Use this for raw JSON inputs (wire payloads, log lines); use
+    :func:`canonicalize` when the value is already a parsed Python object.
+    """
+    import json as _json
+
+    seen: list = []
+
+    def _hook(pairs):
+        keys = [k for k, _ in pairs]
+        if len(set(keys)) != len(keys):
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            raise JCSTypeError(f"duplicate object keys in JSON input: {dupes}")
+        seen.append(True)
+        return dict(pairs)
+
+    value = _json.loads(raw, object_pairs_hook=_hook)
+    return canonicalize(value)
+
+
 def canonicalize(value: Any) -> str:
     """RFC 8785 canonical JSON of ``value`` as a str.
 

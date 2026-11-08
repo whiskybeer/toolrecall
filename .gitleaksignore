@@ -1,0 +1,8 @@
+# gitleaks baseline — findings verified as NON-secrets (2026-09-18).
+#
+# bench/litellm_dedup/run_accumulate.sh:48 — `Authorization: Bearer sk-bench`
+# is a LITERAL PLACEHOLDER for the local LiteLLM bench proxy (binds
+# localhost only, virtual-key style token defined in the same bench config;
+# no external system accepts it). gitleaks flags the `sk-` prefix pattern.
+# Fingerprint from: gitleaks detect --source . --no-git --redact
+bench/litellm_dedup/run_accumulate.sh:curl-auth-header:48

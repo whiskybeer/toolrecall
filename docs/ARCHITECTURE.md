@@ -317,6 +317,7 @@ that every `toolrecall/*.py` path cited in `docs/` exists.
 | File | Purpose |
 |------|---------|
 | `toolrecall/mcp_bridge.py` | stdio ↔ UDS protocol adapter |
+| `toolrecall/stub_core.py` | Shared unchanged-file stub state machine (bridge + shim surfaces) |
 | `toolrecall/mcp_registry.py` | MCP server-name → command registry |
 | `toolrecall/mcp_cache_fs.py` | Cached read/write MCP server via ToolRecall SQLite |
 | `toolrecall/mcp_fetch.py` | stdlib-only HTTP fetch MCP server |

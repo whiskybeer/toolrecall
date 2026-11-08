@@ -430,17 +430,41 @@ _USAGE_LOG_PATH = os.path.expanduser("~/.toolrecall/proxy_usage.csv")
 # fallback rows, or providers without a cost field) — never guess it here.
 _USAGE_LOG_HEADER = (
     "timestamp,cache_status,target_host,target_path,request_hash,"
-    "prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens,cost_usd\n"
+    "prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens,cost_usd,"
+    "dedup_tokens\n"
 )
 _USAGE_LOG_LOCK = threading.Lock()
 
 
 def _init_usage_log():
-    """Ensure the usage CSV exists with headers (one-time, thread-safe)."""
+    """Ensure the usage CSV exists with a CURRENT header (one-time, thread-safe).
+
+    Header migration: the file is append-only across daemon restarts and
+    version bumps, so a pre-v3 file keeps its v1/v2 header forever — and
+    DictReader-based consumers (money_today, cron script) then read
+    dedup_tokens/cost_usd as None even though the writer emits them.
+    When the existing header lacks a column, rewrite ONLY the header line
+    in place (same byte positions for existing columns; consumers treat
+    missing values in old rows as 0 via .get() or 0).
+    """
     os.makedirs(os.path.dirname(_USAGE_LOG_PATH), exist_ok=True)
     if not os.path.exists(_USAGE_LOG_PATH):
         with open(_USAGE_LOG_PATH, "w") as f:
             f.write(_USAGE_LOG_HEADER)
+        return
+    with open(_USAGE_LOG_PATH) as f:
+        first = f.readline()
+    if first.strip() != _USAGE_LOG_HEADER.strip():
+        with _USAGE_LOG_LOCK:
+            try:
+                with open(_USAGE_LOG_PATH) as f:
+                    lines = f.readlines()
+                if lines:
+                    lines[0] = _USAGE_LOG_HEADER
+                    with open(_USAGE_LOG_PATH, "w") as f:
+                        f.writelines(lines)
+            except OSError:
+                pass  # best-effort — header migration must never block startup
 
 
 def _try_parse_usage(body: str) -> dict:
@@ -500,6 +524,7 @@ def _log_proxy_usage(
     body: str = "",
     prompt_tokens_override: int = 0,
     usage: dict | None = None,
+    dedup_tokens: int = 0,
 ) -> None:
     """Append one usage row to the proxy_usage.csv log.
 
@@ -516,6 +541,10 @@ def _log_proxy_usage(
         usage: pre-parsed provider usage dict (from a stream's final SSE
             chunk). Takes precedence over body parsing; empty/None falls
             back to body parsing, then prompt_tokens_override.
+        dedup_tokens: wire-verified tokens REMOVED from this request by
+            request-body dedup before billing (est. chars//4 from the
+            dedup stats). 0 = nothing stubbed. This is the per-request
+            Y in the user-facing "sent X, not sent Y" accounting.
     """
     if usage is None:
         usage = _try_parse_usage(body)
@@ -541,7 +570,7 @@ def _log_proxy_usage(
                 f.write(
                     f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
                     f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
-                    f",{pt},{ct},{crt},{cwt},{cost_usd:.6f}\n"
+                    f",{pt},{ct},{crt},{cwt},{cost_usd:.6f},{dedup_tokens}\n"
                 )
         except OSError:
             pass  # best-effort — never break the proxy over a log write
@@ -799,6 +828,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 not in ("1", "true", "yes")
             ):
                 body_bytes, _dedup_stats = _maybe_dedup_body(body_bytes)
+                # Wire-verified not-sent for THIS request (chars//4, same
+                # estimator as the dedup log line). Threaded to the usage
+                # row so every billed request carries its own Y.
+                _dedup_tokens = int(_dedup_stats["chars_saved"]) // 4 if _dedup_stats else 0
+                self._request_dedup_tokens = _dedup_tokens
+                if _dedup_stats and _dedup_tokens:
+                    self._request_dedup_blocks = int(_dedup_stats["blocks"])
 
             # Detect streaming requests — bypass cache, use chunked relay
             if body_bytes and _STREAM_RE.search(body_bytes):
@@ -807,6 +843,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         # Estimate prompt tokens from request body (fallback when response
         # body has no usage field — e.g. cached HIT or malformed response).
         self._usage_prompt_tokens_fallback = max(1, len(body_bytes) // 4)
+        # Per-request dedup default (0) — set above only when dedup ran and
+        # stubbed something. Consumed by the usage-log calls downstream.
+        if not hasattr(self, "_request_dedup_tokens"):
+            self._request_dedup_tokens = 0
 
         # ── Canonicalization (X-ToolRecall-Canonicalize: <profile>) ─────────
         # Agent harnesses inject per-request volatile fields (run UUIDs,
@@ -864,7 +904,12 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     )
                     if n is not None:
                         _log_proxy_usage(
-                            "HIT", target_host, target_path, request_hash, prompt_tokens_override=n
+                            "HIT",
+                            target_host,
+                            target_path,
+                            request_hash,
+                            prompt_tokens_override=n,
+                            dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
                         )
                         return  # replay written
                 # MISS (or replay failed). Two sub-cases:
@@ -887,6 +932,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                                 target_path,
                                 request_hash,
                                 prompt_tokens_override=n,
+                                dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
                             )
                             return  # replay written
                 # still a MISS → live streaming, which will tee the response.
@@ -907,6 +953,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 canonical_profile=canonical_profile,
                 request_hash=request_hash,
                 body_for_tee=body_bytes,
+                dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
             )
             return
 
@@ -930,6 +977,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 target_path,
                 request_hash,
                 resp_body.decode("utf-8", "replace"),
+                dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
             )
             resp_body_bytes = (
                 resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8")
@@ -999,7 +1047,14 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(cached_body_bytes)
                 # Log usage — the cached body still contains the original usage field
-                _log_proxy_usage("HIT", target_host, target_path, request_hash, cached_body)
+                _log_proxy_usage(
+                    "HIT",
+                    target_host,
+                    target_path,
+                    request_hash,
+                    cached_body,
+                    dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                )
                 return
 
         # Cache MISS — forward to real API
@@ -1075,9 +1130,16 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 target_path,
                 request_hash,
                 body_str if isinstance(resp_body, bytes) else resp_body,
+                dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
             )
         else:
-            _log_proxy_usage("MISS", target_host, target_path, request_hash)
+            _log_proxy_usage(
+                "MISS",
+                target_host,
+                target_path,
+                request_hash,
+                dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+            )
 
     def do_GET(self):
         self._handle("GET")
@@ -1253,7 +1315,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             if is_loopback:
                 conn = http.client.HTTPConnection(host, timeout=_FORWARD_TIMEOUT)
             else:
-                conn = http.client.HTTPSConnection(host, timeout=_FORWARD_TIMEOUT)
+                conn = http.client.HTTPSConnection(
+                    host, timeout=_FORWARD_TIMEOUT
+                )  # nosemgrep: httpsconnection-detected — this IS the forward proxy's function; TLS posture reviewed (Warp trust-model doc)
         except Exception as e:
             log.error("Cannot establish HTTPS connection to %s: %s", host, e)
             return (
@@ -1309,6 +1373,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         canonical_profile: str | None = None,
         request_hash: str | None = None,
         body_for_tee: bytes | None = None,
+        dedup_tokens: int = 0,
     ):
         """Forward request and relay response as chunked/streaming.
 
@@ -1356,7 +1421,9 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             if is_loopback:
                 conn = http.client.HTTPConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
             else:
-                conn = http.client.HTTPSConnection(host, timeout=_FORWARD_STREAM_TIMEOUT)
+                conn = http.client.HTTPSConnection(
+                    host, timeout=_FORWARD_STREAM_TIMEOUT
+                )  # nosemgrep: httpsconnection-detected — this IS the forward proxy's function; TLS posture reviewed (Warp trust-model doc)
         except Exception as e:
             log.error(
                 "Cannot establish %s connection to %s: %s",
@@ -1477,6 +1544,7 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # the historical len(body)//4 prompt approximation so the row
             # still carries a nonzero magnitude.
             prompt_tokens_override=pt_est if not usage else 0,
+            dedup_tokens=dedup_tokens,
         )
 
     def _replay_stream_from_cache(

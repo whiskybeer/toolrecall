@@ -8,6 +8,7 @@ Loads toolrecall.toml from (in order of priority):
 5. Package default (config.toml next to this file)
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -59,6 +60,7 @@ ENV_MAP = {
     "TOOLRECALL_NORM_STRIP_STRINGS": ("norm", "strip_strings"),
     "TOOLRECALL_SHIM_EXCLUDE_PREFIXES": ("shim", "exclude_prefixes"),
     "TOOLRECALL_SHIM_TAG_SOURCE": ("shim", "tag_source"),
+    "TOOLRECALL_SHIM_STUB_TTL": ("shim", "stub_ttl"),
     "TOOLRECALL_TRACKER_IGNORE_PREFIXES": ("tracker", "ignore_read_prefixes"),
     "TOOLRECALL_TRACKER_PERSIST_TTL": ("tracker", "persist_ttl"),
     "TOOLRECALL_RECALL_ENABLED": ("recall", "enabled"),
@@ -131,6 +133,13 @@ def _apply_env_overrides(config: dict) -> dict:
             "allow_symlink_escapes",
         }
     )
+    # Float-typed keys (fail-soft override): an unparseable env value must
+    # NOT replace a valid config-file value with a raw string (which the
+    # property would then reject down to its default). 2026-09-18: invalid
+    # TOOLRECALL_SHIM_STUB_TTL masked a valid [shim].stub_ttl=123 with the
+    # 300 default — invalid env now falls back to CONFIG per the documented
+    # contract, and only to the default when the config lacks the key too.
+    _FLOAT_KEYS = frozenset({"stub_ttl", "persist_ttl"})
     for env_key, (section, key) in ENV_MAP.items():
         val = os.environ.get(env_key)
         if val is None:
@@ -146,6 +155,14 @@ def _apply_env_overrides(config: dict) -> dict:
                 config[section][key] = False
             else:
                 pass  # Leave default — invalid bool value
+            continue
+        if key in _FLOAT_KEYS:
+            try:
+                config[section][key] = float(val)
+            except (ValueError, TypeError):
+                logging.getLogger("toolrecall.config").debug(
+                    "%s=%r is not a number — keeping config value", env_key, val
+                )
             continue
         try:
             config[section][key] = int(val)
@@ -274,7 +291,7 @@ class Config:
                 "cb_open_seconds",
             }
         ),
-        "shim": frozenset({"exclude_prefixes", "tag_source"}),
+        "shim": frozenset({"exclude_prefixes", "tag_source", "stub_ttl"}),
         "mcp": frozenset(
             {
                 "allowed_paths",
@@ -1054,6 +1071,46 @@ class Config:
         if isinstance(raw, list):
             return raw
         return []
+
+    @property
+    def shim_stub_ttl(self) -> float:
+        """TTL (seconds) for the shim's unchanged-file stub, Lever 1.
+
+        WHAT THIS TTL IS — and what it is NOT:
+
+        It does NOT guard against stale disk content. Every shim cache hit
+        is already re-validated against the file's mtime+size before it is
+        served, so a stub can never reference different bytes than the disk
+        holds. The TTL guards the AGENT-memory axis: a stub works by
+        claiming "the agent already holds this content from an earlier
+        read". Agent harnesses compact old tool results out of the context
+        window; after compaction the stub references content the agent no
+        longer has, which strands it for a recovery turn. The TTL bounds
+        how old a "you already hold this" claim may be before ToolRecall
+        stops trusting it and re-sends the full content.
+
+        In short: mtime+size proves the DISK is current; the TTL bounds how
+        much we trust the AGENT's memory. They are independent validators
+        and both are required (disabling the TTL re-opens the
+        read-then-compact-then-re-read stranding case).
+
+        Tuning: higher = more measured savings, higher stranding risk after
+        harness compactions; lower = more duplicate re-sends. The optimal
+        value tracks the harness's compaction cadence — start at the 300s
+        default and adjust from observed behavior. ``0`` disables stubbing
+        entirely (cache still serves, just without the stub).
+
+        Configured via [shim].stub_ttl in toolrecall.toml, or
+        TOOLRECALL_SHIM_STUB_TTL env var (seconds). The MCP bridge stub
+        deliberately keeps its own shorter TTL (60s) — append-only harnesses
+        like Claude Code compact aggressively.
+        """
+        val = self.get("shim", "stub_ttl", default=300)
+        try:
+            v = float(val)
+            return v if v >= 0 else 300.0
+        except (TypeError, ValueError):
+            return 300.0
 
     # ─── Context Tracker Properties ─────────────────────
 

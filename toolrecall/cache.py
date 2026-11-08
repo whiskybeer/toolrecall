@@ -28,6 +28,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 
 import os
 import time
+import logging
 from typing import Any, Callable
 import warnings
 from datetime import datetime
@@ -38,6 +39,8 @@ from toolrecall.config import load_config
 from toolrecall._db import _db
 from toolrecall._db import _init as _db_init
 from toolrecall._db import _hash
+
+log = logging.getLogger("toolrecall.cache")
 
 
 # Re-export for test compatibility: toolrecall.cache._init() calls _db_init with SCHEMA
@@ -2218,6 +2221,10 @@ def invalidate_file(path: str, ns: str = ""):
 
     A6-7: with a namespace, ONLY that scope's entry is removed — global
     and other scopes' entries for the same path survive.
+
+    Also clears the shim's unchanged-file stub state for the path
+    (Lever 1): after a write/patch, the next read must deliver FULL
+    content (the agent's held copy is stale).
     """
     path = os.path.expanduser(path)
     if ns:
@@ -2226,6 +2233,16 @@ def invalidate_file(path: str, ns: str = ""):
     else:
         _file_cache.remove(path)
         h = _hash(path)
+
+    try:
+        from toolrecall.shim_stub import reset_path as _stub_reset
+
+        _stub_reset(path)
+    except Exception:
+        # stub-state reset must never block invalidation (daemon-side call:
+        # the shim's in-process state is unreachable from here — mtime-gate
+        # covers correctness; the swallow is logged for diagnosis).
+        log.debug("stub-state reset failed for %s", path, exc_info=True)
 
     try:
         with _db() as conn:
