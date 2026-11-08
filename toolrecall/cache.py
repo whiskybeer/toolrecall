@@ -429,8 +429,11 @@ CREATE TABLE IF NOT EXISTS cache_stats (
 -- (so the status view is not dominated by dead categories); it used to do that
 -- by DELETING the totals, which destroyed 2.02 B io_tokens_saved on the live DB
 -- (found 2026-10-03). Totals are now banked here and stay readable as
--- live + banked (get_stats lifetime_*). Exactly the columns the GC resets are
--- banked, so a lifetime sum can never double-count.
+-- live + banked (get_stats lifetime_*). A caller banks exactly the columns it
+-- zeroes, so a lifetime sum can never double-count:
+--   * the GC resets five for categories idle >24 h (see garbage_collect);
+--   * reset_stats moves all seven, including the measured bridge-stub axis
+--     and the uncacheable-read denominator, because it zeroes the whole row.
 -- tokens_saved_to_llm joined the banked set on 2026-10-22: it is reset by the
 -- same statement as io_tokens_saved, so leaving it out made the display claim
 -- MORE context savings than IO offload after every reset — ctx > io, which is
@@ -443,6 +446,8 @@ CREATE TABLE IF NOT EXISTS cache_stats_banked (
     tokens_read_from_disk INTEGER NOT NULL DEFAULT 0,
     io_tokens_saved       INTEGER NOT NULL DEFAULT 0,
     tokens_saved_to_llm   INTEGER NOT NULL DEFAULT 0,
+    tokens_read_uncacheable INTEGER NOT NULL DEFAULT 0,
+    tokens_not_sent_measured INTEGER NOT NULL DEFAULT 0,
     banked_at             REAL,
     bank_count            INTEGER NOT NULL DEFAULT 0
 );
@@ -456,6 +461,24 @@ CREATE TABLE IF NOT EXISTS access_log (
     client TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_time ON access_log(cached_at DESC);
+-- Compacted remainders of access_log windows that reset_stats() moved aside.
+-- `toolrecall trend` aggregates access_log at query time and has no other
+-- source, so a reset used to blank the trend silently. Per day/category/path
+-- counts keep every read and hit counted at a fraction of the rows; the infra
+-- filter stays in trend.py (applied to live and banked rows alike), so the
+-- two sources remain comparable.
+CREATE TABLE IF NOT EXISTS access_log_banked (
+    day        TEXT NOT NULL,
+    category   TEXT NOT NULL,
+    path       TEXT NOT NULL DEFAULT '',
+    reads      INTEGER NOT NULL DEFAULT 0,
+    hits       INTEGER NOT NULL DEFAULT 0,
+    misses     INTEGER NOT NULL DEFAULT 0,
+    tokens     INTEGER NOT NULL DEFAULT 0,
+    banked_at  REAL,
+    bank_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, category, path)
+);
 CREATE TABLE IF NOT EXISTS work_ledger (
     key TEXT PRIMARY KEY,
     metrics_json TEXT NOT NULL,
@@ -2819,17 +2842,28 @@ def get_stats() -> dict:
                 # that has no ctx column yet (the migration adds it, but a
                 # read-only or not-yet-migrated DB must not break the view).
                 _ctx_col = "tokens_saved_to_llm" if "tokens_saved_to_llm" in bank_cols else "0"
+                # Same guard for the two axes reset_stats() also moves. Kept as
+                # trailing SELECT columns on purpose: the first seven tuple
+                # slots (hits, misses, read, io, ctx, banked_at, bank_count)
+                # must keep their meaning for the lifetime_* fields below.
+                _unc_col = (
+                    "tokens_read_uncacheable" if "tokens_read_uncacheable" in bank_cols else "0"
+                )
+                _meas_col = (
+                    "tokens_not_sent_measured" if "tokens_not_sent_measured" in bank_cols else "0"
+                )
                 banked = {
-                    r[0]: (r[1], r[2], r[3], r[4], r[5], r[6], r[7])
+                    r[0]: (r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9])
                     for r in conn.execute(
                         "SELECT category, hits, misses, tokens_read_from_disk,"
                         " io_tokens_saved, " + _ctx_col + ","
-                        " banked_at, bank_count FROM cache_stats_banked"
+                        " banked_at, bank_count,"
+                        " " + _unc_col + ", " + _meas_col + " FROM cache_stats_banked"
                     )
                 }
             for row in conn.execute("SELECT * FROM cache_stats"):
                 total = row["hits"] + row["misses"]
-                b = banked.get(row["category"], (0, 0, 0, 0, 0, None, 0))
+                b = banked.get(row["category"], (0, 0, 0, 0, 0, None, 0, 0, 0))
                 measured = (
                     row["tokens_not_sent_measured"]
                     if "tokens_not_sent_measured" in row.keys()
@@ -2878,6 +2912,20 @@ def get_stats() -> dict:
                     "banked_tokens_saved_to_llm": b[4],
                     "banked_at": b[5],
                     "bank_count": b[6],
+                    # The two axes reset_stats() moves but the GC leaves alone:
+                    # without a lifetime field a reset would drop them from the
+                    # report entirely (the measured axis is the only wire-level
+                    # verified savings number there is).
+                    "lifetime_tokens_read_uncacheable": (
+                        (
+                            row["tokens_read_uncacheable"]
+                            if "tokens_read_uncacheable" in row.keys()
+                            else 0
+                        )
+                        + b[7]
+                    ),
+                    "lifetime_tokens_not_sent_measured": measured + b[8],
+                    "banked_tokens_not_sent_measured": b[8],
                     # MEASURED tier — wire-verified (bridge replaced the
                     # content with a stub). Never an estimate; independent
                     # of any checkpoint/hint state.
@@ -2984,22 +3032,168 @@ def get_stats() -> dict:
     return stats
 
 
-def reset_stats():
-    """Reset cache statistics counters (hits, misses, tokens_read_from_disk, tokens_not_read_from_disk) without clearing cache entries.
+#: Every cache_stats column that accumulates over the window. reset_stats()
+#: moves all of them into cache_stats_banked before zeroing the live row.
+#: This is deliberately a superset of what garbage_collect() banks: the GC
+#: resets only its idle-category columns and must leave the measured
+#: bridge-stub axis and the uncacheable-read denominator alone (zeroing those
+#: would blank the only wire-level verified savings headline), while a
+#: user-requested reset zeroes the whole row.
+_BANKED_COUNTERS = (
+    "hits",
+    "misses",
+    "tokens_read_from_disk",
+    "io_tokens_saved",
+    "tokens_saved_to_llm",
+    "tokens_read_uncacheable",
+    "tokens_not_sent_measured",
+)
 
-    AUDIT: every wipe is logged to the daemon/CLI log with the calling
-    module — two silent wipes (2026-09-08/09) destroyed lifetime counters
-    and the access_log trend window before anyone noticed. This must
-    never happen silently again.
+
+def _ensure_cache_stats_banked(conn) -> set:
+    """Create the bank table; add any counter column an older build lacks.
+
+    Self-sufficient on a pre-migration DB: a missing table or a table created
+    before a column existed must never abort the caller (same guard style as
+    the GC's inline version). Returns the column set present afterwards.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cache_stats_banked ("
+        " category TEXT PRIMARY KEY,"
+        " hits INTEGER NOT NULL DEFAULT 0,"
+        " misses INTEGER NOT NULL DEFAULT 0,"
+        " tokens_read_from_disk INTEGER NOT NULL DEFAULT 0,"
+        " io_tokens_saved INTEGER NOT NULL DEFAULT 0,"
+        " tokens_saved_to_llm INTEGER NOT NULL DEFAULT 0,"
+        " tokens_read_uncacheable INTEGER NOT NULL DEFAULT 0,"
+        " tokens_not_sent_measured INTEGER NOT NULL DEFAULT 0,"
+        " banked_at REAL,"
+        " bank_count INTEGER NOT NULL DEFAULT 0)"
+    )
+    have = {r[1] for r in conn.execute("PRAGMA table_info(cache_stats_banked)")}
+    for col in _BANKED_COUNTERS:
+        if col not in have:
+            conn.execute(
+                f"ALTER TABLE cache_stats_banked ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0"
+            )
+            have.add(col)
+    return have
+
+
+def _bank_and_zero_cache_stats(conn, now: float) -> list:
+    """Move every cache_stats counter into the bank, then zero the live row.
+
+    The move SUMS rather than overwrites: a category already banked by an
+    earlier reset or by the GC must accumulate, not lose the earlier total
+    (bank_count records how often it moved). Returns the moved categories.
+    """
+    _ensure_cache_stats_banked(conn)
+    cols = ", ".join(_BANKED_COUNTERS)
+    placeholders = ", ".join(["?"] * len(_BANKED_COUNTERS))
+    rows = conn.execute(f"SELECT category, {cols} FROM cache_stats").fetchall()
+    for row in rows:
+        conn.execute(
+            f"INSERT INTO cache_stats_banked (category, {cols}, banked_at, bank_count)"
+            f" VALUES (?, {placeholders}, ?, 1)"
+            " ON CONFLICT(category) DO UPDATE SET "
+            + ", ".join(f"{c} = {c} + excluded.{c}" for c in _BANKED_COUNTERS)
+            + ", banked_at = excluded.banked_at, bank_count = bank_count + 1",
+            (*row, now),
+        )
+    if rows:
+        conn.execute(
+            "UPDATE cache_stats SET "
+            + ", ".join(f"{c} = 0" for c in _BANKED_COUNTERS)
+            + ", updated_at = ?",
+            (now,),
+        )
+    return [r[0] for r in rows]
+
+
+def _bank_access_log(conn) -> int:
+    """Compact the access_log window into access_log_banked; drop the raw rows.
+
+    A reset used to DELETE this table, which silently destroyed the trend
+    window: `toolrecall trend` aggregates access_log at query time and has no
+    other source (see trend.py). Per day/category/path counts keep every read
+    and hit counted at a fraction of the rows — a MOVE, not a discard.
+    Returns the number of (day, category) buckets now on record.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS access_log_banked ("
+        " day TEXT NOT NULL,"
+        " category TEXT NOT NULL,"
+        " path TEXT NOT NULL DEFAULT '',"
+        " reads INTEGER NOT NULL DEFAULT 0,"
+        " hits INTEGER NOT NULL DEFAULT 0,"
+        " misses INTEGER NOT NULL DEFAULT 0,"
+        " tokens INTEGER NOT NULL DEFAULT 0,"
+        " banked_at REAL,"
+        " bank_count INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY (day, category, path))"
+    )
+    # INSERT ... SELECT with ON CONFLICT needs a WHERE clause: without one
+    # SQLite parses the ON as a join condition and reports a syntax error.
+    conn.execute(
+        """
+        INSERT INTO access_log_banked
+            (day, category, path, reads, hits, misses, tokens, banked_at, bank_count)
+        SELECT date(cached_at, 'unixepoch'),
+               category,
+               coalesce(path, ''),
+               COUNT(*),
+               SUM(hit),
+               SUM(1 - hit),
+               SUM(coalesce(tokens, 0)),
+               ?,
+               1
+        FROM access_log
+        WHERE category IS NOT NULL
+        GROUP BY 1, 2, 3
+        ON CONFLICT(day, category, path) DO UPDATE SET
+            reads = reads + excluded.reads,
+            hits = hits + excluded.hits,
+            misses = misses + excluded.misses,
+            tokens = tokens + excluded.tokens,
+            banked_at = excluded.banked_at,
+            bank_count = bank_count + 1
+        """,
+        (time.time(),),
+    )
+    buckets = conn.execute(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM access_log_banked GROUP BY day, category)"
+    ).fetchone()[0]
+    conn.execute("DELETE FROM access_log")
+    return int(buckets or 0)
+
+
+def reset_stats():
+    """Reset the statistics *window* without destroying any history.
+
+    MOVE, never destroy. Two silent wipes (2026-09-08/09) destroyed lifetime
+    counters and the access_log trend window before anyone noticed, and the
+    trend command has no other source — a reset blanked it silently. So:
+
+      1. every cache_stats counter is moved into cache_stats_banked and the
+         live row is zeroed: the window reads 0, the lifetime total
+         (get_stats lifetime_*) still carries everything;
+      2. the access_log window is compacted into access_log_banked before the
+         raw rows go, so `toolrecall trend` still reaches back past a reset.
+
+    Cache *entries* were never touched by this function and still aren't.
+
+    AUDIT: every move is logged with the calling module — the 2026-09-10 wipe
+    storm (17 resets in 5h) was attributable only by timestamp correlation.
+    This must never happen silently again.
     """
     import logging
     import traceback
 
     try:
         with _db() as conn:
-            wiped = conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0]
-            conn.execute("DELETE FROM cache_stats")
-            conn.execute("DELETE FROM access_log")
+            window_rows = conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0]
+            moved = _bank_and_zero_cache_stats(conn, time.time())
+            buckets = _bank_access_log(conn)
         # Caller forensics: the 2026-09-10 wipe storm (17 resets in 5h) was
         # attributable only by timestamp correlation — the audit line named no
         # caller. Frame list is path/line/function only (payload-free, no
@@ -3008,9 +3202,13 @@ def reset_stats():
             f"{fr.filename}:{fr.lineno}:{fr.name}" for fr in traceback.extract_stack()[-7:-1]
         )
         logging.getLogger(__name__).warning(
-            "reset_stats: wiped cache_stats + %d access_log rows — "
-            "caller should be an explicit user action | caller stack: %s",
-            wiped,
+            "reset_stats: moved %d cache_stats row(s) into cache_stats_banked"
+            " and compacted %d access_log row(s) into %d banked (day, category)"
+            " bucket(s) — no lifetime total destroyed | caller should be an"
+            " explicit user action | caller stack: %s",
+            len(moved),
+            window_rows,
+            buckets,
             caller_frames,
         )
     except Exception as e:

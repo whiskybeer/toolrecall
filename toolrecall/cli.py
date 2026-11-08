@@ -484,11 +484,12 @@ def cmd_invalidate():
 
 
 def cmd_reset_stats():
-    """Reset cache statistics counters (hits, misses, tokens_read_from_disk) without clearing cache entries."""
+    """Reset the statistics window, moving counters and the trend window into lifetime totals."""
     if "--help" in sys.argv or "-h" in sys.argv:
         print("Usage: toolrecall reset-stats [--yes]")
         print()
-        print("Reset hit/miss/token counters + access_log trend window.")
+        print("Reset the statistics window. Counters and the access_log window are")
+        print("moved into banked lifetime totals — nothing is deleted.")
         print("Cache entries are preserved (use `toolrecall invalidate` to clear those).")
         print("Useful before benchmark runs so numbers reflect only that run.")
         print()
@@ -497,11 +498,16 @@ def cmd_reset_stats():
         return
     from toolrecall.cache import reset_stats
 
-    # Destructive-ish (wipes counters + trend window): confirm interactively.
+    # Changes every reported number, so confirm interactively. Not destructive
+    # any more (the stats are banked, not wiped), but an unexplained sudden
+    # zero in a benchmark reading is still worth a yes.
     # --yes / TOOLRECALL_NONINTERACTIVE bypass for scripts.
     if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
         try:
-            resp = input("Wipe hits/misses/token counters + access_log trend window? [y/N] ")
+            resp = input(
+                "Reset the stats window (counters move to banked lifetime totals,"
+                " trend window is compacted)? [y/N] "
+            )
         except (EOFError, OSError, KeyboardInterrupt):
             # OSError = non-tty stdin (captured/closed); treat as "no answer"
             # and keep the counters rather than crashing the command.
@@ -511,7 +517,10 @@ def cmd_reset_stats():
             print("aborted — counters untouched")
             return
     reset_stats()
-    print("Cache statistics reset (hits/misses/tokens). Cache entries preserved.")
+    print(
+        "Statistics window reset. Totals kept as banked lifetime values"
+        " (`toolrecall stats` lifetime_*), trend history preserved. Cache entries untouched."
+    )
 
 
 def cmd_index():

@@ -41,6 +41,25 @@
   imports this checkout instead of a stale `/tmp` worktree.
 
 ### Fixed
+- **`toolrecall reset-stats` moves statistics into lifetime totals instead of deleting them.**
+  `reset_stats()` ended in `DELETE FROM cache_stats` + `DELETE FROM access_log`, so a
+  reset — and every benchmark script that calls it — silently destroyed lifetime
+  counters *and* the entire trend window. `toolrecall trend` aggregates `access_log`
+  at query time and has no other source, so a reset blanked the report; the two silent
+  2026-09-08/09 wipes are the same class of loss. Now every counter is moved into
+  `cache_stats_banked` (the live window reads 0, `get_stats() lifetime_*` still carries
+  everything, including the measured bridge-stub axis and the uncacheable denominator
+  that the GC deliberately leaves alone), and the `access_log` window is compacted into
+  the new `access_log_banked` (per day/category/path counts) before the raw rows go, so
+  the daily trend reaches back past the reset. Banked and live rows are disjoint by
+  construction, so nothing is counted twice, and the infra filter applies to both.
+  `coverage()` reports the banked days separately from the live window. Tests:
+  `tests/test_reset_stats_banks.py` (10; nine of them fail against the old
+  delete-based implementation).
+  **Observable contract change:** a category no longer disappears from
+  `toolrecall stats` after a reset — its window counters read 0 while its
+  `lifetime_*` values keep carrying the total, so the number is visible instead
+  of merely stored.
 - **Context-savings totals can no longer exceed IO-offload totals after a GC pass.**
   The housekeeping reset zeroes five `cache_stats` columns for idle categories, but
   `cache_stats_banked` only had four of them, so `tokens_saved_to_llm` was reset in

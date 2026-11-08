@@ -8,9 +8,13 @@ session transcripts at ~28% of reads / 27% hit rate pinned the global rate
 at ~71% while the cacheable classes ran at ~80%+).
 
 Design (deliberately stateless, zero-dep):
-  - Computes daily aggregates from the ``access_log`` table at query time.
-    No rollup tables, no background aggregation, no cron — access_log is
-    a rolling ~50k-entry window and that IS the retention policy.
+  - Computes daily aggregates at query time from two plain tables: the live
+    ``access_log`` (a rolling ~50k-entry window — that IS the live retention
+    policy) and ``access_log_banked``, the compacted per-day/per-path remains
+    of windows a ``reset_stats()`` moved aside rather than deleted. No
+    background aggregation, no cron, no cache: both are read directly, and
+    the infra filter applies to identically-shaped rows from either source, so
+    a banked day is comparable to a live one.
   - Reads the DB directly (read-only), never through the daemon: a CLI
     reporting command must not depend on (or perturb) the daemon.
   - Alongside the daily rate, reports the worst miss-heavy path classes —
@@ -146,6 +150,30 @@ def savings_trend(days: int | None = 30, usage_csv: str | None = None) -> list[d
     return out[-days:] if days else out
 
 
+def _banked_rows(conn: sqlite3.Connection, category: str) -> list[tuple]:
+    """(day, path, reads, hits, misses) from ``access_log_banked``, infra-filtered.
+
+    These are the rows a prior ``reset_stats()`` compacted out of the live
+    window. Without them the trend claims the window starts at the last reset
+    — the reset used to DELETE them, which is what made a reset silently blank
+    the report. Returns [] when the table is absent (pre-migration DB) so a
+    read-only trend never fails on an old file.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='access_log_banked'"
+    ).fetchone():
+        return []
+    return conn.execute(
+        f"""
+        SELECT day, path, reads, hits, misses
+        FROM access_log_banked
+        WHERE category = ?
+          AND {_infra_filter_sql()}
+        """,
+        (category,),
+    ).fetchall()
+
+
 def _infra_filter_sql(column: str = "path") -> str:
     """SQL predicate excluding agent-infrastructure reads from a trend.
 
@@ -201,12 +229,28 @@ def daily_trend(days: int | None = None, category: str = "file_cache") -> list[d
             """,
             (category,),
         ).fetchall()
+        banked = _banked_rows(conn, category)
     finally:
         conn.close()
 
-    out = []
+    # Live and banked rows are disjoint by construction: a reset compacts the
+    # window and drops the raw rows in the same transaction, so adding them can
+    # never count one read twice.
+    agg: dict[str, list[int]] = {}
     for d, reads, hits, misses in rows:
-        reads, hits, misses = int(reads), int(hits or 0), int(misses or 0)
+        slot = agg.setdefault(d, [0, 0, 0])
+        slot[0] += int(reads)
+        slot[1] += int(hits or 0)
+        slot[2] += int(misses or 0)
+    for d, _path, reads, hits, misses in banked:
+        slot = agg.setdefault(d, [0, 0, 0])
+        slot[0] += int(reads)
+        slot[1] += int(hits or 0)
+        slot[2] += int(misses or 0)
+
+    out = []
+    for d in sorted(agg):
+        reads, hits, misses = agg[d]
         out.append(
             {
                 "date": d,
@@ -242,8 +286,13 @@ def miss_classes(min_reads: int = _MIN_CLASS_READS, top: int = 5) -> list[dict]:
             GROUP BY path
             """
         ).fetchall()
+        banked = _banked_rows(conn, "file_cache")
     finally:
         conn.close()
+
+    # Paths from a compacted window are the same kind of evidence as live ones:
+    # a reset must not silently shrink the class breakdown either.
+    rows = list(rows) + [(p, r, h) for _d, p, r, h, _m in banked if p]
 
     # Aggregate per class in Python — path normalization is easier to keep
     # honest outside SQL, and per-path counts stay available for future
@@ -287,6 +336,17 @@ def coverage() -> dict:
             f"WHERE {_infra_filter_sql()}"
         ).fetchone()
         total = conn.execute("SELECT COUNT(*) FROM access_log").fetchone()[0]
+        has_bank = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='access_log_banked'"
+        ).fetchone()
+        banked = (
+            conn.execute(
+                "SELECT COUNT(DISTINCT day), MIN(day), MAX(day), SUM(reads),"
+                " SUM(hits) FROM access_log_banked"
+            ).fetchone()
+            if has_bank
+            else (0, None, None, 0, 0)
+        )
     finally:
         conn.close()
     from datetime import datetime, timezone
@@ -303,6 +363,14 @@ def coverage() -> dict:
         "infra_entries": max(0, int(total or 0) - int(n or 0)),
         "oldest": fmt(lo),
         "newest": fmt(hi),
+        # Days a reset moved out of the live window. Reported separately, never
+        # folded into the window counts: "how much of the rolling window is
+        # left" and "how far back does the history reach" are different facts.
+        "banked_days": int(banked[0] or 0),
+        "banked_oldest": banked[1],
+        "banked_newest": banked[2],
+        "banked_reads": int(banked[3] or 0),
+        "banked_hits": int(banked[4] or 0),
     }
 
 
@@ -362,6 +430,12 @@ def trend_report(days: int | None = 7, as_json: bool = False) -> str:
         lines.append(
             f"  ({cov['infra_entries']:,} agent-infrastructure reads excluded —"
             f" config/cron/plugin polling, never sent to a model)"
+        )
+    if cov.get("banked_days"):
+        lines.append(
+            f"  (+ {cov['banked_days']} day(s) before this window kept as banked totals:"
+            f" {cov['banked_reads']:,} reads, {cov['banked_hits']:,} hits,"
+            f" oldest {cov['banked_oldest']})"
         )
     lines.append("")
     lines.append("  date        reads   hits  misses  hit%")

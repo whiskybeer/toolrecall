@@ -404,7 +404,7 @@ toolrecall trend          Daily hit-rate trend + worst miss classes  [no daemon]
 toolrecall trend --json   Machine-readable trend (observer/CI)       [no daemon]
 toolrecall top            Interactive TUI dashboard: stats, access log, trend, tracker
 toolrecall invalidate     Clear agent caches (api_cache: scope=api)  [auto-starts]
-toolrecall reset-stats    Reset counters (hits, misses, tokens) without clearing entries
+toolrecall reset-stats    Reset the stats window (counters are banked, not deleted)
 toolrecall mcp            Start MCP Bridge                           [auto-starts]
 toolrecall serve          Forward proxy — daemon already owns :8569; standalone on another port:
 toolrecall serve --port 9090   Standalone forward proxy on :9090 (daemon must be stopped)

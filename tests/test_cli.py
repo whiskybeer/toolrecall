@@ -91,13 +91,29 @@ class TestCLIResetStats(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_reset_stats_prints_confirmation(self):
-        """reset-stats --yes prints 'Cache statistics reset'."""
+        """reset-stats --yes prints the confirmation, and it must not promise a wipe.
+
+        The command moves the statistics window into banked lifetime totals
+        (2026-10-22); a message that still says "reset" without saying "banked"
+        would leave the operator believing history was thrown away.
+        """
         sys.argv = ["toolrecall", "reset-stats", "--yes"]
         from toolrecall.cli import cmd_reset_stats
 
         cmd_reset_stats()
         output = self.stdout.getvalue()
-        self.assertIn("Cache statistics reset (hits/misses/tokens)", output)
+        self.assertIn("Statistics window reset", output)
+        self.assertIn("banked lifetime values", output)
+
+    def test_reset_stats_help_does_not_promise_a_wipe(self):
+        """--help must describe the move, not a destructive reset."""
+        sys.argv = ["toolrecall", "reset-stats", "--help"]
+        from toolrecall.cli import cmd_reset_stats
+
+        cmd_reset_stats()
+        output = self.stdout.getvalue()
+        self.assertIn("nothing is deleted", output)
+        self.assertNotIn("Wipe", output)
 
 
 class TestCLIStatsContextFlow(unittest.TestCase):

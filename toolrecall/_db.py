@@ -503,3 +503,10 @@ def _init(schema: str = ""):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cache_stats_banked'"
         ).fetchone():
             _add_column(conn, "cache_stats_banked", "tokens_saved_to_llm INTEGER DEFAULT 0")
+            # Migration: 2026-10-22 — reset_stats() moves ALL seven counter
+            # columns (it zeroes the whole row), so the bank needs the two the
+            # GC deliberately leaves alone. Without them a reset would drop the
+            # measured bridge-stub total and the uncacheable denominator from
+            # the lifetime view — the same silent-loss class as above.
+            _add_column(conn, "cache_stats_banked", "tokens_read_uncacheable INTEGER DEFAULT 0")
+            _add_column(conn, "cache_stats_banked", "tokens_not_sent_measured INTEGER DEFAULT 0")

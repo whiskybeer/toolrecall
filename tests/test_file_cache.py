@@ -211,8 +211,17 @@ class TestFileCache(unittest.TestCase):
         reset_stats()
 
         stats = get_stats()
-        # Counters gone
-        self.assertNotIn("file_cache", stats, "file_cache stats should be reset")
+        # Counters reset to zero — the row stays and reads 0, because the reset
+        # moves its totals into cache_stats_banked instead of deleting them
+        # (2026-10-22). Absence from this dict used to mean "deleted"; a zeroed
+        # window next to a readable lifetime_* is the honest version, and it is
+        # what makes the total visible instead of merely stored.
+        fc = stats.get("file_cache", {})
+        self.assertEqual(fc.get("hits"), 0, "live window counters must be reset")
+        self.assertEqual(fc.get("misses"), 0, "live window counters must be reset")
+        self.assertGreaterEqual(
+            fc.get("lifetime_misses", 0), 1, "the reset must keep the total readable"
+        )
         # Entries preserved
         entries_after = stats.get("file_cache_entries", 0)
         self.assertEqual(entries_after, entries_before, "Cache entries should survive reset_stats")
@@ -230,8 +239,16 @@ class TestFileCache(unittest.TestCase):
 
         with self.assertLogs("toolrecall.cache", level="WARNING") as captured:
             reset_stats()
-        audit_lines = [ln for ln in captured.output if "reset_stats: wiped cache_stats" in ln]
+        # Anchor on the stable prefix, not on "wiped": the reset now MOVES the
+        # counters into cache_stats_banked (2026-10-22), so claiming a wipe
+        # would make the audit line untrue.
+        audit_lines = [ln for ln in captured.output if "reset_stats:" in ln]
         self.assertTrue(audit_lines, f"no audit line in: {captured.output}")
+        self.assertIn(
+            "cache_stats_banked",
+            audit_lines[0],
+            f"audit line must say where the counters went: {audit_lines[0]}",
+        )
         self.assertIn(
             "caller stack:",
             audit_lines[0],

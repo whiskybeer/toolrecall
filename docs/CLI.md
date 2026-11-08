@@ -85,7 +85,11 @@ Most commands accept `--help` / `-h` for per-command usage and options
 ### `toolrecall reset-stats`
 
 - **File:** `cli.py : cmd_reset_stats()`
-- **Purpose:** Reset hit/miss counters without clearing cache entries. Useful for benchmarking.
+- **Purpose:** Reset the statistics *window* (hit/miss/token counters and the
+  `access_log` trend window). Both are **moved into banked lifetime totals**
+  (`cache_stats_banked`, `access_log_banked`) instead of being deleted, so
+  `toolrecall stats` keeps its `lifetime_*` values and `toolrecall trend` still
+  reaches back past the reset. Cache entries are never touched. Useful for benchmarking.
 
 ### `toolrecall index`
 
