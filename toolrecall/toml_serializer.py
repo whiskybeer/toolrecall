@@ -1,23 +1,25 @@
-# Zero-dependency TOML serializer — writes TOML without tomli-w.
-# Replaces tomli-w dependency entirely. Pure Python, stdlib only.
-#
-# Usage:
-#     from toolrecall.toml_serializer import dumps, dump
-#
-#     text = dumps({"mcp": {"allowed_paths": ["~/projects"], "allow_terminal": True}})
-#     # -> '[mcp]\nallowed_paths = [\"~/projects\"]\nallow_terminal = true\n'
-#
-#     with open("config.toml", "w") as f:
-#         dump({"storage": {"backend": "sqlite"}}, f)
-#
-# Supports: int, str, float, bool, None, list, dict, datetime.date
-#
-# Does NOT support:
-#   - Inline tables (foo = {bar = "baz"}) — use section headers instead
-#   - Array of tables [[foo]] — use plain sections
-#   - Multi-line strings ("""...""") — plain strings only
-#
-# For ToolRecall's use case (writing config.toml) this is sufficient.
+"""Zero-dependency TOML serializer — writes TOML without tomli-w.
+
+Pure Python, stdlib only; replaces the tomli-w dependency entirely.
+
+Usage:
+    from toolrecall.toml_serializer import dumps, dump
+
+    text = dumps({"mcp": {"allowed_paths": ["~/projects"], "allow_terminal": True}})
+    # -> '[mcp]\\nallowed_paths = ["~/projects"]\\nallow_terminal = true\\n'
+
+    with open("config.toml", "w") as f:
+        dump({"storage": {"backend": "sqlite"}}, f)
+
+Supports: int, str, float, bool, None, list, dict, datetime.date
+
+Does NOT support:
+  - Inline tables (foo = {bar = "baz"}) — use section headers instead
+  - Array of tables [[foo]] — use plain sections
+  - Multi-line strings (triple-quoted) — plain strings only
+
+For ToolRecall's use case (writing config.toml) this is sufficient.
+"""
 
 import datetime
 from typing import Any

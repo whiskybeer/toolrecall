@@ -253,6 +253,96 @@ flowchart TB
 
 ## 4. Components
 
+### 4.0 Module Map
+
+All 41 shipped modules, grouped by layer — one line each. The module
+docstring is the authoritative detail; `tests/test_module_integrity.py`
+guards both this table's precondition (every module has a docstring) and
+that every `toolrecall/*.py` path cited in `docs/` exists.
+
+**Daemon core & IPC**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/daemon.py` | Daemon core: IPC dispatch, MCP multiplexer, `SecurityGate` |
+| `toolrecall/client.py` | Daemon-first client with fallback to direct operations |
+| `toolrecall/transport.py` | Platform-agnostic IPC (UDS on POSIX, TCP on Windows) |
+| `toolrecall/resilience.py` | Request coalescing, retry with jitter, circuit breaker |
+| `toolrecall/healthcheck.py` | Generalized, self-contained daemon/cache healthcheck |
+| `toolrecall/network_auth.py` | HMAC-SHA256 challenge-response for the shared network daemon |
+| `toolrecall/network_tls.py` | Optional TLS for the shared network daemon |
+
+**Storage, keys & config**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/_db.py` | SQLite singleton: connection lifecycle, key hashing, sensitive-path blocklist |
+| `toolrecall/storage/` | Storage backend layer (sqlite, libsql, libsql-sync) |
+| `toolrecall/cache.py` | Hybrid in-memory + SQLite cache core (all cache types) |
+| `toolrecall/keys.py` | Canonical key derivation — the Layer-0 primitive |
+| `toolrecall/normalizer.py` | Deterministic JSON normalization for cache key generation |
+| `toolrecall/jcs.py` | RFC 8785 JSON Canonicalization Scheme (stdlib implementation) |
+| `toolrecall/config.py` | Configuration system |
+| `toolrecall/toml_serializer.py` | Zero-dependency TOML serializer (replaces tomli-w) |
+| `toolrecall/path_utils.py` | Shared path validation (daemon + client) |
+
+**Caching layers, replay & shim**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/ttl_policy.py` | TTL policy: SWR tiers, adaptive/file/fuzzy TTL resolution |
+| `toolrecall/recall.py` | Recall tier: persist non-reproducible content, restore on demand |
+| `toolrecall/replay.py` | Record/replay of agent tool calls for deterministic testing |
+| `toolrecall/replay_cli.py` | `toolrecall replay` subcommands |
+| `toolrecall/shim.py` | Transparent OS-level file-read cache shim (patches `builtins.open`) |
+| `toolrecall/venvs.py` | Python venv discovery + `.pth` shim helper (agent-agnostic) |
+
+**Forward proxy & dedup**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/proxy.py` | Forward proxy: cache API responses without touching the provider |
+| `toolrecall/dedup.py` | Request-level duplicate-content dedup (transport-neutral core) |
+| `toolrecall/tee_settle.py` | Tee-settle registry: closes the stream-cache store race in-process |
+| `toolrecall/trend.py` | Daily hit-rate trend from the access log |
+
+**Context Tracker**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/context_tracker.py` | Checkpoint-based dirty/clean file tracking + context token accounting |
+
+**MCP multiplexer & bundled servers**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/mcp_bridge.py` | stdio ↔ UDS protocol adapter |
+| `toolrecall/mcp_registry.py` | MCP server-name → command registry |
+| `toolrecall/mcp_cache_fs.py` | Cached read/write MCP server via ToolRecall SQLite |
+| `toolrecall/mcp_fetch.py` | stdlib-only HTTP fetch MCP server |
+| `toolrecall/mcp_github.py` | stdlib-only GitHub MCP server (no npm) |
+| `toolrecall/mcp_seqthink.py` | stdlib-only sequential-thinking MCP server |
+| `toolrecall/mcp_time.py` | stdlib-only time MCP server |
+
+**Framework adapters**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/adapters/` | Framework adapters (ADK, LangChain, LangGraph, LiteLLM, herdr, Odysseus, Warp, GEPA) |
+
+**CLI, UI & support**
+
+| File | Purpose |
+|------|---------|
+| `toolrecall/cli.py` | CLI entrypoint: setup, daemon lifecycle, cache inspection, indexing |
+| `toolrecall/__main__.py` | Enables `python -m toolrecall` |
+| `toolrecall/docs.py` | FTS5 knowledge base |
+| `toolrecall/tui_top.py` | `toolrecall top` — zero-dependency curses TUI dashboard |
+| `toolrecall/turso_cli.py` | Turso Cloud integration CLI commands |
+| `toolrecall/updater.py` | Auto-updater — opt-out (default ON) |
+| `toolrecall/logging_setup.py` | Central stdlib-only logging, zero sensitive data |
+| `toolrecall/__init__.py` | Package marker + public exports |
+
 ### 4.1 Daemon Core
 
 The daemon uses a singleton connection wrapped in a `_DBConnection` class,
@@ -912,7 +1002,7 @@ See [Context Tracker](CONTEXT_TRACKER.md) for the full workflow.
 | `toolrecall/path_utils.py` | Shared path allowlist validation (daemon + client) |
 | `toolrecall/storage/` | Storage backend layer (sqlite, libsql, libsql-sync) |
 | `toolrecall/transport.py` | UDS transport client/server |
-| `toolrecall/security.py` | Security gate, path allowlist, terminal policy |
+| `toolrecall/daemon.py` | `SecurityGate` — injection scan (cognitive + AST), read-path/terminal/MCP policy checks |
 | `toolrecall/adapters/` | Framework adapters (ADK, LangChain, herdr, Odysseus) |
 
 ### E. FAQ

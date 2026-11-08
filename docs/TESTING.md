@@ -70,8 +70,8 @@ Each test file covers a distinct module or feature:
 
 | File | Module Under Test | What It Tests |
 |------|------------------|---------------|
-| `tests/test_cognitive_scan.py` | `toolrecall/security.py` | 70 injection patterns (override instructions, jailbreak tags, exfiltration URLs), 50 legitimate patterns (code, configs, logs) — 86% detection rate |
-| `tests/test_ast_security.py` | `toolrecall/security.py` | AST injection detection: `exec()`, `eval()`, `__import__()`, `compile()`, dynamic imports, function redefinition — plus false-positive suppression for safe patterns |
+| `tests/test_cognitive_scan.py` | `toolrecall/daemon.py` (`SecurityGate`) | 70 injection patterns (override instructions, jailbreak tags, exfiltration URLs), 50 legitimate patterns (code, configs, logs) — 86% detection rate |
+| `tests/test_ast_security.py` | `toolrecall/daemon.py` (`SecurityGate`) | AST injection detection: `exec()`, `eval()`, `__import__()`, `compile()`, dynamic imports, function redefinition — plus false-positive suppression for safe patterns |
 
 ### Knowledge Base & Docs
 

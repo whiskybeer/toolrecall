@@ -1,3 +1,13 @@
+"""SQLite database layer — connection lifecycle, key hashing, sensitive paths.
+
+Owns the process-wide DB singleton: the thread-safe, reentrant ``_db()``
+context manager (commit at outermost exit, rollback on error), config-
+cached connection reuse across call sites, backend selection via
+``toolrecall.storage``, and the ``[cache].hash_algorithm`` pluggable key
+hashing. Also hosts the sensitive-path blocklist that keeps credential
+and secrets files out of the cache layer.
+"""
+
 import os
 import re
 import sqlite3
