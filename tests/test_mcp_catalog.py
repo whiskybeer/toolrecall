@@ -122,15 +122,28 @@ class TestCatalogDefs(unittest.TestCase):
 
 
 class _FakeMultiplexCfg:
-    """Just enough config surface for MCPMultiplexer.catalog()."""
+    """Just enough config surface for MCPMultiplexer.catalog()/warm_catalog()."""
 
-    def __init__(self, db_path: str):
+    def __init__(
+        self,
+        db_path: str,
+        servers_config: dict | None = None,
+        allow: list | None = None,
+        multiplex: bool = True,
+        gateway: bool = False,
+    ):
         self.cache_db = db_path
         self.mcp_multiplex_idle_minutes = 15
-        self.mcp_multiplex_servers = ["hermes-docs"]
-        self.mcp_multiplex_servers_config = {
-            "hermes-docs": {"command": "python3", "args": ["-m", "faketr"], "env": {}}
-        }
+        self.mcp_multiplex_servers = ["hermes-docs"] if allow is None else allow
+        self.mcp_multiplex_servers_config = (
+            {
+                "hermes-docs": {"command": "python3", "args": ["-m", "faketr"], "env": {}},
+            }
+            if servers_config is None
+            else servers_config
+        )
+        self.mcp_multiplex_enabled = multiplex
+        self.mcp_multiplex_gateway = gateway
 
 
 class TestMultiplexerCatalog(unittest.TestCase):
@@ -156,6 +169,109 @@ class TestMultiplexerCatalog(unittest.TestCase):
         tmpdir = tempfile.mkdtemp()
         cfg = _FakeMultiplexCfg(os.path.join(tmpdir, "cache.db"))
         self.assertEqual(MCPMultiplexer(cfg).catalog(), {})
+
+
+class TestGatewayWarmUp(unittest.TestCase):
+    """A fresh install must not be stuck in a discovery deadlock.
+
+    The gateway lists tools from a persisted catalog, and the catalog is only
+    written when a server starts: nothing started -> nothing listed -> nobody
+    calls -> never starts. warm_catalog() is the one best-effort pass that
+    breaks it (run in a background thread by the daemon).
+    """
+
+    _THREE = {
+        "hermes-docs": {"command": "python3", "args": ["-m", "a"], "env": {}},
+        "fetch": {"command": "python3", "args": ["-m", "b"], "env": {}},
+        "sqlite-browser": {"command": "python3", "args": ["-m", "c"], "env": {}},
+    }
+
+    def _mux(self, servers_config=None, allow=None, multiplex=True, gateway=True):
+        from toolrecall.daemon import MCPMultiplexer
+
+        tmpdir = tempfile.mkdtemp()
+        cfg = _FakeMultiplexCfg(
+            os.path.join(tmpdir, "cache.db"),
+            servers_config=servers_config if servers_config is not None else self._THREE,
+            allow=allow if allow is not None else [],
+            multiplex=multiplex,
+            gateway=gateway,
+        )
+        return MCPMultiplexer(cfg)
+
+    def _stub(self, mux, fail=(), raise_for=()):
+        calls = []
+
+        def fake_ensure(name_lower):
+            calls.append(name_lower)
+            if name_lower in raise_for:
+                raise RuntimeError("boom")
+            if name_lower in fail:
+                return f"{name_lower}: start failed — nope"
+            return None
+
+        mux._ensure_server = fake_ensure  # type: ignore[method-assign]
+        return calls
+
+    def test_gateway_enabled_requires_both_flags(self):
+        self.assertTrue(self._mux(multiplex=True, gateway=True).gateway_enabled)
+        self.assertFalse(self._mux(multiplex=True, gateway=False).gateway_enabled)
+        self.assertFalse(self._mux(multiplex=False, gateway=True).gateway_enabled)
+
+    def test_warmup_starts_every_configured_server(self):
+        mux = self._mux()
+        calls = self._stub(mux)
+        outcome = mux.warm_catalog()
+        self.assertEqual(sorted(calls), ["fetch", "hermes-docs", "sqlite-browser"])
+        self.assertEqual(outcome["failed"], {})
+        self.assertEqual(len(outcome["started"]), 3)
+
+    def test_warmup_respects_the_server_allowlist(self):
+        """Warming must not start servers the allowlist excludes."""
+        mux = self._mux(allow=["fetch"])
+        calls = self._stub(mux)
+        outcome = mux.warm_catalog()
+        self.assertEqual(calls, ["fetch"])
+        self.assertEqual(outcome["started"], ["fetch"])
+
+    def test_warmup_reports_a_failure_and_continues(self):
+        mux = self._mux()
+        self._stub(mux, fail={"fetch"})
+        outcome = mux.warm_catalog()
+        self.assertIn("fetch", outcome["failed"])
+        self.assertEqual(sorted(outcome["started"]), ["hermes-docs", "sqlite-browser"])
+
+    def test_warmup_survives_an_exception(self):
+        """One broken server must not abort the pass or the thread."""
+        mux = self._mux()
+        self._stub(mux, raise_for={"sqlite-browser"})
+        outcome = mux.warm_catalog()
+        self.assertIn("RuntimeError: boom", outcome["failed"]["sqlite-browser"])
+        self.assertEqual(sorted(outcome["started"]), ["fetch", "hermes-docs"])
+
+    def test_wrapper_logs_and_never_raises(self):
+        """The thread target swallows nothing silently: it logs."""
+        from toolrecall.daemon import _warm_gateway_catalog
+
+        class _Boom:
+            def warm_catalog(self):
+                raise RuntimeError("kaboom")
+
+        logged: list[str] = []
+
+        class _Log:
+            def warning(self, msg, *args):
+                logged.append(msg % args if args else msg)
+
+            def info(self, *a, **k):
+                pass
+
+            def debug(self, *a, **k):
+                pass
+
+        _warm_gateway_catalog(_Boom(), _Log())
+        self.assertTrue(logged)
+        self.assertIn("kaboom", logged[0])
 
 
 if __name__ == "__main__":

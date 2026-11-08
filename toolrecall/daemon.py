@@ -965,6 +965,43 @@ class MCPMultiplexer:
 
     # ─── Gateway Catalog ──────────────────────────────
 
+    @property
+    def gateway_enabled(self) -> bool:
+        """True when the bridge advertises this multiplexer's tools by name.
+
+        The warm-up below is only worth its price in that mode: without it
+        nothing consumes the catalog.
+        """
+        return bool(self.cfg.mcp_multiplex_enabled and self.cfg.mcp_multiplex_gateway)
+
+    def warm_catalog(self) -> dict:
+        """Start the configured servers once so the gateway has tools to list.
+
+        Why this exists: the gateway advertises tools from the persisted
+        catalog, and that catalog is only written when a server starts. On a
+        fresh install (or after the catalog is removed) nothing has started →
+        nothing is advertised → no agent calls a tool it cannot see → nothing
+        ever starts. One best-effort pass breaks that deadlock.
+
+        Callers run it in a background thread: a cold ``uv run`` takes seconds
+        and must never delay daemon startup. Failures are reported, not
+        raised — the gateway keeps listing whatever else it has.
+        """
+        self._discover_configs()
+        started: list[str] = []
+        failed: dict[str, str] = {}
+        for name_lower in list(self._configs):
+            try:
+                err = self._ensure_server(name_lower)
+            except Exception as e:  # a warm-up must never kill its thread silently
+                failed[name_lower] = f"{type(e).__name__}: {e}"
+                continue
+            if err:
+                failed[name_lower] = err
+            else:
+                started.append(name_lower)
+        return {"started": started, "failed": failed}
+
     def catalog(self) -> dict:
         """Tool catalog for the gateway: fresh for running servers, disk for the rest.
 
@@ -1298,6 +1335,27 @@ def _fetch_revalidate_once(url: str, etag: str) -> dict | None:
         return None
 
 
+def _warm_gateway_catalog(mux, logger) -> None:
+    """Thread target for the gateway warm-up: log the outcome, never raise.
+
+    The pass itself stays synchronous and testable in MCPMultiplexer; this
+    wrapper only absorbs the threading consequences. Every outcome is logged —
+    there is no silent-swallow path here.
+    """
+    try:
+        outcome = mux.warm_catalog()
+    except Exception as e:
+        logger.warning("gateway catalog warm-up failed: %s", e)
+        return
+    logger.info(
+        "gateway catalog warm-up: %s started, %s failed",
+        len(outcome["started"]),
+        len(outcome["failed"]),
+    )
+    if outcome["failed"]:
+        logger.debug("gateway warm-up failures: %s", outcome["failed"])
+
+
 class DaemonServer:  # noqa: E302 — placed immediately before its section
     """IPC server — Unix Domain Socket (POSIX) or TCP (Windows).
 
@@ -1316,6 +1374,19 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         self.cfg = load_config()
         self.security = SecurityGate(self.cfg)
         self.multiplexer = MCPMultiplexer(self.cfg)
+        # Gateway discovery needs one server start before it has anything to
+        # advertise: the catalog persists across restarts, but a fresh
+        # install (or a removed catalog) would otherwise list nothing, never
+        # be called, and therefore never start anything. Background + best
+        # effort, only while the gateway mode is on: startup latency is
+        # untouched and a failure only costs that server's catalog entry.
+        if self.multiplexer.gateway_enabled:
+            threading.Thread(
+                target=_warm_gateway_catalog,
+                args=(self.multiplexer, self.logger),
+                daemon=True,
+                name="tr-mcp-warmup",
+            ).start()
         self._context = ContextTracker(ignore_prefixes=self.cfg.tracker_ignore_read_prefixes)
         # Restore persisted tracker state (option A): keeps the checkpoint
         # flow alive across daemon restarts instead of resetting it. TTL
