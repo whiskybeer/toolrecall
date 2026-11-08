@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -134,6 +135,63 @@ class TestDaemonNoErrorStore(unittest.TestCase):
                     {"cmd": "mcp_call", "server": "fetch", "tool": "fetch_url", "arguments": {}}
                 )
             store.assert_not_called()
+
+
+class TestHitTokensSaved(unittest.TestCase):
+    """tokens_saved must ride the hit record — not be computed-and-dropped.
+
+    Regression for the 2026-09-24 finding: mcp_cache had 12 hits with
+    tokens_saved=0, so the TUI IO-offload column read 0 despite real
+    replays. Same class as the api_cache fix (computed-but-dropped counter).
+    """
+
+    def test_hit_records_tokens_saved(self) -> None:
+        import toolrecall.cache as cache_mod
+
+        body = json.dumps({"result": "x" * 300})  # ~100 tokens est.
+        # DB comes from the conftest autouse fixture's hermetic pin.
+        os.environ["TOOLRECALL_CACHE_DB"]  # noqa: B018 — assert pin exists
+        cache_mod._init()
+        # Key comes from the miss return — never hand-rolled.
+        key = cache_mod.cached_mcp_check("hermes-docs", "search_docs", {"q": 1})["key"]
+        cache_mod.cached_mcp_store(key, "hermes-docs", "search_docs", {"q": 1}, body)
+        hit = cache_mod.cached_mcp_check("hermes-docs", "search_docs", {"q": 1})
+        assert hit.get("cached") is True
+        with cache_mod._db() as conn:
+            row = conn.execute(
+                "SELECT tokens_saved FROM cache_stats WHERE category='mcp_cache'"
+            ).fetchone()
+        assert row is not None
+        assert row[0] > 0, f"tokens_saved stayed 0 on a hit: {row[0]}"
+
+        # SWR serve-stale tier records it too. The window is config-gated
+        # (default off) — enable it for this test only, then expire the row
+        # INTO the window (not past it).
+        with mock.patch.object(cache_mod, "_swr_window", lambda: 120):
+            with cache_mod._db() as conn:
+                conn.execute(
+                    "UPDATE mcp_cache SET expires_at = ? WHERE request_hash = ?",
+                    (time.time() - 1, key),
+                )
+            stale = cache_mod.cached_mcp_check("hermes-docs", "search_docs", {"q": 1})
+        assert stale.get("cached") is True and stale.get("stale") is True
+        with cache_mod._db() as conn:
+            (saved,) = conn.execute(
+                "SELECT tokens_saved FROM cache_stats WHERE category='mcp_cache'"
+            ).fetchone()
+        assert saved > 0, f"stale hit dropped tokens_saved: {saved}"
+
+    def test_miss_records_zero_tokens(self) -> None:
+        import toolrecall.cache as cache_mod
+
+        cache_mod._init()
+        cache_mod.cached_mcp_check("hermes-docs", "search_docs", {"q": 2})
+        with cache_mod._db() as conn:
+            row = conn.execute(
+                "SELECT tokens_saved FROM cache_stats WHERE category='mcp_cache'"
+            ).fetchone()
+        assert row is not None
+        assert row[0] == 0, f"a miss must not carry tokens_saved: {row[0]}"
 
 
 class TestPartialOverrideMerge(unittest.TestCase):

@@ -1993,12 +1993,23 @@ def cached_mcp_check(
                 from toolrecall import ttl_policy
 
                 tier = ttl_policy.classify_expiry(row["expires_at"], now, _swr_window())
+                # The cached response body is what the server would have
+                # produced — replaying it skips the subprocess round-trip
+                # entirely. Estimate the avoided IO as tokens (same rule as
+                # api_cache: bytes/3 on the stored body).
+                tokens_saved = _estimate_tokens(row["data"])
                 if tier == ttl_policy.SWR_FRESH:
                     conn.execute(
                         "UPDATE mcp_cache SET hits = hits + 1, hit_streak = hit_streak + 1 WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    _record("mcp_cache", hit=True)
+                    # tokens_saved was computed but never passed (2026-09-24):
+                    # mcp_cache showed 12 hits with tokens_saved=0, so the
+                    # TUI IO-offload column read 0 despite real replays —
+                    # same class as the api_cache fix. A cached MCP replay
+                    # skips the subprocess round-trip entirely: the response
+                    # body is what the server would have produced.
+                    _record("mcp_cache", hit=True, tokens_saved=tokens_saved)
                     return {
                         "cached": True,
                         "data": row["data"],
@@ -2012,7 +2023,7 @@ def cached_mcp_check(
                     # SWR: serve stale; revalidation is the CALLER's job
                     # (check has no fetch capability — cached_mcp() handles
                     # it via fetch_fn; daemon-routed callers re-invoke).
-                    _record("mcp_cache", hit=True)
+                    _record("mcp_cache", hit=True, tokens_saved=tokens_saved)
                     return {
                         "cached": True,
                         "data": row["data"],
@@ -2203,13 +2214,11 @@ def _heal_poisoned_mcp_row(request_hash: str) -> None:
                        WHERE category = 'mcp_cache' AND hits > 0""",
                     (time.time(),),
                 )
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         # No table (fresh DB) is a legitimate state — nothing to heal.
         # A real failure (locked/corrupt) still deserves its warning.
         if "no such table" not in str(e):
             warnings.warn(f"ToolRecall: mcp_cache poison heal failed: {e}")
-    except Exception as e:  # pragma: no cover — heal is best-effort
-        warnings.warn(f"ToolRecall: mcp_cache poison clean failed: {e}")
 
 
 def invalidate_mcp_url(server: str, tool: str, url_substring: str) -> int:
