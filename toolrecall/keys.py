@@ -9,7 +9,7 @@ routes through here, so a given (tool, args) pair or a given result body
 hashes identically in every adapter, in the daemon, and in external code
 that imports this module standalone.
 
-Two primitives, one rule — hash the canonical thing, nothing else:
+Three primitives, one rule — hash the canonical thing, nothing else:
 
 - ``content_digest(data)``  — content key. sha256 over the exact bytes of a
   tool RESULT (file body, command output, screenshot bytes). Freshness, TTL,
@@ -19,6 +19,11 @@ Two primitives, one rule — hash the canonical thing, nothing else:
 - ``tool_key(tool, args, kwargs)`` — request key. sha256 over a canonical
   JSON preimage of a tool REQUEST. Deterministic under dict insertion-order
   permutation.
+
+- ``work_key(data, stage=, params=)`` — work-unit key. sha256 over a candidate
+  artifact (plus optional evaluation parameters) instead of over a request:
+  the level at which a *unit of work* can be reused across processes, runs, and
+  workers. Legacy-compatible with the evaluator memo keys that predate it.
 
 Design constraints (deliberate):
 
@@ -68,7 +73,7 @@ import hashlib
 import json
 from typing import Any, Optional, Tuple, Union
 
-__all__ = ["content_digest", "tool_key", "digest16", "api_request_hash"]
+__all__ = ["content_digest", "tool_key", "digest16", "api_request_hash", "work_key"]
 
 BytesLike = Union[str, bytes, bytearray]
 _MIN_TRUNCATE = 8  # below 8 hex chars, stub references collide too easily
@@ -119,6 +124,45 @@ def api_request_hash(method: str, host: str, path: str, body: bytes) -> str:
     """
     body_hash = content_digest(body)
     return content_digest(f"{method}:{host}:{path}:{body_hash}")
+
+
+def work_key(
+    data: BytesLike,
+    *,
+    stage: Optional[str] = None,
+    params: Any = None,
+) -> str:
+    """Identity of a UNIT OF WORK — a candidate artifact plus its eval parameters.
+
+    Two deliberately separate spaces:
+
+    - ``params is None`` — legacy-compatible: ``content_digest(data)`` with an
+      optional ``":" + stage`` suffix. Byte-identical to the evaluator memo keys
+      that predate this function (``content_digest(code)`` for the default
+      ``evaluate`` stage), so stores already on disk keep hitting. Pinned by
+      ``tests/golden_keys.json`` with a real OpenEvolve candidate whose digest
+      is a key in the M4 memo store.
+    - ``params`` given — versioned preimage ``w/v1:<sha256>`` over
+      ``canonicalize({"unit": …, "stage": …, "params": …})`` (RFC 8785 via
+      ``toolrecall.jcs``). The version tag keeps this disjoint from every bare
+      content digest, and canonicalization makes dict order irrelevant.
+
+    Unlike ``content_digest`` (a byte body's identity) and ``tool_key`` (a
+    call's identity), this answers a work-level question: *have we already paid
+    for this unit?* — the level at which an evaluation is worth reusing.
+    Storage, TTL, and reuse policy stay with the caller; the key only names it.
+    """
+    base = content_digest(data)
+    if params is None:
+        if stage in (None, "evaluate"):
+            return base
+        if ":" in stage:
+            raise ValueError("stage must not contain ':' — it separates the suffix")
+        return base + ":" + stage
+    from toolrecall.jcs import canonicalize  # lazy: keeps the key module stdlib-cheap
+
+    preimage = canonicalize({"unit": base, "stage": stage or "evaluate", "params": params})
+    return "w/v1:" + content_digest(preimage)
 
 
 def _normalize_args(args: Tuple[Any, ...], kwargs: dict) -> str:

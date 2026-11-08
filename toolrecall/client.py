@@ -378,6 +378,42 @@ def refresh_file(path: str) -> dict:
     return _get_direct_cache().refresh_file(path)
 
 
+def work_store(key: str, metrics: dict, eval_time: float = 0.0, ttl: float = 0.0) -> dict:
+    """Record one PAID evaluation of a work unit (identity: ``keys.work_key``).
+
+    Daemon-first; falls back to a direct SQLite write so a memo can still be
+    recorded while the daemon is restarting. Returns ``{"stored": bool, ...}`` —
+    False means the unit was already known (its result is never overwritten).
+    """
+    client = _get_client()
+    resp = client.send(
+        {
+            "cmd": "work_store",
+            "key": key,
+            "metrics": metrics,
+            "eval_time": eval_time,
+            "ttl": ttl,
+        }
+    )
+    if not _is_daemon_down(resp):
+        return resp.get("result", resp)
+    stored = _get_direct_cache().work_store(key, metrics, eval_time=eval_time, ttl=ttl)
+    return {"stored": stored, "key": key}
+
+
+def work_lookup(key: str) -> dict | None:
+    """Recall a work unit's recorded result, or None when the unit is unknown.
+
+    Returns ``{"metrics", "eval_time", "attempts", "age_s"}`` on a hit — the
+    caller decides whether to reuse it or pay again (see the reuse policy).
+    """
+    client = _get_client()
+    resp = client.send({"cmd": "work_lookup", "key": key})
+    if not _is_daemon_down(resp):
+        return resp.get("result")
+    return _get_direct_cache().work_lookup(key)
+
+
 # ─── Connection Check ─────────────────────────────────────
 
 

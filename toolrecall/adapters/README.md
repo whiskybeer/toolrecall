@@ -8,8 +8,16 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 
 ## Available Adapters
 
-| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |
-| **Google Antigravity** | ✅ `@cached_tool` decorator + MCP bridge | ❌ N/A (no base-URL override — Google-hosted inference) | `pip install toolrecall` + `toolrecall setup` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |\n| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
+| Adapter | Tool | LLM | Setup |
+|---------|------|-----|-------|
+| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |
+| **Google Antigravity** | ✅ `@cached_tool` decorator + MCP bridge | ❌ N/A (no base-URL override — Google-hosted inference) | `pip install toolrecall` + `toolrecall setup` |
+| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |
+| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |
+| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |
+| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |
+| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
+| **OpenEvolve** | ✅ evaluator memo (work ledger) | — (evaluator-side, not a gateway) | `pip install toolrecall` + `TOOLRECALL_OPENEVOLVE_MEMO=1` |
 
 ---
 
@@ -300,6 +308,53 @@ cloudflared tunnel --url http://127.0.0.1:8571
 arm sees identical tool results). **Skip the file cache** — Warp manages its own
 context. Response cache does not survive model switches; cloud agents are excluded
 by Warp. Full compatibility matrix: [AGENT_COMPATIBILITY.md](../../docs/AGENT_COMPATIBILITY.md).
+
+---
+
+## OpenEvolve — Evaluator Memo on the Work Ledger
+
+A candidate program's bytes are the entire input to `evaluate(program_path)`, so
+a repeat of an already-evaluated candidate can be served instead of paid for
+again:
+
+```python
+from toolrecall.adapters import openevolve as tr_oe
+
+
+def evaluate(program_path):
+    return {"combined_score": my_score(program_path)}
+
+
+tr_oe.wrap_evaluator(globals())  # in the eval script, after evaluate() is defined
+```
+
+- **Opt-in:** `TOOLRECALL_OPENEVOLVE_MEMO=1`. Without it the wrappers are a pure
+  pass-through — no behaviour change. Wrapping is idempotent and accepts
+  `globals()` or a module object.
+- **Reuse policy is explicit:** pass `samples=K` (pay for K attempts, serve from
+  K+1 — K is a re-roll count of *your* sampler, or derive it with
+  `policy_from_config(cfg, field="…")`; OpenEvolve 0.3.2 has no re-roll field, so
+  K=1 there) or `allow_reuse=<callable>` (`reuse_after(K)`, `never_reuse`);
+  passing both raises. The ceiling is the hit rate, and the hit rate is the
+  sampling design: a 100-iteration A/B with the memo flipped saved **21.8 %** of
+  evaluator spend at K=1 and **12.1 %** at K=3.
+- **Nothing is silent:** a served hit logs `HIT`; a hit withheld by the policy
+  logs `WITHHELD` with the attempt count and the threshold. `mode="shadow"`
+  never serves — it pays for every evaluation and counts would-be hits into a
+  caller-owned `stats` dict, so K can be chosen from data before behaviour
+  changes.
+- **Impure evaluators are refused:** `wrap_evaluator(..., impure=True)` raises
+  rather than memoize a sandbox score that depends on more than the candidate.
+- **Environment dependence:** fold the environment into `params=` (the Bazel
+  `--action_env` idiom) or bound the entry with `ttl=`. An automatic environment
+  fingerprint is deliberately not built.
+- **Counted where you look:** hits and misses land in the `work_cache`
+  category — visible in `toolrecall top` and the healthcheck.
+- **Prior art, not novelty:** fitness caching is an established research field and
+  content-addressed memoization is standard (`joblib.Memory`, Bazel's action
+  cache, OpenEvolve's own `code_hash` diversity cache). What this adapter adds is
+  placement — a harness-neutral key from `keys.work_key`, a persistent ledger,
+  and an explicit policy. Details and sources: [`openevolve.py`](./openevolve.py).
 
 ---
 

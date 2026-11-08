@@ -33,7 +33,7 @@ ToolRecall is built on 9 principles that guide every design decision:
 | **Secure** | Security gate is independent of any identity layer | Path allowlist, terminal allowlist, sensitive-file blocklist work regardless of who's calling |
 | **Agnostic** | Works with any agent framework — no framework-specific code | UDS transport, env-var config, MCP bridge, HTTP bridge, Go binary — any language, any agent |
 | **0-deps** | Pure Python stdlib, no external dependencies | Under 1MB install. SQLite, threading, http.server, json — all stdlib. libSQL is an optional extra |
-| **Deterministic** | Same input always produces the same cache result | Cache keys are pure (path hash, content hash, command hash), derived via the Layer-0 contract (`toolrecall/keys.py`). Agent_id, timestamps, session IDs excluded |
+| **Deterministic** | Same input always produces the same cache result | Cache keys are pure (path hash, content hash, command hash, work-unit artifact digest), derived via the Layer-0 contract (`toolrecall/keys.py`). Agent_id, timestamps, session IDs excluded — a work result's timestamp lives in its ledger row, never in its key |
 | **Replayable** | Recorded sessions can be replayed identically | Replay mode reads by cache key. Same keys in replay as recording. No ambient state leaks |
 | **Zero-trust** | Caller-provided metadata is never treated as authenticated | Agent_id, source labels are stats-only. Not security primitives, not cache key components |
 | **Fail-closed** | If the daemon is unreachable, gated operations are refused | No silent fallback. Terminal, write, and unrestricted reads fail closed |
@@ -46,6 +46,7 @@ Every key ToolRecall derives — request keys and content digests alike — come
 | Function | Answers | Consumers |
 |----------|---------|-----------|
 | `content_digest(data)` | *What is the identity of these bytes?* | Dedup stubs (text + image), shim file/terminal stubbing |
+| `work_key(data, stage=, params=)` | *What is the identity of this unit of work?* | Evaluator/optimizer memo ledgers (adapter-side) |
 | `tool_key(tool, args, kwargs)` | *What is the identity of this call?* | Adapter cache lookups, replay |
 
 Three rules make this a Layer-0 primitive rather than a helper: it is **pure** (no I/O, no clock, no config reads), **deterministic across processes and sessions** (one encoding policy, canonical serialization), and **byte-stable** (a key written today must be honored forever — golden vectors in `tests/golden_keys.json` pin the format). Same bytes → same key, everywhere. This is content addressing in the same sense as git objects or CAS storage: identity derives from content, not from location, name, or time — and it is the property every layer above stands on: cache hits across sessions, dedup stubs that reference earlier turns, and deterministic replay. Adapters must not hand-roll hashers; route through `keys.py` so a key produced by one component is honored by every other.

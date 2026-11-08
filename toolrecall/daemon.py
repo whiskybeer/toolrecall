@@ -50,6 +50,8 @@ from toolrecall.keys import content_digest
 from toolrecall.cache import (
     _record as _cache_record,
     record_tool_call,
+    work_store as _work_store,
+    work_lookup as _work_lookup,
     cached_read as _cache_read,
     cached_terminal as _cache_terminal,
     cached_skill as _cache_skill,
@@ -2175,6 +2177,10 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_invalidate(request)
             elif cmd == "dedup_tokens":
                 return self._handle_dedup_tokens(request)
+            elif cmd == "work_store":
+                return self._handle_work_store(request)
+            elif cmd == "work_lookup":
+                return self._handle_work_lookup(request)
             elif cmd == "cache_refresh_file":
                 return self._handle_refresh_file(request)
             elif cmd == "mcp_call":
@@ -2581,6 +2587,45 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 tokens_not_sent_measured=tokens,
             )
         return {"ok": True, "counted": tokens}
+
+    def _handle_work_store(self, req: dict) -> dict:
+        """Record one PAID evaluation of a work unit (identity: keys.work_key).
+
+        Fail-closed on a malformed request: an empty key or a non-dict metrics
+        payload is refused, never coerced. The reuse POLICY stays with the
+        caller — the daemon only stores the result and counts attempts.
+
+        The key is caller-supplied and trusted only as a memo *address*, never
+        as an authorization claim (§2 Zero-trust): whoever calls this can only
+        pollute its own memo lookups, and the row carries no path or privilege.
+        """
+        key = req.get("key")
+        if not isinstance(key, str) or not key.strip():
+            return {"error": "Missing or empty 'key'"}
+        metrics = req.get("metrics")
+        if not isinstance(metrics, dict):
+            return {"error": "'metrics' must be an object"}
+        try:
+            created = _work_store(
+                key,
+                metrics,
+                eval_time=float(req.get("eval_time") or 0.0),
+                ttl=float(req.get("ttl") or 0.0),
+            )
+        except (TypeError, ValueError) as e:
+            return {"error": str(e)}
+        return {"result": {"stored": created, "key": key}}
+
+    def _handle_work_lookup(self, req: dict) -> dict:
+        """Read a work unit's recorded result — ``null`` when the unit is unknown."""
+        key = req.get("key")
+        if not isinstance(key, str) or not key.strip():
+            return {"error": "Missing or empty 'key'"}
+        try:
+            record = _work_lookup(key)
+        except (TypeError, ValueError) as e:
+            return {"error": str(e)}
+        return {"result": record}
 
     def _handle_invalidate(self, req: dict) -> dict:
         err = self.security.check_invalidate()

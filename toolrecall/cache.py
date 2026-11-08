@@ -28,6 +28,7 @@ Token estimation: len(content) // 3  →  approximates typical LLM tokenizer
 
 import os
 import re
+import json
 import sqlite3
 import time
 import logging
@@ -449,6 +450,16 @@ CREATE TABLE IF NOT EXISTS access_log (
     client TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_time ON access_log(cached_at DESC);
+CREATE TABLE IF NOT EXISTS work_ledger (
+    key TEXT PRIMARY KEY,
+    metrics_json TEXT NOT NULL,
+    eval_time REAL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    ttl REAL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_work_ledger_updated ON work_ledger(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_file_mtime ON file_cache(mtime);
 CREATE INDEX IF NOT EXISTS idx_terminal_expires ON terminal_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_file_path ON file_cache(path);
@@ -2658,6 +2669,98 @@ def cached_mcp(
 
 
 # ─── STATS & ADMIN ─────────────────────────────────────────
+
+
+def _work_key_guard(key: Any) -> str:
+    """Reject malformed work keys loudly — a ledger that accepts junk is a
+    ledger that can serve the wrong unit's result."""
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("work key must be a non-empty string")
+    return key
+
+
+def work_store(key: Any, metrics: dict, eval_time: float = 0.0, ttl: float = 0.0) -> bool:
+    """Record one PAID evaluation of a work unit (see ``keys.work_key``).
+
+    Returns True when this call established the unit's result, False when the
+    unit was already known. A stored result is never overwritten — a re-roll
+    must not rewrite history — but ``attempts`` still advances, because the
+    second evaluation was paid for and the reuse policy is exactly a question
+    about how many times a unit was paid for.
+
+    ``ttl=0`` (default) means no expiry: a work result is a statement about a
+    deterministic unit, not a freshness-sensitive read. A caller memoizing an
+    environment-dependent evaluator must pass a ttl or fold the environment
+    into the key.
+    """
+    key = _work_key_guard(key)
+    if not isinstance(metrics, dict):
+        raise TypeError(f"metrics must be a dict, got {type(metrics).__name__}")
+    payload = json.dumps(metrics, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    now = time.time()
+    try:
+        with _db() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO work_ledger
+                    (key, metrics_json, eval_time, attempts, created_at, updated_at, ttl)
+                VALUES (?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(key) DO NOTHING
+                """,
+                (key, payload, float(eval_time), now, now, float(ttl)),
+            )
+            created = cur.rowcount == 1
+            if not created:
+                conn.execute(
+                    "UPDATE work_ledger SET attempts = attempts + 1, updated_at = ? WHERE key = ?",
+                    (now, key),
+                )
+        return created
+    except Exception as e:  # a ledger write must never break the caller's run
+        warnings.warn(f"ToolRecall: work ledger write failed for {key[:16]}: {e}")
+        return False
+
+
+def work_lookup(key: Any) -> dict | None:
+    """Read a work unit's recorded result, or None when the unit is unknown.
+
+    Counts into the ``work_cache`` category — hit when the unit is known, miss
+    otherwise — so reuse is visible in ``top`` and the healthcheck. A malformed
+    key raises; an unreadable ledger degrades to None, which makes the caller
+    pay again instead of trusting a result we could not verify.
+    """
+    key = _work_key_guard(key)
+    row = None
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                """
+                SELECT metrics_json, eval_time, attempts, created_at, updated_at, ttl
+                FROM work_ledger WHERE key = ?
+                """,
+                (key,),
+            ).fetchone()
+            if row is not None:
+                ttl = row["ttl"] or 0.0
+                if ttl and (time.time() - (row["updated_at"] or 0.0)) > ttl:
+                    conn.execute("DELETE FROM work_ledger WHERE key = ?", (key,))
+                    row = None
+    except Exception as e:  # unreadable ledger: pay again rather than trust it
+        warnings.warn(f"ToolRecall: work ledger read failed for {key[:16]}: {e}")
+        return None
+    _record("work_cache", hit=row is not None, path=key[:64])
+    if row is None:
+        return None
+    try:
+        metrics = json.loads(row["metrics_json"])
+    except (TypeError, ValueError):
+        metrics = {}
+    return {
+        "metrics": metrics,
+        "eval_time": row["eval_time"] or 0.0,
+        "attempts": row["attempts"],
+        "age_s": max(0.0, time.time() - (row["created_at"] or 0.0)),
+    }
 
 
 def get_stats() -> dict:

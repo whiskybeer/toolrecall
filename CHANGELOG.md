@@ -123,6 +123,58 @@
   preserved; applied on first open of an older DB). TUI labels follow:
   the IO table column reads `IO saved`, the headline `SAVED TO LLM TODAY`
   (never sent to the model).
+- **`work_key` — Layer-0 identity for a unit of work (`keys.py`).** Answers
+  *"have we already paid for this unit?"* for a candidate artifact (plus
+  optional evaluation parameters) instead of for a request — the level at which
+  an evaluation is worth reusing across processes, runs, and workers. Two
+  deliberately separate spaces: the legacy-compatible form
+  (`content_digest(code)`, optional `":" + stage`) is byte-identical to the
+  evaluator memo keys that predate this function, so stores already on disk
+  keep hitting — pinned by a golden vector captured from a real OpenEvolve memo
+  store; the params form is versioned (`w/v1:`) over `jcs.canonicalize`
+  (RFC 8785) so dict order cannot fork a key. Purely additive: no existing
+  preimage changes, `tests/golden_keys.json` keeps its old vectors. 6 tests in
+  `tests/test_keys.py`.
+- **Work-unit ledger (`work_ledger` table + `work_store` / `work_lookup`).**
+  The persistence half of `work_key`: `work_store(key, metrics, eval_time, ttl)`
+  records one PAID evaluation — `attempts` advances on a re-roll while the first
+  known result is never overwritten — and `work_lookup(key)` recalls it (None
+  when unknown, TTL honored). Counters land in their own `work_cache` category,
+  so reuse is visible in `top` and the healthcheck instead of borrowing another
+  tier's label — the same visibility gap that proxy dedup still has. Daemon
+  commands `work_store` / `work_lookup`, thin client wrappers with a
+  direct-SQLite fallback, malformed requests fail closed. Unit tests plus a
+  socket E2E test (`tests/test_work_ledger.py`,
+  `tests/test_e2e_work_ledger.py`).
+- **OpenEvolve evaluator memo (`adapters/openevolve.py`).** Wraps an eval
+  script's `evaluate` / `evaluate_stageN` so a repeat of an already-paid
+  candidate is served from the work ledger. Opt-in via
+  `TOOLRECALL_OPENEVOLVE_MEMO=1` (pure pass-through without it); `reuse_after(K)`
+  makes the reuse boundary explicit so deliberate re-rolls stay paid;
+  `impure=True` refuses to memoize an evaluator that is not a pure function of
+  the candidate; hits count in the `work_cache` category. No framework import —
+  duck-typed over the eval namespace, wrapping `globals()` or a module object.
+  15 tests, including the documented integration shape (the eval script wraps
+  `globals()`, then the file is imported by path the way OpenEvolve does).
+  Prior art is documented in the module docstring: fitness caching is an
+  established field and content-addressed memoization is standard — the
+  contribution is placement and policy, not mechanism.
+- **Reuse policy for a stochastic search (`adapters/openevolve.py`).** The reuse
+  boundary became a first-class knob: `samples=K` (pay K attempts, serve from
+  K+1), `policy_from_config()` to read K from a sampler field you name — verified
+  that OpenEvolve 0.3.2 exposes no re-roll field (`num_islands` and
+  `parallel_evaluations` are breadth and concurrency; each child is evaluated
+  once), so K=1 is the honest policy there —
+  and `never_reuse` as a control arm — passing both `samples` and `allow_reuse`
+  raises instead of silently picking one. `mode="shadow"` pays for every
+  evaluation while counting would-be hits into a caller-owned `stats` dict, so K
+  can be chosen from data before any behaviour changes. Every decision is logged
+  (`HIT`, `WITHHELD` with the threshold, `SHADOW-HIT`). Rationale in the module
+  docstring: the ceiling is the hit rate, and the hit rate is the sampling
+  design — 21.8 % of evaluator spend at K=1 versus 12.1 % at K=3 (100-iteration
+  A/B). 9 further tests, including the per-key score-identity gate: scores are
+  derived from the candidate's content, so a served score that came from the
+  wrong key cannot pass.
 
 ### Fixed
 - **Shim drift detection is content-based, not version-based (`venvs.py`).**

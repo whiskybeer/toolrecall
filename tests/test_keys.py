@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_HYPOTHESIS = False
 
-from toolrecall.keys import _normalize_args, content_digest, digest16, tool_key
+from toolrecall.keys import _normalize_args, content_digest, digest16, tool_key, work_key
 
 _GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "golden_keys.json")
 
@@ -240,6 +240,55 @@ class TestPurityContract(unittest.TestCase):
             )
         ).hexdigest()
         self.assertEqual(tool_key("mytool", ("x",), {"y": 2}), manual)
+
+
+class TestWorkKey(unittest.TestCase):
+    """work_key — Layer-0 identity for a unit of work (candidate + eval params).
+
+    Two spaces, pinned separately: the legacy-compatible form is byte-identical
+    to the M4 memo-shim keys (``content_digest(code)`` / ``content_digest(code)
+    + ":" + stage``), so memo stores written before this function existed keep
+    hitting; the params form is versioned (``w/v1:``) and cannot collide.
+    """
+
+    def test_golden_file_work_key_unit(self):
+        """A real OpenEvolve candidate must reproduce its M4 memo-store key."""
+        with open(_GOLDEN_PATH, encoding="utf-8") as fh:
+            golden = json.load(fh)
+        for unit, want in zip(golden["work_key_units"], golden["work_key_digests"]):
+            with self.subTest(unit=unit[:40]):
+                self.assertEqual(work_key(unit), want)
+                self.assertEqual(work_key(unit, stage="evaluate"), want)
+
+    def test_legacy_stage_suffix_matches_memo_shim(self):
+        """The M4 shim keyed stages as content_digest(code) + ":" + stage."""
+        unit = b"def solve():\n    return 1\n"
+        self.assertEqual(work_key(unit), content_digest(unit))
+        self.assertEqual(work_key(unit, stage="evaluate"), content_digest(unit))
+        self.assertEqual(
+            work_key(unit, stage="evaluate_stage1"),
+            content_digest(unit) + ":evaluate_stage1",
+        )
+
+    def test_stage_rejects_colon(self):
+        with self.assertRaises(ValueError):
+            work_key(b"x", stage="a:b")
+
+    def test_params_are_canonical_and_versioned(self):
+        a = work_key(b"x", params={"b": 1, "a": [2, 3]})
+        b = work_key(b"x", params={"a": [2, 3], "b": 1})
+        self.assertEqual(a, b, "params must be canonical (dict order invariant)")
+        self.assertTrue(a.startswith("w/v1:"), a)
+        self.assertNotEqual(a, work_key(b"x"))
+        self.assertNotEqual(a, work_key(b"x", stage="evaluate"))
+
+    def test_bytes_and_str_units_agree(self):
+        src = "def f():\n    return 1\n"
+        self.assertEqual(work_key(src), work_key(src.encode()))
+
+    def test_rejects_non_byteslike(self):
+        with self.assertRaises(TypeError):
+            work_key(None)
 
 
 if __name__ == "__main__":
