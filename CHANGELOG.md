@@ -7,6 +7,10 @@
   Evicts cached API responses and scenario records associated with a run or key-trace directory.
   Prevents replaying failed attempts in CI, so retries run live against the model. Runs are tagged
   via `TOOLRECALL_RUN_ID` or HTTP header `X-ToolRecall-Run-Id` and recorded in `api_cache_runs`.
+- **Git context normalization for cross-commit replay.**
+  Normalizes agent-injected `# gitStatus` (recent commit SHAs, branch) and `# userEmail` via
+  profile suffix `-nogit` (e.g. `claude-code-nogit`), header `X-ToolRecall-Ignore-Git-Context: 1`,
+  or env var `TOOLRECALL_IGNORE_GIT_CONTEXT=1`. Allows unchanged turns across unrelated commits to replay.
 - **`antigravity` canonicalization profile for forward proxy replay.**
   Normalizes volatile `<ADDITIONAL_METADATA>` timestamps (`The current local time is: ...`),
   conversation IDs, brain directory UUIDs, and test-runner durations, enabling headless Antigravity

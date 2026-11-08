@@ -171,9 +171,12 @@ def test_git_context_normalization_opt_in():
     assert _canonicalize_body("claude-code", b1, ignore_git=True) == _canonicalize_body(
         "claude-code", b2, ignore_git=True
     )
-    assert _canonicalize_body("claude-code-nogit", b1) == _canonicalize_body("claude-code-nogit", b2)
+    assert _canonicalize_body("claude-code-nogit", b1) == _canonicalize_body(
+        "claude-code-nogit", b2
+    )
 
     # Actual prompt changes still produce different keys
     b3 = _git_body("aaaaaaa", "user1@example.com", prompt="different prompt")
-    assert _canonicalize_body("claude-code-nogit", b1) != _canonicalize_body("claude-code-nogit", b3)
-
+    assert _canonicalize_body("claude-code-nogit", b1) != _canonicalize_body(
+        "claude-code-nogit", b3
+    )

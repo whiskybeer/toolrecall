@@ -90,6 +90,12 @@ an `error` event are never cached. To see why a rerun stopped replaying, set
 measured limits: [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md),
 [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code).
 
+**Cross-commit replay (new commit isolation):**
+By default, Claude Code embeds `# gitStatus` (recent commit SHAs, branch) and `# userEmail` into turn 1, which causes new commits to fork the cache key even if the task is identical. To enable cross-commit replay:
+- Profile suffix: `X-ToolRecall-Canonicalize: claude-code-nogit`
+- Or header: `X-ToolRecall-Ignore-Git-Context: 1`
+- Or env var: `TOOLRECALL_IGNORE_GIT_CONTEXT=1`
+
 ### Antigravity (headless repeat runs)
 Antigravity injects volatile metadata (current local time in `<ADDITIONAL_METADATA>`,
 conversation IDs, and brain UUIDs) into prompts. To replay headless Antigravity runs:
@@ -172,7 +178,8 @@ Compare with file/terminal caching, which only saves input tokens (the output st
 | `TOOLRECALL_FORWARD_STREAM_TIMEOUT` | `300` | Streaming request timeout |
 | `TOOLRECALL_FORWARD_DEDUP` (or `[forward_proxy] dedup` in `toolrecall.toml`) | `false` | Request-body dedup — see below |
 | `TOOLRECALL_FORWARD_BYPASS_SAMPLED` (or `[forward_proxy] bypass_sampled`) | `false` | Bypass cache for explicit `temperature > 0` |
-| `TOOLRECALL_DEDUP_NORMALIZE` | unset | Normalize timings/timestamps/temp paths/addresses before dedup hashing (automatic under the `claude-code` profile, which also sets keep-first `protect_last=0`) |
+| `TOOLRECALL_IGNORE_GIT_CONTEXT` | `false` | Normalize agent-injected git status / user email for cross-commit replay |
+| `TOOLRECALL_DEDUP_NORMALIZE` | unset | Normalize timings/timestamps/temp paths/addresses before dedup hashing (automatic under the `claude-code` and `antigravity` profiles, which also set keep-first `protect_last=0`) |
 | `TOOLRECALL_KEY_TRACE_DIR` | unset | Write canonical bodies + HIT/MISS of canonical-profile streaming requests for `toolrecall keytrace` (holds prompts; local only) |
 | N/A | 5 MB | Maximum POST body size |
 

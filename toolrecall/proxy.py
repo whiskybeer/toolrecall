@@ -1244,20 +1244,15 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         if sampled:
             canonical_profile = ""  # no stream cache either
         ignore_git = (
-            (
-                self.headers.get("X-ToolRecall-Ignore-Git-Context")
-                or self.headers.get("X-ToolRecall-Ignore-Git")
-                or ""
-            ).strip().lower()
-            in ("1", "true", "yes")
-            or os.environ.get("TOOLRECALL_IGNORE_GIT_CONTEXT", "").strip().lower()
-            in ("1", "true", "yes")
-        )
+            self.headers.get("X-ToolRecall-Ignore-Git-Context")
+            or self.headers.get("X-ToolRecall-Ignore-Git")
+            or ""
+        ).strip().lower() in ("1", "true", "yes") or os.environ.get(
+            "TOOLRECALL_IGNORE_GIT_CONTEXT", ""
+        ).strip().lower() in ("1", "true", "yes")
         hash_body = body_bytes
         if canonical_profile and body_bytes:
-            canonical = _canonicalize_body(
-                canonical_profile, body_bytes, ignore_git=ignore_git
-            )
+            canonical = _canonicalize_body(canonical_profile, body_bytes, ignore_git=ignore_git)
             if canonical is not None:
                 hash_body = canonical
 
