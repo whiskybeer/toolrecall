@@ -25,7 +25,8 @@ class TestMCPFetch:
         assert "fetch_url" in tool_names
         assert "fetch_head" in tool_names
         assert "fetch_headers" in tool_names
-        assert len(TOOLS) == 3
+        assert "fetch_revalidate" in tool_names  # ETag conditional GET (2026-09)
+        assert len(TOOLS) == 4
 
     def test_validate_url_valid(self):
         """Valid HTTPS URLs pass validation (DNS mocked hermetic — public IP)."""

@@ -312,6 +312,7 @@ class Config:
                 "transparent_cache",
                 "default_ttl",
                 "idle_minutes",
+                "fetch_revalidate",
             }
         ),
         "security": frozenset(
@@ -963,6 +964,17 @@ class Config:
     def mcp_multiplex_servers(self) -> list:
         """Allowlist of server names to multiplex. Empty = all configured."""
         return self.get("mcp_multiplex", "servers", default=[])
+
+    @property
+    def mcp_multiplex_fetch_revalidate(self) -> bool:
+        """ETag revalidation for the fetch server (opt-in, default OFF).
+
+        When true, a transparent-cache MISS with an expired-but-validated
+        row triggers one If-None-Match request: 304 keeps the old body (no
+        body transfer), 200 replaces it. Requires the row to have an etag
+        captured on the original store (see fetch_revalidate tool).
+        """
+        return self.get("mcp_multiplex", "fetch_revalidate", default=False)
 
     @property
     def mcp_multiplex_idle_minutes(self) -> int:

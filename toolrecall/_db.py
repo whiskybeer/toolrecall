@@ -448,6 +448,10 @@ def _init(schema: str = ""):
         _add_column(conn, "terminal_cache", "hit_streak INTEGER DEFAULT 0")
         _add_column(conn, "mcp_cache", "hit_streak INTEGER DEFAULT 0")
         _add_column(conn, "api_cache", "hit_streak INTEGER DEFAULT 0")
+        # Migration: v0.12.x — mcp_cache.etag: HTTP validator for conditional
+        # revalidation (If-None-Match). NULL/'' = row is not ETag-validated;
+        # revalidation treats it as a plain expired row (live refetch).
+        _add_column(conn, "mcp_cache", "etag TEXT")
         # Migration: A6-7 (2026-09-13) — access_log.client: which identity
         # performed the cached operation (NULL/'' = local/unknown). Remote
         # requests stamp their token-id; enables "who wrote this entry"

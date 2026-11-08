@@ -101,6 +101,27 @@ TOOLS = [
             "required": ["url"],
         },
     },
+    {
+        "name": "fetch_revalidate",
+        "description": (
+            "Conditional HTTP GET: send If-None-Match with the cached ETag. "
+            "Returns status 304 (content unchanged — keep the cached copy) or "
+            "200 with fresh content. Also fetches normally when the server "
+            "ignores the validator."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL to revalidate (http/https only)"},
+                "etag": {"type": "string", "description": "Cached ETag (If-None-Match value)"},
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Max bytes to read when the server returns 200",
+                },
+            },
+            "required": ["url", "etag"],
+        },
+    },
 ]
 
 
@@ -182,8 +203,19 @@ def _validate_url(url: str) -> str | None:
     return None
 
 
-def _do_fetch(url: str, method: str = "GET", max_bytes: int = MAX_CONTENT_BYTES) -> dict:
-    """Execute HTTP request. Returns result dict."""
+def _do_fetch(
+    url: str,
+    method: str = "GET",
+    max_bytes: int = MAX_CONTENT_BYTES,
+    if_none_match: str | None = None,
+) -> dict:
+    """Execute HTTP request. Returns result dict.
+
+    ``if_none_match``: sends If-None-Match (conditional GET). A 304 returns
+    {revalidated: True, etag: <echoed validator>, status: 304} with NO body
+    — the caller keeps its cached copy. A 200 returns the normal result
+    (with fresh etag if the server sent one) — the caller replaces its row.
+    """
     assert _LOG is not None
     max_bytes = min(max_bytes, MAX_CONTENT_BYTES)
 
@@ -191,6 +223,8 @@ def _do_fetch(url: str, method: str = "GET", max_bytes: int = MAX_CONTENT_BYTES)
     req = Request(url, method=method)
     req.add_header("User-Agent", "toolrecall-fetch-mcp/0.1")
     req.add_header("Accept", "text/html,application/xhtml+xml,application/xml,text/plain,*/*")
+    if if_none_match:
+        req.add_header("If-None-Match", if_none_match)
 
     # SSRF guard (F14): never follow redirects — the redirect target was
     # never validated and could be an internal address. The resulting
@@ -231,10 +265,21 @@ def _do_fetch(url: str, method: str = "GET", max_bytes: int = MAX_CONTENT_BYTES)
                 "encoding": encoding,
                 "bytes_read": len(raw),
                 "truncated": truncated,
+                "etag": headers.get("ETag"),
             }
 
     except HTTPError as e:
         _LOG.warning(f"HTTP {e.code} for {url}")
+        # 304 Not Modified: the conditional-GET contract — content is
+        # byte-identical to what the caller has cached. Report it without
+        # treating it as an error; no body arrives with a 304.
+        if e.code == 304:
+            return {
+                "status": 304,
+                "revalidated": True,
+                "etag": if_none_match,
+                "headers": dict(e.headers or {}),
+            }
         return {
             "status": e.code,
             "error": str(e.reason),
@@ -281,6 +326,19 @@ def _handle(method: str, params: dict) -> dict | None:
                 f"{k}: {v}" for k, v in result["headers"].items()
             )
         return result
+
+    elif method == "fetch_revalidate":
+        url = params.get("url", "")
+        etag = params.get("etag", "")
+        err = _validate_url(url)
+        if err:
+            return {"error": err}
+        if not etag or not isinstance(etag, str):
+            return {"error": "fetch_revalidate requires the cached ETag string"}
+        max_bytes = params.get("max_bytes", MAX_CONTENT_BYTES)
+        if not (isinstance(max_bytes, int) and max_bytes > 0):
+            max_bytes = MAX_CONTENT_BYTES
+        return _do_fetch(url, "GET", max_bytes, if_none_match=etag)
 
     return None
 

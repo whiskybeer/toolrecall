@@ -394,12 +394,48 @@ def cmd_trend():
         os._exit(0)
 
 
+def _cli_arg_value(flag: str) -> str | None:
+    """Value of ``--flag value`` from sys.argv (None when absent or bare)."""
+    argv = sys.argv
+    for i, a in enumerate(argv):
+        if a == flag and i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
 def cmd_invalidate():
-    """Clear cache via Daemon or direct SQLite fallback."""
+    """Clear cache — whole cache, one MCP server, or one site.
+
+    toolrecall invalidate                  # agent caches (api_cache untouched)
+    toolrecall invalidate --server fetch   # one MCP server's cached responses
+    toolrecall invalidate --url example.com --server fetch
+                                           # rows whose arguments contain the substring
+    toolrecall invalidate --scope api      # explicit opt-in: ALSO wipe api_cache
+    """
+    server_flag = _cli_arg_value("--server")
+    url_flag = _cli_arg_value("--url")
+    scope_flag = _cli_arg_value("--scope")
+
+    if url_flag:
+        from toolrecall.cache import invalidate_mcp_url
+
+        server = server_flag or "fetch"
+        tool = "fetch_url" if server == "fetch" else "fetch"
+        n = invalidate_mcp_url(server, tool, url_flag)
+        print(f"Invalidated {n} cached response(s) for '{url_flag}' ({server}).")
+        return
+
+    if server_flag:
+        from toolrecall.cache import invalidate_mcp_server
+
+        invalidate_mcp_server(server_flag)
+        print(f"Invalidated all cached responses for MCP server '{server_flag}'.")
+        return
+
     try:
         from toolrecall.client import cache_invalidate
 
-        print(cache_invalidate())
+        print(cache_invalidate(scope=scope_flag or "agent"))
     except Exception:
         from toolrecall.cache import invalidate_all
 
@@ -1612,7 +1648,7 @@ def _ensure_agent_integration():
         writing ~/.claude.json directly.
       - OpenCode/Crush: writes ~/.opencode/opencode.jsonc.
 
-    Returns dict with keys: 'hermes', 'opencode', 'claude' — bool per agent.
+    Returns dict with keys: 'hermes', 'opencode', 'antigravity', 'claude' — bool per agent.
     """
     import os
     import subprocess
@@ -1705,6 +1741,25 @@ def _ensure_agent_integration():
         result["opencode"] = True
     else:
         result["opencode"] = False
+
+    # ─── Google Antigravity (2.0 / IDE / CLI) ───────────────────────────
+    # All Antigravity surfaces read ~/.gemini/config/mcp_config.json (global)
+    # or .agents/mcp_config.json (workspace). We write the global file —
+    # workspace files belong to the project. Merge-preserving: existing
+    # servers stay untouched, only the "toolrecall" entry is added.
+    ag_home = os.path.expanduser("~/.gemini")
+    if os.path.isdir(ag_home):
+        ag_config_path = os.path.join(ag_home, "config", "mcp_config.json")
+        wrote, warn = _prepare_antigravity_config(ag_config_path)
+        if wrote:
+            print(f"  ✅ Antigravity MCP config written (automatic): {ag_config_path}")
+            result["antigravity"] = True
+            _print_antigravity_notice()
+        else:
+            print(f"  ⚠️  Antigravity MCP config NOT written: {warn}")
+            result["antigravity"] = False
+    else:
+        result["antigravity"] = False
 
     # ─── Claude Code ────────────────────────────────
     claude_bin = shutil.which("claude")
@@ -2002,6 +2057,116 @@ def _write_claude_json_config(multiplexer_only: bool = False):
 
     with open(claude_json, "w") as f:
         json.dump(config, f, indent=2)
+
+
+def _toolrecall_command_for_mcp() -> list[str]:
+    """Command + args that launch the TR MCP bridge from an MCP client.
+
+    Resolves the absolute path of the `toolrecall` executable — MCP servers
+    spawned by GUI processes (Antigravity IDE on macOS/Windows especially)
+    may not inherit a shell PATH where pipx/uv tool shims live. Absolute path
+    keeps it working everywhere; falls back to the bare name if resolution
+    fails (client-PATH lookup then applies).
+    """
+    import os as _os
+    import shutil as _shutil
+
+    # shutil.which only returns existing executables — trust it outright
+    # (it runs in the user's shell at setup time, where pipx/uv shims are
+    # on PATH; Antigravity then launches the recorded absolute path).
+    resolved = _shutil.which("toolrecall")
+    if resolved:
+        return [resolved, "mcp"]
+    fallback = _os.path.expanduser("~/.local/bin/toolrecall")
+    for candidate in (fallback, fallback + ".exe", fallback + ".cmd", fallback + ".bat"):
+        if _os.path.isfile(candidate):
+            return [candidate, "mcp"]
+    return ["toolrecall", "mcp"]
+
+
+def _prepare_antigravity_config(config_path: str) -> tuple[bool, str]:
+    """Read existing Antigravity mcp_config.json or create a fresh one, then
+    merge the toolrecall MCP bridge entry into ``mcpServers``.
+
+    Merge-preserving: user-defined servers in the file are kept verbatim
+    (Antigravity schema: stdio uses command/args/env; remote uses serverUrl).
+    Writes atomically (tmp file + os.replace) so a crash mid-write can't
+    leave a truncated config that would break Antigravity startup.
+
+    Returns:
+        (wrote, info): wrote=True → file written/updated (info = "created" or
+        "updated"); warn non-empty with wrote=False → reason skipped
+        (unreadable/corrupt existing file, schema mismatch).
+    """
+    import json
+    import os
+    import tempfile
+
+    config: dict = {}
+    existing = False
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+            existing = True
+        except (json.JSONDecodeError, OSError) as e:
+            # Never clobber a config we cannot parse — user data protection.
+            return False, f"existing config unreadable ({e}) — fix or remove it first"
+
+    if not isinstance(config, dict):
+        return False, "existing config is not a JSON object"
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        return False, '"mcpServers" is not an object'
+
+    cmd_line = _toolrecall_command_for_mcp()
+    servers["toolrecall"] = {"command": cmd_line[0], "args": cmd_line[1:]}
+
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    # Atomic: tmp file in the same directory, then os.replace.
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(config_path), prefix=".mcp_config_", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, config_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError as cleanup_err:
+            # Best-effort temp cleanup — never masks the original write error
+            # (re-raised below); logged so the swallow is visible, not silent.
+            import logging
+
+            logging.getLogger("toolrecall.cli").debug(
+                "antigravity config tmp cleanup failed: %s", cleanup_err
+            )
+        raise
+    return True, "updated" if existing else "created"
+
+
+def _print_antigravity_notice() -> None:
+    """One-time guidance after Antigravity MCP config write.
+
+    Covers the rides-along capabilities the bridge unlocks (replay, FTS
+    skills indexing, MCP multiplex opt-in) — the bridge entry alone is what
+    was written; these are optional next steps, never auto-enabled.
+    """
+    print()
+    print("  Antigravity + ToolRecall — next steps:")
+    print("  • Restart Antigravity so it picks up the new MCP server.")
+    print("  • SDK agents: decorate expensive custom tools —")
+    print("      from toolrecall.adapters import antigravity")
+    print("      @antigravity.cached_tool(ttl=300)")
+    print("  • Record a session for offline replay:")
+    print("      toolrecall replay record antigravity-session")
+    print("  • Make workspace skills/rules searchable (docs_search):")
+    print("      toolrecall index-dir ~/.gemini/skills --source antigravity-skills")
+    print("  • Optional: fronted third-party MCP servers get transparent")
+    print("    response caching — opt in via [mcp_multiplex] in the daemon")
+    print("    config (set ttl = 0 on any server with write tools).")
 
 
 def _prepare_opencode_config(config_path):

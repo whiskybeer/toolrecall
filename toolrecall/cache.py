@@ -324,7 +324,8 @@ CREATE TABLE IF NOT EXISTS mcp_cache (
     cached_at REAL NOT NULL,
     expires_at REAL NOT NULL,
     hits INTEGER DEFAULT 1,
-    hit_streak INTEGER DEFAULT 0
+    hit_streak INTEGER DEFAULT 0,
+    etag TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_expires ON mcp_cache(expires_at);
 CREATE TABLE IF NOT EXISTS browser_cache (
@@ -1830,6 +1831,25 @@ MCP_DEFAULT_TTL = config.get("mcp", "default_ttl", default=60)
 _POSIX_MODE = os.name != "nt"  # shlex.split: posix=True on Unix, False on Windows
 
 
+def _mcp_request_key(server: str, tool: str, arguments: dict | None) -> str:
+    """Canonical MCP cache key derivation — the ONE place that knows how.
+
+    Honors ``[norm] enabled`` (semantic normalization) exactly as the
+    transparent cache does. cached_mcp_check and get_mcp_etag both route
+    through this so etag validation addresses the same row the check
+    reads — never re-derive this formula at a call site.
+    """
+    import json as _json
+
+    if config.get("norm", "enabled", default=False) and arguments:
+        from toolrecall.normalizer import normalize_tool_args
+
+        args_json = normalize_tool_args(arguments)
+    else:
+        args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
+    return _hash(f"{server}://{tool}?{args_json}")
+
+
 def cached_mcp_check(
     server: str, tool: str, arguments: dict | None = None, ttl: int | None = None
 ) -> dict:
@@ -1859,20 +1879,13 @@ def cached_mcp_check(
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
 
     # Normalize MCP arguments for cache key when enabled
-    if config.get("norm", "enabled", default=False) and arguments:
-        from toolrecall.normalizer import normalize_tool_args
-
-        args_json = normalize_tool_args(arguments)
-    else:
-        args_json = _json.dumps(arguments, sort_keys=True) if arguments else "{}"
-    request_str = f"{server}://{tool}?{args_json}"
-    request_hash = _hash(request_str)
+    request_hash = _mcp_request_key(server, tool, arguments)
     now = time.time()
 
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT data, expires_at, hit_streak FROM mcp_cache WHERE request_hash = ?",
+                "SELECT data, expires_at, hit_streak, cached_at FROM mcp_cache WHERE request_hash = ?",
                 (request_hash,),
             ).fetchone()
             if row is not None:
@@ -1885,7 +1898,13 @@ def cached_mcp_check(
                         (request_hash,),
                     )
                     _record("mcp_cache", hit=True)
-                    return {"cached": True, "data": row["data"], "server": server, "tool": tool}
+                    return {
+                        "cached": True,
+                        "data": row["data"],
+                        "server": server,
+                        "tool": tool,
+                        "age_s": max(0.0, now - row["cached_at"]),
+                    }
                 if tier == ttl_policy.SWR_SERVE_STALE:
                     # SWR: serve stale; revalidation is the CALLER's job
                     # (check has no fetch capability — cached_mcp() handles
@@ -1898,6 +1917,7 @@ def cached_mcp_check(
                         "tool": tool,
                         "stale": True,
                         "key": request_hash,
+                        "age_s": max(0.0, now - row["cached_at"]),
                     }
                 # tier == "expired" → fall through to miss
     except Exception as e:
@@ -1908,9 +1928,20 @@ def cached_mcp_check(
 
 
 def cached_mcp_store(
-    request_hash: str, server: str, tool: str, arguments: dict, data: str, ttl: int | None = None
+    request_hash: str,
+    server: str,
+    tool: str,
+    arguments: dict,
+    data: str,
+    ttl: int | None = None,
+    etag: str | None = None,
 ):
-    """Store an MCP tool call result for future cache hits."""
+    """Store an MCP tool call result for future cache hits.
+
+    ``etag``: optional HTTP validator (If-None-Match target) captured from
+    the live response. Enables conditional revalidation on later refresh
+    (get_mcp_etag → fetch_revalidate); NULL stores an un-validated row.
+    """
     import json as _json
 
     ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
@@ -1928,15 +1959,149 @@ def cached_mcp_store(
             conn.execute(
                 """
                 INSERT OR REPLACE INTO mcp_cache
-                (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at, hit_streak)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (request_hash, mcp_server, mcp_tool, arguments, data, cached_at, expires_at, hit_streak, etag)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (request_hash, server, tool, args_json, data, now, now + eff_ttl, 0),
+                (request_hash, server, tool, args_json, data, now, now + eff_ttl, 0, etag),
             )
     except Exception as e:
         warnings.warn(f"ToolRecall: MCP cache store failed: {e}")
 
     _record_tokens_read_from_disk("mcp_cache", _estimate_tokens(data))
+
+
+def get_mcp_etag(server: str, tool: str, arguments: dict) -> str | None:
+    """Return the stored HTTP ETag for an mcp_cache row (None if absent).
+
+    Key derivation is shared with cached_mcp_check (via _mcp_request_key),
+    so validation always addresses the row the transparent cache reads —
+    including ``[norm]`` normalization when enabled.
+    """
+    request_hash = _mcp_request_key(server, tool, arguments)
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT etag FROM mcp_cache WHERE request_hash = ?", (request_hash,)
+            ).fetchone()
+            return row["etag"] if row and row["etag"] else None
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP etag read failed: {e}")
+        return None
+
+
+def refresh_mcp_etag(request_hash: str, etag: str | None, ttl: int | None = None) -> None:
+    """Bump an mcp_cache row's freshness after a 304 Not Modified response.
+
+    Content is byte-identical (the ETag proves it) — only cached_at,
+    expires_at, and the validator are refreshed; hits/hit_streak are left
+    untouched (this is a revalidation, not a hit). A 200 response must NOT
+    take this path — the caller stores the new body via cached_mcp_store.
+    """
+    now = time.time()
+    eff_ttl = ttl if ttl is not None else MCP_DEFAULT_TTL
+    try:
+        with _db() as conn:
+            conn.execute(
+                "UPDATE mcp_cache SET cached_at = ?, expires_at = ?, etag = ? WHERE request_hash = ?",
+                (now, now + eff_ttl, etag, request_hash),
+            )
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP etag refresh failed: {e}")
+
+
+def revalidate_mcp_entry(
+    server: str,
+    tool: str,
+    arguments: dict,
+    fetch_fn: Callable[[str], dict | None],
+) -> dict:
+    """Expired-row revalidation via HTTP validator (If-None-Match).
+
+    Contract:
+      - fetch_fn(etag) performs ONE network call; returns a dict with
+        ``status`` and optionally ``revalidated`` (304 semantics) or fresh
+        content. Returns None on network failure → stale row untouched.
+      - 304 (fetch_fn sets revalidated=True) → refresh timestamps via
+        refresh_mcp_etag; the row stays byte-identical. Saves the full
+        body transfer.
+      - 200 with a new etag → replace the row (new body + validator).
+      - Anything else / exception → row left as-is; caller decides
+        (transparent cache serves stale, adapter bypasses to live call).
+
+    Returns a dict describing what happened: {action, rows, etag}.
+    ``action`` ∈ {revalidated, replaced, failed, not_found, no_etag}.
+    """
+    import json as _json
+
+    request_hash = _mcp_request_key(server, tool, arguments)
+    etag = None
+    row_exists = False
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT etag FROM mcp_cache WHERE request_hash = ?", (request_hash,)
+            ).fetchone()
+            row_exists = row is not None
+            etag = row["etag"] if row else None
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP revalidate read failed: {e}")
+        return {"action": "failed", "rows": 0}
+
+    if not row_exists:
+        return {"action": "not_found", "rows": 0}
+    if not etag:
+        # Row exists but was never validator-captured: plain refetch would
+        # duplicate cached_mcp() — the caller handles that case itself.
+        return {"action": "no_etag", "rows": 0}
+
+    try:
+        fresh = fetch_fn(etag)
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP revalidate fetch failed: {e}")
+        return {"action": "failed", "rows": 0}
+
+    if not isinstance(fresh, dict):
+        return {"action": "failed", "rows": 0}
+
+    status = fresh.get("status")
+    if fresh.get("revalidated") or status == 304:
+        refresh_mcp_etag(request_hash, etag, None)
+        return {"action": "revalidated", "rows": 1, "etag": etag}
+
+    if status == 200 and "content" in fresh:
+        new_etag = fresh.get("etag")
+        serialized = _json.dumps(fresh, default=str, ensure_ascii=False)
+        cached_mcp_store(request_hash, server, tool, arguments, serialized, ttl=None, etag=new_etag)
+        return {"action": "replaced", "rows": 1, "etag": new_etag}
+
+    return {"action": "failed", "rows": 0}
+
+
+def invalidate_mcp_url(server: str, tool: str, url_substring: str) -> int:
+    """Invalidate mcp_cache rows whose stored arguments contain a substring.
+
+    Substring match is case-insensitive against the JSON-serialized
+    arguments (the URL lives inside them for fetch-style tools). Returns
+    the number of rows deleted — 0 means nothing matched (the caller can
+    treat that as "nothing was cached for this site").
+
+    Substring scope keeps this safe from SQL injection (parameterized) and
+    from URL-parsing edge cases (a query param IS part of the identity —
+    `?page=2` SHOULD be a different row than `?page=1`).
+    """
+    if not url_substring:
+        return 0
+    pattern = f"%{url_substring.lower()}%"
+    try:
+        with _db() as conn:
+            cur = conn.execute(
+                "DELETE FROM mcp_cache WHERE mcp_server = ? AND mcp_tool = ? AND LOWER(arguments) LIKE ?",
+                (server, tool, pattern),
+            )
+            return cur.rowcount
+    except Exception as e:
+        warnings.warn(f"ToolRecall: MCP url invalidate failed: {e}")
+        return 0
 
 
 def invalidate_mcp_server(server: str):

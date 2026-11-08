@@ -8,7 +8,8 @@ ToolRecall adapters bridge ToolRecall's SQLite-backed cache into popular agent d
 
 ## Available Adapters
 
-| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |\n| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
+| Adapter | Tool | LLM | Setup |\n|---------|------|-----|-------|\n| **Google ADK** | ✅ `@cached_tool` decorator | ✅ Forward proxy (auto) | `pip install toolrecall` |
+| **Google Antigravity** | ✅ `@cached_tool` decorator + MCP bridge | ❌ N/A (no base-URL override — Google-hosted inference) | `pip install toolrecall` + `toolrecall setup` |\n| **LangChain / LangGraph** | ✅ `ToolRecallCallbackHandler` / `cached_tool` | ✅ `ToolRecallCache` BaseCache / `get_saver()` BaseCheckpointSaver | `pip install toolrecall[langchain]` / `toolrecall[langgraph]` |\n| **herdr** | ✅ `tr` binary + MCP bridge | — (shell-level) | Build `tr`, `toolrecall mcp` |\n| **Odysseus** | ✅ `install_agent_cache()` + `install_mcp_cache()` | ✅ Forward proxy (auto) | `pip install toolrecall` |\n| **LiteLLM Proxy** | ✅ `async_pre_call_hook` dedup | — (gateway-level) | `pip install toolrecall` (+ LiteLLM) |\n| **Warp** | ❌ N/A (Rust) | ✅ `tr-warp-edge` public endpoint | `pip install toolrecall` + tunnel |
 
 ---
 
@@ -33,6 +34,31 @@ The decorator wraps any `@tool` function. On repeat calls with identical args, t
 - **Graceful bypass:** Daemon not running → function executes live, no crash
 
 [Full docs →](../../docs/google-adk.md)
+
+---
+
+## Google Antigravity — `@cached_tool` + MCP Bridge
+
+Same decorator pattern as ADK, for the Antigravity SDK (tools are plain
+callables):
+
+```python
+from toolrecall.adapters import antigravity
+
+@antigravity.cached_tool(ttl=300)
+async def search_web(query: str) -> str:
+    return await external_api_call(query)   # runs only on cache miss
+
+config = LocalAgentConfig(tools=[search_web])   # plain callable — done
+```
+
+- **ToolContext excluded:** SDK-injected conversation state never enters the key
+- **No endpoint override in Antigravity** → LLM column N/A; the bridge, replay,
+  and FTS indexing do the work instead
+- `toolrecall setup` auto-writes `~/.gemini/config/mcp_config.json`
+  (merge-preserving; Windows `.exe`/`.cmd` shims detected)
+
+[Full docs →](../../docs/antigravity.md)
 
 ---
 

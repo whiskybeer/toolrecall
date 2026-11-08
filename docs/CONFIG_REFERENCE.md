@@ -21,7 +21,7 @@ The package-default config shipped with ToolRecall. Located at `toolrecall/confi
 | `[nginx]` | Optional nginx config generation | `site_name`, `domain`, `ssl` |
 | `[security]` | MCP security gates | `tool_access_control`, `dangerous_tool_keywords`, `cognitive_check_enabled`, `ast_check_enabled` |
 | `[mcp]` | MCP file/terminal access | `allowed_paths`, `allow_terminal`, `allow_invalidate`, `emit_context_hints`, `allowed_terminal_commands` |
-| `[mcp_multiplex]` | MCP Multiplexer settings — optional layer; only enable when multiple agent sessions share the daemon or the agent lacks native MCP config (see [MCP_MULTIPLEXER.md](MCP_MULTIPLEXER.md)) | `enabled`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache` |
+| `[mcp_multiplex]` | MCP Multiplexer settings — optional layer; only enable when multiple agent sessions share the daemon or the agent lacks native MCP config (see [MCP_MULTIPLEXER.md](MCP_MULTIPLEXER.md)) | `enabled`, `servers`, `servers_config`, `idle_minutes`, `default_ttl`, `transparent_cache`, `fetch_revalidate` |
 | `[mcp_multiplex.servers_config]` | Custom server overrides | Any server name with `command`, `args`, `env`, `ttl` |
 | `[sources]` | Knowledge DB scanning | `scan_dirs` (default: `<agent_home>/memories` + `<agent_home>/skills` via `AGENT_HOME`/`[paths].agent_home`), `scan_extensions`, `scan_ignore`, `max_file_kb` |
 | `[sources.memory]` | Agent memory indexing | `enabled` |
@@ -106,6 +106,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_MCP_MULTIPLEX_SERVERS` | `mcp_multiplex.servers` | `TOOLRECALL_MCP_MULTIPLEX_SERVERS=time,github` |
 | `TOOLRECALL_MCP_MULTIPLEX_TRANSPARENT_CACHE` | `mcp_multiplex.transparent_cache` | |
 | `TOOLRECALL_MCP_MULTIPLEX_DEFAULT_TTL` | `mcp_multiplex.default_ttl` | |
+| `TOOLRECALL_MCP_MULTIPLEX_FETCH_REVALIDATE` | `mcp_multiplex.fetch_revalidate` | |
 | `TOOLRECALL_STORAGE_BACKEND` | `storage.backend` | `TOOLRECALL_STORAGE_BACKEND=libsql` or `TOOLRECALL_STORAGE_BACKEND=libsql-sync` |
 | `TOOLRECALL_LIBSQL_DB_PATH` | `storage.libsql_db` | `TOOLRECALL_LIBSQL_DB_PATH=~/.toolrecall/cache-libsql.db` |
 | `TOOLRECALL_SYNC_ENABLED` | `storage.sync_enabled` | `TOOLRECALL_SYNC_ENABLED=true` |

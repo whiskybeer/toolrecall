@@ -7,7 +7,17 @@
 
 - [Why ADK?](#why-adk)
 - [Three Integration Paths](#three-integration-paths)
-  - [1. Forward Proxy — no code, maximum impact](#1-forward-proxy---no-code-maximum-impact)
+  - [1. Forward Proxy — no code, maximum impact](#1-forward-proxy---n
+
+> **Stateful harness? Use the Antigravity rules instead.** ADK's file-cache
+> and proxy wins assume the **stateless** harness ADK itself provides (full
+> history resent every `run_async()`). If you run ADK *inside* a stateful
+> agent that manages its own context (Antigravity SDK, Claude Code, Warp),
+> the harness that owns the context window decides: file caching off (2.4×
+> trap), proxy per that harness's capability. See
+> [Antigravity vs Google ADK](antigravity.md#antigravity-vs-google-adk--stateful-vs-stateless).
+
+o-code-maximum-impact)
   - [2. Agent-Agnostic Runtime Patch — file/subprocess level](#2-agent-agnostic-runtime-patch---filesubprocess-level)
   - [3. Embedded Library — deepest integration](#3-embedded-library---deepest-integration)
 - [ADK-Specific Considerations](#adk-specific-considerations)

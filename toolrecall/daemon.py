@@ -53,6 +53,7 @@ from toolrecall.cache import (
     cached_patch as _cache_patch,
     cached_mcp_check as _cache_mcp_check,
     cached_mcp_store as _cache_mcp_store,
+    revalidate_mcp_entry as _revalidate_mcp_entry,
     cached_browser_check as _cache_browser_check,
     cached_browser_store as _cache_browser_store,
     cached_api_check as _cache_api_check,
@@ -1181,7 +1182,66 @@ def _is_local_network_bind(host: str) -> bool:
     return True
 
 
-class DaemonServer:
+def _fetch_revalidate_once(url: str, etag: str) -> dict | None:
+    """One conditional HTTP GET for ETag revalidation (stdlib, no subprocess).
+
+    Mirrors mcp_fetch's security posture exactly: same URL validation
+    (SSRF), no redirects, same size cap. Returns the mcp_fetch-style result
+    dict — {status: 304, revalidated: True} on unchanged content,
+    {status: 200, content, etag} on changed content, None on network
+    failure (revalidate_mcp_entry leaves the stale row untouched).
+    """
+    # Import inside: keeps the daemon's module-import surface unchanged and
+    # avoids a daemon↔fetch-tool circular import.
+    import importlib.util
+    import socket
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, build_opener
+
+    spec = importlib.util.find_spec("toolrecall.mcp_fetch")
+    if spec is None or spec.origin is None or spec.loader is None:
+        return None
+    mcp_fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mcp_fetch)  # stdlib-only module; safe to load twice
+
+    try:
+        # The fetch server's own SSRF validator (F14) — same posture as the
+        # real fetch tool so revalidation can never reach somewhere the
+        # plain fetch could not.
+        err = mcp_fetch._validate_url(url)
+        if err:
+            return {"status": 0, "error": err}
+        req = Request(url, method="GET")
+        req.add_header("User-Agent", "toolrecall-fetch-mcp/0.1")
+        req.add_header("If-None-Match", etag)
+        opener = build_opener(mcp_fetch._no_redirects())
+        try:
+            with opener.open(req, timeout=mcp_fetch.TIMEOUT_SECONDS) as resp:
+                headers = dict(resp.headers)
+                raw = resp.read(mcp_fetch.MAX_CONTENT_BYTES)
+                try:
+                    content = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = raw.decode("latin-1", errors="replace")
+                return {
+                    "status": resp.status,
+                    "content": content,
+                    "content_type": headers.get("Content-Type", ""),
+                    "etag": headers.get("ETag"),
+                }
+        except HTTPError as e:
+            if e.code == 304:
+                return {
+                    "status": 304,
+                    "revalidated": True,
+                    "etag": etag,
+                }
+            return {"status": e.code, "error": str(e.reason)}
+    except (URLError, socket.timeout, ConnectionError, OSError):
+        return None
+
+
+class DaemonServer:  # noqa: E302 — placed immediately before its section
     """IPC server — Unix Domain Socket (POSIX) or TCP (Windows).
 
     Uses ThreadPoolExecutor for connection handling.
@@ -2313,23 +2373,64 @@ class DaemonServer:
 
         # Check cache (only when transparent cache is enabled)
         cached = {"key": f"{server}:{tool}"}  # default for type checker
-        if self.multiplexer.cfg.mcp_multiplex_transparent_cache:
-            server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
-            ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
+        cache_enabled = self.multiplexer.cfg.mcp_multiplex_transparent_cache
+        server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
+        ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
+        if cache_enabled:
             cached = _cache_mcp_check(server, tool, arguments, ttl=ttl)
             if cached.get("cached"):
                 return {"result": cached["data"], "cached": True}
+
+        # ETag revalidation (opt-in, fetch server): a cache MISS that has an
+        # EXPIRED row with a stored validator → ONE conditional request
+        # (If-None-Match) instead of a full refetch. 304 = content unchanged
+        # → serve the old body (no body transfer). 200 → row already replaced
+        # with the fresh body. Any other outcome → fall through to the
+        # normal live call + store below.
+        if (
+            cache_enabled
+            and cached.get("key")
+            and server == "fetch"
+            and tool == "fetch_url"
+            and isinstance(arguments, dict)
+            and self.multiplexer.cfg.mcp_multiplex_fetch_revalidate
+        ):
+            url = arguments.get("url", "")
+            if not isinstance(url, str) or not url:
+                return {
+                    "result": json.dumps({"error": "fetch_revalidate: URL required"}),
+                    "cached": False,
+                }
+            # Narrowed for the closure — mypy can't carry isinstance-narrowing
+            # into the lambda below.
+            revalidate_url: str = url
+            outcome = _revalidate_mcp_entry(
+                "fetch",
+                "fetch_url",
+                arguments,
+                fetch_fn=lambda etag: _fetch_revalidate_once(revalidate_url, etag),
+            )
+            if outcome["action"] in ("revalidated", "replaced"):
+                # refresh_mcp_etag / the replaced store both bumped the row
+                # to fresh — read it back through the normal check path so
+                # hit accounting stays consistent.
+                refreshed = _cache_mcp_check(server, tool, arguments, ttl=ttl)
+                if refreshed.get("cached"):
+                    return {
+                        "result": refreshed["data"],
+                        "cached": True,
+                        "revalidated": outcome["action"] == "revalidated",
+                    }
+            # failed / not_found / no_etag / read-back miss → normal path
 
         # Call the multiplexed server
         result = self.multiplexer.call(server, tool, arguments)
 
         # Store in cache (only when transparent cache is enabled)
-        if self.multiplexer.cfg.mcp_multiplex_transparent_cache:
+        if cache_enabled:
             import json as _json
 
             result_json = _json.dumps(result)
-            server_cfg = self.multiplexer.cfg.mcp_multiplex_servers_config.get(server, {})
-            ttl = server_cfg.get("ttl", self.multiplexer.cfg.mcp_multiplex_default_ttl)
             _cache_mcp_store(
                 cached.get("key", f"{server}:{tool}"), server, tool, arguments, result_json, ttl=ttl
             )
