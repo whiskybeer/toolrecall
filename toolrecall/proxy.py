@@ -410,6 +410,24 @@ def _hermes_canon_walk(node):
 # phrases are touched — counts and pass/fail stay in the key.
 _RE_CANON_DURATION = re.compile(r"\b(in|took) \d+(?:\.\d+)?\s?(?:ms|s|sec|seconds)\b")
 
+# Tool-schema default values that Claude Code draws per session from a
+# server-side flag: measured on a SWE-bench A/B, the Bash tool's
+# run_in_background description said "default 600000 ms" or "default 1800000
+# ms" (~50/50), so call 1 of about half the reruns missed. Applied to the
+# ``tools`` array only (key-only; the provider gets the original body).
+_RE_CANON_TOOL_DEFAULT_MS = re.compile(r"\bdefault \d+ ms\b")
+
+
+def _cc_canon_tools(node):
+    """Replace per-session 'default <n> ms' values inside tool definitions."""
+    if isinstance(node, dict):
+        return {k: _cc_canon_tools(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_cc_canon_tools(x) for x in node]
+    if isinstance(node, str):
+        return _RE_CANON_TOOL_DEFAULT_MS.sub("default <ms>", node)
+    return node
+
 
 def _cc_canon_walk(node):
     """claude-code profile: hermes text rules + duration placeholder; the
@@ -453,6 +471,8 @@ def _canonicalize_body(profile: str, body: bytes):
         return None
     if profile == "claude-code" and isinstance(envelope, dict):
         envelope.pop("metadata", None)
+        if isinstance(envelope.get("tools"), list):
+            envelope["tools"] = _cc_canon_tools(envelope["tools"])
     envelope = walk(envelope)
     return json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
