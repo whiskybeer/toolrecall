@@ -282,9 +282,11 @@ Most commands accept `--help` / `-h` for per-command usage and options
   the billed-savings path (`api_cache` replay + provider usage capture,
   i.e. the MONEY metric tier).
 - **Subcommands:**
-  - `toolrecall proxy attach` — rewrite `~/.hermes/config.yaml`
+  - `toolrecall proxy attach` — point `~/.hermes/config.yaml`
     `llm.base_url` → `http://127.0.0.1:8569/v1` (port via
-    `TOOLRECALL_FORWARD_PORT`). Creates `config.yaml.toolrecall-bak` on
+    `TOOLRECALL_FORWARD_PORT`). Updates the line in place, or **inserts** it
+    as the section's first key when the LLM section carries none (using that
+    section's own child indentation). Creates `config.yaml.toolrecall-bak` on
     first attach. Idempotent (no-op when already proxied).
   - `toolrecall proxy detach` — restore the backup, removing the proxy
     override.
@@ -292,6 +294,9 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - Health check: refuses to attach unless the proxy answers on its port
     (any HTTP response — including upstream 401 — proves it's alive;
     connection errors refuse). Never points an agent at a dead proxy.
+  - A config with no `model:`/`llm:` section is refused rather than guessed
+    at: attach names the manual `OPENAI_BASE_URL` route instead of writing a
+    section shape it cannot verify.
   - Opt-in: `setup` asks interactively (or with `--yes`); non-interactive
     runs without `--yes` skip it. Attaching changes the agent's LLM
     failure mode — must never be silent.

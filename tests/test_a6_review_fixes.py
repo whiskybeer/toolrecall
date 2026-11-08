@@ -271,7 +271,10 @@ class TestA62FailClosedTLS:
             .decode()
             .strip()
         )
-        assert lan_ip, "no global LAN IP in this environment"
+        if not lan_ip:
+            import pytest
+
+            pytest.skip("no global LAN IP in this environment")
         monkeypatch.setenv("TOOLRECALL_NETWORK_ENABLED", "true")
         monkeypatch.setenv("TOOLRECALL_NETWORK_TOKEN", "tok")
         # no TLS env -> tls=false

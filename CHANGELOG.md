@@ -55,6 +55,15 @@
   exact signal beats guessing at the compaction horizon.
 
 ### Fixed
+- **`toolrecall proxy attach` was a silent no-op on a config without a `base_url` line.**
+  It only rewrote an *existing* `llm.base_url:`; a config whose LLM section carried
+  none — the state a partial revert or a hand edit leaves behind — made attach print
+  "no llm.base_url found in Hermes config — skipping" and leave the agent unproxied,
+  with the proxy CSV as the only evidence. Attach now **inserts** the line as the
+  section's first key, reusing that section's own child indentation, so the agent ends
+  up proxied either way; a config with no `model:`/`llm:` section is still refused and
+  names the manual `OPENAI_BASE_URL` route instead. Regression coverage in
+  `tests/test_proxy_attach_config.py` (attach previously had no tests at all).
 - **`test_ast_performance` is no longer load-flaky.** The single 1000-call mean
   measured 1.18ms inside a full-suite run while the same check costs 0.08ms
   standalone (2026-09-28, 14x swing from the suite's own interpreter state) and

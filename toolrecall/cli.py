@@ -2103,8 +2103,9 @@ def _attach_hermes_to_proxy() -> tuple[bool, str]:
     OpenAI-compatible YAML config with that shape.
 
     Writes a <config>.toolrecall-bak backup; `toolrecall proxy detach`
-    restores it. Refuses when: no config found, base_url already proxied,
-    or proxy unreachable. Returns (ok, message).
+    restores it. Inserts a base_url line when the section carries none.
+    Refuses when: no config found, no model:/llm: section to insert into,
+    base_url already proxied, or proxy unreachable. Returns (ok, message).
     """
     explicit = os.environ.get("TOOLRECALL_PROXY_TARGET")
     candidates = []
@@ -2135,11 +2136,14 @@ def _attach_hermes_to_proxy() -> tuple[bool, str]:
     # for older configs. The FIRST matching top-level section wins.
     section_keys = ("model:", "llm:")
     in_llm = False
+    section_idx = None
     target_idx = None
     current_url = ""
     for i, line in enumerate(lines):
         stripped = line.strip()
         if any(line.startswith(k) for k in section_keys) and stripped.endswith(":"):
+            if section_idx is None:
+                section_idx = i
             in_llm = True
             continue
         if in_llm and line and not line[0].isspace():  # next top-level key
@@ -2150,10 +2154,34 @@ def _attach_hermes_to_proxy() -> tuple[bool, str]:
             current_url = stripped.split(":", 1)[1].strip().strip("'\"")
             break
 
+    inserted = False
     if target_idx is None:
-        return False, "no llm.base_url found in Hermes config — skipping"
-    if "127.0.0.1" in current_url or "localhost" in current_url:
+        # The LLM section exists but carries no base_url line. A partial
+        # revert or a hand edit leaves configs in exactly that state, and a
+        # missing line means "not proxied yet" — not "config broken". Insert
+        # one as the section's first key instead of refusing.
+        if section_idx is None:
+            return False, (
+                "no model:/llm: section in Hermes config — cannot insert a "
+                "base_url line; set OPENAI_BASE_URL=http://127.0.0.1:" + port + "/v1 manually"
+            )
+        indent = "  "
+        for line in lines[section_idx + 1 :]:
+            if not line.strip():  # blank line — keep looking for a child key
+                continue
+            if not line[0].isspace():  # next top-level key: section has no child
+                break
+            indent = line[: len(line) - len(line.lstrip())]
+            break
+        target_idx = section_idx + 1
+        lines.insert(
+            target_idx,
+            f"{indent}base_url: {proxy_base}  # toolrecall proxy (detach: toolrecall proxy detach)\n",
+        )
+        inserted = True
+    elif "127.0.0.1" in current_url or "localhost" in current_url:
         return True, f"Hermes already points at a local proxy ({current_url})"
+
     if not _proxy_alive():
         return False, (
             f"forward proxy not reachable on :{port} — refusing to redirect "
@@ -2166,13 +2194,17 @@ def _attach_hermes_to_proxy() -> tuple[bool, str]:
 
         shutil.copy2(cfg_path, backup)
 
-    indent = lines[target_idx][: len(lines[target_idx]) - len(lines[target_idx].lstrip())]
-    lines[target_idx] = (
-        f"{indent}base_url: {proxy_base}  # toolrecall proxy (detach: toolrecall proxy detach; was {current_url})\n"
-    )
+    if not inserted:
+        indent = lines[target_idx][: len(lines[target_idx]) - len(lines[target_idx].lstrip())]
+        lines[target_idx] = (
+            f"{indent}base_url: {proxy_base}  # toolrecall proxy (detach: toolrecall proxy detach; was {current_url})\n"
+        )
     with open(cfg_path, "w") as f:
         f.writelines(lines)
-    return True, f"agent llm.base_url → {proxy_base} (config: {cfg_path}; backup: {backup})"
+    return True, (
+        f"agent llm.base_url → {proxy_base} "
+        f"({'inserted' if inserted else 'updated'}; config: {cfg_path}; backup: {backup})"
+    )
 
 
 def _detach_hermes_from_proxy() -> int:
