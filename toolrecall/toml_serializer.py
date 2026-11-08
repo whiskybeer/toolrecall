@@ -234,10 +234,11 @@ DEFAULT_CONFIG = {
     "security": {
         "tool_access_control": False,
         "dangerous_tool_keywords": [],
-        # F1 symlink policy: allow reads through symlinks located inside an
-        # allowed dir even when their target is not (/etc/os-release style).
-        # false = strict realpath-only containment.
-        "allow_symlink_escapes": True,
+        # F1 symlink policy: strict realpath-only containment by default
+        # (review 2026-09; junction attacks are easiest on Windows).
+        # true = opt into the lexical in-allowed-dir rescue
+        # (/etc/os-release style layouts need it).
+        "allow_symlink_escapes": False,
     },
     "forward_proxy": {
         "port": 8569,

@@ -1,0 +1,72 @@
+# Windows smoke — the guard the repo never had.
+#
+# The 2026-09 review found 149 Windows/3.12 failures, all test
+# portability (AF_UNIX hardcodes, os.getuid, curses, and a6 fixture TOML
+# that broke on C:\Users paths). Product code branches correctly; nothing
+# would have caught the next Windows-only regression.
+#
+# This job gates a minimal Windows-critical selection (config, updater,
+# symlink default, a6 namespacing incl. the escaped-TOML fixtures) and
+# runs the FULL suite report-only so the remaining portability punch list
+# stays visible in the log without blocking.
+#
+# Symlink note: os.symlink on Windows needs Developer Mode — enabled in a
+# prior step so tests/test_symlink_default.py can create real symlinks.
+
+name: windows-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enable Developer Mode (unprivileged symlinks)
+        run: >
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"
+          /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f
+        shell: cmd
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Gate — Windows-critical tests
+        run: >
+          python -m pytest
+          tests/test_toml_helpers.py
+          tests/test_symlink_default.py
+          tests/test_a6_namespacing.py
+          tests/test_a6_review_fixes.py
+          tests/test_mcp_config.py
+          tests/test_audit_fixes.py
+          tests/test_updater.py
+          -q --tb=short -p no:cacheprovider
+
+      - name: Report-only — full suite punch list (non-gating)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python -m pytest tests/ -q --tb=line -p no:cacheprovider 2>&1 |
+            Tee-Object -FilePath windows_punchlist.txt
+
+      - name: Upload punch list
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-punchlist
+          path: windows_punchlist.txt
+          if-no-files-found: ignore

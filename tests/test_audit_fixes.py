@@ -74,8 +74,8 @@ class TestA3UnknownKeys(unittest.TestCase):
             warnings.simplefilter("always")
             Config(p)
         self.assertTrue(
-            any("could not load config" in str(x.message) for x in w),
-            "unreadable config must warn (was except: pass)",
+            any("CONFIG IGNORED" in str(x.message) for x in w),
+            "unreadable config must warn loudly (fail-open = security-relevant)",
         )
 
 

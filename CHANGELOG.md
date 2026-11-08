@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **F1: the lexical symlink rescue is now OPT-IN (`[security] allow_symlink_escapes`, default `false`).** A stock install enforces strict realpath-only containment (Layer A) — no symlink inside an allowed directory can widen what is readable. Rationale (2026-09 review): the Layer-B rescue is the easiest attack surface on Windows (junction reparse points published by any writer inside an allowed dir), and the `/etc/os-release → /usr/lib/os-release` justification is POSIX-only. Layouts that legitimately need the rescue opt in with `allow_symlink_escapes = true` / `TOOLRECALL_ALLOW_SYMLINK_ESCAPES=1`. Flipped at every fallback surface (Config property, daemon/client `getattr` fallbacks, `path_utils.check_path_allowed` signature, `toml_serializer.DEFAULT_CONFIG`, shipped `config.toml` template) — pinned by `tests/test_symlink_default.py` (8). SECURITY.md, README, README-pypi synced.
+- **Malformed config files now warn loudly instead of degrading quietly.** `Config._load` could not load a file → single generic warning → every setting in it silently reverted to package defaults — fail-open for a file carrying `[mcp] allowed_paths` and `[network]` tokens. The warning now leads with `CONFIG IGNORED`, names the exact file and error, and states that allowed_paths/tokens are NOT active. Tests: `tests/test_audit_fixes.py::test_unreadable_config_warns_not_silent` updated.
+
+### Fixed
+- **a6/e2e test portability: fixture TOML paths are now escaped (`tests/toml_helpers.py`).** Three test files f-stringed `tmp_path` (on Windows `C:\Users\...`) raw into TOML — `\U` is an invalid escape, tomllib raised, `Config._load` warned-and-fell-back to package defaults, and every `[network.clients."id"]` entry silently vanished. The a6 namespacing tests passed on Windows for the vacuous reason that all members shared the default namespace; on Linux the same fixtures genuinely exercised the feature. `write_toml_config()` now JSON-escapes every path (`json.dumps` escape set ⊂ TOML basic-string escapes) and parse-asserts the file at setup, so a broken fixture fails loudly instead of passing on defaults. Migrated: `test_a6_namespacing.py`, `test_a6_review_fixes.py`, `test_e2e_network_daemon.py`; contract pinned by `tests/test_toml_helpers.py` (8, incl. the exact `C:\Users` round-trip).
 
 ## [0.8.21] — 2026-09-13
 ### Added

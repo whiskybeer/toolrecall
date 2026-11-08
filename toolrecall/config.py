@@ -101,8 +101,8 @@ ENV_MAP = {
     # the profile to headerless requests (session-wide default).
     "TOOLRECALL_CANONICALIZE_DEFAULT": ("forward_proxy", "canonicalize_default"),
     # SecurityGate symlink policy (path_utils Layer B, F1): lexical
-    # in-allowed-dir symlinks permitted (default true; false = strict
-    # realpath-only containment).
+    # in-allowed-dir symlinks permitted (default false — strict
+    # realpath-only containment; true opts INTO Layer-B rescue).
     "TOOLRECALL_ALLOW_SYMLINK_ESCAPES": ("security", "allow_symlink_escapes"),
 }
 
@@ -204,9 +204,21 @@ class Config:
                     self._warn_unknown_keys(config, user, str(p))
                     self._deep_merge(config, user)
                 except Exception as e:
+                    # Fail-open load failure (review 2026-09): a malformed
+                    # config degrades to PACKAGE DEFAULTS — for a file that
+                    # also carries [mcp] allowed_paths and [network] tokens,
+                    # that flips security posture silently. Make the
+                    # degradation impossible to miss.
                     import warnings
 
-                    warnings.warn(f"ToolRecall: could not load config {p}: {e}")
+                    warnings.warn(
+                        f"ToolRecall: CONFIG IGNORED — could not load {p}: "
+                        f"{type(e).__name__}: {e}. Running on package "
+                        f"defaults; [mcp] allowed_paths, [network] tokens "
+                        f"and every other setting from this file are NOT "
+                        f"active. Fix or remove the file.",
+                        stacklevel=2,
+                    )
 
         config = _apply_env_overrides(config)
         return config
@@ -750,14 +762,16 @@ class Config:
         """Permit reads through symlinks located INSIDE an allowed directory
         even when their target is not (path_utils Layer B, F1).
 
-        Default True — matches historical behavior and legitimate layouts
-        (/etc/os-release → /usr/lib/os-release, venv site-packages links).
-        Set false (here or TOOLRECALL_ALLOW_SYMLINK_ESCAPES=0) for strict
-        realpath-only containment: no symlink inside an allowed dir can
-        widen what is readable. The sensitive-file blocklist applies
-        either way.
+        Default False (review 2026-09): a stock install enforces strict
+        realpath-only containment — no symlink inside an allowed dir can
+        widen what is readable. This is the safe direction on Windows,
+        where junction attacks against the Layer-B rescue are easiest.
+        Distro/venv layouts that legitimately need the rescue
+        (/etc/os-release → /usr/lib/os-release, site-packages links) opt
+        in by setting this true (or TOOLRECALL_ALLOW_SYMLINK_ESCAPES=1).
+        The sensitive-file blocklist applies either way.
         """
-        val = self.get("security", "allow_symlink_escapes", default=True)
+        val = self.get("security", "allow_symlink_escapes", default=False)
         if isinstance(val, bool):
             return val
         return str(val).strip().lower() not in ("0", "false", "no", "off")

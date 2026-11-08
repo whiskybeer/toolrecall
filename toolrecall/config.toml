@@ -163,6 +163,14 @@ tool_access_control = false
 # EMPTY by default — set tool_access_control=true AND add keywords below to activate filtering
 dangerous_tool_keywords = []
 
+# F1 symlink policy. false (default): strict realpath-only containment —
+# no symlink inside an allowed directory can widen what is readable. This
+# is the safe default on Windows, where junction attacks against the
+# lexical rescue are easiest. Set true ONLY if your layout depends on
+# distro/venv symlinks (e.g. /etc/os-release → /usr/lib/os-release with
+# /etc in allowed_paths).
+allow_symlink_escapes = false
+
 [mcp]
 # ⚠️ SECURITY: Filesystem access control
 #
@@ -185,6 +193,11 @@ dangerous_tool_keywords = []
 # (.env, .ssh/, *.pem) is a secondary safety net within allowed paths.
 # Avoid broad system dirs like /etc or /dev — a compromised agent could
 # read system config / device files under them.
+#
+# NOTE: "~" below deliberately allows the WHOLE home directory. That is
+# broader than the default-deny wording above — tighten it to your real
+# project directories (e.g. "~/projects") if you don't need home-wide
+# caching.
 allowed_paths = [
     "~",
 ]

@@ -222,9 +222,10 @@ class SecurityGate:
         self.allowed_servers = [s.lower() for s in (cfg.mcp_multiplex_servers or [])]
         self.tool_access_control = cfg.mcp_tool_access_control
         # F1 symlink policy: lexical in-allowed-dir symlinks (path_utils
-        # Layer B). Default True (historical behavior); strict deployments
-        # set [security] allow_symlink_escapes = false.
-        self.allow_symlink_escapes = getattr(cfg, "mcp_allow_symlink_escapes", True)
+        # Layer B). Default False (strict realpath containment, review
+        # 2026-09); distro/venv layouts opt in with allow_symlink_escapes
+        # = true.
+        self.allow_symlink_escapes = getattr(cfg, "mcp_allow_symlink_escapes", False)
         self.dangerous_tool_keywords = cfg.mcp_dangerous_tool_keywords or [
             "write",
             "edit",

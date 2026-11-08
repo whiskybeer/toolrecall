@@ -170,7 +170,7 @@ def cached_read(path: str, source: str = "agent_tool") -> dict:
         if not check_path_allowed(
             path,
             allowed_paths,
-            getattr(cfg, "mcp_allow_symlink_escapes", True),
+            getattr(cfg, "mcp_allow_symlink_escapes", False),
         ):
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
     return _get_direct_cache().cached_read(path, source=source)

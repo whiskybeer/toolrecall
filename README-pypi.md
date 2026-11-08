@@ -435,8 +435,9 @@ persist_ttl = 21600
 # ignore_read_prefixes = []   # paths never counted as agent context reads
 
 [security]
-# F1: lexical symlink rescue inside allowed dirs (realpath containment always enforced)
-allow_symlink_escapes = true
+# F1: strict realpath-only containment by default; lexical symlink rescue
+# is opt-in (Windows junction attacks against Layer B are easiest)
+allow_symlink_escapes = false
 
 [update]
 # F2: self-update pinned to ONE index (default official PyPI) — pip can't discover extras

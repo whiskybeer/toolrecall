@@ -52,29 +52,29 @@ class NetworkDaemonE2E:
         self.port = _free_port()
         self.token = "e2e-shared-token"
         self.cfg_path = os.path.join(tmp, "toolrecall.toml")
-        with open(self.cfg_path, "w") as f:
-            json.dump({}, f)  # placeholder; real body below (TOML)
-        with open(self.cfg_path, "w") as f:
-            f.write(
-                f"""
+        from tests.toml_helpers import toml_str, write_toml_config
+
+        write_toml_config(
+            self.cfg_path,
+            f"""
 [paths]
-cache_db = "{tmp}/cache.db"
-knowledge_db = "{tmp}/knowledge.db"
+cache_db = {toml_str(os.path.join(tmp, "cache.db"))}
+knowledge_db = {toml_str(os.path.join(tmp, "knowledge.db"))}
 
 [mcp]
-allowed_paths = ["{tmp}"]
+allowed_paths = [{toml_str(tmp)}]
 
 [network]
 enabled = true
 bind = "127.0.0.1"
 port = {self.port}
-token = "{self.token}"
+token = {toml_str(self.token)}
 
 [network.clients.network-client]
-allowed_paths = ["{tmp}"]
+allowed_paths = [{toml_str(tmp)}]
 allow_terminal = false
-"""
-            )
+""",
+        )
         env = dict(os.environ)
         env["TOOLRECALL_CONFIG"] = self.cfg_path
         env.pop("TOOLRECALL_NETWORK_TOKEN", None)

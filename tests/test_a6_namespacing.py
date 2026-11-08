@@ -254,24 +254,41 @@ class TestMemberNsComputation:
     def _daemon(self, tmp_path, clients):
         """Bare daemon with an explicit config. Mirrors the remote_gate
         fixture: patch load_config (DaemonServer calls it with no path)."""
+        import warnings
+
         import toolrecall.daemon as daemon_mod
         from toolrecall.config import Config
         from toolrecall.daemon import DaemonServer
 
+        from tests.toml_helpers import toml_str, write_toml_config
+
         cfg_file = tmp_path / "c.toml"
-        lines = ["[paths]", f'cache_db = "{tmp_path}/c.db"']
+        lines = ["[paths]", f"cache_db = {toml_str(tmp_path / 'c.db')}"]
         for mid, entry in clients.items():
             lines.append(f'[network.clients."{mid}"]')
             for k, v in entry.items():
                 if isinstance(v, list):
-                    lines.append(f"{k} = {v}")
+                    lines.append(f"{k} = [{', '.join(toml_str(p) for p in v)}]")
                 else:
-                    lines.append(f'{k} = "{v}"')
-        cfg_file.write_text("\n".join(lines))
+                    lines.append(f"{k} = {toml_str(v)}")
+        write_toml_config(cfg_file, "\n".join(lines))
         old = daemon_mod.load_config
         daemon_mod.load_config = lambda: Config(str(cfg_file))
         try:
-            d = DaemonServer(socket_path=str(tmp_path / "t.sock"))
+            # A config-load failure degrades the fixture to package
+            # defaults — the exact wrong-reason pass the TOML helper
+            # guards against. Catch the load-failure warning loudly;
+            # unrelated (incl. known-false-positive) config warnings are
+            # not this fixture's business.
+            with warnings.catch_warnings(record=True) as rec:
+                warnings.simplefilter("always")
+                d = DaemonServer(socket_path=str(tmp_path / "t.sock"))
+            load_failures = [str(w.message) for w in rec if "CONFIG IGNORED" in str(w.message)]
+            assert not load_failures, (
+                f"fixture config failed to load (daemon ran on package "
+                f"defaults; assertions would pass for the wrong reason): "
+                f"{load_failures}"
+            )
         finally:
             daemon_mod.load_config = old
         return d

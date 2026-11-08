@@ -175,24 +175,26 @@ class TestA63RemoteCommandAllowList:
         from toolrecall.daemon import DaemonServer
         from toolrecall.transport import TransportClient
 
+        from tests.toml_helpers import toml_str, write_toml_config
+
         toml = f"""
 [paths]
-cache_db = "{tmp_path}/c.db"
+cache_db = {toml_str(tmp_path / "c.db")}
 [mcp]
-allowed_paths = ["{tmp_path}"]
+allowed_paths = [{toml_str(tmp_path)}]
 [network]
 enabled = true
 bind = "127.0.0.1"
 port = 0
 [network.clients.alice]
 token = "alice-token-1"
-allowed_paths = ["{tmp_path}"]
+allowed_paths = [{toml_str(tmp_path)}]
 [network.clients.bob]
 token = "bob-token-2"
 allowed_paths = ["/nonexistent-bob"]
 """
         cfg_file = tmp_path / "toolrecall.toml"
-        cfg_file.write_text(toml)
+        write_toml_config(cfg_file, toml)
         import toolrecall.daemon as daemon_mod
         from toolrecall.config import Config
 
