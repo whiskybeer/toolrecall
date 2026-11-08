@@ -148,7 +148,7 @@ def merge_verdict_metadata(
         return merged
 
     # Ladder 2: drop non-essential verdict keys (misses keep essential keys).
-    essential = ("hit", "key", "age_s")
+    essential: tuple[str, ...] = ("hit", "key", "age_s")
     if not vr.get("hit"):
         essential = ("hit", "key", "stale", "bypassed", "ttl")
     for k in list(vr):
