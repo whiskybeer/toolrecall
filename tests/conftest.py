@@ -276,3 +276,28 @@ def _production_path_guard(request):
                 "Test touched production state: " + "; ".join(sorted(violations)),
                 pytrace=False,
             )
+
+
+@pytest.fixture(autouse=True)
+def _reap_mcp_sessions():
+    """Leak guard: stop any MCP server subprocess this test started.
+
+    The daemon tracks every started MCP subprocess in
+    ``toolrecall.daemon._LIVE_MCP_SESSIONS`` and reaps them at interpreter
+    exit, but a long run would still accumulate one live server per test until
+    the run ends. One pytest run leaked 84 ``uvx mcp-server-sqlite`` processes
+    (168 with their uv wrappers) that way and starved the host of memory — the
+    box then looked broken to every other service on it.
+    """
+    try:
+        from toolrecall import daemon as _daemon
+    except Exception:  # noqa: BLE001 — never fail a test on import trouble
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            _daemon.shutdown_all_mcp_sessions()
+        except Exception:  # noqa: BLE001
+            pass

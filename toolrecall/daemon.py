@@ -29,7 +29,9 @@ Architektur:
     └─────────────────────────────────┘
 """
 
+import atexit
 import json
+import weakref
 import logging
 import itertools
 import os
@@ -725,6 +727,42 @@ class SecurityGate:
 # ─── MCP Multiplexer ──────────────────────────────────────
 
 
+# ─── Live MCP session registry (leak guard) ───────────────────────────────
+# Every started MCP subprocess is tracked here so it can be reaped when this
+# process goes away, even if no caller ever invoked shutdown(). Without it, any
+# short-lived owner (tests, CLIs, a daemon killed before teardown) orphans its
+# servers: one pytest run left 84 `uvx mcp-server-sqlite` processes running
+# (168 with their uv wrappers), which starved the host of memory and made every
+# unrelated service on the box look "slow".
+# WeakSet, deliberately: the registry must observe sessions, never own them.
+# A strong set would pin every session for the life of the process, so
+# ``MCPClientSession.__del__`` could never fire and an abandoned session's
+# server would live on — the leak this guard exists to prevent, inverted.
+_LIVE_MCP_SESSIONS: "weakref.WeakSet" = weakref.WeakSet()
+_LIVE_MCP_SESSIONS_LOCK = threading.Lock()
+
+
+def shutdown_all_mcp_sessions() -> int:
+    """Best-effort shutdown of every live MCP session in this process.
+
+    Safe to call from test teardown, atexit, or a signal handler. Returns the
+    number of sessions that were stopped.
+    """
+    with _LIVE_MCP_SESSIONS_LOCK:
+        sessions = list(_LIVE_MCP_SESSIONS)
+    stopped = 0
+    for session in sessions:
+        try:
+            session.shutdown()
+            stopped += 1
+        except Exception:
+            pass
+    return stopped
+
+
+atexit.register(shutdown_all_mcp_sessions)
+
+
 class MCPClientSession:
     """Manages a persistent MCP subprocess over stdio JSON-RPC.
 
@@ -786,6 +824,17 @@ class MCPClientSession:
             if os.name != "nt"
             else None,  # POSIX only; new process group for clean killing
         )
+        with _LIVE_MCP_SESSIONS_LOCK:
+            _LIVE_MCP_SESSIONS.add(self)
+
+    def __del__(self):
+        # Leak guard: a session dropped without an explicit shutdown() would
+        # leave its server process running with no remaining owner.
+        try:
+            if getattr(self, "_proc", None) is not None:
+                self.shutdown()
+        except Exception:
+            pass
 
     def _send_raw(self, payload: dict) -> dict:
         """Send JSON-RPC line, read response line. Thread-safe."""
@@ -878,6 +927,11 @@ class MCPClientSession:
                 except Exception:
                     pass
         self._proc = None
+        try:
+            with _LIVE_MCP_SESSIONS_LOCK:
+                _LIVE_MCP_SESSIONS.discard(self)
+        except Exception:
+            pass
 
 
 class MCPMultiplexer:
@@ -1117,6 +1171,13 @@ class MCPMultiplexer:
                     pass
             self._sessions.clear()
             self._last_use.clear()
+
+    def __del__(self):
+        # Leak guard: reaps every server this multiplexer started.
+        try:
+            self.shutdown()
+        except Exception:
+            pass
 
     def list_servers(self) -> list:
         """List all configured servers — running, idle, or not yet started."""
