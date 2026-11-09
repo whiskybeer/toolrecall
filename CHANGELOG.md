@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.23] — 2026-11-09
+
+### Changed
+- **One-shot install command in the README.** Quick start and one-time setup now show
+  `pipx install toolrecall && toolrecall setup` on a single line, so install → configure →
+  systemd → daemon start is one paste instead of two steps.
+
+### Documentation
+- **Claude Code CLI vs Desktop compatibility.** `docs/AGENT_COMPATIBILITY.md` and
+  `docs/CLAUDE_CODE_INTEGRATIONS.md` spell out which surfaces the integration covers and where
+  Desktop behaves differently, plus a decision matrix separating interactive sessions from CI runs.
+- **Antigravity surface matrix.** `docs/AGENT_COMPATIBILITY.md` and `docs/antigravity.md` now
+  distinguish the Desktop IDE, the `agy` CLI, and the SDK integration, so the supported surface
+  is unambiguous.
+
+### Fixed
+- **`toolrecall shim --status` reports `applied`.** The status renderer printed only `probe: pass`,
+  while `healthcheck` treats a shim as active solely on `applied: yes` — so a correctly shimmed
+  agent was reported as `shim=inactive`. The field is now printed, taken from the `applied` value
+  `shim_status()` already computes with a real `_shim_open` probe.
+  Tests: `tests/test_venvs.py` (19).
+
 ## [0.8.22] — 2026-11-08
 
 ### Added
