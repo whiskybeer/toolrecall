@@ -15,6 +15,17 @@ real local transcripts; methodology and raw figures are in
 > For one-off and interactive sessions it saves ~0%: Claude Code already stubs
 > unchanged re-reads, and repeated tool output does not occur in real sessions
 > (0 of 3,015 tool results in 193 local sessions).
+>
+> **Scope note on Claude Desktop:** This document applies to the **Claude Code CLI** (`claude` in terminal). For Anthropic's **Claude Desktop** GUI app, see [AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#claude-code-cli-vs-claude-desktop-gui-app) — Claude Desktop connects as an MCP client for server multiplexing, but cannot use the forward proxy or CLI hooks because it routes traffic internally without proxy base URL support.
+
+### Quick Decision Matrix: Should you use ToolRecall with Claude Code CLI?
+
+| Your Claude Code Setup & Workflow | ToolRecall Value | Why |
+|-----------------------------------|:----------------:|-----|
+| **Interactive Terminal Chat (solo)** + Remote HTTP MCPs | ❌ **No / Skip** | Claude Code's prompt cache and `file_unchanged` stubs already handle this. Remote HTTP MCPs have no local subprocesses to pool. |
+| **Headless CI / Batch Evals / Nightly Loops** (`claude -p`) | 🟢 **High (−45% to −96% cost)** | Forward-proxy stream replay caches identical requests and answers repeats with zero LLM API cost. |
+| **Multiple Sessions with Local STDIO MCPs** (Postgres, Git, Playwright) | 🟢 **High (−70% RAM)** | MCP multiplexer pools local daemon subprocesses across all open terminal windows instead of spawning copies. |
+| **Multi-Agent Fleets** (Claude Code alongside Hermes, Antigravity, Cline) | 🟢 **High** | Unified host-wide rate limits, FTS5 skills indexing, and centralized `toolrecall top` token telemetry. |
 
 ---
 

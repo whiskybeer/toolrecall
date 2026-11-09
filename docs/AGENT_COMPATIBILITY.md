@@ -15,7 +15,8 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
-| **Claude Code** | ❌ Not for file cache — use multiplexer + proxy only | ⚠️ Headless repeats only (`claude-code` profile) | ❌ | **Selective** | Interactive sessions: no measurable token saving — Claude Code already dedups unchanged re-reads natively, and 76 local transcripts showed 0 redundant reads/outputs. Headless repeats (CI re-runs): proxy replay with the `claude-code` canonical profile: −69% usage on warm repeats of short real SWE-bench tasks that run tests, −18% on a 5-issue session (replay stops at the first non-deterministic tool output). Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Context hints now silent by default: emitted only after a client calls `context_set_checkpoint`, which Claude Code never does → zero hint overhead, no config needed. Distinct from provider prefix caching, which complements TR on stateless agents. |
+| **Claude Code (CLI)** | ❌ Not for file cache — use multiplexer + proxy only | ⚠️ Headless repeats only (`claude-code` profile) | ❌ | **Selective** | Interactive sessions: no measurable token saving — Claude Code already dedups unchanged re-reads natively, and 76 local transcripts showed 0 redundant reads/outputs. Headless repeats (CI re-runs): proxy replay with the `claude-code` canonical profile: −69% usage on warm repeats of short real SWE-bench tasks that run tests, −18% on a 5-issue session (replay stops at the first non-deterministic tool output). Tested: file caching via MCP increases cost 2.4× (real billed API usage, n=2, adoption forced, edit-heavy — directional). Context hints now silent by default: emitted only after a client calls `context_set_checkpoint`, which Claude Code never does → zero hint overhead, no config needed. Distinct from provider prefix caching, which complements TR on stateless agents. |
+| **Claude Desktop (App)** | ✅ Multiplexer only (`claude_desktop_config.json`) | ❌ N/A (no proxy base URL) | ❌ | **Low** | MCP server multiplexing (shares subprocesses to cut RAM) and local skill/doc FTS5 search (`docs_search`) only. Electron app with internal auth does not support proxy routing or CLI lifecycle hooks. Like Claude Code, it is an append-only chat interface — do not route file tools through MCP. |
 | **Codex CLI** | ⚠️ Multiplex only (static tools) | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only; skip file caching. |
 | **Cursor** | ✅ Multiplexer only (`~/.cursor/mcp.json`) | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages context natively. `toolrecall setup` configures `~/.cursor/mcp.json` with `--multiplexer-only` to pool MCP servers host-wide, plus :8569 for proxy dedup. |
 | **Warp** | ❌ N/A | ✅ via [warp adapter](#warp-⚠️-selective--strong-for-platform-workloads) | ❌ N/A (Rust) | **Selective** | Strong for platform workloads (agent fleets, Factories replay, cross-model evals); skip the file cache — Warp manages its own context. Requires a public HTTPS endpoint (Warp's backend calls your endpoint; localhost is rejected). |
@@ -135,6 +136,9 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 <a id="claude-code"></a>
 
 ## Claude Code — ⚠️ Headless repeats only; no saving in interactive sessions
+
+> [!NOTE]
+> **Who benefits?** If you use Claude Code solely for **interactive terminal chat with remote HTTP MCP servers**, ToolRecall saves ~0% (Claude already has native prompt prefix caching and `file_unchanged` stubs). ToolRecall is designed for Claude Code in **automated CI / eval regression test loops** (`claude -p`, saving −45% to −96%), **multi-session local STDIO MCP pooling** (−70% RAM), and **multi-agent environments** (unified rate-limiting and `toolrecall top` telemetry).
 
 | Feature | Verdict | Evidence |
 |---------|---------|----------|
@@ -405,6 +409,43 @@ For an A/B baseline arm, per-request opt-out is the header
 > empirically tested and makes sessions **2.4× more expensive** — do not route
 > file tools through ToolRecall with Claude Code. Context hints are silent by
 > default (checkpoint opt-in).
+
+### Claude Code (CLI) vs. Claude Desktop (GUI App)
+
+Anthropic provides two distinct client interfaces: the terminal-based **Claude Code CLI** (`claude`) and the desktop GUI app **Claude Desktop** (`Claude.app`). They interact with ToolRecall very differently:
+
+| Dimension | Claude Code (CLI) | Claude Desktop (GUI App) |
+|---|---|---|
+| **Interface** | Terminal CLI agent for autonomous coding | Desktop chat GUI for human conversation |
+| **Layer 3: MCP Multiplexing** | ✅ Yes (`~/.claude.json` / `settings.json`) | ✅ Yes (`claude_desktop_config.json`) |
+| **Local Docs / Skill Search** | ✅ Yes (`docs_search` FTS5 in 0.6ms) | ✅ Yes (`docs_search` FTS5 in 0.6ms) |
+| **Layer 4: Forward Proxy Replay** | ✅ Yes (`ANTHROPIC_BASE_URL=http://localhost:8569`) | ❌ No (closed Electron networking, direct to api.anthropic.com) |
+| **Test Output Deduplication** | ✅ Yes (normalizes pytest durations/tempdirs) | ❌ N/A (no terminal test runner loop) |
+| **Lifecycle Hooks (Drift Alerts)** | ✅ Yes (`toolrecall hook claude` / `PostToolUse`) | ❌ No (no hook ecosystem) |
+| **File Caching Tools (`cached_read`)** | ❌ **Do NOT use** (causes 2.4× cost increase) | ❌ **Do NOT use** (append-only chat context) |
+
+#### Why Claude Desktop cannot use the Forward Proxy or Hooks:
+1. **No Proxy Base-URL Override:** Claude Desktop is a compiled Electron app that connects directly to Anthropic's hosted infrastructure using internal session authentication. Unlike the CLI, it does not respect `ANTHROPIC_BASE_URL` for LLM completions.
+2. **Interactive Chat vs. Autonomous Loops:** Claude Desktop is driven by human chat prompts. It does not run multi-turn automated bash/test loops where repeated test tracebacks and background file modifications occur.
+3. **No Lifecycle Hook API:** Claude Code 2.1+ exposes native `PreToolUse` and `PostToolUse` event hooks. Claude Desktop provides an MCP client runtime but lacks agent lifecycle hooks.
+
+#### Configuring Claude Desktop with ToolRecall:
+To use ToolRecall as a shared MCP multiplexer and local doc search engine in Claude Desktop, register it in:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "toolrecall": {
+      "command": "toolrecall",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+This saves host RAM by sharing back-end MCP server subprocesses across desktop sessions and enables fast FTS5 retrieval over indexed documentation.
+
 ---
 
 ## Codex CLI — ⚠️ Use selectively
@@ -473,6 +514,15 @@ bridge CAN sit between Antigravity and other MCP servers. The
 `google-antigravity` SDK registers custom tools as plain callables, so
 [`@cached_tool`](antigravity.md#path-2-antigravity-sdk-decorator-python-agents)
 works exactly like the ADK adapter.
+
+### Antigravity Surface Breakdown: IDE (Desktop) vs. CLI (agy) vs. SDK
+
+| Surface | ToolRecall Value | Why & Recommended Setup |
+|---|:---:|---|
+| **Antigravity Desktop (IDE Chat)** | ⚠️ **Selective** | No LLM base-URL override. Do not enable MCP file caching. **Use:** MCP Multiplexing (−70% RAM across windows) and 0.6ms local FTS5 skills search (`docs_search`). |
+| **Antigravity CLI (`agy` interactive)** | ⚠️ **Selective** | Same Google-hosted inference path as IDE chat. Shares `~/.gemini/config/mcp_config.json`. **Use:** MCP Multiplexer, skills search, and `tr` terminal tool wrapper. |
+| **Antigravity Headless / Eval Loops** | 🟢 **High** | Uses `export TOOLRECALL_CANONICALIZE=antigravity` to strip volatile timestamps (`<ADDITIONAL_METADATA>`) and session UUIDs for 100% warm replay in CI. |
+| **Antigravity Python SDK (`google-antigravity`)** | 🟢 **High** | Wrap expensive tools with `@antigravity.cached_tool(ttl=300, freshness=True)`. Eliminates duplicate external tool calls during subagent handovers. |
 
 **Works:** SDK tool caching (web/GitHub/DB lookups), session replay via the
 bridge (`toolrecall replay record`), FTS over skills/rules

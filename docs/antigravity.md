@@ -47,6 +47,15 @@ decorator wraps them exactly like the ADK/LangGraph adapters.
 > **Rating: Selective.** Strong for SDK tool caching + replay + MCP multiplex.
 > Skip the file-cache pitch entirely.
 
+### Surface Breakdown: Desktop (IDE) vs. CLI (agy) vs. SDK
+
+| Surface | ToolRecall Role | What It Does & What To Avoid |
+|---|:---:|---|
+| **Antigravity Desktop (IDE Chat)** | MCP Multiplexer & FTS Search | Connects via `~/.gemini/config/mcp_config.json`. Cuts background tool RAM by 70% and enables 0.6ms skills search (`docs_search`). Interactive inference is Google-hosted (no proxy base URL). Do not route file tools through MCP. |
+| **Antigravity CLI (`agy` interactive)** | MCP Multiplexer & `tr` wrapper | Shares global `mcp_config.json`. Fast local skills retrieval. Repeatable expensive terminal commands can use the `tr` execution wrapper. |
+| **Antigravity Headless CI / Evals** | Forward Proxy Replay | Use `export TOOLRECALL_CANONICALIZE=antigravity` with the forward proxy. Normalizes volatile `<ADDITIONAL_METADATA>` timestamps and session UUIDs to replay identical test suites at $0. |
+| **Antigravity Python SDK (`google-antigravity`)** | Custom Tool Caching | Custom agent tools decorated with `@antigravity.cached_tool(ttl=300, freshness=True)` return cached API/DB lookups without re-billing, especially useful during subagent handovers. |
+
 ---
 
 ## Path 1: MCP Bridge (recommended — all surfaces)

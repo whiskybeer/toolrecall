@@ -11,8 +11,7 @@ ToolRecall is one shared daemon that pools your MCP servers, records and replays
 > **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), expect no token saving in interactive sessions: the forward proxy pays off for **headless repeat runs** (Claude Code with the `claude-code` profile: −69% on short repeated tasks, −18% on long sessions), the MCP multiplexer shares server processes, and file caching through MCP may **increase** costs. See [Agent Compatibility](docs/AGENT_COMPATIBILITY.md).
 
 ```bash
-pipx install toolrecall
-toolrecall setup          # One-shot: config -> systemd -> daemon start
+pipx install toolrecall && toolrecall setup   # One-shot: install + config -> systemd -> daemon start
 ```
 
 > **Zero config mode:** Every `toolrecall` command auto-starts the daemon if it isn't running. You never need to think about it.
@@ -369,9 +368,7 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 ### One-time setup
 
 ```bash
-pipx install toolrecall        # or: uv tool install toolrecall
-                               # or: pip install toolrecall (inside a venv)
-toolrecall setup                # config -> systemd service -> daemon start
+pipx install toolrecall && toolrecall setup   # or: uv tool install toolrecall && toolrecall setup
 ```
 
 > **PATH check:** After installation, make sure `toolrecall` is on your `$PATH`.  
