@@ -1693,7 +1693,11 @@ def cmd_shim():
             icon = "✅" if ok else "❌"
             print(f"{icon} {v.root}")
             print(f"     python: {v.python}")
-            print(f"     package: {pkg} | shim: {pth} | probe: {'pass' if ok else 'FAIL'}")
+            print(
+                f"     package: {pkg} | shim: {pth} | "
+                f"applied: {'yes' if st['applied'] else 'no'} | "
+                f"probe: {'pass' if ok else 'FAIL'}"
+            )
             print(
                 f"     version: {st['version_venv'] or '-'} (venv) vs "
                 f"{st['version_source'] or '-'} (this install)"
