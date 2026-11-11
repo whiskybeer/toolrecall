@@ -340,7 +340,9 @@ class Config:
                 "cb_open_seconds",
             }
         ),
-        "shim": frozenset({"exclude_prefixes", "tag_source", "stub_ttl", "stub_max_consecutive"}),
+        "shim": frozenset(
+            {"exclude_prefixes", "tag_source", "stub_ttl", "stub_max_consecutive", "required_venvs"}
+        ),
         "mcp": frozenset(
             {
                 "allowed_paths",

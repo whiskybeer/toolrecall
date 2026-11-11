@@ -76,3 +76,29 @@ def test_applied_but_probe_failing_is_inactive(monkeypatch):
     probe = hc._classify_shim_output(out, 1.0)
     assert probe["shim_state"] == hc.SHIM_INACTIVE
     assert probe["shim_reason"] == "probe_failed"
+
+
+def test_required_venvs_is_a_known_config_key(tmp_path, monkeypatch):
+    """The schema must accept the key, or the whole gate is silently inert.
+
+    Regression caught live: a config with [shim].required_venvs loaded fine but
+    emitted "unknown config key ... key ignored, default in effect", so the
+    healthcheck stayed aggregate while the operator believed it was strict.
+    """
+    import warnings
+
+    from toolrecall.config import load_config
+
+    cfg_path = tmp_path / "toolrecall.toml"
+    cfg_path.write_text('[shim]\nrequired_venvs = ["/opt/agent-*"]\n', encoding="utf-8")
+    monkeypatch.delenv("TOOLRECALL_SHIM_REQUIRED_VENVS", raising=False)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = load_config(str(cfg_path))
+        values = cfg.shim_required_venvs
+
+    assert values == ["/opt/agent-*"]
+    assert not [w for w in caught if "unknown config key" in str(w.message)], (
+        "required_venvs must be part of the config schema"
+    )
