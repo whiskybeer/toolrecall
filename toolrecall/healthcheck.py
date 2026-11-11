@@ -103,6 +103,7 @@ class HealthInfo(TypedDict):
     log_file: str
     log_errors_recent: int
     log_warnings_recent: int
+    hermes_plugin: dict
 
 
 # Honor the same env override the cron wrapper uses.
@@ -424,6 +425,47 @@ def _classify_shim_output(out: str, elapsed: float | None = None) -> ShimProbe:
     }
 
 
+# ── Hermes-side plugin co-install check ───────────────────────────────────
+#
+# `toolrecall-light` is a Hermes plugin that hooks `transform_tool_result` and
+# stubs byte-identical repeats of ANY tool result. This package dedups file
+# content on the bridge/shim, and the proxy rewrites the request itself, so
+# running both double-handles the same read: the bridge sends full content, the
+# plugin replaces it with its own stub, and our mcp_dedup counters then credit a
+# full send the model never received. One of the two belongs off.
+
+LIGHT_PLUGIN_NAME = "toolrecall-light"
+
+
+def _hermes_home_path() -> str:
+    return os.environ.get("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
+
+
+def detect_light_plugin(home: str | None = None) -> dict:
+    """Best-effort detection of the Hermes ``toolrecall-light`` plugin.
+
+    Never raises and never inspects plugin internals: an installed directory is
+    ``installed``, a ``- toolrecall-light`` entry in config.yaml is ``enabled``
+    (``plugins.enabled`` is a plain YAML list, so the list item is unambiguous
+    without a YAML parser this repo deliberately does not depend on).
+    """
+    base = home or _hermes_home_path()
+    plugin_dir = os.path.join(base, "plugins", LIGHT_PLUGIN_NAME)
+    try:
+        installed = os.path.isdir(plugin_dir)
+    except OSError:
+        installed = False
+    enabled = False
+    try:
+        with open(os.path.join(base, "config.yaml"), encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        enabled = any(line.strip() == f"- {LIGHT_PLUGIN_NAME}" for line in text.splitlines())
+        installed = installed or enabled
+    except OSError:
+        pass
+    return {"installed": installed, "enabled": enabled, "path": plugin_dir if installed else ""}
+
+
 def gather() -> HealthInfo:
     """Collect every health signal into one dict. No side effects."""
     pid_file = _pid_file()
@@ -448,6 +490,7 @@ def gather() -> HealthInfo:
         "log_file": "",
         "log_errors_recent": 0,
         "log_warnings_recent": 0,
+        "hermes_plugin": detect_light_plugin(),
     }
 
     if os.path.isfile(pid_file):
@@ -846,6 +889,15 @@ def warnings(info: HealthInfo) -> list[str]:
         notes.append(
             f"forward proxy NOT listening on :{info.get('proxy_port')} — "
             "LLM traffic routed through it fails with connection errors"
+        )
+
+    plugin = info.get("hermes_plugin") or {}
+    if plugin.get("enabled"):
+        notes.append(
+            "toolrecall-light (Hermes plugin) is installed AND enabled — both layers "
+            "dedup the same tool results, so mcp_dedup counts overstate what the model "
+            "actually received; run one, not both (`hermes plugins disable "
+            "toolrecall-light` keeps this stack)"
         )
 
     if info.get("shim_state") == SHIM_UNKNOWN:

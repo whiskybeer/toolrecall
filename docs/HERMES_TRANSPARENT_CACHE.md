@@ -181,3 +181,18 @@ present but idle for file reads; `file_cache` shows the real activity. This is
 normal for a shim-based agent and no action is needed. (Healthcheck: `shim=active`
 with nonzero `file_cache` = working as intended. The `shim=` field distinguishes
 this from the case where the shim is actually missing.)
+
+## The `toolrecall-light` plugin: run one, not both
+
+`toolrecall-light` is a separate Hermes plugin that hooks `transform_tool_result` and stubs
+byte-identical repeats of **any** tool result. It overlaps this stack on file reads — the bridge
+sends full content, the plugin replaces it with its own stub, and the `mcp_dedup` counter then
+credits a full send the model never received. Core also covers what the plugin cannot: only the
+forward proxy rewrites the request before billing, so only it reduces cost for the *current* turn.
+
+Install one. With core running, the plugin is unnecessary — disable it:
+`hermes plugins disable toolrecall-light`.
+
+Detection is built in: `toolrecall healthcheck` reports an installed/enabled `toolrecall-light`
+(and names the disable command), and the plugin reports core at load time and via
+`status()["core_conflict"]`.
