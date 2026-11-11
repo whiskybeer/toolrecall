@@ -611,7 +611,13 @@ class MCPBridge:
             log.debug("measured-tier counter failed (path=%s)", log_path, exc_info=True)
 
     def _resolve_agent_id(self) -> str:
-        """Resolve agent identity from environment or clientInfo handshake."""
+        """Resolve agent identity from environment or clientInfo handshake.
+
+        Attribution only. The activation contract (context-tier tagging and
+        stubs) is ``TOOLRECALL_AGENT_ID`` in the AGENT's own environment, set by
+        its adapter — this process must not mutate global env state on behalf of
+        someone else's session.
+        """
         return (os.environ.get("TOOLRECALL_AGENT_ID") or self._client_name or "").strip()
 
     def _uds_request(self, cmd: str, **kwargs) -> dict:

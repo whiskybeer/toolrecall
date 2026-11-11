@@ -31,6 +31,7 @@ Everything is configurable via the standard TOOLRECALL_* env vars and the
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import subprocess
@@ -62,15 +63,25 @@ SHIM_UNKNOWN = "unknown"
 
 
 class ShimProbe(TypedDict):
-    """The three shim fields `_probe_shim_state` classifies.
+    """The shim fields `_probe_shim_state` classifies.
 
     Its own TypedDict so `HealthInfo.update(probe)` type-checks: a bare ``dict``
     return would erase the key/value types at the one place they matter.
+
+    ``shim_venvs`` / ``shim_bare`` / ``shim_bare_required`` carry the PER-VENV
+    verdict. The aggregate ``shim_state`` says "a shim works somewhere", which
+    is not the same question as "the interpreter that runs the agent is
+    shimmed": on 2026-11-11 three venvs were discovered, one was shimmed, the
+    agent runtime was missing the package, and the single-state report was
+    green.
     """
 
     shim_state: str
     shim_reason: str
     shim_probe_s: float | None
+    shim_venvs: list[dict]
+    shim_bare: list[str]
+    shim_bare_required: list[str]
 
 
 class HealthInfo(TypedDict):
@@ -85,6 +96,9 @@ class HealthInfo(TypedDict):
     shim_state: str
     shim_reason: str
     shim_probe_s: float | None
+    shim_venvs: list[dict]
+    shim_bare: list[str]
+    shim_bare_required: list[str]
     hit_rate: float | None
     log_file: str
     log_errors_recent: int
@@ -306,19 +320,90 @@ def _probe_shim_state() -> ShimProbe:
             "shim_state": SHIM_UNKNOWN,
             "shim_reason": "probe_timeout",
             "shim_probe_s": round(time.monotonic() - t0, 2),
+            "shim_venvs": [],
+            "shim_bare": [],
+            "shim_bare_required": [],
         }
     except (subprocess.SubprocessError, OSError):
         return {
             "shim_state": SHIM_UNKNOWN,
             "shim_reason": "probe_error",
             "shim_probe_s": round(time.monotonic() - t0, 2),
+            "shim_venvs": [],
+            "shim_bare": [],
+            "shim_bare_required": [],
         }
 
     elapsed = round(time.monotonic() - t0, 2)
-    out = r.stdout or ""
-    applied = "applied: yes" in out
-    probe_pass = "probe: pass" in out
-    if applied and probe_pass:
+    return _classify_shim_output(r.stdout or "", elapsed)
+
+
+def _parse_shim_venvs(out: str) -> list[dict]:
+    """Parse ``shim --status --all`` into per-venv rows.
+
+    Block shape::
+
+        ✅ /path/to/venv
+             package: ok | shim: present | applied: yes | probe: pass
+
+    A row whose detail line never appears stays bare (``applied``/``probe_ok``
+    False): a malformed probe must OVER-report bare venvs, never hide one.
+    """
+    rows: list[dict] = []
+    cur: dict | None = None
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line[0] in "✅❌":
+            cur = {"root": line[1:].strip(), "applied": False, "probe_ok": False}
+            rows.append(cur)
+            continue
+        if cur is not None and line.startswith("package:"):
+            cur["applied"] = "applied: yes" in line
+            cur["probe_ok"] = "probe: pass" in line
+    return rows
+
+
+def _required_venv_globs() -> list[str]:
+    """Required venv globs from config; never fatal to a health check."""
+    try:
+        from toolrecall.config import load_config
+
+        return list(load_config().shim_required_venvs)
+    except Exception:
+        log.debug("required-venv config read failed", exc_info=True)
+        return []
+
+
+def _classify_shim_output(out: str, elapsed: float | None = None) -> ShimProbe:
+    """Classify one ``shim --status --all`` output into a truthful verdict.
+
+    ``active`` requires a working shim AND no REQUIRED venv bare. Required venvs
+    are declared by the operator (``[shim].required_venvs``); without that
+    declaration the verdict stays aggregate ("a shim works somewhere") but the
+    per-venv rows are reported so a caller can surface the gap. Both facts are
+    returned; nothing is inferred from a substring over the whole output any
+    more (that made one shimmed venv out of three report ``active``).
+
+    Falls back to the old substring behaviour when the output carries no
+    parseable venv blocks (older CLI, unknown format) — never worse than before.
+    """
+    venvs = _parse_shim_venvs(out)
+    if venvs:
+        applied = any(v["applied"] for v in venvs)
+        probe_pass = any(v["probe_ok"] for v in venvs)
+        bare = [v["root"] for v in venvs if not (v["applied"] and v["probe_ok"])]
+    else:
+        applied = "applied: yes" in out
+        probe_pass = "probe: pass" in out
+        bare = []
+    required = _required_venv_globs()
+    bare_required = [p for p in bare if any(fnmatch.fnmatch(p, g) for g in required)]
+
+    if bare_required:
+        state, reason = SHIM_INACTIVE, "required_venv_bare"
+    elif applied and probe_pass:
         state, reason = SHIM_ACTIVE, ""
     elif applied:
         state, reason = SHIM_INACTIVE, "probe_failed"
@@ -326,7 +411,17 @@ def _probe_shim_state() -> ShimProbe:
         state, reason = SHIM_INACTIVE, "applied_missing"
     else:
         state, reason = SHIM_INACTIVE, ""
-    return {"shim_state": state, "shim_reason": reason, "shim_probe_s": elapsed}
+    return {
+        "shim_state": state,
+        "shim_reason": reason,
+        "shim_probe_s": elapsed,
+        "shim_venvs": [
+            {"root": v["root"], "applied": bool(v["applied"]), "probe_ok": bool(v["probe_ok"])}
+            for v in venvs
+        ],
+        "shim_bare": bare,
+        "shim_bare_required": bare_required,
+    }
 
 
 def gather() -> HealthInfo:
@@ -346,6 +441,9 @@ def gather() -> HealthInfo:
         "shim_state": SHIM_INACTIVE,
         "shim_reason": "",
         "shim_probe_s": None,
+        "shim_venvs": [],
+        "shim_bare": [],
+        "shim_bare_required": [],
         "hit_rate": None,
         "log_file": "",
         "log_errors_recent": 0,
@@ -389,6 +487,9 @@ def gather() -> HealthInfo:
     info["shim_state"] = probe["shim_state"]
     info["shim_reason"] = probe["shim_reason"]
     info["shim_probe_s"] = probe["shim_probe_s"]
+    info["shim_venvs"] = probe["shim_venvs"]
+    info["shim_bare"] = probe["shim_bare"]
+    info["shim_bare_required"] = probe["shim_bare_required"]
 
     # Best-effort hit rate from stats (bounded; direct mode trace is fine).
     # NO_AUTOSTART is mandatory here: `toolrecall stats` is in the CLI's
@@ -762,6 +863,22 @@ def warnings(info: HealthInfo) -> list[str]:
                 " `toolrecall shim --status --all`"
             )
 
+    bare_required = info.get("shim_bare_required") or []
+    if bare_required:
+        notes.append(
+            "shim: required venv(s) NOT shimmed — "
+            + ", ".join(bare_required[:3])
+            + " (reads from that interpreter bypass the cache and the context tier)"
+        )
+    elif info.get("shim_state") == SHIM_ACTIVE:
+        bare = info.get("shim_bare") or []
+        if bare:
+            shown = ", ".join(bare[:2]) + ("…" if len(bare) > 2 else "")
+            notes.append(
+                f"shim: {len(bare)} of {len(info.get('shim_venvs') or bare)} discovered venv(s)"
+                f" unshimmed — {shown}; declare [shim].required_venvs to make this fail"
+            )
+
     log_err = info.get("log_errors_recent", 0)
     log_warn = info.get("log_warnings_recent", 0)
     if log_err:
@@ -788,6 +905,9 @@ def render(info: HealthInfo) -> str:
     shim_detail = ""
     if info.get("shim_reason"):
         shim_detail = f"({info['shim_reason']})"
+    bare_n = len(info.get("shim_bare") or [])
+    if bare_n:
+        shim_detail += f" bare={bare_n}"
     return (
         f"toolrecall healthcheck | procs={info['procs']} | pid={pid} | "
         f"locks={info['lock_files']} | sock={'yes' if info['socket'] else 'no'} "

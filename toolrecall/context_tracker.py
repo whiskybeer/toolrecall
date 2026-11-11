@@ -487,6 +487,35 @@ class ContextTracker:
             }
         return result
 
+    def arm(self, source: str = "") -> dict:
+        """Mark the flow agent-driven WITHOUT banking a checkpoint.
+
+        ``set_checkpoint(armed=True)`` arms as a side effect of banking clean
+        files; arming on its own needs no banking and must not move the
+        checkpoint counter. Transport surfaces call this on the first request
+        of a session (MCP bridge handshake, forward proxy request), so the flag
+        reflects reality for ANY agent and does not depend on the agent calling
+        ``context_set_checkpoint`` every turn — a convention no shipped
+        harness follows (measured 2026-11-11: agent_armed=false after 61 days,
+        233 clean files staged, nothing dropped, while the benchmark harness
+        that does follow it reported 7.4×).
+
+        Idempotent: repeated calls keep the flow armed and report
+        ``already=True`` so callers can log the first transition only.
+
+        Returns:
+            {"armed": True, "already": bool, "armed_by": str}
+        """
+        with self._lock:
+            already = self._agent_armed
+            self._agent_armed = True
+            return {"armed": True, "already": already, "armed_by": source}
+
+    def is_armed(self) -> bool:
+        """Whether an agent-driven flow has been seen (cheap, lock-guarded)."""
+        with self._lock:
+            return self._agent_armed
+
     def mark_dirty(self, path: str) -> None:
         """Record a file write. Called by daemon handlers.
 

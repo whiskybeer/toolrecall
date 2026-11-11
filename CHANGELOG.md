@@ -3,6 +3,36 @@
 ## [Unreleased]
 
 ### Changed
+- **Agent identity is a contract, not a vendor list.** The context-tier tagging and the
+  Lever-1 stub only fired in processes whose env matched a hardcoded harness prefix list,
+  so any integration not on it silently lost both measurements *and* stubs; supporting a
+  new harness meant editing core (design principle: Agnostic). `TOOLRECALL_AGENT_ID` /
+  `TOOLRECALL_AGENT_SESSION` are now the primary signal any adapter or hand-rolled loop
+  can declare; `_AGENT_ENV_MARKERS` remains zero-config auto-detect only. Core no longer
+  needs to know a framework's name to treat it as an agent session.
+  Tests: `tests/test_shim_agent_identity.py` (8).
+
+### Fixed
+- **The context flow arms itself from traffic instead of agent etiquette.** Arming (the
+  flag the TUI/healthcheck read as "agent-driven flow") was reachable only by an agent
+  voluntarily calling `context_set_checkpoint` every turn — a convention no shipped
+  harness follows. The benchmark harness does follow it, which is why only benchmarks
+  reported the endurance effect; the live box sat at `agent_armed=false` for 61 days with
+  233 clean files staged and nothing dropped. The daemon now arms on the first request
+  that carries an `agent_id` (no extra round trip, no client state); `context_arm` is
+  available as an explicit command. `arm()` banks nothing and does not move the
+  checkpoint counter (that remains `set_checkpoint`'s job).
+  Tests: `tests/test_context_arm.py` (4).
+- **`healthcheck` classifies the shim PER VENV, so one shimmed interpreter cannot speak
+  for a bare one.** The probe did `"applied: yes" in out` over the whole
+  `shim --status --all` output: with 3 venvs discovered, the agent's runtime missing the
+  package and one sibling shimmed, it reported `shim=active` (observed 2026-11-11). The
+  verdict now parses each block, reports `bare=N` plus the unshimmed roots, and honours a
+  new `[shim].required_venvs` list (`TOOLRECALL_SHIM_REQUIRED_VENVS`) — a declared venv
+  that is not applied+working makes the state `inactive` with reason
+  `required_venv_bare`. Verification only; installation stays `shim --install --all`.
+  Tests: `tests/test_healthcheck_shim_venvs.py` (7), `tests/test_shim_tagging.py` updated.
+
 - **The shim now skips the agent home by default.** `[shim].exclude_prefixes` defaults
   to the kernel virtual filesystems plus the resolved agent home (`AGENT_HOME` →
   `TOOLRECALL_AGENT_HOME` → `[paths].agent_home` → `~/.hermes`), so control-plane reads

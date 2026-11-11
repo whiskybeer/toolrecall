@@ -2164,6 +2164,17 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         """Route a request to the appropriate handler."""
         cmd = request.get("cmd", "")
 
+        # Transport-driven arming: any client that identifies itself with an
+        # agent_id is an agent session, so the flow arms on its first request.
+        # This keeps activation independent of harness-specific hooks AND of the
+        # agent calling context_set_checkpoint every turn (a convention no
+        # shipped harness follows — live 2026-11-11: agent_armed=false after 61
+        # days while the benchmark harness that does call it reported 7.4×).
+        # No extra request, no extra state on the client: the arming rides on
+        # the traffic that was going to happen anyway.
+        if request.get("agent_id") and not self._context.is_armed():
+            self._context.arm(source=cmd)
+
         try:
             if cmd == "cached_read":
                 return self._handle_read(request)
@@ -2228,6 +2239,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_restart(request)
             elif cmd == "context_set_checkpoint":
                 return self._handle_context_set_checkpoint(request)
+            elif cmd == "context_arm":
+                return self._handle_context_arm(request)
             elif cmd == "context_get_dirty":
                 return self._handle_context_get_dirty(request)
             elif cmd == "context_get_hint":
@@ -3101,6 +3114,23 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         """
         name = req.get("name", "")
         return self._context.set_checkpoint(name=name)
+
+    def _handle_context_arm(self, req: dict) -> dict:
+        """Arm the context flow from transport activity, not agent etiquette.
+
+        Any transport that can identify an agent session calls this on its
+        first request (MCP bridge: first tool call; forward proxy: first chat
+        request). ``armed`` is the flag the TUI/healthcheck read to tell
+        "agent-driven flow, nothing dropped yet" from "daemon restarted, no
+        agent ever drove it"; before this command it could only be set by an
+        agent voluntarily calling ``context_set_checkpoint``, which is why the
+        live box sat at agent_armed=false for 61 days.
+
+        No banking, no checkpoint counter movement — pure state. See
+        ``ContextTracker.arm``.
+        """
+        source = str(req.get("source") or req.get("agent_id") or "")
+        return self._context.arm(source=source)
 
     def _handle_context_get_dirty(self, req: dict) -> dict:
         """Get dirty and clean files since a checkpoint.

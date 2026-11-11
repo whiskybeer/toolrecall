@@ -44,6 +44,11 @@ class TestTagSourceGate(unittest.TestCase):
         self._saved_environ = os.environ.copy()
         for key in [k for k in os.environ if k.startswith(shim_mod._AGENT_ENV_MARKERS)]:
             del os.environ[key]
+        # The harness-neutral activation contract is an agent signal too
+        # (2026-11-11): assertions must not depend on whether the developer's
+        # own shell exports it.
+        for key in ("TOOLRECALL_AGENT_ID", "TOOLRECALL_AGENT_SESSION"):
+            os.environ.pop(key, None)
         os.environ.pop("TOOLRECALL_SHIM_TAG_SOURCE", None)
 
     def tearDown(self):

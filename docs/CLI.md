@@ -226,9 +226,16 @@ Most commands accept `--help` / `-h` for per-command usage and options
 - **⚠️  Important when using `pipx` or `uv tool install`:** The shim is installed into the **current Python environment** only. If toolrecall is installed via `pipx` or `uv tool install`, that's an isolated environment — the shim won't activate in your agent's runtime. Use `--venv <path>` to target the right venv, `--all` to sweep every venv, or run `toolrecall setup`.
 - **Healthcheck indicator:** `toolrecall stats`/healthcheck shows
   `shim=active|inactive|unknown` (derived from `shim --status --all`; `active`
-  requires **both** `applied: yes` and `probe: pass`). `shim=active` with
+  requires a venv with **both** `applied: yes` and `probe: pass`, **and** no
+  bare venv matching `[shim].required_venvs`). `shim=active` with
   nonzero `file_cache` = caching working; `mcp_cache=0` alongside is expected
   (shim bypasses the MCP bridge). `shim=inactive` → install with `--venv`/`--all`.
+  `shim=inactive (required_venv_bare)` names an interpreter you declared as
+  required — install into it, then re-run. Without a `required_venvs` list the
+  verdict stays aggregate ("a shim works somewhere"), so the one-line report is
+  annotated `bare=N` and the notes list the unshimmed interpreters: on a
+  multi-interpreter host the agent's own runtime can be bare while the report
+  is green.
   `shim=unknown` (reason `probe_timeout`/`probe_error`) means the probe did not
   finish — not evidence that the shim is missing; re-run the status command
   before reinstalling. See `docs/TROUBLESHOOTING.md` §16.

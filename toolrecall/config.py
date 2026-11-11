@@ -1345,6 +1345,36 @@ class Config:
         except (TypeError, ValueError):
             return 5
 
+    # ─── Shim verification ──────────────────────────────
+
+    @property
+    def shim_required_venvs(self) -> list[str]:
+        """Venv-root globs the shim MUST be applied to, or the shim counts as inactive.
+
+        Verification only — this never installs anything. Without it a
+        multi-venv host can only report "the shim works *somewhere*": the one
+        interpreter that runs the agent may be bare while another venv is
+        shimmed, and the aggregate probe reports ``active``. Observed
+        2026-11-11 on the live box: 3 venvs discovered, the agent's toolchain
+        venv shimmed, its runtime venv missing the package entirely, and
+        ``toolrecall healthcheck`` green.
+
+        Configured via ``[shim].required_venvs`` in toolrecall.toml (list of
+        glob patterns matched against the venv ROOT via fnmatch), or
+        ``TOOLRECALL_SHIM_REQUIRED_VENVS`` (os.pathsep-separated). Empty =
+        aggregate behaviour (any working shim ⇒ active).
+        """
+        val = self.get("shim", "required_venvs", default=None)
+        items: list[str] = []
+        if isinstance(val, str):
+            items = [p.strip() for p in val.replace(",", os.pathsep).split(os.pathsep)]
+        elif isinstance(val, (list, tuple)):
+            items = [str(p).strip() for p in val]
+        env = (os.environ.get("TOOLRECALL_SHIM_REQUIRED_VENVS") or "").strip()
+        if env:
+            items.extend(p.strip() for p in env.split(os.pathsep))
+        return [p for p in items if p]
+
     # ─── Context Tracker Properties ─────────────────────
 
     @property
