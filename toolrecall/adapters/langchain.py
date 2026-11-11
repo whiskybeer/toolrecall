@@ -58,7 +58,7 @@ import contextvars
 import functools
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 # langchain_core is optional - only imported when actually used
 if TYPE_CHECKING:
@@ -477,10 +477,14 @@ def _ensure_base():
             def lookup(self, prompt: str, llm_string: str) -> Optional[list]:
                 return self._impl.lookup(prompt, llm_string)
 
-            def update(self, prompt: str, llm_string: str, return_val: list) -> None:
-                self._impl.update(prompt, llm_string, return_val)
+            def update(self, prompt: str, llm_string: str, return_val: "Sequence[Any]") -> None:
+                # BaseCache hands over a Sequence; the impl serializes a list.
+                self._impl.update(prompt, llm_string, list(return_val))
 
-            def clear(self) -> None:
+            def clear(self, **kwargs: Any) -> None:
+                # langchain-core's BaseCache.clear() gained keyword selectors;
+                # ToolRecall keys LLM responses by server namespace only, so a
+                # full clear is the single supported mode.
                 self._impl.clear()
 
         ToolRecallCache = ToolRecallCacheImpl  # type: ignore

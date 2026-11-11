@@ -35,9 +35,9 @@ markers = [
 ]
 
 [project.optional-dependencies]
-mcp-fastmcp = ["mcp>=1.0.0"]
+mcp-fastmcp = ["mcp>=1.30.0,<2"]
 yaml = ["pyyaml >= 6.0"]
-langgraph = ["langgraph>=1.0"]
+langgraph = ["langgraph>=1.2.14"]
 toml-write = []  # No longer needed — built-in serializer replaces tomli-w
 libsql = ["libsql-experimental>=0.0.55,<0.1"]
 libsql-sync = ["pyturso>=0.1"]
