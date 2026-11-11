@@ -2,7 +2,26 @@
 
 ## [Unreleased]
 
+### Changed
+- **The shim now skips the agent home by default.** `[shim].exclude_prefixes` defaults
+  to the kernel virtual filesystems plus the resolved agent home (`AGENT_HOME` →
+  `TOOLRECALL_AGENT_HOME` → `[paths].agent_home` → `~/.hermes`), so control-plane reads
+  (`config.yaml`, `cron/jobs.json`, plugin manifests) no longer pay a daemon round-trip
+  or write an `access_log` row. Those reads were already tagged `source="shim"` and never
+  counted toward `tokens_saved_to_llm`; on a cron-heavy host they were 25,952 of 26,076
+  reads in a day (99.5 %). An explicit `exclude_prefixes = []` still bypasses nothing, and
+  an explicit list still replaces the default.
+  Tests: `tests/test_shim_exclude_agent_home.py` (9).
+
 ### Fixed
+- **`repo_overlay.py` no longer reports a shadowed venv as "overlay".**
+  `overlay_state()` returned `overlay` whenever the `.pth` existed, but an installed
+  `site-packages/toolrecall` directory still precedes it on `sys.path` and wins every
+  import. The post-commit hook greps for `state: overlay`, so it exited early forever
+  while the live CLI/cron kept importing the frozen snapshot. `--check` now reports
+  `shadowed`, `apply()` verifies which copy the venv actually imports, and it refuses to
+  deploy a non-`main` checkout (the hook runs after every commit) unless `--force`.
+  Tests: `tests/test_repo_overlay.py` (11).
 - **`healthcheck` no longer reports a timed-out shim probe as `inactive`.** The probe
   (`shim --status --all`, one interpreter per venv) measured 3.2 s warm and 10.8–17.1 s
   loaded against a 20 s budget, so the daily verdict depended on host load; a timeout was
@@ -12,6 +31,16 @@
   60 s (`TOOLRECALL_SHIM_PROBE_TIMEOUT_S`), and the success predicate is one contract for
   every consumer: `applied: yes` **and** `probe: pass`.
   Tests: `tests/test_healthcheck_shim_probe.py` (11).
+- **Shim reads no longer wait 5 s on a busy daemon.** `cached_read` runs inside the
+  caller's `open()`, but used transport's 5 s admin default and had no circuit breaker:
+  19 WebUI requests stalled 5.5-5.8 s in 7 days (thread stack in `recv_exact`) and every
+  following read paid again. The shim now passes a read-path budget (0.5 s,
+  `TOOLRECALL_SHIM_READ_TIMEOUT_MS`; admin/CLI calls keep 5 s) and opens a per-process
+  circuit breaker after 3 consecutive timeouts: while open (30 s) reads go straight to the
+  real `open()`, then one probe is allowed (half-open) and a failed probe re-opens it.
+  Timeouts are counted in `toolrecall stats` under `shim_timeouts`. Six stalled reads:
+  30.1 s before, 1.55 s after.
+  Tests: `tests/test_shim_read_timeout.py` (11).
 
 ## [0.8.23] — 2026-11-09
 

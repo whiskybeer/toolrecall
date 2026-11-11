@@ -1250,23 +1250,46 @@ class Config:
         Configured via [shim].exclude_prefixes in toolrecall.toml,
         or TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated).
 
-        Default: /proc, /sys, /dev — kernel virtual filesystems. Their
-        contents change between reads (procfs/sysfs are generated live), so
-        they can never produce a cache hit; every intercept is pure overhead
-        (an RPC to the daemon that ends in a path-denial warning). The
-        security gate still applies to anything a *tool* reads via the
-        daemon's cached_read — this list only governs the in-process shim.
+        Default: /proc, /sys, /dev (kernel virtual filesystems — generated
+        live, so they can never produce a cache hit) plus the resolved agent
+        home (control-plane files such as config.yaml, cron/jobs.json and plugin
+        manifests, which never enter an LLM context). The security gate still
+        applies to anything a *tool* reads via the daemon's cached_read — this
+        list only governs the in-process shim.
 
         Empty list = bypass NOTHING (all open() calls go through the shim).
         """
         raw = self.get(
             "shim",
             "exclude_prefixes",
-            default=["/proc/", "/sys/", "/dev/"],
+            default=None,
         )
+        if raw is None:
+            return self._default_shim_exclude_prefixes()
         if isinstance(raw, list):
             return raw
         return []
+
+    def _default_shim_exclude_prefixes(self) -> list:
+        """Kernel virtual filesystems plus the agent home.
+
+        Agent-home reads are control plane: the shim already tags them
+        ``source="shim"`` via ``shim._LIBRARY_DIR_MARKERS``, so they never count
+        toward ``tokens_saved_to_llm`` — yet they still paid a daemon
+        round-trip and an ``access_log`` row. On 2026-11-09 that was 25,952 of
+        26,076 reads (99.5 %), driven by cron workers reloading their own
+        manifests.
+
+        Resolved through :attr:`agent_home` (AGENT_HOME →
+        TOOLRECALL_AGENT_HOME → ``[paths].agent_home`` → ``~/.hermes``), so no
+        agent layout is hardcoded in the decision. A bare ``/`` is never added:
+        it would skip every path and disable the shim.
+        """
+        prefixes = ["/proc/", "/sys/", "/dev/"]
+        home = (self.agent_home or "").rstrip("/")
+        if home:
+            prefixes.append(home + "/")
+        return prefixes
 
     @property
     def shim_stub_ttl(self) -> float:

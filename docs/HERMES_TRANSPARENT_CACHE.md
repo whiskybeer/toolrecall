@@ -109,7 +109,16 @@ infrastructure files (cwd trackers, env snapshots, config polls, cron job
 lists). These are tiny, rewritten constantly, and never benefit from caching
 — but they inflate the cache stats.
 
-**Solution:** Configure exclude prefixes in `toolrecall.toml`:
+The **agent home is excluded by default**: `Config.shim_exclude_prefixes`
+resolves it through `AGENT_HOME` → `TOOLRECALL_AGENT_HOME` →
+`[paths].agent_home` → `~/.hermes`, so `config.yaml`, `cron/jobs.json` and
+plugin manifests never reach the shim. Those reads were already tagged
+`source="shim"` and so never counted toward `tokens_saved_to_llm`, but before
+this default each one still paid a daemon round-trip and wrote an `access_log`
+row — on a cron-heavy host that was 25,952 of 26,076 reads in a day (99.5 %).
+
+**Solution for framework-specific paths beyond the agent home:** Configure
+exclude prefixes in `toolrecall.toml`:
 
 ```toml
 [shim]
