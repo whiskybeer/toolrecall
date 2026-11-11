@@ -2194,63 +2194,129 @@ def _ensure_agent_integration():
     # Default to multiplexer-only: file caching via MCP was tested on Claude
     # Code and showed a 2.4× cost increase (Claude Code manages its own context).
     claude_multiplexer_only = True
+    claude_skip = False
+
+    claude_json_path = os.path.expanduser("~/.claude.json")
+    local_stdio_mcps = []
+    remote_http_mcps = []
+    if os.path.exists(claude_json_path):
+        try:
+            with open(claude_json_path, encoding="utf-8") as _f:
+                _cc_cfg = json.load(_f)
+                _mcps = _cc_cfg.get("mcpServers") or {}
+                for _name, _spec in _mcps.items():
+                    if _name == "toolrecall":
+                        continue
+                    if isinstance(_spec, dict):
+                        if _spec.get("command"):
+                            local_stdio_mcps.append(_name)
+                        elif _spec.get("url") or _spec.get("type") in ("http", "sse"):
+                            remote_http_mcps.append(_name)
+        except (OSError, json.JSONDecodeError):
+            local_stdio_mcps = []
+            remote_http_mcps = []
 
     if claude_bin:
         # Prompt user: offer full bridge mode only if explicitly desired.
         if "--yes" not in sys.argv and "TOOLRECALL_NONINTERACTIVE" not in os.environ:
             print()
             print("  ℹ️  Claude Code detected:")
-            print(
-                "     ToolRecall's MCP multiplexer pools MCP servers host-wide, cutting RAM by 70%."
-            )
-            print(
-                "     (Note: Full MCP file caching increases cost on Claude Code by 2.4× and is not recommended)."
-            )
-            print()
-            print("  Options:")
-            print(
-                "    m) Multiplexer-only — host-wide MCP pooling, no file stubs (recommended, default)"
-            )
-            print(
-                "    f) Full bridge — file cache + multiplexer (warning: 2.4× cost increase tested)"
-            )
-            print()
-            try:
-                claude_choice = input("  Install [M/f]: ").strip().lower()
-                if claude_choice == "f":
-                    claude_multiplexer_only = False
-            except (EOFError, OSError, KeyboardInterrupt):
-                pass  # Non-interactive (or non-tty stdin) → default to multiplexer-only
-        # Automatic: uses Claude's own CLI to register the MCP server
-        mcp_args = ["toolrecall", "mcp"]
-        if claude_multiplexer_only:
-            mcp_args.append("--multiplexer-only")
-        try:
-            r = subprocess.run(
-                [claude_bin, "mcp", "add", "toolrecall", "-s", "user", "--"] + mcp_args,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if r.returncode == 0:
-                label = "multiplexer-only" if claude_multiplexer_only else "full"
-                print(f"  ✅ Claude Code MCP server registered ({label} — via 'claude mcp add')")
-                result["claude"] = True
-            else:
+            if remote_http_mcps and not local_stdio_mcps:
                 print(
-                    f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config"
+                    f"     • Found {len(remote_http_mcps)} remote HTTP MCP server(s): {', '.join(remote_http_mcps)}"
                 )
-                if r.stderr.strip():
-                    print(f"     stderr: {r.stderr.strip()[:200]}")
+                print("       (Remote HTTP MCPs have no local subprocesses to pool).")
+                print("     • Claude Code manages context and stubs unchanged file reads natively.")
+                print("     • Interactive sessions will not see token savings from ToolRecall.")
+                print("     • ToolRecall benefits Claude Code in headless CI replay ('claude -p').")
+                print()
+                print("  Options:")
+                print("    s) Skip Claude Code setup — recommended for interactive use (default)")
+                print(
+                    "    m) Multiplexer-only — host-wide MCP pooling (if you add local stdio MCPs later)"
+                )
+                print(
+                    "    f) Full bridge — file cache + multiplexer (warning: 2.4× cost increase tested)"
+                )
+                print()
+                try:
+                    claude_choice = input("  Install [S/m/f]: ").strip().lower()
+                    if claude_choice == "f":
+                        claude_multiplexer_only = False
+                    elif claude_choice == "m":
+                        claude_multiplexer_only = True
+                    else:
+                        claude_skip = True
+                except (EOFError, OSError, KeyboardInterrupt):
+                    claude_skip = True
+            else:
+                if local_stdio_mcps:
+                    print(
+                        f"     • Found {len(local_stdio_mcps)} local stdio MCP server(s): {', '.join(local_stdio_mcps)}"
+                    )
+                print(
+                    "     • ToolRecall's MCP multiplexer pools local stdio MCP servers host-wide, cutting RAM by ~70%."
+                )
+                print(
+                    "     • (Note: Full MCP file caching increases cost on Claude Code by 2.4× and is not recommended)."
+                )
+                print()
+                print("  Options:")
+                print(
+                    "    m) Multiplexer-only — host-wide MCP pooling, no file stubs (recommended, default)"
+                )
+                print("    s) Skip Claude Code setup (if you use Claude Code only interactively)")
+                print(
+                    "    f) Full bridge — file cache + multiplexer (warning: 2.4× cost increase tested)"
+                )
+                print()
+                try:
+                    claude_choice = input("  Install [M/s/f]: ").strip().lower()
+                    if claude_choice == "f":
+                        claude_multiplexer_only = False
+                    elif claude_choice == "s":
+                        claude_skip = True
+                except (EOFError, OSError, KeyboardInterrupt):
+                    pass  # Non-interactive (or non-tty stdin) → default to multiplexer-only
+
+        if claude_skip:
+            print(
+                "  ⏭️  Skipped Claude Code integration (Claude Code manages context natively in interactive sessions)"
+            )
+            result["claude"] = False
+        else:
+            # Automatic: uses Claude's own CLI to register the MCP server
+            mcp_args = ["toolrecall", "mcp"]
+            if claude_multiplexer_only:
+                mcp_args.append("--multiplexer-only")
+            try:
+                r = subprocess.run(
+                    [claude_bin, "mcp", "add", "toolrecall", "-s", "user", "--"] + mcp_args,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if r.returncode == 0:
+                    label = "multiplexer-only" if claude_multiplexer_only else "full"
+                    print(
+                        f"  ✅ Claude Code MCP server registered ({label} — via 'claude mcp add')"
+                    )
+                    result["claude"] = True
+                else:
+                    print(
+                        f"  ⚠️  'claude mcp add' returned exit {r.returncode} — falling back to direct config"
+                    )
+                    if r.stderr.strip():
+                        print(f"     stderr: {r.stderr.strip()[:200]}")
+                    _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
+                    result["claude"] = True
+            except FileNotFoundError:
                 _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
                 result["claude"] = True
-        except FileNotFoundError:
-            _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
-            result["claude"] = True
-        except subprocess.TimeoutExpired:
-            print("  ⚠️  'claude mcp add' timed out — falling back to direct config")
-            _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
-            result["claude"] = True
+            except subprocess.TimeoutExpired:
+                print("  ⚠️  'claude mcp add' timed out — falling back to direct config")
+                _write_claude_json_config(multiplexer_only=claude_multiplexer_only)
+                result["claude"] = True
     else:
         # Fallback: detect via ~/.claude.json
         claude_json = os.path.expanduser("~/.claude.json")
@@ -3449,6 +3515,174 @@ def cmd_audit():
     sys.exit(1)
 
 
+def _diagnose_claude_code():
+    """Diagnostic check for Claude Code integration and compatibility."""
+    import shutil
+    import subprocess
+    import json
+
+    print("══════════════════════════════════════════════════════════════")
+    print("  ToolRecall Compatibility Audit: Claude Code")
+    print("══════════════════════════════════════════════════════════════")
+
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        print("  ❌ 'claude' CLI binary not found on PATH.")
+        print(
+            "     If you use Claude Code, install it via: npm install -g @anthropic-ai/claude-code"
+        )
+        print("══════════════════════════════════════════════════════════════")
+        print()
+        return
+
+    version_str = "unknown"
+    try:
+        r = subprocess.run([claude_bin, "--version"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            version_str = r.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        version_str = "unknown"
+
+    print(f"  ├─ Binary:           {claude_bin} ({version_str})")
+
+    # 1. Check MCP configuration
+    claude_json = os.path.expanduser("~/.claude.json")
+    local_stdio = []
+    remote_http = []
+    tr_registered = False
+    tr_multiplexer_only = False
+
+    if os.path.exists(claude_json):
+        try:
+            with open(claude_json, encoding="utf-8") as f:
+                data = json.load(f)
+                servers = data.get("mcpServers") or {}
+                for name, s in servers.items():
+                    if name == "toolrecall":
+                        tr_registered = True
+                        args = s.get("args") or []
+                        if "--multiplexer-only" in args:
+                            tr_multiplexer_only = True
+                        continue
+                    if isinstance(s, dict):
+                        if s.get("command"):
+                            local_stdio.append(name)
+                        elif s.get("url") or s.get("type") in ("http", "sse"):
+                            remote_http.append(name)
+        except (OSError, json.JSONDecodeError):
+            local_stdio = []
+            remote_http = []
+
+    print(f"  ├─ MCP Config:       {claude_json}")
+    if local_stdio:
+        print(
+            f"  │  ├─ Local stdio:   {len(local_stdio)} server(s) [{', '.join(local_stdio)}] → can be pooled"
+        )
+    else:
+        print("  │  ├─ Local stdio:   None")
+    if remote_http:
+        print(
+            f"  │  ├─ Remote HTTP:   {len(remote_http)} server(s) [{', '.join(remote_http)}] → no local processes to pool"
+        )
+    else:
+        print("  │  ├─ Remote HTTP:   None")
+
+    if tr_registered:
+        mode_desc = (
+            "multiplexer-only (safe)"
+            if tr_multiplexer_only
+            else "full bridge (⚠️ 2.4× cost penalty tested)"
+        )
+        print(f"  │  └─ ToolRecall:    Registered ({mode_desc})")
+    else:
+        print("  │  └─ ToolRecall:    Not registered in ~/.claude.json")
+
+    # 2. Check workflow mode (interactive vs headless)
+    has_claude_p = False
+    for root, dirs, files in os.walk(".", topdown=True):
+        dirs[:] = [
+            d
+            for d in dirs
+            if d
+            not in (".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", ".ruff_cache")
+        ]
+        for fname in files:
+            if fname.endswith((".sh", ".yml", ".yaml", ".mk", "Makefile", "Jenkinsfile")):
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        if "claude -p" in f.read():
+                            has_claude_p = True
+                            break
+                except OSError:
+                    continue
+        if has_claude_p:
+            break
+
+    # 3. Check proxy configuration
+    anthropic_base = os.environ.get("ANTHROPIC_BASE_URL", "")
+    proxy_routed = ":8569" in anthropic_base
+
+    if has_claude_p:
+        print("  ├─ Workflow:         Headless CI scripts detected ('claude -p')")
+    else:
+        print(
+            "  ├─ Workflow:         Interactive CLI (no 'claude -p' scripts found in current repo)"
+        )
+
+    if proxy_routed:
+        print(f"  ├─ Proxy Routing:    Active ({anthropic_base})")
+    else:
+        print("  ├─ Proxy Routing:    Inactive (ANTHROPIC_BASE_URL not set to :8569)")
+
+    print("  ├─ Context Engine:   Claude Code native stubs active (append-only transcript)")
+    print("  │")
+    print("  └─ Verdict:")
+    if not has_claude_p and remote_http and not local_stdio:
+        print("     ⚠️  ToolRecall provides 0% token/RAM savings for this setup.")
+        print("        • Remote HTTP MCPs have no local subprocesses to pool.")
+        print("        • Interactive chat inputs vary every turn (proxy replay will not hit).")
+        print("        • Claude Code already stubs unchanged file reads natively.")
+        print("        👉 Recommendation: Keep ToolRecall unattached for interactive Claude Code.")
+    elif has_claude_p:
+        print("     ✅ High Value for Headless CI ('claude -p'):")
+        print("        • Route via: export ANTHROPIC_BASE_URL=http://127.0.0.1:8569")
+        print("        • Warm repeats in CI save up to −69% to −96% API cost.")
+    elif local_stdio:
+        print("     ✅ Value for Local MCP Pooling:")
+        print(
+            f"        • Pools {len(local_stdio)} local MCP server(s) to cut workstation RAM by ~70%."
+        )
+        print("        • Use '--multiplexer-only' mode (do NOT enable MCP file stubs).")
+    else:
+        print("     ℹ️  Interactive sessions manage context natively.")
+        print(
+            "        ToolRecall is recommended for Claude Code in automated CI test loops ('claude -p')."
+        )
+    print("══════════════════════════════════════════════════════════════")
+    print()
+
+
+def cmd_doctor():
+    """Environment, agent compatibility, and configuration diagnostics."""
+    args = sys.argv[2:]
+    target = args[0] if args else "all"
+    if target in ("-h", "--help"):
+        print("Usage: toolrecall doctor [agent]")
+        print("")
+        print("Audits local workspace and agent setups for ToolRecall compatibility.")
+        print("")
+        print("Supported targets: claude (or claude-code), all")
+        return
+
+    if target in ("claude", "claude-code", "all"):
+        _diagnose_claude_code()
+    else:
+        print(f"Unknown doctor target: {target}")
+        print("Supported targets: claude, all")
+        sys.exit(1)
+
+
 def main():
     if sys.platform == "win32":
         # Windows consoles default to legacy code pages (cp1252) that cannot
@@ -3500,6 +3734,7 @@ def main():
         print("  agent           Per-agent cache stats: ls, show, prune")
         print("  hook            Agent lifecycle hooks (claude print-config, staleness)")
         print("  audit           Token audit of agent transcripts (claude-code)")
+        print("  doctor          Agent compatibility and environment diagnostics (claude, all)")
         print("  keytrace        Explain proxy replay misses (needs TOOLRECALL_KEY_TRACE_DIR)")
         print("  healthcheck     One-shot daemon/cache health (--json, --clean-stale; exit 0/1/2)")
         return
@@ -3566,6 +3801,7 @@ def main():
         "agent": cmd_agent,
         "hook": cmd_hook,
         "audit": cmd_audit,
+        "doctor": cmd_doctor,
         "keytrace": cmd_keytrace,
     }
 

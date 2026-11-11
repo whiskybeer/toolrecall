@@ -225,6 +225,10 @@ def format_report(r: Dict[str, Any]) -> str:
         "detail into files loaded on demand), disable MCP servers and skills a project",
         "does not use. Unchanged re-reads and repeated tool output are already handled",
         "by Claude Code itself; there is nothing to gain from caching those.",
+        "",
+        "Note on ToolRecall: Interactive Claude Code sessions do not benefit from file",
+        "caching (Claude manages context natively). ToolRecall savings apply to headless",
+        "regression test loops (claude -p in CI) and local stdio MCP pooling.",
     ]
     return "\n".join(lines)
 

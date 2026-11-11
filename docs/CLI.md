@@ -46,6 +46,7 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall healthcheck` | `cmd_healthcheck()` | `toolrecall/cli.py` |
 | `toolrecall hook` | `cmd_hook()` → `toolrecall/adapters/claude_code.py` | `toolrecall/cli.py` |
 | `toolrecall audit` | `cmd_audit()` → `toolrecall/adapters/claude_code_audit.py` | `toolrecall/cli.py` |
+| `toolrecall doctor` | `cmd_doctor()` → `_diagnose_claude_code()` | `toolrecall/cli.py` |
 | `toolrecall keytrace` | `cmd_keytrace()` → `toolrecall/keytrace.py` | `toolrecall/cli.py` |
 
 Each function imports its dependencies lazily — running `toolrecall status` does not load `daemon.py` or `proxy.py`.
@@ -365,6 +366,15 @@ Most commands accept `--help` / `-h` for per-command usage and options
   controllable parts (instruction files, skill/MCP/agent listings) ranked by cost share.
 - **Options:** `--days N`, `--projects DIR` (default `~/.claude/projects`),
   `--include-tmp` (sessions whose workdir is under `/tmp`), `--json`.
+
+### `toolrecall doctor`
+
+- **File:** `cli.py : cmd_doctor()` → `_diagnose_claude_code()`
+- **Purpose:** environment and agent compatibility diagnostics. Audits local workspace
+  and agent configurations (such as Claude Code) to assess compatibility. Inspects CLI
+  binary availability, local stdio vs. remote HTTP MCP servers, presence of headless CI
+  scripts (`claude -p`), and proxy environment variables (`ANTHROPIC_BASE_URL`).
+- **Usage:** `toolrecall doctor [claude|all]`
 
 ### `toolrecall keytrace`
 

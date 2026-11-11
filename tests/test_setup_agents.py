@@ -163,6 +163,95 @@ class TestSetupAgentProfiles(unittest.TestCase):
                 cfg = json.load(f)
             self.assertIn("--multiplexer-only", cfg["mcpServers"]["toolrecall"]["args"])
 
+    def test_claude_interactive_allows_skip(self):
+        """Interactive prompt with 's' skips registration."""
+        with tempfile.TemporaryDirectory() as home:
+            fake_claude = os.path.join(home, "bin", "claude")
+            os.makedirs(os.path.dirname(fake_claude), exist_ok=True)
+            open(fake_claude, "w").close()
+
+            def fake_which(name):
+                return fake_claude if name == "claude" else None
+
+            with (
+                patch.object(sys, "argv", ["toolrecall", "setup"]),
+                patch.object(shutil, "which", side_effect=fake_which),
+                patch.dict(os.environ, {}, clear=True),
+                patch("builtins.input", return_value="s"),
+                _expand_to(home),
+            ):
+                result = cli._ensure_agent_integration()
+
+            self.assertFalse(result.get("claude"))
+
+    def test_claude_remote_http_defaults_to_skip(self):
+        """When only remote HTTP MCPs are configured, default prompt choice skips."""
+        with tempfile.TemporaryDirectory() as home:
+            fake_claude = os.path.join(home, "bin", "claude")
+            os.makedirs(os.path.dirname(fake_claude), exist_ok=True)
+            open(fake_claude, "w").close()
+
+            claude_json = os.path.join(home, ".claude.json")
+            with open(claude_json, "w") as f:
+                json.dump({"mcpServers": {"remote_mcp": {"url": "https://example.com/mcp"}}}, f)
+
+            def fake_which(name):
+                return fake_claude if name == "claude" else None
+
+            with (
+                patch.object(sys, "argv", ["toolrecall", "setup"]),
+                patch.object(shutil, "which", side_effect=fake_which),
+                patch.dict(os.environ, {}, clear=True),
+                patch("builtins.input", return_value=""),  # default enter
+                _expand_to(home),
+            ):
+                result = cli._ensure_agent_integration()
+
+            self.assertFalse(result.get("claude"))
+
+    def test_doctor_claude_output(self):
+        """toolrecall doctor claude runs cleanly and outputs diagnostics."""
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as home:
+            fake_claude = os.path.join(home, "bin", "claude")
+            os.makedirs(os.path.dirname(fake_claude), exist_ok=True)
+            open(fake_claude, "w").close()
+
+            claude_json = os.path.join(home, ".claude.json")
+            with open(claude_json, "w") as f:
+                json.dump(
+                    {
+                        "mcpServers": {
+                            "remote1": {"url": "https://remote.mcp"},
+                            "local1": {"command": "node", "args": ["server.js"]},
+                        }
+                    },
+                    f,
+                )
+
+            def fake_which(name):
+                return fake_claude if name == "claude" else None
+
+            buf = io.StringIO()
+            with (
+                patch.object(shutil, "which", side_effect=fake_which),
+                patch.object(
+                    subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0, stdout="2.1.306\n"),
+                ),
+                _expand_to(home),
+                redirect_stdout(buf),
+            ):
+                cli._diagnose_claude_code()
+
+            out = buf.getvalue()
+            self.assertIn("ToolRecall Compatibility Audit: Claude Code", out)
+            self.assertIn("Local stdio:   1 server(s)", out)
+            self.assertIn("Remote HTTP:   1 server(s)", out)
+
 
 if __name__ == "__main__":
     unittest.main()
