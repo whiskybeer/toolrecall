@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Shim reads no longer wait 5 s on a busy daemon.** `cached_read` runs inside the
+  caller's `open()`, but used transport's 5 s admin default and had no circuit breaker:
+  19 WebUI requests stalled 5.5-5.8 s in 7 days (thread stack in `recv_exact`) and every
+  following read paid again. The shim now passes a read-path budget (0.5 s,
+  `TOOLRECALL_SHIM_READ_TIMEOUT_MS`; admin/CLI calls keep 5 s) and opens a per-process
+  circuit breaker after 3 consecutive timeouts: while open (30 s) reads go straight to the
+  real `open()`, then one probe is allowed (half-open) and a failed probe re-opens it.
+  Timeouts are counted in `toolrecall stats` under `shim_timeouts`. Six stalled reads:
+  30.1 s before, 1.55 s after.
+  Tests: `tests/test_shim_read_timeout.py` (11).
+
 ## [0.8.23] — 2026-11-09
 
 ### Changed

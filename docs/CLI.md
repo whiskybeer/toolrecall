@@ -76,6 +76,11 @@ Most commands accept `--help` / `-h` for per-command usage and options
 - **Flags:**
   - `--by-agent`: Print human-readable per-agent breakdown from `agent_cache_stats`.
   - `--agent-id <id>`: Filter per-agent breakdown to a specific agent identity.
+- **Extra top-level keys:** `context_flow` (armed/checkpoint/banked state) and
+  `shim_timeouts` (`{"total", "last_24h", "last"}`) — shim reads served from disk because
+  the daemon missed the short read-path budget. Counted client-side in
+  `~/.toolrecall/shim_timeouts.jsonl`, so it stays accurate when the daemon is the
+  unresponsive party.
 
 ### `toolrecall agent`
 

@@ -38,6 +38,7 @@ import builtins
 import logging
 import sys
 import threading
+import time
 from collections import OrderedDict
 
 
@@ -123,6 +124,80 @@ def _get_tr():
         except ImportError:
             _TR = False
     return _TR
+
+
+# ─── Read-path budget + circuit breaker ───────────────────────────────────
+# cached_read runs INSIDE the caller's open(). transport.Client defaults to a
+# 5 s timeout, so a busy daemon charged every read 5 s (19 WebUI requests
+# stalled 5.5-5.8 s in 7 days, thread stack in recv_exact) and, with no breaker,
+# charged the next read again. The read path gets its own short budget; after
+# _BREAKER_THRESHOLD consecutive timeouts the shim stops talking to the daemon
+# for _BREAKER_COOLDOWN_S and serves the real open() instead.
+_READ_TIMEOUT_DEFAULT_MS = 500  # >10x the p99 local shim read on this class of box
+_BREAKER_THRESHOLD = 3
+_BREAKER_COOLDOWN_S = 30.0
+
+_breaker_lock = threading.Lock()
+_breaker = {"timeouts": 0, "open_until": 0.0, "recovering": False}
+
+
+def _read_timeout_s() -> float:
+    """Read-path socket budget in seconds (env TOOLRECALL_SHIM_READ_TIMEOUT_MS)."""
+    raw = (os.environ.get("TOOLRECALL_SHIM_READ_TIMEOUT_MS") or "").strip()
+    if raw:
+        try:
+            ms = float(raw)
+            if ms > 0:
+                return ms / 1000.0
+        except ValueError:
+            logging.getLogger("toolrecall.shim").debug(
+                "TOOLRECALL_SHIM_READ_TIMEOUT_MS=%r is not a number", raw
+            )
+    return _READ_TIMEOUT_DEFAULT_MS / 1000.0
+
+
+def _breaker_allows_read() -> bool:
+    """False → skip the daemon entirely and read from disk.
+
+    Half-open: when the cooldown expires the next read is let through to probe
+    the daemon; if it times out the breaker re-opens immediately (threshold 1
+    while recovering) instead of paying the full threshold again.
+    """
+    with _breaker_lock:
+        if not _breaker["open_until"]:
+            return True
+        if time.monotonic() < _breaker["open_until"]:
+            return False
+        _breaker["open_until"] = 0.0
+        _breaker["recovering"] = True
+        return True
+
+
+def _note_read_timeout(path: str) -> None:
+    with _breaker_lock:
+        _breaker["timeouts"] += 1
+        threshold = 1 if _breaker["recovering"] else _BREAKER_THRESHOLD
+        if _breaker["timeouts"] >= threshold:
+            _breaker["timeouts"] = 0
+            _breaker["recovering"] = False
+            _breaker["open_until"] = time.monotonic() + _BREAKER_COOLDOWN_S
+    logging.getLogger("toolrecall.shim").warning(
+        "daemon read timed out; served from disk: %s", path
+    )
+    try:
+        from toolrecall.shim_timeouts import record as _record_timeout
+
+        _record_timeout(path)
+    except Exception:  # noqa: BLE001 — accounting must never break the read
+        pass
+
+
+def _note_read_ok() -> None:
+    with _breaker_lock:
+        if _breaker["timeouts"] or _breaker["recovering"] or _breaker["open_until"]:
+            _breaker["timeouts"] = 0
+            _breaker["recovering"] = False
+            _breaker["open_until"] = 0.0
 
 
 # ─── W2: in-process local-hit cache ─────────────────────────────────────────
@@ -895,6 +970,10 @@ def _shim_open(path, mode="r", *args, **kwargs):
                 handle = _serve_local(entry, path_str, mode, mode_kind, args, kwargs)
                 if handle is not None:
                     return handle
+            # Circuit breaker: while open, a known-stalled daemon is not asked
+            # at all — the caller pays a disk read instead of a socket timeout.
+            if not _breaker_allows_read():
+                return _original_open(path_str, mode, *args, **kwargs)
             try:
                 # Source tagging: a shim hit in an agent process IS the
                 # agent's file-read path — tag it agent_tool so the CONTEXT
@@ -904,7 +983,13 @@ def _shim_open(path, mode="r", *args, **kwargs):
                 # the call itself records the hit): it uses path shape + one
                 # os.stat, never the content. stats stay exactly-once.
                 source = _tag_source_for(path_str)
-                result = tr["read"](path_str, source=source)
+                result = tr["read"](path_str, source=source, timeout=_read_timeout_s())
+                # A timeout is not a cache miss: count it, trip the breaker,
+                # and serve the real file instead of trusting a fallback path.
+                if isinstance(result, dict) and result.get("_daemon_timeout"):
+                    _note_read_timeout(path_str)
+                    return _original_open(path_str, mode, *args, **kwargs)
+                _note_read_ok()
                 # Only serve from shim if it was a cache HIT.
                 # On cache miss, fall through to _original_open so the
                 # real cached_read (from cache.py) reads the file directly

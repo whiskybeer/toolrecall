@@ -195,7 +195,12 @@ def mcp_list_servers() -> dict:
     return resp
 
 
-def cached_read(path: str, source: str = "agent_tool", agent_id: str | None = None) -> dict:
+def cached_read(
+    path: str,
+    source: str = "agent_tool",
+    agent_id: str | None = None,
+    timeout: float | None = None,
+) -> dict:
     """Read file via daemon (UDS) or direct SQLite.
 
     Daemon-first: sends path to the running daemon over Unix Domain Socket.
@@ -208,14 +213,20 @@ def cached_read(path: str, source: str = "agent_tool", agent_id: str | None = No
                 infrastructure/interception reads. Controls whether
                 tokens count toward tokens_saved_to_llm.
         agent_id: Optional agent identity for per-agent stats tracking.
+        timeout: Socket budget in seconds. ``None`` keeps the 5 s admin
+                default; the shim passes its own short read-path budget
+                because this call runs inside the caller's ``open()``.
+                A daemon timeout tags the returned dict with
+                ``_daemon_timeout`` so the caller can trip its breaker.
     """
     path = _abs_path(path)
     client = _get_client()
     payload = {"cmd": "cached_read", "path": path, "source": source}
     _add_agent_id(payload, agent_id)
-    resp = client.send(payload)
+    resp = client.send(payload, timeout=timeout) if timeout is not None else client.send(payload)
     if not _is_daemon_down(resp):
         return resp  # Success or real error from Daemon
+    timed_out = resp.get("error") == "daemon_timeout"
     # Fallback: check allowed_paths ourselves, then read directly
     from toolrecall.config import load_config
 
@@ -230,7 +241,11 @@ def cached_read(path: str, source: str = "agent_tool", agent_id: str | None = No
             getattr(cfg, "mcp_allow_symlink_escapes", False),
         ):
             return {"error": "Path not allowed: access denied (daemon unavailable)"}
-    return _get_direct_cache().cached_read(path, source=source, agent_id=agent_id)
+    direct = _get_direct_cache().cached_read(path, source=source, agent_id=agent_id)
+    if timed_out and isinstance(direct, dict):
+        direct = dict(direct)
+        direct["_daemon_timeout"] = True
+    return direct
 
 
 def cached_shell_exec(command: str, agent_id: str | None = None) -> dict:

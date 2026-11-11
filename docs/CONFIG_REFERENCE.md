@@ -134,6 +134,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_SHIM_DISABLE` | (not in config.toml) | `TOOLRECALL_SHIM_DISABLE=1` (disable OS-level shim per-process) |
 | `TOOLRECALL_SHIM_STUB` | (not in config.toml) | `TOOLRECALL_SHIM_STUB=0` (kill switch for the shim's unchanged-file stub) |
 | `TOOLRECALL_SHIM_STUB_TTL` | `shim.stub_ttl` | `TOOLRECALL_SHIM_STUB_TTL=600` |
+| `TOOLRECALL_SHIM_READ_TIMEOUT_MS` | (not in config.toml) | `TOOLRECALL_SHIM_READ_TIMEOUT_MS=500` (shim read-path socket budget; admin calls keep 5 s) |
 | `TOOLRECALL_DEDUP_NORMALIZE` | (not in config.toml) | `TOOLRECALL_DEDUP_NORMALIZE=1` (normalized dedup keys; see FORWARD_PROXY.md) |
 | `TOOLRECALL_KEY_TRACE_DIR` | (not in config.toml) | `TOOLRECALL_KEY_TRACE_DIR=/tmp/tr-trace` (proxy replay diagnostics for `toolrecall keytrace`) |
 | `TOOLRECALL_CC_HOOK_DIR` | (not in config.toml) | `TOOLRECALL_CC_HOOK_DIR=~/.toolrecall/claude-code` (Claude Code hook session state) |
