@@ -1,0 +1,28 @@
+# Dependabot: dependency updates for pip and GitHub Actions.
+#
+# pip alerts already came from the dependency graph, but nothing updated the
+# pinned action versions in .github/workflows/. Weekly, grouped per ecosystem
+# so the PR queue stays small.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
