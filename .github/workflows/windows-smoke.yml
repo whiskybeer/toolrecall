@@ -21,6 +21,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege: this job only reads the repo and uploads nothing.
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: windows-latest

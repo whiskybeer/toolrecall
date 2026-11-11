@@ -4078,6 +4078,18 @@ def cached_api_store(
         return {"stored": False, "error": str(e)}
 
 
+def _is_plain_trace_name(target: str) -> bool:
+    """True when target is a bare run/scenario name, never a path.
+
+    Guards the ``~/.toolrecall/traces/<target>/trace.jsonl`` join: a target
+    carrying a separator or ``..`` must not walk out of the trace root
+    (CodeQL py/path-injection).
+    """
+    if not target or target in (".", ".."):
+        return False
+    return not any(sep and sep in target for sep in (os.sep, os.altsep, "/", "\\"))
+
+
 def forget_run(target: str) -> dict:
     """Evict cached API responses and scenario records created during a run.
 
@@ -4141,22 +4153,25 @@ def forget_run(target: str) -> dict:
                 scenario_deleted = False
 
             # 4. Check if trace exists at default path ~/.toolrecall/traces/<target>/trace.jsonl
-            default_trace = os.path.expanduser(f"~/.toolrecall/traces/{target}/trace.jsonl")
-            if os.path.exists(default_trace):
-                try:
-                    with open(default_trace, "r", encoding="utf-8") as fh:
-                        for line in fh:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                d = _json.loads(line)
-                                if isinstance(d, dict) and d.get("request_hash"):
-                                    hashes.add(d["request_hash"])
-                            except Exception:
-                                continue
-                except FileNotFoundError:
-                    pass
+            #    Bare names only: a path-like target is handled by branch 1 and
+            #    must never be joined into the trace root.
+            if _is_plain_trace_name(target):
+                default_trace = os.path.expanduser(f"~/.toolrecall/traces/{target}/trace.jsonl")
+                if os.path.exists(default_trace):
+                    try:
+                        with open(default_trace, "r", encoding="utf-8") as fh:
+                            for line in fh:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    d = _json.loads(line)
+                                    if isinstance(d, dict) and d.get("request_hash"):
+                                        hashes.add(d["request_hash"])
+                                except Exception:
+                                    continue
+                    except FileNotFoundError:
+                        pass
 
             deleted = 0
             if hashes:

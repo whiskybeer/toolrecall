@@ -87,6 +87,13 @@ class TestReplayForget(unittest.TestCase):
         self.assertEqual(res["forgotten"], 0)
         self.assertFalse(res["scenario_deleted"])
 
+    def test_path_like_target_never_joins_trace_root(self):
+        """A target with separators must not be joined into ~/.toolrecall/traces."""
+        self.assertTrue(cache._is_plain_trace_name("failed-run-123"))
+        self.assertTrue(cache._is_plain_trace_name("scen.v2"))
+        for bad in ("..", ".", "", "a/b", "../escape", "a\\b", "/abs/path"):
+            self.assertFalse(cache._is_plain_trace_name(bad), bad)
+
     def test_antigravity_canonicalization_profile(self):
         t1 = (
             "You are Antigravity.\n"

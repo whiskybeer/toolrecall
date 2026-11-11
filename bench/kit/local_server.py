@@ -73,7 +73,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            # Header values can carry URL-derived data (e.g. /etag/<id>).
+            # Strip CR/LF so a crafted path segment cannot split the response.
+            self.send_header(k, str(v).replace("\r", "").replace("\n", ""))
         self.end_headers()
         self.wfile.write(body)
 

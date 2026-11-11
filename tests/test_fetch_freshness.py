@@ -279,7 +279,9 @@ class TestInvalidateCli:
 
     def test_url_flag_reports_count(self, monkeypatch, tmp_path):
         out = self._run(monkeypatch, tmp_path, "--url", "example.com")
-        assert "example.com" in out and "0 cached response(s)" in out
+        # Exact line match, not a substring test on a URL-ish token.
+        lines = [ln.strip() for ln in out.splitlines()]
+        assert "Invalidated 0 cached response(s) for 'example.com' (fetch)." in lines
 
     def test_url_flag_deletes_matching_rows(self, monkeypatch, tmp_path):
         self._run(monkeypatch, tmp_path)  # init DB first
