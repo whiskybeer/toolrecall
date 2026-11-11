@@ -3515,11 +3515,144 @@ def cmd_audit():
     sys.exit(1)
 
 
-def _diagnose_claude_code():
-    """Diagnostic check for Claude Code integration and compatibility."""
+# Repo scan limits for the headless hint: doctor must stay fast when run from $HOME.
+_DOCTOR_SCAN_MAX_DEPTH = 4
+_DOCTOR_SCAN_MAX_FILES = 2000
+_DOCTOR_SCAN_MAX_BYTES = 256 * 1024
+_DOCTOR_SCAN_MAX_SECONDS = 2.0
+_DOCTOR_SCAN_SKIP_DIRS = frozenset(
+    (".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", ".ruff_cache", "dist", "build")
+)
+_DOCTOR_SCAN_SUFFIXES = (".sh", ".bash", ".yml", ".yaml", ".mk", ".py", ".js", ".mjs", ".ts")
+_DOCTOR_SCAN_NAMES = ("Makefile", "Jenkinsfile", "Justfile")
+_DOCTOR_HEADLESS_PATTERNS = (
+    r"\bclaude\s+(?:-p|--print)\b",
+    r"[\"']claude[\"']\s*,\s*[\"'](?:-p|--print)[\"']",
+    r"anthropics/claude-code-action",
+)
+
+
+def _find_repo_root(start):
+    """Nearest ancestor of ``start`` that contains ``.git``, or None."""
+    d = os.path.abspath(start)
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def _collect_claude_mcp_servers(cwd, repo_root):
+    """Read every place Claude Code keeps MCP servers.
+
+    Returns ``(servers, warnings)``. ``servers`` is a list of
+    ``(name, scope, config)`` with Claude Code's scope names: ``user``
+    (top-level ``~/.claude.json``), ``local`` (``projects[<dir>]`` in
+    ``~/.claude.json``, the default of ``claude mcp add``) and ``project``
+    (``.mcp.json`` at the repo root).
+    """
+    import json
+
+    servers = []
+    warnings = []
+    dirs = [os.path.realpath(cwd)]
+    if repo_root and os.path.realpath(repo_root) not in dirs:
+        dirs.append(os.path.realpath(repo_root))
+
+    claude_json = os.path.expanduser("~/.claude.json")
+    if os.path.exists(claude_json):
+        try:
+            with open(claude_json, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            warnings.append(f"could not parse {claude_json}: {e}")
+            data = {}
+        if isinstance(data, dict):
+            for name, cfg in (data.get("mcpServers") or {}).items():
+                servers.append((name, "user", cfg))
+            projects = data.get("projects") or {}
+            for d in dirs:
+                entry = projects.get(d) or {}
+                for name, cfg in (entry.get("mcpServers") or {}).items():
+                    servers.append((name, "local", cfg))
+
+    if repo_root:
+        mcp_json = os.path.join(repo_root, ".mcp.json")
+        if os.path.exists(mcp_json):
+            try:
+                with open(mcp_json, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                warnings.append(f"could not parse {mcp_json}: {e}")
+                data = {}
+            if isinstance(data, dict):
+                for name, cfg in (data.get("mcpServers") or {}).items():
+                    servers.append((name, "project", cfg))
+
+    return servers, warnings
+
+
+def _scan_headless_hint(repo_root):
+    """First non-comment line in the repo that runs Claude Code headless.
+
+    Returns ``(relpath, lineno)`` or None. Only a hint: a script that runs
+    ``claude -p`` does not show the same task is rerun on unchanged code,
+    which is the only case the proxy replays.
+    """
+    import re
+    import time
+
+    patterns = [re.compile(p) for p in _DOCTOR_HEADLESS_PATTERNS]
+    files_read = 0
+    deadline = time.monotonic() + _DOCTOR_SCAN_MAX_SECONDS
+    base_depth = repo_root.rstrip(os.sep).count(os.sep)
+    for root, dirs, files in os.walk(repo_root, topdown=True):
+        if time.monotonic() > deadline:
+            return None
+        depth = root.rstrip(os.sep).count(os.sep) - base_depth
+        if depth >= _DOCTOR_SCAN_MAX_DEPTH:
+            dirs[:] = []
+        else:
+            # Hidden dirs hold tool state (.cargo, .vscode-server, ...), not
+            # the repo's scripts; .github is the exception (CI workflows).
+            dirs[:] = sorted(
+                d
+                for d in dirs
+                if d not in _DOCTOR_SCAN_SKIP_DIRS and (not d.startswith(".") or d == ".github")
+            )
+        for fname in sorted(files):
+            if not (fname.endswith(_DOCTOR_SCAN_SUFFIXES) or fname in _DOCTOR_SCAN_NAMES):
+                continue
+            if files_read >= _DOCTOR_SCAN_MAX_FILES:
+                return None
+            fpath = os.path.join(root, fname)
+            try:
+                if os.path.getsize(fpath) > _DOCTOR_SCAN_MAX_BYTES:
+                    continue
+                files_read += 1
+                with open(fpath, encoding="utf-8", errors="ignore") as f:
+                    for lineno, line in enumerate(f, 1):
+                        stripped = line.lstrip()
+                        if stripped.startswith(("#", "//")):
+                            continue
+                        if any(p.search(line) for p in patterns):
+                            return os.path.relpath(fpath, repo_root), lineno
+            except OSError:
+                continue
+    return None
+
+
+def _diagnose_claude_code(workflow=None):
+    """Diagnostic check for Claude Code integration and compatibility.
+
+    ``workflow`` is ``"headless"``, ``"interactive"`` or None (not stated:
+    treated as interactive, the common case, with a hint if the repo has
+    scripts that run Claude Code headless).
+    """
     import shutil
     import subprocess
-    import json
 
     print("══════════════════════════════════════════════════════════════")
     print("  ToolRecall Compatibility Audit: Claude Code")
@@ -3545,35 +3678,30 @@ def _diagnose_claude_code():
 
     print(f"  ├─ Binary:           {claude_bin} ({version_str})")
 
-    # 1. Check MCP configuration
-    claude_json = os.path.expanduser("~/.claude.json")
+    # 1. MCP servers from every scope Claude Code reads
+    cwd = os.getcwd()
+    repo_root = _find_repo_root(cwd)
+    servers, warnings = _collect_claude_mcp_servers(cwd, repo_root)
     local_stdio = []
     remote_http = []
     tr_registered = False
     tr_multiplexer_only = False
+    for name, scope, s in servers:
+        if not isinstance(s, dict):
+            continue
+        if name == "toolrecall":
+            tr_registered = True
+            if "--multiplexer-only" in (s.get("args") or []):
+                tr_multiplexer_only = True
+            continue
+        if s.get("command"):
+            local_stdio.append(f"{name} ({scope})")
+        elif s.get("url") or s.get("type") in ("http", "sse"):
+            remote_http.append(f"{name} ({scope})")
 
-    if os.path.exists(claude_json):
-        try:
-            with open(claude_json, encoding="utf-8") as f:
-                data = json.load(f)
-                servers = data.get("mcpServers") or {}
-                for name, s in servers.items():
-                    if name == "toolrecall":
-                        tr_registered = True
-                        args = s.get("args") or []
-                        if "--multiplexer-only" in args:
-                            tr_multiplexer_only = True
-                        continue
-                    if isinstance(s, dict):
-                        if s.get("command"):
-                            local_stdio.append(name)
-                        elif s.get("url") or s.get("type") in ("http", "sse"):
-                            remote_http.append(name)
-        except (OSError, json.JSONDecodeError):
-            local_stdio = []
-            remote_http = []
-
-    print(f"  ├─ MCP Config:       {claude_json}")
+    print("  ├─ MCP Config:       ~/.claude.json (user + local scope), .mcp.json (project scope)")
+    for w in warnings:
+        print(f"  │  ├─ ⚠️  {w}")
     if local_stdio:
         print(
             f"  │  ├─ Local stdio:   {len(local_stdio)} server(s) [{', '.join(local_stdio)}] → can be pooled"
@@ -3595,41 +3723,27 @@ def _diagnose_claude_code():
         )
         print(f"  │  └─ ToolRecall:    Registered ({mode_desc})")
     else:
-        print("  │  └─ ToolRecall:    Not registered in ~/.claude.json")
+        print("  │  └─ ToolRecall:    Not registered")
 
-    # 2. Check workflow mode (interactive vs headless)
-    has_claude_p = False
-    for root, dirs, files in os.walk(".", topdown=True):
-        dirs[:] = [
-            d
-            for d in dirs
-            if d
-            not in (".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", ".ruff_cache")
-        ]
-        for fname in files:
-            if fname.endswith((".sh", ".yml", ".yaml", ".mk", "Makefile", "Jenkinsfile")):
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        if "claude -p" in f.read():
-                            has_claude_p = True
-                            break
-                except OSError:
-                    continue
-        if has_claude_p:
-            break
-
-    # 3. Check proxy configuration
-    anthropic_base = os.environ.get("ANTHROPIC_BASE_URL", "")
-    proxy_routed = ":8569" in anthropic_base
-
-    if has_claude_p:
-        print("  ├─ Workflow:         Headless CI scripts detected ('claude -p')")
+    # 2. Workflow: stated by the user; a repo scan can only hint at it
+    headless = workflow == "headless"
+    hint = None
+    if workflow is None and repo_root:
+        hint = _scan_headless_hint(repo_root)
+    if workflow == "headless":
+        print("  ├─ Workflow:         Headless repeat runs (--headless)")
+    elif workflow == "interactive":
+        print("  ├─ Workflow:         Interactive (--interactive)")
     else:
         print(
-            "  ├─ Workflow:         Interactive CLI (no 'claude -p' scripts found in current repo)"
+            "  ├─ Workflow:         Interactive (default; pass --headless for repeat 'claude -p' runs)"
         )
+    if hint:
+        print(f"  │  └─ Hint:          headless Claude Code call in {hint[0]}:{hint[1]}")
 
+    # 3. Proxy configuration
+    anthropic_base = os.environ.get("ANTHROPIC_BASE_URL", "")
+    proxy_routed = ":8569" in anthropic_base
     if proxy_routed:
         print(f"  ├─ Proxy Routing:    Active ({anthropic_base})")
     else:
@@ -3637,28 +3751,37 @@ def _diagnose_claude_code():
 
     print("  ├─ Context Engine:   Claude Code native stubs active (append-only transcript)")
     print("  │")
+
+    # 4. Verdict: one line per finding, not a single branch
     print("  └─ Verdict:")
-    if not has_claude_p and remote_http and not local_stdio:
-        print("     ⚠️  ToolRecall provides 0% token/RAM savings for this setup.")
-        print("        • Remote HTTP MCPs have no local subprocesses to pool.")
-        print("        • Interactive chat inputs vary every turn (proxy replay will not hit).")
-        print("        • Claude Code already stubs unchanged file reads natively.")
-        print("        👉 Recommendation: Keep ToolRecall unattached for interactive Claude Code.")
-    elif has_claude_p:
-        print("     ✅ High Value for Headless CI ('claude -p'):")
-        print("        • Route via: export ANTHROPIC_BASE_URL=http://127.0.0.1:8569")
-        print("        • Warm repeats in CI save up to −69% to −96% API cost.")
-    elif local_stdio:
-        print("     ✅ Value for Local MCP Pooling:")
+    if tr_registered and not tr_multiplexer_only:
+        print("     ⚠️  ToolRecall is registered as the full MCP bridge: file caching through")
+        print("        MCP measured 2.4× more expensive on Claude Code. Re-register with:")
+        print("        claude mcp remove toolrecall -s user")
+        print("        claude mcp add toolrecall -s user -- toolrecall mcp --multiplexer-only")
+    if local_stdio:
         print(
-            f"        • Pools {len(local_stdio)} local MCP server(s) to cut workstation RAM by ~70%."
+            f"     ✅ {len(local_stdio)} local stdio MCP server(s) can be pooled: one shared process"
         )
-        print("        • Use '--multiplexer-only' mode (do NOT enable MCP file stubs).")
+        print("        per server across sessions instead of one per session.")
+        if not tr_registered:
+            print("        Register with: toolrecall setup")
+    if headless:
+        print("     ✅ Headless repeat runs: the proxy replays identical reruns.")
+        print("        Measured (5 SWE-bench Lite tasks, Sonnet, n=1 per scenario):")
+        print("        • identical rerun on unchanged code: −77%; total after 4 runs: −72%")
+        print("        • first run: no saving")
+        print("        • a commit changing files the agent reads stops the replay")
+        print("        • replays repeat failures: use 'toolrecall replay forget <run>' in CI")
+        if not proxy_routed:
+            print("        Route via: export ANTHROPIC_BASE_URL=http://127.0.0.1:8569")
     else:
-        print("     ℹ️  Interactive sessions manage context natively.")
-        print(
-            "        ToolRecall is recommended for Claude Code in automated CI test loops ('claude -p')."
-        )
+        print("     ℹ️  ~0% token saving for interactive use: Claude Code already stubs")
+        print("        unchanged re-reads, and turns differ so proxy replay does not hit.")
+        if hint:
+            print("        If you rerun the same 'claude -p' task on unchanged code:")
+            print("        toolrecall doctor claude --headless")
+    print("     📊 Your token history: toolrecall audit claude-code --days 30")
     print("══════════════════════════════════════════════════════════════")
     print()
 
@@ -3666,17 +3789,26 @@ def _diagnose_claude_code():
 def cmd_doctor():
     """Environment, agent compatibility, and configuration diagnostics."""
     args = sys.argv[2:]
-    target = args[0] if args else "all"
-    if target in ("-h", "--help"):
-        print("Usage: toolrecall doctor [agent]")
+    if any(a in ("-h", "--help") for a in args):
+        print("Usage: toolrecall doctor [claude|all] [--headless|--interactive]")
         print("")
         print("Audits local workspace and agent setups for ToolRecall compatibility.")
         print("")
         print("Supported targets: claude (or claude-code), all")
+        print("  --headless      you rerun the same 'claude -p' task on unchanged code")
+        print("  --interactive   you use Claude Code as an interactive chat (default)")
         return
 
+    workflow = None
+    if "--headless" in args:
+        workflow = "headless"
+    elif "--interactive" in args:
+        workflow = "interactive"
+    positional = [a for a in args if not a.startswith("--")]
+    target = positional[0] if positional else "all"
+
     if target in ("claude", "claude-code", "all"):
-        _diagnose_claude_code()
+        _diagnose_claude_code(workflow)
     else:
         print(f"Unknown doctor target: {target}")
         print("Supported targets: claude, all")

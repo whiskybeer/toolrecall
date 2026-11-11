@@ -138,7 +138,7 @@ For detailed ADK-specific patterns, see [ToolRecall + Google ADK](google-adk.md)
 ## Claude Code — ⚠️ Headless repeats only; no saving in interactive sessions
 
 > [!NOTE]
-> **Who benefits?** If you use Claude Code solely for **interactive terminal chat with remote HTTP MCP servers**, ToolRecall saves ~0% (Claude already has native prompt prefix caching and `file_unchanged` stubs). ToolRecall is designed for Claude Code in **automated CI / eval regression test loops** (`claude -p`, saving −45% to −96%), **multi-session local STDIO MCP pooling** (−70% RAM), and **multi-agent environments** (unified rate-limiting and `toolrecall top` telemetry).
+> **Who benefits?** If you use Claude Code solely for **interactive terminal chat with remote HTTP MCP servers**, ToolRecall saves ~0% (Claude already has native prompt prefix caching and `file_unchanged` stubs). ToolRecall pays off for Claude Code on **repeat headless runs of the same task on unchanged code** (`claude -p`: identical rerun −77%, −72% cumulative after 4 runs, first run no saving; 5 SWE-bench Lite tasks), **local STDIO MCP pooling** (one shared process per server across sessions), and **multi-agent environments** (unified rate-limiting and `toolrecall top` telemetry). Run `toolrecall doctor claude` to check your setup.
 
 | Feature | Verdict | Evidence |
 |---------|---------|----------|

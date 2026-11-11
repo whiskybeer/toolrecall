@@ -370,11 +370,19 @@ Most commands accept `--help` / `-h` for per-command usage and options
 ### `toolrecall doctor`
 
 - **File:** `cli.py : cmd_doctor()` → `_diagnose_claude_code()`
-- **Purpose:** environment and agent compatibility diagnostics. Audits local workspace
-  and agent configurations (such as Claude Code) to assess compatibility. Inspects CLI
-  binary availability, local stdio vs. remote HTTP MCP servers, presence of headless CI
-  scripts (`claude -p`), and proxy environment variables (`ANTHROPIC_BASE_URL`).
-- **Usage:** `toolrecall doctor [claude|all]`
+- **Purpose:** environment and agent compatibility diagnostics for Claude Code.
+  Checks the `claude` binary; MCP servers from all three scopes (`user` and `local`
+  in `~/.claude.json`, `project` in the repo's `.mcp.json`), split into local stdio
+  (poolable) and remote HTTP/SSE; how ToolRecall is registered (warns on the full
+  bridge, measured 2.4× cost); and whether `ANTHROPIC_BASE_URL` points at the proxy.
+  The verdict lists every finding. Interactive use reports ~0% token saving;
+  `--headless` reports the measured replay numbers (identical rerun −77%, first run
+  no saving). Always points to `toolrecall audit claude-code --days 30` for history.
+- **Workflow:** stated by the user, not guessed. Without a flag the repo (git root
+  only, depth 4, hidden dirs except `.github` skipped, 2,000 files, 2 s budget) is
+  scanned for `claude -p` / `--print` / `claude-code-action` outside comments; a hit
+  is shown as a hint only.
+- **Usage:** `toolrecall doctor [claude|all] [--headless|--interactive]`
 
 ### `toolrecall keytrace`
 
