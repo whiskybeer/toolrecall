@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.24] — 2026-11-11
+
+### Added
+- **`toolrecall doctor` — one command for environment and agent diagnostics.** Reports daemon,
+  shim and venv state, and audits agent setups (`doctor [claude|all] [--headless|--interactive]`).
+  Headless Claude Code runs and interactive sessions get separate verdicts, and both quote the
+  same rerun pair the README uses, so a setup verdict cannot contradict the documentation.
+  `healthcheck` additionally flags the `toolrecall-light` Hermes plugin as a co-install conflict,
+  which otherwise silently double-loads the tool layer.
+  Tests: `tests/test_setup_agents.py` (28).
 
 ### Changed
 - **Agent identity is a contract, not a vendor list.** The context-tier tagging and the
@@ -78,6 +87,31 @@
   read-timeout tests no longer pin `/tmp`.
   Tests: `tests/test_shim_timeouts.py` (5), `tests/test_agent_home.py` (5),
   `tests/test_repo_overlay.py` (+1).
+
+### Security
+- **All 25 open Dependabot advisories cleared in the lockfile.** PyJWT 2.13.0 → 2.15.1 (15
+  advisories, incl. a critical PEM-detection bypass), urllib3 2.7.0 → 2.8.0 (3), certifi
+  → 2026.10.23 (1 critical), mcp 1.28.1 → 1.30.0 (4; the extra now pins `>=1.30.0,<2` so the
+  bridge stays on the 1.x API), langgraph 1.2.11 → 1.2.20 and langgraph-sdk 0.4.4 → 0.4.14 (2).
+  A `pip-audit` pass over the installed environment then found one alert Dependabot had not
+  reported — `cryptography 49.0.0` (PYSEC-2026-3552, a PKCS#7 decryption oracle) → 50.0.2; the
+  environment now audits clean.
+- **Four CodeQL alerts closed at the source.** `windows-smoke.yml` declares
+  `permissions: contents: read`; the bench kit strips CR/LF from header values (a crafted
+  `/etag/<id>` segment could split the response); the freshness test asserts an exact output line
+  instead of a URL substring; and the `~/.toolrecall/traces/<target>` join accepts bare
+  run/scenario names only, so a path-like target can no longer walk out of the trace root.
+  Five path-injection alerts on the documented `replay forget <trace_dir>` feature are dismissed
+  as by-design: the path comes from the same user over a 0700/loopback socket, and only eviction
+  counts are returned, never file content.
+- **Dependabot now covers GitHub Actions as well** (`.github/dependabot.yml`, weekly, grouped per
+  ecosystem), so pinned action versions stop drifting unannounced.
+
+### Documentation
+- **Savings claims are scoped to their agent and workload.** The README no longer implies the
+  forward-proxy numbers apply to agents that manage their own context; the 450-turn run and the
+  rerun pair are quoted consistently in the README, the Claude Code NOTE block and
+  `doctor --headless`.
 
 ## [0.8.23] — 2026-11-09
 
