@@ -383,8 +383,8 @@ Most commands accept `--help` / `-h` for per-command usage and options
   (poolable) and remote HTTP/SSE; how ToolRecall is registered (warns on the full
   bridge, measured 2.4× cost); and whether `ANTHROPIC_BASE_URL` points at the proxy.
   The verdict lists every finding. Interactive use reports ~0% token saving;
-  `--headless` reports the measured replay numbers (identical rerun −77%, first run
-  no saving). Always points to `toolrecall audit claude-code --days 30` for history.
+  `--headless` reports the measured replay numbers (identical rerun $0, −45% / −72%
+  cumulative after 2 / 4 runs, first run no saving). Always points to `toolrecall audit claude-code --days 30` for history.
 - **Workflow:** stated by the user, not guessed. Without a flag the repo (git root
   only, depth 4, hidden dirs except `.github` skipped, 2,000 files, 2 s budget) is
   scanned for `claude -p` / `--print` / `claude-code-action` outside comments; a hit
