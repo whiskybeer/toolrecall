@@ -28,31 +28,44 @@ def _clean_agent_stats():
 
 
 @pytest.fixture
-def capsys(monkeypatch):
+def capsys(request, monkeypatch):
     """Fallback fixture for environments where pytest runs with -p no:capture."""
-    import io
+    capman = request.config.pluginmanager.getplugin("capturemanager")
+    if capman is not None and capman.is_capturing():
+        from _pytest.capture import CaptureFixture, SysCapture
 
-    class _CaptureResult:
-        def __init__(self, out, err):
-            self.out = out
-            self.err = err
+        capture_fixture = CaptureFixture(SysCapture, request, _ispytest=True)
+        capman.set_fixture(capture_fixture)
+        capture_fixture._start()
+        try:
+            yield capture_fixture
+        finally:
+            capture_fixture.close()
+            capman.unset_fixture()
+    else:
+        import io
 
-    class _Capsys:
-        def __init__(self):
-            self.out_buf = io.StringIO()
-            self.err_buf = io.StringIO()
-            monkeypatch.setattr(sys, "stdout", self.out_buf)
-            monkeypatch.setattr(sys, "stderr", self.err_buf)
+        class _CaptureResult:
+            def __init__(self, out, err):
+                self.out = out
+                self.err = err
 
-        def readouterr(self):
-            res = _CaptureResult(self.out_buf.getvalue(), self.err_buf.getvalue())
-            self.out_buf.seek(0)
-            self.out_buf.truncate(0)
-            self.err_buf.seek(0)
-            self.err_buf.truncate(0)
-            return res
+        class _Capsys:
+            def __init__(self):
+                self.out_buf = io.StringIO()
+                self.err_buf = io.StringIO()
+                monkeypatch.setattr(sys, "stdout", self.out_buf)
+                monkeypatch.setattr(sys, "stderr", self.err_buf)
 
-    return _Capsys()
+            def readouterr(self):
+                res = _CaptureResult(self.out_buf.getvalue(), self.err_buf.getvalue())
+                self.out_buf.seek(0)
+                self.out_buf.truncate(0)
+                self.err_buf.seek(0)
+                self.err_buf.truncate(0)
+                return res
+
+        yield _Capsys()
 
 
 # ─── Tests ───────────────────────────────────────────
