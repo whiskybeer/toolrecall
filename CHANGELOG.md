@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`repo_overlay.py` no longer reports a shadowed venv as "overlay".**
+  `overlay_state()` returned `overlay` whenever the `.pth` existed, but an installed
+  `site-packages/toolrecall` directory still precedes it on `sys.path` and wins every
+  import. The post-commit hook greps for `state: overlay`, so it exited early forever
+  while the live CLI/cron kept importing the frozen snapshot. `--check` now reports
+  `shadowed`, `apply()` verifies which copy the venv actually imports, and it refuses to
+  deploy a non-`main` checkout (the hook runs after every commit) unless `--force`.
+  Tests: `tests/test_repo_overlay.py` (11).
+
 ## [0.8.23] — 2026-11-09
 
 ### Changed

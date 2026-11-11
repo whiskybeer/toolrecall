@@ -312,6 +312,16 @@ venv onto the live tree (`zz_toolrecall_repo.pth` — the same mechanism
 cannot drift again. On a read-only venv the install reports failure instead of
 a false ✅; reinstall the package there with `pip install -e /path/to/repo`.
 
+**The pipx venv overlay can be shadowed.** `overlay_state()` used to call any
+`.pth` "overlay", but an installed `site-packages/toolrecall` directory still
+precedes the `.pth` on `sys.path`, so the stale snapshot won every import while
+`--check` reported the repo tree as live — and the `post-commit` hook exited
+early on that report, so the overlay was never repaired. `--check` now
+distinguishes `shadowed` (`.pth` **and** snapshot present) from `overlay`,
+`apply()` verifies which copy the venv actually imports, and it refuses to
+deploy a non-`main` checkout — the hook runs after every commit, on whatever
+branch is checked out — unless `--force` is passed.
+
 **Scope:** the fingerprint covers the modules that decide shim behaviour
 (`shim.py`, `shim_stub.py`, `stub_core.py`, `client.py`, `keys.py`,
 `config.py`). Daemon-only changes do not flag drift.
