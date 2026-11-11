@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **The shim now skips the agent home by default.** `[shim].exclude_prefixes` defaults
+  to the kernel virtual filesystems plus the resolved agent home (`AGENT_HOME` →
+  `TOOLRECALL_AGENT_HOME` → `[paths].agent_home` → `~/.hermes`), so control-plane reads
+  (`config.yaml`, `cron/jobs.json`, plugin manifests) no longer pay a daemon round-trip
+  or write an `access_log` row. Those reads were already tagged `source="shim"` and never
+  counted toward `tokens_saved_to_llm`; on a cron-heavy host they were 25,952 of 26,076
+  reads in a day (99.5 %). An explicit `exclude_prefixes = []` still bypasses nothing, and
+  an explicit list still replaces the default.
+  Tests: `tests/test_shim_exclude_agent_home.py` (9).
+
 ## [0.8.23] — 2026-11-09
 
 ### Changed

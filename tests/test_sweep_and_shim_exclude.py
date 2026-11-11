@@ -188,8 +188,16 @@ class ShimVirtualFsExclusionTest(unittest.TestCase):
             side_effect=RuntimeError("injected config failure"),
         ):
             shim_mod._load_skip_prefixes()
-        self.assertEqual(shim_mod._SKIP_PREFIXES, ["/proc/", "/sys/", "/dev/"])
+        # Kernel virtual FS always, plus the agent home (control plane): a broken
+        # config must not put control-plane reads back into the shim.
+        home = (
+            os.environ.get("AGENT_HOME")
+            or os.environ.get("TOOLRECALL_AGENT_HOME")
+            or os.path.expanduser("~/.hermes")
+        ).rstrip("/")
+        self.assertEqual(shim_mod._SKIP_PREFIXES, ["/proc/", "/sys/", "/dev/", home + "/"])
         self.assertTrue(shim_mod._should_skip("/proc/self/status"))
+        self.assertTrue(shim_mod._should_skip(os.path.join(home, "config.yaml")))
 
 
 if __name__ == "__main__":

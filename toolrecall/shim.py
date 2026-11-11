@@ -719,8 +719,17 @@ def _load_skip_prefixes():
         # Config load failed — fall back to the same built-in defaults the
         # Config property carries. /proc//sys//dev/ must NEVER be intercepted
         # even when config is unreadable: these reads can't be cached and the
-        # resulting daemon RPC just produces a denial warning.
+        # resulting daemon RPC just produces a denial warning. The agent home is
+        # resolved the way Config.agent_home does, so control-plane reads stay
+        # out of the shim even with a broken config.
+        home = (
+            os.environ.get("AGENT_HOME")
+            or os.environ.get("TOOLRECALL_AGENT_HOME")
+            or os.path.expanduser("~/.hermes")
+        ).rstrip("/")
         prefixes = ["/proc/", "/sys/", "/dev/"]
+        if home:
+            prefixes.append(home + "/")
     # Normalize: entries without a trailing slash would match /procself etc.
     # ("/proc" must not prefix-match "/procself/status"). A bare "/" entry
     # would skip everything — drop it.
