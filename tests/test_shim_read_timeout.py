@@ -27,10 +27,6 @@ import toolrecall.client as client_mod
 import toolrecall.shim as shim_mod
 import toolrecall.shim_timeouts as timeouts_mod
 
-# The machine TMPDIR is under the agent home (excluded by the P3 default); use
-# /tmp explicitly so these reads are real shim candidates.
-_TMP_ROOT = "/tmp"
-
 
 class _StalledDaemon:
     """A UDS server that accepts and then never replies — a busy daemon."""
@@ -80,7 +76,9 @@ class _Base(unittest.TestCase):
     BUDGET_MS = 300
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="tr_p2_", dir=_TMP_ROOT)
+        # The config below sets exclude_prefixes = [], so the agent-home default
+        # cannot swallow these reads — no need to pin a non-TMPDIR location.
+        self.tmp = tempfile.mkdtemp(prefix="tr_p2_")
         self.addCleanup(self._rmtree)
         cfg = os.path.join(self.tmp, "tr.toml")
         with open(cfg, "w") as f:

@@ -193,6 +193,13 @@ def _note_read_timeout(path: str) -> None:
 
 
 def _note_read_ok() -> None:
+    # Fast path: the common case is "nothing to reset". Reading these three
+    # fields without the lock is safe (GIL-atomic reads of int/float/bool); the
+    # worst case is taking the lock needlessly or skipping a reset of values
+    # that are already zero. Without this, every successful shim read pays a
+    # lock acquire.
+    if not (_breaker["timeouts"] or _breaker["recovering"] or _breaker["open_until"]):
+        return
     with _breaker_lock:
         if _breaker["timeouts"] or _breaker["recovering"] or _breaker["open_until"]:
             _breaker["timeouts"] = 0
@@ -822,6 +829,21 @@ def _tag_source_for(path: str) -> str:
 _SKIP_PREFIXES = None
 
 
+def _fallback_agent_home() -> str:
+    """Agent home when config cannot be loaded — the same resolver Config uses.
+
+    Kept in ``toolrecall.agent_home`` (stdlib-only) so this path cannot import
+    the config module that just failed. A failure here must not break ``open()``,
+    so the last resort is the documented compat path.
+    """
+    try:
+        from .agent_home import resolve as _resolve_agent_home
+
+        return _resolve_agent_home()
+    except Exception:  # noqa: BLE001 — a broken resolver must not break open()
+        return os.path.expanduser("~/.hermes")
+
+
 def _load_skip_prefixes():
     """Load exclude prefixes from config. Call once on first use."""
     global _SKIP_PREFIXES
@@ -839,18 +861,17 @@ def _load_skip_prefixes():
         # resulting daemon RPC just produces a denial warning. The agent home is
         # resolved the way Config.agent_home does, so control-plane reads stay
         # out of the shim even with a broken config.
-        home = (
-            os.environ.get("AGENT_HOME")
-            or os.environ.get("TOOLRECALL_AGENT_HOME")
-            or os.path.expanduser("~/.hermes")
-        ).rstrip("/")
+        home = _fallback_agent_home().rstrip("/\\")
         prefixes = ["/proc/", "/sys/", "/dev/"]
         if home:
-            prefixes.append(home + "/")
-    # Normalize: entries without a trailing slash would match /procself etc.
+            prefixes.append(home + os.sep)
+    # Normalize: entries without a trailing separator would match /procself etc.
     # ("/proc" must not prefix-match "/procself/status"). A bare "/" entry
-    # would skip everything — drop it.
-    _SKIP_PREFIXES = [p if p.endswith("/") else p + "/" for p in prefixes if p and p != "/"]
+    # would skip everything — drop it. Accept either separator: config prefixes
+    # are matched with a plain str.startswith against real filesystem paths.
+    _SKIP_PREFIXES = [
+        p if p.endswith(("/", "\\")) else p + os.sep for p in prefixes if p and p != "/"
+    ]
 
 
 def _should_skip(path: str | bytes | os.PathLike) -> bool:

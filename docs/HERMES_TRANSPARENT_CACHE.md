@@ -110,6 +110,13 @@ the real `open()` without touching the socket. Measured: six stalled reads cost
 30.1 s before, 1.55 s after (the first three at 0.51 s, the rest instant). Timeouts
 are counted in `toolrecall stats` under `shim_timeouts`.
 
+**During an outage the counters see nothing.** `access_log` and `cache_stats`
+are written by the daemon, so any read it cannot answer — a timeout, or a
+breaker-open read served from disk — is invisible in the numbers by
+construction. The breaker bounds how long the *caller* waits; it does not
+restore accounting. Expect a dip in the daily report during a daemon stall and
+read `shim_timeouts` for how many reads took the disk path.
+
 ### 4. Infrastructure file noise
 
 The shim intercepts **all** `open()` calls, including your agent's internal

@@ -582,13 +582,16 @@ class Config:
         Agents should set AGENT_HOME so ToolRecall finds skills,
         configs, and memories correctly.
         """
-        env = os.environ.get("AGENT_HOME") or os.environ.get("TOOLRECALL_AGENT_HOME")
+        from toolrecall.agent_home import default as _default_home
+        from toolrecall.agent_home import from_env
+
+        env = from_env()
         if env:
-            return os.path.expanduser(env)
+            return env
         cfg = self.get("paths", "agent_home", default=None)
         if cfg:
             return os.path.expanduser(cfg)
-        return os.path.expanduser("~/.hermes")
+        return _default_home()
 
     @property
     def skill_dirs(self) -> list:
@@ -1285,12 +1288,14 @@ class Config:
         Resolved through :attr:`agent_home` (AGENT_HOME →
         TOOLRECALL_AGENT_HOME → ``[paths].agent_home`` → ``~/.hermes``), so no
         agent layout is hardcoded in the decision. A bare ``/`` is never added:
-        it would skip every path and disable the shim.
+        it would skip every path and disable the shim. The trailing separator is
+        the platform's (``os.sep``), because prefix matching is a plain
+        ``str.startswith`` and a Windows path never starts with ``/``.
         """
         prefixes = ["/proc/", "/sys/", "/dev/"]
-        home = (self.agent_home or "").rstrip("/")
+        home = (self.agent_home or "").rstrip("/\\")
         if home:
-            prefixes.append(home + "/")
+            prefixes.append(home + os.sep)
         return prefixes
 
     @property

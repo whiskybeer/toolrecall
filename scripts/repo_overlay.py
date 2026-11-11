@@ -61,13 +61,42 @@ def overlay_state(sp: str) -> str:
     return "absent"
 
 
+_BACKUP_SUFFIX = ".shadowed-bak"
+
+
 def apply_to(sp: str) -> int:
-    """Point site-packages at the repo tree: drop the snapshot, write the .pth."""
+    """Point site-packages at the repo tree, verifying the result.
+
+    The snapshot is MOVED aside, not deleted, so a failed verification restores
+    the previous state instead of leaving the venv half-deployed (the .pth
+    written but the imports still coming from somewhere else).
+    """
     snap = os.path.join(sp, "toolrecall")
+    bak = snap + _BACKUP_SUFFIX
+    pth = os.path.join(sp, PTH_NAME)
+    moved = False
     if os.path.isdir(snap):
-        shutil.rmtree(snap)
-    with open(os.path.join(sp, PTH_NAME), "w") as f:
-        f.write(REPO + "\n")
+        if os.path.isdir(bak):
+            shutil.rmtree(bak)
+        os.replace(snap, bak)
+        moved = True
+    try:
+        with open(pth, "w") as f:
+            f.write(REPO + "\n")
+        src = import_source(sp)
+        if src and not os.path.realpath(src).startswith(os.path.realpath(REPO) + os.sep):
+            raise RuntimeError(f"venv still imports {src}")
+    except Exception as exc:  # noqa: BLE001 — any failure here must roll back
+        try:
+            if os.path.exists(pth):
+                os.unlink(pth)
+        finally:
+            if moved and os.path.isdir(bak):
+                os.replace(bak, snap)
+        print(f"WARNING: overlay verification failed ({exc}); restored the previous state")
+        return 1
+    if moved and os.path.isdir(bak):
+        shutil.rmtree(bak)
     return 0
 
 
@@ -125,16 +154,13 @@ def apply() -> int:
         print(f"REFUSING: {branch} is checked out — the overlay would deploy unmerged work.")
         print(f"         merge to main first, or run: {sys.argv[0]} --force")
         return 1
-    apply_to(sp)
-    pth_path = os.path.join(sp, PTH_NAME)
-    src = import_source(sp)
-    real_repo = os.path.realpath(REPO) + os.sep
-    if src and not os.path.realpath(src).startswith(real_repo):
-        print(f"WARNING: overlay written but the venv still imports {src}")
+    rc = apply_to(sp)
+    if rc != 0:
         print(f"         expected a path under {REPO} — check sys.path ordering")
-        return 1
+        return rc
+    src = import_source(sp)
     suffix = f" (imports {src})" if src else " (import not probed)"
-    print(f"overlay applied: {pth_path} -> {REPO}{suffix}")
+    print(f"overlay applied: {os.path.join(sp, PTH_NAME)} -> {REPO}{suffix}")
     return 0
 
 

@@ -57,18 +57,13 @@ def record(path: str = "", reason: str = "timeout") -> None:
         log.debug("shim timeout record failed", exc_info=True)
 
 
-def summary(window_s: float = 86400.0) -> dict:
-    """Return ``{"total", "last_24h", "last"}`` over the append log.
-
-    Tolerant by design: a truncated last line (killed writer) or a rewritten
-    file must not turn a diagnostics read into an exception.
-    """
+def _scan_file(path: str, cutoff: float) -> tuple[int, int, float | None]:
+    """(total, recent, last) for one log file. Tolerant of truncated lines."""
     total = 0
     recent = 0
     last = None
-    cutoff = time.time() - window_s
     try:
-        with open(_log_path(), encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -90,5 +85,28 @@ def summary(window_s: float = 86400.0) -> dict:
                 if last is None or ts > last:
                     last = ts
     except OSError:
-        log.debug("shim timeout summary unreadable", exc_info=True)
+        log.debug("shim timeout log unreadable: %s", path, exc_info=True)
+    return total, recent, last
+
+
+def summary(window_s: float = 86400.0) -> dict:
+    """Return ``{"total", "last_24h", "last"}`` over the live log + its rotation.
+
+    ``total`` is the lifetime count of everything still on disk (the live file
+    plus the single ``.1`` rotation), so it no longer resets to zero when the
+    log rolls over. Older rotations are intentionally not kept: this is a
+    diagnostic counter, not an audit trail.
+    """
+    cutoff = time.time() - window_s
+    live = _log_path()
+    total = 0
+    recent = 0
+    last = None
+    # Oldest first so `last` ends up as the newest timestamp seen.
+    for path in (live + ".1", live):
+        t, r, stamp = _scan_file(path, cutoff)
+        total += t
+        recent += r
+        if stamp is not None and (last is None or stamp > last):
+            last = stamp
     return {"total": total, "last_24h": recent, "last": last}

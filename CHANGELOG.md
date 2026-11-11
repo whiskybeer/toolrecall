@@ -11,6 +11,15 @@
   can declare; `_AGENT_ENV_MARKERS` remains zero-config auto-detect only. Core no longer
   needs to know a framework's name to treat it as an agent session.
   Tests: `tests/test_shim_agent_identity.py` (8).
+- **The shim now skips the agent home by default.** `[shim].exclude_prefixes` defaults
+  to the kernel virtual filesystems plus the resolved agent home (`AGENT_HOME` →
+  `TOOLRECALL_AGENT_HOME` → `[paths].agent_home` → `~/.hermes`), so control-plane reads
+  (`config.yaml`, `cron/jobs.json`, plugin manifests) no longer pay a daemon round-trip
+  or write an `access_log` row. Those reads were already tagged `source="shim"` and never
+  counted toward `tokens_saved_to_llm`; on a cron-heavy host they were 25,952 of 26,076
+  reads in a day (99.5 %). An explicit `exclude_prefixes = []` still bypasses nothing, and
+  an explicit list still replaces the default.
+  Tests: `tests/test_shim_exclude_agent_home.py` (9).
 
 ### Fixed
 - **The context flow arms itself from traffic instead of agent etiquette.** Arming (the
@@ -32,18 +41,6 @@
   that is not applied+working makes the state `inactive` with reason
   `required_venv_bare`. Verification only; installation stays `shim --install --all`.
   Tests: `tests/test_healthcheck_shim_venvs.py` (7), `tests/test_shim_tagging.py` updated.
-
-- **The shim now skips the agent home by default.** `[shim].exclude_prefixes` defaults
-  to the kernel virtual filesystems plus the resolved agent home (`AGENT_HOME` →
-  `TOOLRECALL_AGENT_HOME` → `[paths].agent_home` → `~/.hermes`), so control-plane reads
-  (`config.yaml`, `cron/jobs.json`, plugin manifests) no longer pay a daemon round-trip
-  or write an `access_log` row. Those reads were already tagged `source="shim"` and never
-  counted toward `tokens_saved_to_llm`; on a cron-heavy host they were 25,952 of 26,076
-  reads in a day (99.5 %). An explicit `exclude_prefixes = []` still bypasses nothing, and
-  an explicit list still replaces the default.
-  Tests: `tests/test_shim_exclude_agent_home.py` (9).
-
-### Fixed
 - **`repo_overlay.py` no longer reports a shadowed venv as "overlay".**
   `overlay_state()` returned `overlay` whenever the `.pth` existed, but an installed
   `site-packages/toolrecall` directory still precedes it on `sys.path` and wins every
@@ -71,6 +68,16 @@
   Timeouts are counted in `toolrecall stats` under `shim_timeouts`. Six stalled reads:
   30.1 s before, 1.55 s after.
   Tests: `tests/test_shim_read_timeout.py` (11).
+- **Shim counter and overlay follow-ups from the review.** `shim_timeouts.summary()`
+  counts the rotated log too, so `total` no longer resets on rollover; `_note_read_ok()`
+  skips the breaker lock when there is nothing to reset; the agent home resolves through
+  one stdlib-only `toolrecall.agent_home`, so `Config.agent_home` and the shim's
+  broken-config fallback cannot drift; the default exclude prefix uses `os.sep`, so a
+  Windows checkout can match; `repo_overlay.apply_to()` moves the snapshot aside and
+  restores it when verification fails instead of leaving a half-deployed venv; the
+  read-timeout tests no longer pin `/tmp`.
+  Tests: `tests/test_shim_timeouts.py` (5), `tests/test_agent_home.py` (5),
+  `tests/test_repo_overlay.py` (+1).
 
 ## [0.8.23] — 2026-11-09
 

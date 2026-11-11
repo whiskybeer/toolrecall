@@ -65,7 +65,9 @@ class DefaultPrefixesTest(_Base):
     def test_default_includes_the_agent_home(self):
         with mock.patch.dict(os.environ, {"AGENT_HOME": self.home}):
             prefixes = self._cfg().shim_exclude_prefixes
-        self.assertEqual(prefixes, ["/proc/", "/sys/", "/dev/", self.home + "/"])
+        self.assertEqual(prefixes, ["/proc/", "/sys/", "/dev/", self.home + os.sep])
+        # The separator must be the platform's, or a Windows checkout never matches.
+        self.assertTrue(prefixes[-1].endswith(os.sep))
 
     def test_toolrecall_agent_home_is_honored(self):
         with mock.patch.dict(os.environ, {"TOOLRECALL_AGENT_HOME": self.home}):

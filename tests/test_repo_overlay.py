@@ -84,6 +84,20 @@ class ApplyTest(_Base):
         self.assertEqual(self.mod.apply_to(self.sp), 0)
         self.assertEqual(self.mod.overlay_state(self.sp), "overlay")
 
+    def test_failed_verification_restores_the_previous_state(self):
+        """A wrong import must not leave the venv half-deployed."""
+        self._pth()
+        self._snap()
+        self.mod.import_source = lambda sp: "/somewhere/else/toolrecall/__init__.py"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = self.mod.apply_to(self.sp)
+        self.assertEqual(rc, 1)
+        self.assertIn("WARNING", buf.getvalue())
+        self.assertEqual(self.mod.overlay_state(self.sp), "snapshot")
+        self.assertTrue(os.path.isdir(os.path.join(self.sp, "toolrecall")))
+        self.assertFalse(os.path.exists(os.path.join(self.sp, PTH)))
+
 
 class CheckContractTest(_Base):
     """The hook greps for exactly 'state: overlay' — anything else must move it."""
