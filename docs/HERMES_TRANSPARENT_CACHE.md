@@ -102,6 +102,14 @@ the agent. This is by design (zero agent-side config) but means a buggy shim
 affects all Python scripts that read files. Use `TOOLRECALL_SHIM_DISABLE=1` to
 bypass per-process. Subprocess/terminal calls are never intercepted.
 
+**Read-path budget.** A shim read is charged to the caller's `open()`, so it cannot
+wait like an admin call. Reads get a **0.5 s** socket budget
+(`TOOLRECALL_SHIM_READ_TIMEOUT_MS`) instead of transport's 5 s default, and after
+3 consecutive timeouts a per-process circuit breaker (30 s) sends reads straight to
+the real `open()` without touching the socket. Measured: six stalled reads cost
+30.1 s before, 1.55 s after (the first three at 0.51 s, the rest instant). Timeouts
+are counted in `toolrecall stats` under `shim_timeouts`.
+
 ### 4. Infrastructure file noise
 
 The shim intercepts **all** `open()` calls, including your agent's internal

@@ -438,6 +438,12 @@ def cmd_stats():
     # from the live tracker. Absent this, a bare 0-vs-nonzero counter has
     # been misread as "flow inactive" by downstream summarizers.
     stats["context_flow"] = _context_flow_snapshot()
+    # Read-path circuit-breaker cost: how often the shim paid its short socket
+    # budget and served from disk instead. The daemon was the unresponsive
+    # party, so this counter lives client-side (append log), not in the DB.
+    from toolrecall.shim_timeouts import summary as _shim_timeouts_summary
+
+    stats["shim_timeouts"] = _shim_timeouts_summary()
     print(_json.dumps(stats, indent=2, default=str))
 
 
