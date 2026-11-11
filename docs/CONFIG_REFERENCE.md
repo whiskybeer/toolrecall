@@ -135,6 +135,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_SHIM_STUB` | (not in config.toml) | `TOOLRECALL_SHIM_STUB=0` (kill switch for the shim's unchanged-file stub) |
 | `TOOLRECALL_SHIM_STUB_TTL` | `shim.stub_ttl` | `TOOLRECALL_SHIM_STUB_TTL=600` |
 | `TOOLRECALL_SHIM_READ_TIMEOUT_MS` | (not in config.toml) | `TOOLRECALL_SHIM_READ_TIMEOUT_MS=500` (shim read-path socket budget; admin calls keep 5 s) |
+| `TOOLRECALL_SHIM_REQUIRED_VENVS` | `shim.required_venvs` | `TOOLRECALL_SHIM_REQUIRED_VENVS=/opt/agent/*` (os.pathsep-separated; venvs that MUST be shimmed) |
 | `TOOLRECALL_DEDUP_NORMALIZE` | (not in config.toml) | `TOOLRECALL_DEDUP_NORMALIZE=1` (normalized dedup keys; see FORWARD_PROXY.md) |
 | `TOOLRECALL_KEY_TRACE_DIR` | (not in config.toml) | `TOOLRECALL_KEY_TRACE_DIR=/tmp/tr-trace` (proxy replay diagnostics for `toolrecall keytrace`) |
 | `TOOLRECALL_CC_HOOK_DIR` | (not in config.toml) | `TOOLRECALL_CC_HOOK_DIR=~/.toolrecall/claude-code` (Claude Code hook session state) |
@@ -204,6 +205,29 @@ and any tool result there may be referenced.
 
 Kill switch: `TOOLRECALL_SHIM_STUB=0` disables the shim stub per-process at
 call time (state never arms; a later re-enable starts fresh).
+
+## Shim verification (`[shim].required_venvs`)
+
+`toolrecall healthcheck` probes every discovered venv. By default the verdict is
+aggregate — "a shim works somewhere" — which is not the question that matters on
+a host with several interpreters: the interpreter that actually runs the agent
+can be bare while another venv is shimmed, and the report stays green
+(observed 2026-11-11: 3 venvs, the runtime venv missing the package, healthcheck
+`active`).
+
+Declare the venvs that MUST carry the shim and a bare one becomes a failure:
+
+```toml
+[shim]
+required_venvs = ["~/.hermes/hermes-agent/.hermes-runtime/python/generation-*"]
+```
+
+Entries are fnmatch globs matched against the venv root (or
+`TOOLRECALL_SHIM_REQUIRED_VENVS`, `os.pathsep`-separated). A matching venv that
+is not applied and working makes `shim_state=inactive` with reason
+`required_venv_bare`, and both the one-line report and the notes name the
+interpreter. Verification only — it never installs anything; use
+`toolrecall shim --install --all` for that.
 
 ## Per-Path File TTLs
 

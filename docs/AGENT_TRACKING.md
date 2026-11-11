@@ -38,6 +38,43 @@ Or pass via forward proxy header:
 curl -H "X-ToolRecall-Agent: claude-code" http://127.0.0.1:8569/v1/chat/completions ...
 ```
 
+## What the identity activates
+
+`TOOLRECALL_AGENT_ID` is not only attribution — it is the **activation
+contract** for the context savings. A process that declares an identity is
+treated as an agent session, which turns on:
+
+- `agent_tool` tagging of shim-served reads (the CONTEXT tier counts them), and
+- the Lever-1 unchanged-file stub (second read of an unchanged file returns a
+  one-line note instead of the full content).
+
+Harness identity is therefore **never required in core**. Any adapter,
+framework or hand-rolled loop sets the variable and gets the same behaviour.
+The MCP bridge resolves the same value from `clientInfo` for per-agent
+attribution, but it does not inject it into the agent's environment — the agent
+owns its own identity.
+
+> **Fallback only:** `toolrecall/shim.py` still auto-detects a fixed list of
+> harness env prefixes (`HERMES_*`, `CLAUDECODE`, `CURSOR_TRACE_ID`, …). That
+> list is convenience for zero-config setups, not the gate: a harness missing
+> from it is covered by the contract. Do not add a vendor to core to "support"
+> it — set `TOOLRECALL_AGENT_ID` instead.
+
+Transports also **arm** the context flow: the daemon arms itself on the first
+request that carries an `agent_id` (every MCP client sends one, and any caller
+can), so the flow reports `armed=true` without the agent calling
+`context_set_checkpoint` every turn. That per-turn call is still supported and
+banks clean files; it is no longer the only way to arm. `context_arm` remains
+available as an explicit command.
+
+Setup:
+
+```bash
+export TOOLRECALL_AGENT_ID=my-harness        # any slug
+# or, for attribution-free opt-in:
+export TOOLRECALL_AGENT_SESSION=1
+```
+
 ## Recommended agent_id values
 
 | Agent framework | Recommended TOOLRECALL_AGENT_ID |

@@ -155,6 +155,8 @@ The gate lives in `daemon.py::_handle_read` (only `agent_tool` calls `mark_read`
 
 **Known boundary case:** a gateway process that carries `HERMES_*` env tags its own reads `agent_tool` — but its config/cache reads under `~/.hermes/` are excluded by the library-path gate in `shim.py::_tag_source_for` (`/.hermes/` is a library marker), so they stay out of both context metrics. Gateway self-reads of files *outside* `~/.hermes/` (rare) would count; that is the honest boundary of the current design.
 
+**Agent identity is a contract, not a vendor list (2026-11-11):** the gate's primary signal is now `TOOLRECALL_AGENT_ID` / `TOOLRECALL_AGENT_SESSION`, which any harness, adapter or hand-rolled loop can declare; the `_AGENT_ENV_MARKERS` prefix list is zero-config auto-detect only. Before this split the list was the sole gate, so a harness absent from it got neither `agent_tool` tagging nor the Lever-1 stub — the mechanism was silently absent for it. See `docs/AGENT_TRACKING.md`.
+
 ### What Gets Tracked
 
 | Operation | Tracked as dirty? | Mechanism |

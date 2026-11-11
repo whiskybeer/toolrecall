@@ -547,6 +547,10 @@ def _serve_local(entry, path_str: str, mode, mode_kind: str, args, kwargs):
 
 # Env-var markers that say "this process is an agent harness" (checked
 # as prefixes; verified live: Hermes gateway/webui both set HERMES_*).
+# Zero-config AUTO-DETECT fallback for agent processes. NOT the gate: the
+# supported contract is TOOLRECALL_AGENT_ID / TOOLRECALL_AGENT_SESSION (see
+# _agent_identity). A harness missing from this list is covered by the
+# contract; adding a vendor here is optional convenience, never required.
 _AGENT_ENV_MARKERS = (
     "HERMES_",
     "CLAUDECODE",
@@ -663,8 +667,46 @@ _agent_process_cache: bool | None = None
 _tag_source_mode_cache: str | None = None
 
 
+def _agent_identity() -> str | None:
+    """Resolve the harness-neutral agent identity for this process.
+
+    The supported contract (docs/AGENT_TRACKING.md): an integration exports
+    ``TOOLRECALL_AGENT_ID`` (any slug) before it launches the agent, and core
+    never needs to know the harness NAME — only that a human put this process
+    in an agent session. ``TOOLRECALL_AGENT_SESSION`` is the equivalent
+    boolean-style opt-in for integrations that do not want per-agent
+    attribution.
+
+    Falsy values (``""``, ``0``, ``false``, ``no``, ``off``) mean "not
+    declared", so an integration that disables the contract keeps the
+    pre-contract behaviour (no context-tier tagging, no stubs).
+    """
+    for var in ("TOOLRECALL_AGENT_ID", "TOOLRECALL_AGENT_SESSION"):
+        raw = (os.environ.get(var) or "").strip()
+        if raw and raw.lower() not in ("0", "false", "no", "off"):
+            return raw
+    return None
+
+
 def _env_has_agent_marker() -> bool:
-    """True if any agent-harness env marker is present in this process."""
+    """True when this process is invocable as an agent session.
+
+    Order — generic contract FIRST, vendor auto-detect second:
+
+      1. ``TOOLRECALL_AGENT_ID`` / ``TOOLRECALL_AGENT_SESSION``: the
+         harness-neutral opt-in any adapter, framework or hand-rolled loop can
+         set. This is the supported path and needs no framework knowledge in
+         core (design principle: Agnostic).
+      2. ``_AGENT_ENV_MARKERS``: zero-config auto-detect for the harnesses
+         listed there. Fallback ONLY — a harness that is not listed, or a fork
+         that renames its env, is covered by (1) instead of requiring a core
+         edit. Before this split the list was the sole gate, so an unlisted
+         harness silently got no stubs and no CONTEXT-tier accounting
+         (measured 2026-11-11: 51 stub events in 61 days on a host whose
+         harness happened to be listed, zero on anything else).
+    """
+    if _agent_identity() is not None:
+        return True
     for key in os.environ:
         for marker in _AGENT_ENV_MARKERS:
             if key.startswith(marker):
