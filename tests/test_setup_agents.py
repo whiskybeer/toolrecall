@@ -385,8 +385,14 @@ class TestDoctorClaude(unittest.TestCase):
     def test_headless_flag_shows_measured_numbers(self):
         out = self._run({}, args=("--headless",))
         self.assertIn("Headless repeat runs (--headless)", out)
-        self.assertIn("−77%", out)
-        self.assertIn("first run: no saving", out)
+        # A rerun replays every call, so its cost is $0; the percentages are
+        # cumulative over runs, never a per-rerun rate. The old mixed pair
+        # (-77% per rerun / -72% after 4 runs) came from two different rounds.
+        self.assertIn("$0 (every call replayed)", out)
+        self.assertIn("−72% after 4", out)
+        self.assertNotIn("−77%", out)
+        self.assertIn("first run no saving", out)
+        self.assertIn("claude-code-nogit", out)
         self.assertIn("ANTHROPIC_BASE_URL=http://127.0.0.1:8569", out)
         self.assertNotIn("96%", out)
 

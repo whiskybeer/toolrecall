@@ -3768,10 +3768,11 @@ def _diagnose_claude_code(workflow=None):
             print("        Register with: toolrecall setup")
     if headless:
         print("     ✅ Headless repeat runs: the proxy replays identical reruns.")
-        print("        Measured (5 SWE-bench Lite tasks, Sonnet, n=1 per scenario):")
-        print("        • identical rerun on unchanged code: −77%; total after 4 runs: −72%")
-        print("        • first run: no saving")
-        print("        • a commit changing files the agent reads stops the replay")
+        print("        Measured (5 SWE-bench Lite tasks, Sonnet, 4 runs per task per arm):")
+        print("        • identical rerun on unchanged code: $0 (every call replayed)")
+        print("        • cumulative: −45% after 2 runs, −72% after 4; first run no saving")
+        print("        • any commit breaks replay (git status/SHA in the first prompt);")
+        print("          the 'claude-code-nogit' profile survives commits outside read files")
         print("        • replays repeat failures: use 'toolrecall replay forget <run>' in CI")
         if not proxy_routed:
             print("        Route via: export ANTHROPIC_BASE_URL=http://127.0.0.1:8569")
