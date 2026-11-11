@@ -15,8 +15,11 @@ are the exception, not the rule.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
+
+log = logging.getLogger("toolrecall.shim_timeouts")
 
 _MAX_BYTES = 2 * 1024 * 1024  # rotate once past this; `stats` must stay cheap
 _FILENAME = "shim_timeouts.jsonl"
@@ -31,7 +34,7 @@ def _rotate_if_large(path: str) -> None:
         if os.path.getsize(path) > _MAX_BYTES:
             os.replace(path, path + ".1")
     except OSError:
-        pass
+        log.debug("shim timeout log rotate failed", exc_info=True)
 
 
 def record(path: str = "", reason: str = "timeout") -> None:
@@ -51,7 +54,7 @@ def record(path: str = "", reason: str = "timeout") -> None:
             os.close(fd)
         _rotate_if_large(p)
     except Exception:  # noqa: BLE001 — diagnostics must never break the caller
-        pass
+        log.debug("shim timeout record failed", exc_info=True)
 
 
 def summary(window_s: float = 86400.0) -> dict:
@@ -87,5 +90,5 @@ def summary(window_s: float = 86400.0) -> dict:
                 if last is None or ts > last:
                     last = ts
     except OSError:
-        pass
+        log.debug("shim timeout summary unreadable", exc_info=True)
     return {"total": total, "last_24h": recent, "last": last}

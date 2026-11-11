@@ -189,7 +189,7 @@ def _note_read_timeout(path: str) -> None:
 
         _record_timeout(path)
     except Exception:  # noqa: BLE001 — accounting must never break the read
-        pass
+        logging.getLogger("toolrecall.shim").debug("shim timeout accounting failed", exc_info=True)
 
 
 def _note_read_ok() -> None:
