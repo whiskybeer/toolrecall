@@ -380,12 +380,14 @@ def _required_venv_globs() -> list[str]:
 def _classify_shim_output(out: str, elapsed: float | None = None) -> ShimProbe:
     """Classify one ``shim --status --all`` output into a truthful verdict.
 
-    ``active`` requires a working shim AND no REQUIRED venv bare. Required venvs
-    are declared by the operator (``[shim].required_venvs``); without that
-    declaration the verdict stays aggregate ("a shim works somewhere") but the
-    per-venv rows are reported so a caller can surface the gap. Both facts are
-    returned; nothing is inferred from a substring over the whole output any
-    more (that made one shimmed venv out of three report ``active``).
+    ``active`` requires a venv with BOTH markers, and no REQUIRED venv bare.
+    Required venvs are declared by the operator (``[shim].required_venvs``);
+    without that declaration the verdict stays aggregate ("a shim works
+    somewhere") but the per-venv rows are reported so a caller can surface the
+    gap. The two markers must come from the SAME venv: one venv supplying
+    ``applied: yes`` while another supplies ``probe: pass`` is not a working
+    shim, and aggregating each marker separately reported ``active`` for a host
+    where no venv worked (2026-11-11 review).
 
     Falls back to the old substring behaviour when the output carries no
     parseable venv blocks (older CLI, unknown format) — never worse than before.
@@ -394,17 +396,19 @@ def _classify_shim_output(out: str, elapsed: float | None = None) -> ShimProbe:
     if venvs:
         applied = any(v["applied"] for v in venvs)
         probe_pass = any(v["probe_ok"] for v in venvs)
+        has_working = any(v["applied"] and v["probe_ok"] for v in venvs)
         bare = [v["root"] for v in venvs if not (v["applied"] and v["probe_ok"])]
     else:
         applied = "applied: yes" in out
         probe_pass = "probe: pass" in out
+        has_working = applied and probe_pass
         bare = []
     required = _required_venv_globs()
     bare_required = [p for p in bare if any(fnmatch.fnmatch(p, g) for g in required)]
 
     if bare_required:
         state, reason = SHIM_INACTIVE, "required_venv_bare"
-    elif applied and probe_pass:
+    elif has_working:
         state, reason = SHIM_ACTIVE, ""
     elif applied:
         state, reason = SHIM_INACTIVE, "probe_failed"

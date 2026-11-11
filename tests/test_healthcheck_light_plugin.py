@@ -41,7 +41,9 @@ def test_explicit_home_argument_wins(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", os.path.join(str(tmp_path), "ignored"))
     home = tmp_path / "explicit"
     home.mkdir()
-    (home / "config.yaml").write_text("plugins:\n  enabled:\n    - toolrecall-light\n", encoding="utf-8")
+    (home / "config.yaml").write_text(
+        "plugins:\n  enabled:\n    - toolrecall-light\n", encoding="utf-8"
+    )
     assert healthcheck.detect_light_plugin(str(home))["enabled"] is True
 
 

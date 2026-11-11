@@ -78,6 +78,33 @@ def test_applied_but_probe_failing_is_inactive(monkeypatch):
     assert probe["shim_reason"] == "probe_failed"
 
 
+SPLIT_MARKERS = """✅ /opt/a
+     package: ok | shim: present | applied: yes | probe: FAIL
+✅ /opt/b
+     package: ok | shim: present | applied: no | probe: pass
+"""
+
+
+def test_markers_split_across_venvs_is_not_active(monkeypatch):
+    """`any(applied)` + `any(probe_ok)` is not a working shim.
+
+    Aggregating each marker separately let one venv supply `applied: yes` and
+    another supply `probe: pass`, so a host where NO venv actually works still
+    reported `shim=active` — and the bare list proved the code knew. `active`
+    must mean at least one venv has BOTH, which is also what makes the
+    aggregate verdict (with bare rows reported) honest.
+    """
+    monkeypatch.setattr(hc, "_required_venv_globs", lambda: [])
+    probe = hc._classify_shim_output(SPLIT_MARKERS, 1.0)
+    assert probe["shim_state"] == hc.SHIM_INACTIVE
+    assert probe["shim_reason"] == "probe_failed"
+    assert probe["shim_bare"] == ["/opt/a", "/opt/b"]
+    assert probe["shim_venvs"] == [
+        {"root": "/opt/a", "applied": True, "probe_ok": False},
+        {"root": "/opt/b", "applied": False, "probe_ok": True},
+    ]
+
+
 def test_required_venvs_is_a_known_config_key(tmp_path, monkeypatch):
     """The schema must accept the key, or the whole gate is silently inert.
 
