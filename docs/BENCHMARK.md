@@ -13,9 +13,9 @@
 ## Headline
 
 **ToolRecall costs less per turn and survives more turns — the two are connected.**  \
-At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.00167 vs $0.00284 — 41% cheaper at matched turns). But the **primary value is endurance**: TR runs 140 turns vs naive's 17 (7.4× longer). Below the context wall, prefix caching also reduces cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
+At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.00167 vs $0.00284 — 41% cheaper at matched turns). But the **primary value is endurance**: TR runs 140 turns vs naive's 17 (8.2×) and the prefix arm's 19 (7.4×). Below the context wall, prefix caching also reduces cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
 
-> **⚠️ For the cleanest matched comparison — both arms completed — see Bugfix Workload (below): TR cost 36% less ($5.62 vs $8.83) on the same 450-turn session. Billed API keys, not estimates.**
+> **⚠️ The 450-turn cost comparison is scripted and its per-turn data is not in this repo.** `bench/workloads.py` defines a 450-turn mixed read/write `bugfix` workload; on it the Context Tracker arm billed 36% less than naive ($5.62 vs $8.83, DeepSeek V4 Flash, one OpenRouter key per arm). This measures the **Context Tracker**, not the forward proxy. The section below is a separate 100-turn run of the same workload family (naive exhausts at turn 35), so the two are not directly comparable — the reproducible artifacts here are the review table above and `bench/results/benchmark_raw.csv`.
 >
 > **Key insight:** ToolRecall and prefix caching are **additive**, not competing. TR sends fewer tokens (volume wins), prefix caches discounts the tokens you do send (rate wins). Both contribute to the final bill. TR saves money with **any** provider, with or without prefix caching. See [Cost Savings](COST_SAVINGS.md).
 

@@ -2,15 +2,16 @@
 
 The forward proxy intercepts HTTP requests to LLM providers, caching responses so repeat requests cost zero tokens. On cache hit the provider never receives the request.
 
-**What it saves (billed API keys, not estimates):**
+**What it saves.** A hit needs a byte-identical request, so savings come from **repeat runs of the same task on unchanged code** (CI, evals), not interactive chat:
 
-| Workload | Without TR | With TR | Savings |
-|----------|-----------|---------|---------|
-| Bugfix (450 turns, both completed) | $8.83 | $5.62 | **−36%** |
-| Review (200 turns, naive died at 112) | $2.53 | $1.26 | **−50%** |
-| Aggregate (3 workloads) | $11.36 | $7.87 | **−31%** |
+| Workload | Saving |
+|----------|--------|
+| Claude Code, identical rerun (5 SWE-bench Lite tasks, Sonnet) | **$0** — every call replayed |
+| Claude Code, cumulative after 2 / 4 runs | **−45% / −72%** |
+| First run of any task | none |
+| Interactive Claude Code session | ~0% |
 
-Separate OpenRouter keys per arm. Full methodology: [Benchmark](BENCHMARK.md) · [Cost Savings](COST_SAVINGS.md).
+Source: `bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md`. Any commit breaks replay in the default `claude-code` profile (git status and recent SHAs are in Claude Code's first prompt); the `claude-code-nogit` profile replays commits that leave the files the run reads untouched (measured −100%, 44/44 calls). Replays repeat failures (`toolrecall replay forget <run>`). The −36% on the 450-turn bugfix workload in [Benchmark](BENCHMARK.md) comes from the Context Tracker, not from this proxy.
 
 The proxy's savings are **additive to any provider's prefix caching** — it caches at the request level (identical request body → $0) while prefix caching discounts at the billing level (tokens already seen → lower rate). They work at different layers. No model lock-in.
 
