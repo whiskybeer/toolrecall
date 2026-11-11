@@ -6,9 +6,15 @@ You run agents. Every session spawns its own MCP servers, every test run hits li
 
 ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
 
-**−36% on a 450-turn session — verified with separate billed API keys, not estimates.** Additive to any model's prefix caching. Under 1MB install. Python 3.11+ stdlib only.
+Under 1MB install. Python 3.11+ stdlib only.
 
-> **⚠️ Who this is for:** ToolRecall's file cache shines for **stateless agents** (Hermes, OpenCode, Cline, Google ADK) — agents with limited or no built-in context management. If your agent already manages its own context (Claude Code, Cursor, Codex CLI), expect no token saving in interactive sessions: the forward proxy pays off for **headless repeat runs** (Claude Code with the `claude-code` profile: −69% on short repeated tasks, −18% on long sessions), the MCP multiplexer shares server processes, and file caching through MCP may **increase** costs. See [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md).
+**Measured, not estimated — and scoped to where each number holds:**
+
+- **Stateless agents (Hermes, OpenCode, Cline, Google ADK):** the Context Tracker cut billed cost **−36%** on a scripted 450-turn bugfix workload driven through Hermes (DeepSeek V4 Flash, separate billed keys; per-turn run data not yet published). Across 240 real Hermes sessions, clean file content the tracker can drop is **~11% of per-turn input**. Additive to provider prefix caching.
+- **Claude Code, Cursor, Codex CLI — interactive:** **~0% token saving.** They already manage their own context (Claude Code stubs unchanged re-reads). Value here is MCP process pooling and the security gate. File caching through MCP **increases** cost (2.4× measured on Claude Code).
+- **Headless repeat runs (CI, evals):** the forward proxy replays an identical rerun on unchanged code — every call replayed, **$0** for the rerun, **−45% / −72% cumulative** after 2 and 4 runs (Claude Code, 5 SWE-bench Lite tasks, Sonnet). The first run saves nothing (+0.7%, within noise). Any commit breaks replay in the default `claude-code` profile (git status and recent SHAs land in Claude Code's first prompt); `claude-code-nogit` replays commits that leave the files the run reads untouched. Replays repeat failures.
+
+Not sure which applies to you? `toolrecall doctor claude`. Details: [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md).
 
 ```bash
 pipx install toolrecall && toolrecall setup   # One-shot: install + config -> systemd -> daemon start
@@ -24,15 +30,15 @@ Three core capabilities are the reason to run it. They target the same waste: ag
 
 | Capability | What it does | Measured |
 |-----------|--------------|----------|
-| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. By keeping your context small it helps **prefix and non-prefix models alike**. | **9.5× fewer request tokens per turn** and **7.4× longer sessions** before the context wall (read-only benchmark, prefix-caching model; real-session figure below) — [Context Tracker](#context-tracker) |
-| **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on real coding tasks (SWE-bench Lite, billing-verified) — [Dedup Hook](#input-dedup-hook) |
-| **Multi-Agent Shared Cache & Attribution** | One shared daemon pools the cache across all your local agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; subsequent agents get instant 100% cache hits with $0 token cost. Per-agent telemetry (`toolrecall agent ls`) tracks exact ROI and tokens saved per agent identity without splitting cache keys. | **100% hit rate for subsequent agents / 0ms disk & API latency** — [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_TRACKING.md) |
+| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. Works only for agents that own their message loop (Hermes, OpenCode, Cline, ADK) — not Claude Code or Cursor. | **−36% billed** on a scripted 450-turn bugfix workload (Hermes harness; per-turn data not yet published). Clean files are **~11% of per-turn input** across 240 real sessions; up to 9.5× fewer tokens in a read-only best case — [Context Tracker](#context-tracker) |
+| **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on an 8-turn SWE-bench Lite script (chat-completions agents, 80 requests per arm, billing-verified). **No effect on Claude Code** (nothing to remove) — [Dedup Hook](#input-dedup-hook) |
+| **Multi-Agent Shared Cache & Attribution** | One shared daemon pools the cache across all your local agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; later agents read the same files and command outputs from it instead of disk or a subprocess. The content still goes to each agent's model, so token cost is unchanged unless the API request itself replays. Per-agent telemetry (`toolrecall agent ls`) shows hits per agent identity. | Shared file/command hits for later agents (no disk or subprocess cost) — [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_TRACKING.md) |
 
 ---
 
 ## Quickstart — Forward Proxy (10 seconds, any agent)
 
-Set one environment variable and all your agent's API calls route through the proxy. Cache hit = zero tokens billed.
+Set one environment variable and all your agent's API calls route through the proxy. A cache hit (byte-identical request) = zero tokens billed.
 
 ```bash
 export OPENAI_BASE_URL=http://localhost:8569/v1
@@ -42,15 +48,7 @@ export ANTHROPIC_BASE_URL=http://localhost:8569
 
 That's it. Every identical API call across sessions costs $0. Works with any OpenAI/Anthropic-compatible agent — no per-agent config.
 
-**What that saves (billed API keys, not estimates):**
-
-| Workload | Without TR | With TR | Savings |
-|----------|-----------|---------|---------|
-| Bugfix (450 turns, both completed) | $8.83 | $5.62 | **−36%** |
-| Review (200 turns, naive died at 112) | $2.53 | $1.26 | **−50%** |
-| Analysis (400 turns, naive died at 145) | — | Completed | **full run** |
-
-Separate OpenRouter keys per arm. Full methodology: [Benchmark](https://github.com/whiskybeer/toolrecall/blob/main/docs/BENCHMARK.md). No token estimates — only billed dollars from the provider dashboard.
+**When requests are identical.** Interactive turns almost never repeat byte-for-byte, so expect hits from **repeat runs of the same task on unchanged code** (CI, evals): Claude Code identical reruns replay at $0, −45% / −72% cumulative after 2 and 4 runs (5 SWE-bench Lite tasks, Sonnet; first run no saving). Interactive Claude Code: ~0%. Check your setup with `toolrecall doctor claude`; full numbers in [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md).
 
 See [Forward Proxy](https://github.com/whiskybeer/toolrecall/blob/main/docs/FORWARD_PROXY.md) for configuration and provider routing.
 
@@ -93,7 +91,7 @@ export TOOLRECALL_AGENT_ID=claude-code   # in your Claude Code session
 export TOOLRECALL_AGENT_ID=antigravity   # in your Antigravity IDE
 ```
 
-All agents share one deterministic cache on your machine. When Agent A reads a file or command, subsequent agents get **100% cache hits** with zero token cost.
+All agents share one deterministic cache on your machine. When Agent A reads a file or runs a command, later agents get it from the cache instead of disk or a subprocess. The content is still sent to each agent's model, so this saves I/O and latency, not tokens.
 
 View your cross-agent breakdown:
 ```bash
@@ -106,7 +104,7 @@ Known Agents
   claude-code           hits=2  misses=0  tokens_saved=4,369  tokens_read=0
   hermes                hits=1  misses=1  tokens_saved=2,608  tokens_read=1,761
 ```
-*Agent Hermes warmed the cache; Claude Code and Antigravity got instant 100% cache hits.*
+*Agent Hermes warmed the cache; Claude Code and Antigravity got cache hits. `tokens_saved` counts the size of content served from cache, not billed tokens avoided.*
 
 Inspect detailed per-category stats or export JSON for monitoring:
 ```bash
@@ -121,10 +119,10 @@ See [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGE
 
 | Feature | What it solves |
 |---------|---------------|
-| **Multi-Agent Shared Cache & Attribution** | Shared local cache across multiple agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; Agent B gets 100% hits with $0 token cost. Per-agent telemetry (`toolrecall agent ls`) tracks exact ROI per agent identity. |
-| **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. **−36% on 450-turn sessions (billed keys).** Additive to any provider's prefix caching. |
-| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. 9.5× fewer request tokens per turn, 7.4× longer sessions (read-only benchmark; ~11 % per-turn reduction in real mixed sessions). |
-| **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on SWE-bench Lite (billing-verified).** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
+| **Multi-Agent Shared Cache & Attribution** | Shared local cache across multiple agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; Agent B reads files and command outputs from it (saves I/O, not model tokens). Per-agent telemetry (`toolrecall agent ls`) shows hits per agent identity. |
+| **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. Pays off on repeat runs of the same task: identical reruns replay at **$0** (Claude Code, 5 SWE-bench Lite tasks; −72% cumulative after 4 runs); ~0% interactive. |
+| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. Stateless agents only. **−36% billed on a scripted 450-turn bugfix workload (Hermes harness)**; ~11% of per-turn input droppable in real sessions (9.5× in a read-only best case). |
+| **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on an 8-turn SWE-bench Lite script (billing-verified); no effect on Claude Code.** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI — 0.8.21 adds a fork tree (`replay tree` / `fork` / `at`): concurrent branches replay the shared tool-call prefix and re-execute only divergent calls, the substrate for the GEPA adapter |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
 | **MCP Multiplexer** | One shared pool of MCP servers instead of N processes per agent session — pays off with multiple agent sessions or agents without native MCP config; [when to skip](https://github.com/whiskybeer/toolrecall/blob/main/docs/MCP_MULTIPLEXER.md#when-the-multiplexer-is-and-isnt-worth-enabling) |
@@ -146,7 +144,7 @@ python3 bench/run_3_local_tests.py
 | # | Primitive & Metric | Baseline (Uncached / Live) | With ToolRecall | Measured Impact |
 |:--|:---|:---|:---|:---|
 | **1** | **Subprocess & Tool Latency**<br>*(30 iterations `git rev-parse HEAD`)* | **5.33 ms** / call<br>*(Live OS fork/exec)* | **0.014 ms** / call<br>*(Local SQLite cache hit)* | **~380× faster**<br>Spawning overhead eliminated |
-| **2** | **Prompt Input Deduplication**<br>*(Multi-turn file inspection re-reads)* | **1,829 tokens**<br>*(7,318 chars uncompressed)* | **749 tokens**<br>*(2,996 chars after hook)* | **−59.1% input tokens**<br>Stripped pre-billing |
+| **2** | **Prompt Input Deduplication**<br>*(Synthetic multi-turn re-read scenario)* | **1,829 tokens**<br>*(7,318 chars uncompressed)* | **749 tokens**<br>*(2,996 chars after hook)* | **−59.1% input tokens**<br>Stripped pre-billing |
 | **3** | **Deterministic Replay & Fork-Tree**<br>*(20 trunk calls branched across 5 forks)* | *N/A (Non-deterministic subprocesses)* | **3,200+ calls/sec**<br>*(100 calls in ~31 ms)* | **100% byte-exact**<br>Zero drift across parallel forks |
 
 ### Why these three matter:

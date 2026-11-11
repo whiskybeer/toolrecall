@@ -6,12 +6,12 @@ The forward proxy intercepts HTTP requests to LLM providers, caching responses s
 
 | Workload | Saving |
 |----------|--------|
-| Claude Code, identical rerun (5 SWE-bench Lite tasks, Sonnet) | **−77%** |
-| Claude Code, cumulative after 4 runs | **−72%** |
+| Claude Code, identical rerun (5 SWE-bench Lite tasks, Sonnet) | **$0** — every call replayed |
+| Claude Code, cumulative after 2 / 4 runs | **−45% / −72%** |
 | First run of any task | none |
 | Interactive Claude Code session | ~0% |
 
-Source: `bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md`. A commit that changes files the agent reads stops the replay, and replays repeat failures (`toolrecall replay forget <run>`). The −36% on a 450-turn Hermes session in [Benchmark](BENCHMARK.md) comes from the Context Tracker, not from this proxy.
+Source: `bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md`. Any commit breaks replay in the default `claude-code` profile (git status and recent SHAs are in Claude Code's first prompt); the `claude-code-nogit` profile replays commits that leave the files the run reads untouched (measured −100%, 44/44 calls). Replays repeat failures (`toolrecall replay forget <run>`). The −36% on the 450-turn bugfix workload in [Benchmark](BENCHMARK.md) comes from the Context Tracker, not from this proxy.
 
 The proxy's savings are **additive to any provider's prefix caching** — it caches at the request level (identical request body → $0) while prefix caching discounts at the billing level (tokens already seen → lower rate). They work at different layers. No model lock-in.
 
