@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`healthcheck` no longer reports a timed-out shim probe as `inactive`.** The probe
+  (`shim --status --all`, one interpreter per venv) measured 3.2 s warm and 10.8–17.1 s
+  loaded against a 20 s budget, so the daily verdict depended on host load; a timeout was
+  indistinguishable from "not installed" and printed an install instruction for a shim
+  that was already applied. `shim_state` gains a third value `unknown` (with
+  `shim_reason` `probe_timeout`/`probe_error` and `shim_probe_s`), the budget rises to
+  60 s (`TOOLRECALL_SHIM_PROBE_TIMEOUT_S`), and the success predicate is one contract for
+  every consumer: `applied: yes` **and** `probe: pass`.
+  Tests: `tests/test_healthcheck_shim_probe.py` (11).
+
 ## [0.8.23] — 2026-11-09
 
 ### Changed

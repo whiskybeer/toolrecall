@@ -13,7 +13,7 @@ Reported signals:
     lock_files   count of ~/.toolrecall/daemon-*.lck files
     socket_path  the resolved default UDS socket path
     socket       whether that socket exists
-    shim_state   'active' | 'inactive' (best-effort via `shim --status --all`)
+    shim_state   'active' | 'inactive' | 'unknown' (via `shim --status --all`)
     hit_rate     cache hit-rate (from `stats`), or None if stats unavailable
 
 Command contract (`toolrecall healthcheck`):
@@ -35,6 +35,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from typing import TypedDict
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,32 @@ DEFAULT_CACHE_DIR = os.path.expanduser("~/.toolrecall")
 EXIT_OK = 0
 EXIT_WARN = 1
 EXIT_UNKNOWN = 2
+
+# Shim probe budget. The probe spawns one interpreter per venv: 3.2 s warm and
+# 10.8-17.1 s under load for 3 venvs on this box. A 20 s budget made the daily
+# verdict a load coin-flip, and the timeout was reported as "inactive" — telling
+# an operator to reinstall a working shim (2026-11-10). This runs once a day, so
+# the margin is free.
+try:
+    SHIM_PROBE_TIMEOUT_S = float(os.environ.get("TOOLRECALL_SHIM_PROBE_TIMEOUT_S", "60"))
+except ValueError:  # a bad env value must not break a health check
+    SHIM_PROBE_TIMEOUT_S = 60.0
+
+SHIM_ACTIVE = "active"
+SHIM_INACTIVE = "inactive"
+SHIM_UNKNOWN = "unknown"
+
+
+class ShimProbe(TypedDict):
+    """The three shim fields `_probe_shim_state` classifies.
+
+    Its own TypedDict so `HealthInfo.update(probe)` type-checks: a bare ``dict``
+    return would erase the key/value types at the one place they matter.
+    """
+
+    shim_state: str
+    shim_reason: str
+    shim_probe_s: float | None
 
 
 class HealthInfo(TypedDict):
@@ -56,6 +83,8 @@ class HealthInfo(TypedDict):
     proxy: bool
     proxy_port: int
     shim_state: str
+    shim_reason: str
+    shim_probe_s: float | None
     hit_rate: float | None
     log_file: str
     log_errors_recent: int
@@ -248,6 +277,58 @@ def _scan_recent_log() -> tuple[str, int, int]:
     return (path, errors, warnings_n)
 
 
+def _probe_shim_state() -> ShimProbe:
+    """Classify the shim from one bounded `shim --status --all` probe.
+
+    Three states, because a probe that did not complete is NOT evidence that the
+    shim is missing (2026-11-10: a 20 s budget against a 10.8-17.1 s probe
+    reported a working shim as `inactive`, and the operator was told to reinstall
+    it):
+
+        active    ``applied: yes`` AND ``probe: pass``
+        inactive  the probe completed and found no working shim
+        unknown   the probe did not complete (timeout / spawn error)
+
+    Both markers are required. A `.pth` that imports but is not applied means
+    real interpreters still start unshimmed (2026-11-07 zz_-ordering bug), and an
+    applied hook whose probe fails is not serving reads either.
+    """
+    t0 = time.monotonic()
+    try:
+        r = subprocess.run(
+            _validated_toolrecall_bin() + ["shim", "--status", "--all"],
+            capture_output=True,
+            text=True,
+            timeout=SHIM_PROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "shim_state": SHIM_UNKNOWN,
+            "shim_reason": "probe_timeout",
+            "shim_probe_s": round(time.monotonic() - t0, 2),
+        }
+    except (subprocess.SubprocessError, OSError):
+        return {
+            "shim_state": SHIM_UNKNOWN,
+            "shim_reason": "probe_error",
+            "shim_probe_s": round(time.monotonic() - t0, 2),
+        }
+
+    elapsed = round(time.monotonic() - t0, 2)
+    out = r.stdout or ""
+    applied = "applied: yes" in out
+    probe_pass = "probe: pass" in out
+    if applied and probe_pass:
+        state, reason = SHIM_ACTIVE, ""
+    elif applied:
+        state, reason = SHIM_INACTIVE, "probe_failed"
+    elif probe_pass:
+        state, reason = SHIM_INACTIVE, "applied_missing"
+    else:
+        state, reason = SHIM_INACTIVE, ""
+    return {"shim_state": state, "shim_reason": reason, "shim_probe_s": elapsed}
+
+
 def gather() -> HealthInfo:
     """Collect every health signal into one dict. No side effects."""
     pid_file = _pid_file()
@@ -262,7 +343,9 @@ def gather() -> HealthInfo:
         "socket": False,
         "proxy": False,
         "proxy_port": _forward_proxy_port(),
-        "shim_state": "inactive",
+        "shim_state": SHIM_INACTIVE,
+        "shim_reason": "",
+        "shim_probe_s": None,
         "hit_rate": None,
         "log_file": "",
         "log_errors_recent": 0,
@@ -301,21 +384,11 @@ def gather() -> HealthInfo:
     # proxy look like a healthy daemon on 2026-09-10).
     info["proxy"] = proxy_listening(info.get("proxy_port"))
 
-    # Best-effort shim state (probe via the CLI, cheap + bounded).
-    try:
-        r = subprocess.run(
-            _validated_toolrecall_bin() + ["shim", "--status", "--all"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        # Require the hook to be APPLIED, not merely importable: a badly ordered
-        # .pth imports fine in a probe but every real interpreter starts unshimmed
-        # (2026-11-07 zz_-ordering bug).
-        if "applied: yes" in r.stdout:
-            info["shim_state"] = "active"
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
+    # Best-effort shim state (one bounded CLI probe; see _probe_shim_state).
+    probe = _probe_shim_state()
+    info["shim_state"] = probe["shim_state"]
+    info["shim_reason"] = probe["shim_reason"]
+    info["shim_probe_s"] = probe["shim_probe_s"]
 
     # Best-effort hit rate from stats (bounded; direct mode trace is fine).
     # NO_AUTOSTART is mandatory here: `toolrecall stats` is in the CLI's
@@ -674,6 +747,21 @@ def warnings(info: HealthInfo) -> list[str]:
             "LLM traffic routed through it fails with connection errors"
         )
 
+    if info.get("shim_state") == SHIM_UNKNOWN:
+        if info.get("shim_reason") == "probe_timeout":
+            took = info.get("shim_probe_s")
+            budget = f"{took:.1f}s" if isinstance(took, (int, float)) else "the budget"
+            notes.append(
+                f"shim probe timed out after {budget}"
+                " — state unknown, NOT missing; the shim may be fine, re-run"
+                " `toolrecall shim --status --all`"
+            )
+        else:
+            notes.append(
+                "shim probe could not run — state unknown, NOT missing; re-run"
+                " `toolrecall shim --status --all`"
+            )
+
     log_err = info.get("log_errors_recent", 0)
     log_warn = info.get("log_warnings_recent", 0)
     if log_err:
@@ -697,11 +785,14 @@ def render(info: HealthInfo) -> str:
     log_seg = ""
     if info.get("log_file"):
         log_seg = f" | log={info['log_errors_recent']}e/{info['log_warnings_recent']}w"
+    shim_detail = ""
+    if info.get("shim_reason"):
+        shim_detail = f"({info['shim_reason']})"
     return (
         f"toolrecall healthcheck | procs={info['procs']} | pid={pid} | "
         f"locks={info['lock_files']} | sock={'yes' if info['socket'] else 'no'} "
         f"| proxy={'yes' if info.get('proxy') else 'NO'} "
-        f"| shim={info['shim_state']}{age}{log_seg}"
+        f"| shim={info['shim_state']}{shim_detail}{age}{log_seg}"
     )
 
 
