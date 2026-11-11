@@ -61,6 +61,18 @@ SHIM_INACTIVE = "inactive"
 SHIM_UNKNOWN = "unknown"
 
 
+class ShimProbe(TypedDict):
+    """The three shim fields `_probe_shim_state` classifies.
+
+    Its own TypedDict so `HealthInfo.update(probe)` type-checks: a bare ``dict``
+    return would erase the key/value types at the one place they matter.
+    """
+
+    shim_state: str
+    shim_reason: str
+    shim_probe_s: float | None
+
+
 class HealthInfo(TypedDict):
     procs: int
     pid_file: str
@@ -265,7 +277,7 @@ def _scan_recent_log() -> tuple[str, int, int]:
     return (path, errors, warnings_n)
 
 
-def _probe_shim_state() -> dict:
+def _probe_shim_state() -> ShimProbe:
     """Classify the shim from one bounded `shim --status --all` probe.
 
     Three states, because a probe that did not complete is NOT evidence that the
@@ -373,7 +385,10 @@ def gather() -> HealthInfo:
     info["proxy"] = proxy_listening(info.get("proxy_port"))
 
     # Best-effort shim state (one bounded CLI probe; see _probe_shim_state).
-    info.update(_probe_shim_state())
+    probe = _probe_shim_state()
+    info["shim_state"] = probe["shim_state"]
+    info["shim_reason"] = probe["shim_reason"]
+    info["shim_probe_s"] = probe["shim_probe_s"]
 
     # Best-effort hit rate from stats (bounded; direct mode trace is fine).
     # NO_AUTOSTART is mandatory here: `toolrecall stats` is in the CLI's
