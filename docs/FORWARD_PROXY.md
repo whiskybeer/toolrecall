@@ -2,15 +2,16 @@
 
 The forward proxy intercepts HTTP requests to LLM providers, caching responses so repeat requests cost zero tokens. On cache hit the provider never receives the request.
 
-**What it saves (billed API keys, not estimates):**
+**What it saves.** A hit needs a byte-identical request, so savings come from **repeat runs of the same task on unchanged code** (CI, evals), not interactive chat:
 
-| Workload | Without TR | With TR | Savings |
-|----------|-----------|---------|---------|
-| Bugfix (450 turns, both completed) | $8.83 | $5.62 | **−36%** |
-| Review (200 turns, naive died at 112) | $2.53 | $1.26 | **−50%** |
-| Aggregate (3 workloads) | $11.36 | $7.87 | **−31%** |
+| Workload | Saving |
+|----------|--------|
+| Claude Code, identical rerun (5 SWE-bench Lite tasks, Sonnet) | **−77%** |
+| Claude Code, cumulative after 4 runs | **−72%** |
+| First run of any task | none |
+| Interactive Claude Code session | ~0% |
 
-Separate OpenRouter keys per arm. Full methodology: [Benchmark](BENCHMARK.md) · [Cost Savings](COST_SAVINGS.md).
+Source: `bench/results/CLAUDE_CODE_INTEGRATIONS_REPORT.md`. A commit that changes files the agent reads stops the replay, and replays repeat failures (`toolrecall replay forget <run>`). The −36% on a 450-turn Hermes session in [Benchmark](BENCHMARK.md) comes from the Context Tracker, not from this proxy.
 
 The proxy's savings are **additive to any provider's prefix caching** — it caches at the request level (identical request body → $0) while prefix caching discounts at the billing level (tokens already seen → lower rate). They work at different layers. No model lock-in.
 
