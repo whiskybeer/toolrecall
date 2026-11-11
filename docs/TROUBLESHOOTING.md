@@ -210,6 +210,11 @@ hits. It looks like the MCP layer is broken.
   toolrecall shim --status --all              # see which venvs lack a verified shim
   toolrecall shim --install --venv <path>     # opt-in; probe-verified after install
   ```
+- **`shim=unknown`** → the status probe did not finish (timeout) or could not
+  run. This is *not* evidence that the shim is missing: one probe spawns an
+  interpreter per venv and costs 3–17 s, so a loaded host can exceed the budget.
+  Re-run `toolrecall shim --status --all` before changing anything; do not
+  reinstall on an `unknown`.
 
 **Rule of thumb:** with file reads happening, *nonzero `file_cache`* is the
 proof caching works. `mcp_cache=0` alongside `shim=active` means the bridge is

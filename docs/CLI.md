@@ -218,11 +218,14 @@ Most commands accept `--help` / `-h` for per-command usage and options
     checkout). See `docs/TROUBLESHOOTING.md` §19.
   - Unknown flags → usage + non-zero exit (no silent swallow)
 - **⚠️  Important when using `pipx` or `uv tool install`:** The shim is installed into the **current Python environment** only. If toolrecall is installed via `pipx` or `uv tool install`, that's an isolated environment — the shim won't activate in your agent's runtime. Use `--venv <path>` to target the right venv, `--all` to sweep every venv, or run `toolrecall setup`.
-- **Healthcheck indicator:** `toolrecall stats`/healthcheck shows `shim=active|inactive`
-  (derived from `shim --status --all`, `probe: pass` = active). `shim=active` with
+- **Healthcheck indicator:** `toolrecall stats`/healthcheck shows
+  `shim=active|inactive|unknown` (derived from `shim --status --all`; `active`
+  requires **both** `applied: yes` and `probe: pass`). `shim=active` with
   nonzero `file_cache` = caching working; `mcp_cache=0` alongside is expected
   (shim bypasses the MCP bridge). `shim=inactive` → install with `--venv`/`--all`.
-  See `docs/TROUBLESHOOTING.md` §16.
+  `shim=unknown` (reason `probe_timeout`/`probe_error`) means the probe did not
+  finish — not evidence that the shim is missing; re-run the status command
+  before reinstalling. See `docs/TROUBLESHOOTING.md` §16.
 
 ### `toolrecall nginx`
 
@@ -299,7 +302,13 @@ Most commands accept `--help` / `-h` for per-command usage and options
   hardcoded per-machine config.
 - **What it reports:** daemon process count, `daemon.pid` liveness (live,
   non-zombie PID), `daemon-*.lck` lock-file count, UDS socket presence, shim
-  state (`active`/`inactive`), and cache hit-rate.
+  state (`active`/`inactive`/`unknown`; `--json` also carries `shim_reason` and
+  `shim_probe_s`), and cache hit-rate.
+- **Shim probe budget:** 60 s (`TOOLRECALL_SHIM_PROBE_TIMEOUT_S`), because one
+  probe spawns an interpreter per venv and measured 3.2–17.1 s on this host. A
+  probe that does not finish is reported as `unknown`, never `inactive`: a
+  timeout is absence of evidence, and mapping it to `inactive` made the daily
+  report tell operators to reinstall a working shim.
 - **Flags:**
   - `--json` — one JSON object: `{"health": {...}, "warnings": [...]}`, plus
     `"cleanup": {...}` when `--clean-stale` is given.
