@@ -177,3 +177,15 @@ def test_hooks_config_schema():
     assert "PreInvocation" in tr_cfg
     assert "SessionStart" in tr_cfg
     assert tr_cfg["PreToolUse"][0]["matcher"] == "*"
+
+
+def test_hooks_config_command_resolution(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: "/opt/bin/toolrecall")
+    cfg = antigravity_hooks.hooks_config()
+    cmd = cfg["toolrecall"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert cmd == "/opt/bin/toolrecall hook antigravity"
+
+    # Custom override
+    cfg_custom = antigravity_hooks.hooks_config(command="custom-hook-cmd")
+    cmd_custom = cfg_custom["toolrecall"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert cmd_custom == "custom-hook-cmd"

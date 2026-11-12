@@ -2729,11 +2729,12 @@ def _write_claude_json_config(multiplexer_only: bool = True):
 
     if "mcpServers" not in config:
         config["mcpServers"] = {}
-    args = ["mcp"]
-    if multiplexer_only:
+    cmd_line = _toolrecall_command_for_mcp()
+    args = list(cmd_line[1:])
+    if multiplexer_only and "--multiplexer-only" not in args:
         args.append("--multiplexer-only")
     config["mcpServers"]["toolrecall"] = {
-        "command": "toolrecall",
+        "command": cmd_line[0],
         "args": args,
     }
 
@@ -2764,6 +2765,26 @@ def _toolrecall_command_for_mcp() -> list[str]:
         if _os.path.isfile(candidate):
             return [candidate, "mcp"]
     return ["toolrecall", "mcp"]
+
+
+def _toolrecall_command_for_hook(target: str = "antigravity") -> str:
+    """Executable command string to invoke a ToolRecall lifecycle hook.
+
+    Resolves the absolute path to the `toolrecall` executable, falling back
+    to `~/.local/bin/toolrecall` or `python -m toolrecall.cli hook <target>`.
+    Crucial for non-login subshells (e.g. Antigravity `/bin/sh` or Claude Code hooks)
+    whose default PATH excludes `~/.local/bin`.
+    """
+    cmd = _toolrecall_command_for_mcp()
+    bin_path = cmd[0]
+    if bin_path == "toolrecall":
+        # If bare 'toolrecall' didn't resolve to a file, fallback to sys.executable module call
+        # so hooks never fail with /bin/sh: toolrecall: not found.
+        import shutil as _shutil
+
+        if not _shutil.which("toolrecall"):
+            return f"{sys.executable} -m toolrecall.cli hook {target}"
+    return f"{bin_path} hook {target}"
 
 
 def _prepare_antigravity_config(
@@ -3000,10 +3021,11 @@ def _prepare_opencode_config(config_path):
 
     is_crush = "mcp" in config and isinstance(config["mcp"], dict)
 
+    cmd_line = _toolrecall_command_for_mcp()
     toolrecall_entry = {
         "type": "local",
-        "command": "toolrecall",
-        "args": ["mcp"],
+        "command": cmd_line[0],
+        "args": cmd_line[1:],
         "enabled": True,
     }
 
@@ -3013,8 +3035,8 @@ def _prepare_opencode_config(config_path):
         if "mcpServers" not in config:
             config["mcpServers"] = {}
         config["mcpServers"]["toolrecall"] = {
-            "command": "toolrecall",
-            "args": ["mcp"],
+            "command": cmd_line[0],
+            "args": cmd_line[1:],
         }
         config.pop("mcp", None)
 

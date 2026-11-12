@@ -299,11 +299,33 @@ def handle(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return {}
 
 
+def _resolve_hook_command() -> str:
+    """Resolve absolute executable command for Antigravity lifecycle hooks.
+
+    Guarantees that non-login subshells executing hooks (e.g. Antigravity `/bin/sh`)
+    never fail with `sh: 1: toolrecall: not found` when ~/.local/bin is missing from PATH.
+    """
+    import shutil as _shutil
+
+    resolved = _shutil.which("toolrecall")
+    if resolved:
+        return f"{resolved} hook antigravity"
+    fallback = os.path.expanduser("~/.local/bin/toolrecall")
+    for candidate in (fallback, fallback + ".exe", fallback + ".cmd", fallback + ".bat"):
+        if os.path.isfile(candidate):
+            return f"{candidate} hook antigravity"
+    py_candidate = os.path.join(os.path.dirname(sys.executable), "toolrecall")
+    if os.path.isfile(py_candidate):
+        return f"{py_candidate} hook antigravity"
+    return f"{sys.executable} -m toolrecall.cli hook antigravity"
+
+
 def hooks_config(
-    command: str = "toolrecall hook antigravity",
+    command: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Generate configuration block for Antigravity hooks.json."""
-    h = [{"type": "command", "command": command, "timeout": 15}]
+    cmd = command if command is not None else _resolve_hook_command()
+    h = [{"type": "command", "command": cmd, "timeout": 15}]
     return {
         "toolrecall": {
             "PreToolUse": [
@@ -327,7 +349,8 @@ def hooks_config(
 def main(argv: Optional[List[str]] = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     if args and args[0] in ("print-config", "--print-config"):
-        cfg = hooks_config()
+        cmd_arg = args[1] if len(args) > 1 else None
+        cfg = hooks_config(command=cmd_arg)
         print(json.dumps(cfg, indent=2))
         return 0
 
