@@ -888,3 +888,79 @@ def _index_config_sources(cfg):
             index_directory(path, source=source, extensions=tuple(exts))
         except Exception:
             pass
+
+
+def index_antigravity(
+    include_artifacts: bool = True, custom_roots: list[str] | None = None
+) -> dict[str, int]:
+    """Auto-index Antigravity skills, plugins, and brain artifacts into FTS5.
+
+    Discovers:
+      1. Builtin skills: ~/.gemini/antigravity-cli/builtin/skills, ~/.gemini/skills
+      2. Workspace skills: .agents/skills, .agent/skills
+      3. Plugins: ~/.gemini/config/plugins (skills & docs)
+      4. Brain artifacts: ~/.gemini/antigravity-cli/brain/*/*.md (excluding .system_generated)
+
+    Returns:
+        dict: {"antigravity-skills": n, "antigravity-plugins": n, "antigravity-workspace": n, "antigravity-artifacts": n, "total": total}
+    """
+    counts: dict[str, int] = {}
+    total = 0
+
+    roots = custom_roots or []
+    if not roots:
+        # Standard candidate directories
+        skill_dirs = [
+            (os.path.expanduser("~/.gemini/antigravity-cli/builtin/skills"), "antigravity-skills"),
+            (os.path.expanduser("~/.gemini/skills"), "antigravity-skills"),
+            (os.path.abspath(".agents/skills"), "antigravity-workspace"),
+            (os.path.abspath(".agent/skills"), "antigravity-workspace"),
+        ]
+        plugin_dirs = [
+            (os.path.expanduser("~/.gemini/config/plugins"), "antigravity-plugins"),
+        ]
+        artifact_dirs = [
+            (os.path.expanduser("~/.gemini/antigravity-cli/brain"), "antigravity-artifacts"),
+            (os.path.expanduser("~/.gemini/antigravity/brain"), "antigravity-artifacts"),
+            (os.path.expanduser("~/.gemini/antigravity-ide/brain"), "antigravity-artifacts"),
+            (os.path.abspath(".gemini/antigravity-cli/brain"), "antigravity-artifacts"),
+        ]
+    else:
+        skill_dirs = [(r, "antigravity-skills") for r in roots]
+        plugin_dirs = []
+        artifact_dirs = []
+
+    # 1. Index skills
+    for p, src in skill_dirs:
+        if os.path.isdir(p):
+            n = index_directory(p, source=src, extensions=(".md",))
+            counts[src] = counts.get(src, 0) + n
+            total += n
+
+    # 2. Index plugins
+    for p, src in plugin_dirs:
+        if os.path.isdir(p):
+            n = index_directory(
+                p,
+                source=src,
+                extensions=(".md",),
+                ignore_dirs={".git", "node_modules", ".venv", "__pycache__"},
+            )
+            counts[src] = counts.get(src, 0) + n
+            total += n
+
+    # 3. Index past conversation artifacts
+    if include_artifacts:
+        for p, src in artifact_dirs:
+            if os.path.isdir(p):
+                n = index_directory(
+                    p,
+                    source=src,
+                    extensions=(".md",),
+                    ignore_dirs={".system_generated", "scratch", ".git"},
+                )
+                counts[src] = counts.get(src, 0) + n
+                total += n
+
+    counts["total"] = total
+    return counts

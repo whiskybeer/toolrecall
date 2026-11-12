@@ -727,8 +727,8 @@ def cmd_reset_stats():
 
 
 def cmd_index():
-    """Index knowledge base. Use --memory to also index agent memory stores."""
-    from toolrecall.docs import index_all, index_agent_memory
+    """Index knowledge base. Use --memory for agent memory, --antigravity for AGY skills/artifacts."""
+    from toolrecall.docs import index_all, index_agent_memory, index_antigravity
 
     print("Indexing knowledge database...")
     total = index_all()
@@ -738,6 +738,40 @@ def cmd_index():
         print("Indexing agent memory stores...")
         mem_total = index_agent_memory()
         print(f"Done. {mem_total} memory entries indexed.")
+
+    if "--antigravity" in sys.argv:
+        print("Indexing Antigravity skills, plugins, and artifacts...")
+        counts = index_antigravity(include_artifacts="--no-artifacts" not in sys.argv)
+        print(f"Done. {counts.get('total', 0)} Antigravity pages indexed.")
+
+
+def cmd_index_antigravity():
+    """Index Antigravity skills, plugins, and conversation artifacts into FTS5 knowledge base.
+
+    Usage:
+        toolrecall index-antigravity [--no-artifacts] [--json]
+    """
+    import json as _json
+    from toolrecall.docs import index_antigravity
+
+    no_artifacts = "--no-artifacts" in sys.argv
+    as_json = "--json" in sys.argv
+
+    if not as_json:
+        print("Indexing Antigravity skills, plugins, and brain artifacts into FTS5...")
+
+    counts = index_antigravity(include_artifacts=not no_artifacts)
+
+    if as_json:
+        print(_json.dumps(counts, indent=2))
+    else:
+        print(f"Done. Total pages indexed: {counts.get('total', 0)}")
+        for src, cnt in counts.items():
+            if src != "total":
+                print(f"  • {src}: {cnt} page(s)")
+        print()
+        print("Search via: docs_search('<query>', source='antigravity-skills')")
+        print("Or across all sources in 0.6ms via docs_search('<query>').")
 
 
 def cmd_index_compact():
@@ -2659,9 +2693,15 @@ def _toolrecall_command_for_mcp() -> list[str]:
     return ["toolrecall", "mcp"]
 
 
-def _prepare_antigravity_config(config_path: str) -> tuple[bool, str]:
+def _prepare_antigravity_config(
+    config_path: str, multiplexer_only: bool = True
+) -> tuple[bool, str]:
     """Read existing Antigravity mcp_config.json or create a fresh one, then
     merge the toolrecall MCP bridge entry into ``mcpServers``.
+
+    Configured as ``--multiplexer-only`` by default: pools MCP servers host-wide
+    without injecting redundant file-caching tools that cause the measured 2.4×
+    cost increase in stateful agents.
 
     Merge-preserving: user-defined servers in the file are kept verbatim
     (Antigravity schema: stdio uses command/args/env; remote uses serverUrl).
@@ -2695,7 +2735,10 @@ def _prepare_antigravity_config(config_path: str) -> tuple[bool, str]:
         return False, '"mcpServers" is not an object'
 
     cmd_line = _toolrecall_command_for_mcp()
-    servers["toolrecall"] = {"command": cmd_line[0], "args": cmd_line[1:]}
+    args = list(cmd_line[1:])
+    if multiplexer_only and "--multiplexer-only" not in args:
+        args.append("--multiplexer-only")
+    servers["toolrecall"] = {"command": cmd_line[0], "args": args}
 
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     # Atomic: tmp file in the same directory, then os.replace.
@@ -2731,14 +2774,22 @@ def _print_antigravity_notice() -> None:
     """
     print()
     print("  Antigravity + ToolRecall — next steps:")
+    print("  • Configured as --multiplexer-only by default (host-wide MCP pooling,")
+    print("    no redundant file stubs — avoids the measured 2.4× cost increase).")
     print("  • Restart Antigravity so it picks up the new MCP server.")
+    print("  • Lifecycle hooks: generate config snippet via —")
+    print("      toolrecall hook antigravity print-config")
+    print("  • Index skills, plugins & past artifacts for 0.6ms docs_search —")
+    print("      toolrecall index-antigravity")
+    print("  • Audit transcript tokens and tool usage —")
+    print("      toolrecall audit antigravity")
+    print("  • Check compatibility and environment health —")
+    print("      toolrecall doctor antigravity")
     print("  • SDK agents: decorate expensive custom tools —")
     print("      from toolrecall.adapters import antigravity")
     print("      @antigravity.cached_tool(ttl=300)")
     print("  • Record a session for offline replay:")
     print("      toolrecall replay record antigravity-session")
-    print("  • Make workspace skills/rules searchable (docs_search):")
-    print("      toolrecall index-dir ~/.gemini/skills --source antigravity-skills")
     print("  • Optional: fronted third-party MCP servers get transparent")
     print("    response caching — opt in via [mcp_multiplex] in the daemon")
     print("    config (set ttl = 0 on any server with write tools).")
@@ -3468,16 +3519,22 @@ def cmd_hook():
         print("Usage: toolrecall hook <target> [options]")
         print("")
         print("Targets:")
+        print("  antigravity     Antigravity hook adapter (stdin JSON or print-config)")
         print("  claude          Claude Code hook adapter (stdin JSON or print-config)")
         print("")
         print("Examples:")
+        print("  toolrecall hook antigravity print-config")
         print("  toolrecall hook claude print-config")
         print(
             "  toolrecall hook claude ci-env [--port 8569]   # shell env for repeated headless runs"
         )
         return
     target = args[0]
-    if target == "claude":
+    if target in ("antigravity", "agy"):
+        from toolrecall.adapters import antigravity_hooks
+
+        sys.exit(antigravity_hooks.main(args[1:]))
+    elif target == "claude":
         from toolrecall.adapters import claude_code
 
         sys.exit(claude_code.main(args[1:]))
@@ -3500,14 +3557,20 @@ def cmd_audit():
         print("Usage: toolrecall audit <target> [options]")
         print("")
         print("Targets:")
+        print("  antigravity     Antigravity transcript steps, tool executions, and tokens")
         print(
             "  claude-code     Where Claude Code session tokens go (starting context, parts, shares)"
         )
         print("")
         print("Examples:")
+        print("  toolrecall audit antigravity --days 7")
         print("  toolrecall audit claude-code --days 30")
         return
-    if args[0] == "claude-code":
+    if args[0] in ("antigravity", "agy"):
+        from toolrecall.adapters import antigravity_audit
+
+        sys.exit(antigravity_audit.main(args[1:]))
+    elif args[0] in ("claude", "claude-code"):
         from toolrecall.adapters import claude_code_audit
 
         sys.exit(claude_code_audit.main(args[1:]))
@@ -3787,15 +3850,160 @@ def _diagnose_claude_code(workflow=None):
     print()
 
 
+def _diagnose_antigravity():
+    """Diagnostic check for Google Antigravity integration and compatibility."""
+    import json
+    import os
+    import shutil
+
+    print("══════════════════════════════════════════════════════════════")
+    print("  ToolRecall Compatibility Audit: Google Antigravity")
+    print("══════════════════════════════════════════════════════════════")
+
+    agy_bin = shutil.which("agy")
+    candidates = [
+        os.path.expanduser("~/.gemini/bin/agy"),
+        os.path.expanduser("~/.local/bin/agy"),
+    ]
+    if not agy_bin:
+        for c in candidates:
+            if os.path.isfile(c) and os.access(c, os.X_OK):
+                agy_bin = c
+                break
+
+    if agy_bin:
+        print(f"  ├─ Binary:           {agy_bin}")
+    else:
+        print("  ├─ Binary:           'agy' CLI not found on PATH or ~/.gemini/bin")
+
+    # 1. MCP Configuration
+    global_mcp = os.path.expanduser("~/.gemini/config/mcp_config.json")
+    ws_mcp = os.path.join(".agents", "mcp_config.json")
+    checked_path = (
+        global_mcp
+        if os.path.exists(global_mcp)
+        else (ws_mcp if os.path.exists(ws_mcp) else global_mcp)
+    )
+
+    tr_registered = False
+    tr_multiplexer_only = False
+    servers_count = 0
+
+    if os.path.exists(checked_path):
+        try:
+            with open(checked_path, encoding="utf-8") as f:
+                data = json.load(f)
+                servers = data.get("mcpServers") or {}
+                servers_count = len(servers)
+                tr_spec = servers.get("toolrecall")
+                if tr_spec:
+                    tr_registered = True
+                    args = tr_spec.get("args") or []
+                    if "--multiplexer-only" in args:
+                        tr_multiplexer_only = True
+        except (OSError, json.JSONDecodeError):
+            tr_registered = False
+
+    print(f"  ├─ MCP Config:       {checked_path}")
+    if tr_registered:
+        mode_desc = (
+            "multiplexer-only (✅ recommended, zero file schema bloat)"
+            if tr_multiplexer_only
+            else "full bridge (⚠️ warning: causes 2.4× cost increase if file tools are used)"
+        )
+        print(f"  │  └─ ToolRecall:    Registered ({mode_desc})")
+        print(f"  │  └─ Total Servers: {servers_count} pooled host-wide")
+    else:
+        print("  │  └─ ToolRecall:    Not registered (run 'toolrecall setup' to configure)")
+
+    # 2. Lifecycle Hooks
+    ws_hooks = os.path.join(".agents", "hooks.json")
+    global_hooks = os.path.expanduser("~/.gemini/config/hooks.json")
+    hooks_path = (
+        ws_hooks
+        if os.path.exists(ws_hooks)
+        else (global_hooks if os.path.exists(global_hooks) else ws_hooks)
+    )
+    hooks_registered = False
+
+    if os.path.exists(hooks_path):
+        try:
+            with open(hooks_path, encoding="utf-8") as f:
+                hdata = json.load(f)
+                if "toolrecall" in hdata:
+                    hooks_registered = True
+        except (OSError, json.JSONDecodeError):
+            hooks_registered = False
+
+    print(f"  ├─ Lifecycle Hooks:  {hooks_path}")
+    if hooks_registered:
+        print("  │  └─ ToolRecall:    Active (WAF gate + out-of-band drift alerts enabled)")
+    else:
+        print(
+            "  │  └─ ToolRecall:    Not configured (run 'toolrecall hook antigravity print-config' to generate)"
+        )
+
+    # 3. Knowledge DB / FTS5 index
+    from toolrecall import docs
+
+    db_path = docs._get_db_path()
+    has_agy_index = False
+    agy_count = 0
+    if os.path.exists(db_path):
+        try:
+            conn = docs._get_db()
+            row = conn.execute(
+                "SELECT COUNT(*) FROM pages WHERE source LIKE 'antigravity%'"
+            ).fetchone()
+            if row and row[0] > 0:
+                has_agy_index = True
+                agy_count = row[0]
+            conn.close()
+        except Exception:
+            has_agy_index = False
+
+    if has_agy_index:
+        print(f"  ├─ Skills Search:    Indexed ({agy_count} Antigravity pages in FTS5)")
+    else:
+        print(
+            "  ├─ Skills Search:    Not indexed (run 'toolrecall index-antigravity' for 0.6ms docs_search)"
+        )
+
+    print("  │")
+    print("  └─ Verdict:")
+    if tr_registered and tr_multiplexer_only and hooks_registered:
+        print("     ✅ Fully optimized for Antigravity:")
+        print("        • Zero tool schema bloat (--multiplexer-only mode)")
+        print("        • Out-of-band drift and staleness alerts active")
+        print("        • Shared MCP server pooling host-wide")
+    elif tr_registered and not tr_multiplexer_only:
+        print("     ⚠️  Configured with full file caching tools:")
+        print(
+            "        • Antigravity is a stateful harness; MCP file caching causes a 2.4× cost increase."
+        )
+        print("        • Re-run 'toolrecall setup' or add '--multiplexer-only' to mcp_config.json.")
+    elif not tr_registered:
+        print("     ℹ️  ToolRecall is not yet attached to Antigravity.")
+        print(
+            "        • Run 'toolrecall setup' to automatically register --multiplexer-only MCP bridge."
+        )
+    else:
+        print(
+            "     ℹ️  MCP registered. Add lifecycle hooks via 'toolrecall hook antigravity print-config'."
+        )
+    print("══════════════════════════════════════════════════════════════")
+    print()
+
+
 def cmd_doctor():
     """Environment, agent compatibility, and configuration diagnostics."""
     args = sys.argv[2:]
     if any(a in ("-h", "--help") for a in args):
-        print("Usage: toolrecall doctor [claude|all] [--headless|--interactive]")
+        print("Usage: toolrecall doctor [antigravity|claude|all] [--headless|--interactive]")
         print("")
         print("Audits local workspace and agent setups for ToolRecall compatibility.")
         print("")
-        print("Supported targets: claude (or claude-code), all")
+        print("Supported targets: antigravity (or agy), claude (or claude-code), all")
         print("  --headless      you rerun the same 'claude -p' task on unchanged code")
         print("  --interactive   you use Claude Code as an interactive chat (default)")
         return
@@ -3808,11 +4016,16 @@ def cmd_doctor():
     positional = [a for a in args if not a.startswith("--")]
     target = positional[0] if positional else "all"
 
-    if target in ("claude", "claude-code", "all"):
+    if target in ("antigravity", "agy"):
+        _diagnose_antigravity()
+    elif target in ("claude", "claude-code"):
+        _diagnose_claude_code(workflow)
+    elif target == "all":
+        _diagnose_antigravity()
         _diagnose_claude_code(workflow)
     else:
         print(f"Unknown doctor target: {target}")
-        print("Supported targets: claude, all")
+        print("Supported targets: antigravity, claude, all")
         sys.exit(1)
 
 
@@ -3846,7 +4059,8 @@ def main():
         print("  trend           Daily hit-rate trend + worst miss classes (--days N --json)")
         print("  invalidate      Clear all caches")
         print("  reset-stats     Reset statistics counters (preserves cache entries)")
-        print("  index           Build/update knowledge database (--memory to add memory stores)")
+        print("  index           Build/update knowledge database (--memory, --antigravity)")
+        print("  index-antigravity Index Antigravity skills, plugins, and brain artifacts")
         print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
         print("  index-compact   Rebuild FTS index + VACUUM knowledge DB (reclaim bloat)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
@@ -3891,6 +4105,7 @@ def main():
         "mcp",
         "restart",
         "index",
+        "index-antigravity",
         "index-memory",
         "index-dir",
         "index-remote",
@@ -3911,6 +4126,7 @@ def main():
         "invalidate": cmd_invalidate,
         "reset-stats": cmd_reset_stats,
         "index": cmd_index,
+        "index-antigravity": cmd_index_antigravity,
         "index-compact": cmd_index_compact,
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,
@@ -3959,3 +4175,7 @@ def main():
         print()
         print("Run `toolrecall --help` for descriptions, or `toolrecall <command> --help`")
         print("for per-command usage.")
+
+
+if __name__ == "__main__":
+    main()

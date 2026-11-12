@@ -58,13 +58,139 @@ import functools
 import inspect
 import json
 import logging
+import os
 
 from toolrecall import client as _tr_client
 from toolrecall.cache import cached_mcp_check, cached_mcp_store
+from toolrecall.keys import content_digest
 
 logger = logging.getLogger("toolrecall.adapters.antigravity")
 
 ADAPTER_SERVER = "antigravity"  # Cache namespace for Antigravity tool calls
+
+
+def tag_agent_role(role: str) -> None:
+    """Set or update ToolRecall agent attribution for this process.
+
+    Common roles: 'coordinator', 'subagent', 'swarm_worker'.
+    Sets TOOLRECALL_AGENT_ID to 'antigravity:<role>'.
+    """
+    clean_role = "".join(c for c in role if c.isalnum() or c in "-_")
+    os.environ["TOOLRECALL_AGENT_ID"] = f"antigravity:{clean_role}" if clean_role else "antigravity"
+
+
+def store_pointer(
+    content: str,
+    summary: str = "",
+    reproducible: bool = False,
+    content_type: str = "other",
+) -> dict:
+    """Store large tool or subagent output out-of-band and return a compact pointer.
+
+    Reduces context consumption by letting agents and subagents retain a
+    pointer node instead of multi-thousand token raw outputs.
+
+    Returns:
+        dict: {"node_id": str, "pointer": str, "summary": str, "tokens_est": int, "persisted": bool}
+    """
+    digest = content_digest(content.encode("utf-8"))
+    tokens_est = len(content) // 4
+    if not summary:
+        first_line = content.strip().split("\n", 1)[0][:120].strip()
+        summary = first_line if first_line else f"Output ({len(content)} chars)"
+
+    if not _tr_client.daemon_running():
+        node_id = digest[:12]
+        return {
+            "node_id": node_id,
+            "pointer": f"[toolrecall:pointer:{node_id}]",
+            "summary": summary,
+            "tokens_est": tokens_est,
+            "persisted": False,
+        }
+
+    try:
+        resp = _tr_client.recall_store(
+            fingerprint=digest,
+            content=content,
+            content_type=content_type,
+            reproducible=reproducible,
+            summary=summary,
+        )
+        if resp.get("node_id") and not resp.get("error"):
+            node_id = resp["node_id"]
+            return {
+                "node_id": node_id,
+                "pointer": f"[toolrecall:pointer:{node_id}]",
+                "summary": summary,
+                "tokens_est": tokens_est,
+                "persisted": True,
+            }
+        node_id = digest[:12]
+        return {
+            "node_id": node_id,
+            "pointer": f"[toolrecall:pointer:{node_id}]",
+            "summary": summary,
+            "tokens_est": tokens_est,
+            "persisted": False,
+        }
+    except Exception as e:
+        logger.warning("recall_store failed: %s", e)
+        node_id = digest[:12]
+        return {
+            "node_id": node_id,
+            "pointer": f"[toolrecall:pointer:{node_id}]",
+            "summary": summary,
+            "tokens_est": tokens_est,
+            "persisted": False,
+        }
+
+
+def fetch_pointer(node_id: str) -> str | None:
+    """Restore output previously persisted via store_pointer by its node_id."""
+    if not _tr_client.daemon_running():
+        return None
+    try:
+        resp = _tr_client.recall_get(node_id)
+        entry = resp.get("entry")
+        if isinstance(entry, dict) and "content" in entry:
+            return entry["content"]
+        return None
+    except Exception as e:
+        logger.warning("recall_get(%s) failed: %s", node_id, e)
+        return None
+
+
+def recall_pointer(threshold_chars: int = 2000, summary_len: int = 120):
+    """Decorator: automatically offload large tool outputs into Recall Tier pointers.
+
+    When the returned string from a tool exceeds threshold_chars, persists
+    the full body into the daemon's Recall cache and returns a compact pointer
+    dictionary so conversation history does not balloon.
+    """
+
+    def decorator(fn):
+        is_async = _is_async(fn)
+
+        @functools.wraps(fn)
+        def sync_wrap(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if isinstance(result, str) and len(result) >= threshold_chars:
+                summary = result.strip().split("\n", 1)[0][:summary_len].strip()
+                return store_pointer(result, summary=summary)
+            return result
+
+        @functools.wraps(fn)
+        async def async_wrap(*args, **kwargs):
+            result = await fn(*args, **kwargs)
+            if isinstance(result, str) and len(result) >= threshold_chars:
+                summary = result.strip().split("\n", 1)[0][:summary_len].strip()
+                return store_pointer(result, summary=summary)
+            return result
+
+        return async_wrap if is_async else sync_wrap
+
+    return decorator
 
 
 def _request_hash(tool: str, args_json: str) -> str:

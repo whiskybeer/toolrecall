@@ -20,7 +20,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | **Codex CLI** | ⚠️ Multiplex only (static tools) | ✅ | ❌ N/A (Node.js) | **Selective** | MCP bridge for static tool multiplexing only; skip file caching. |
 | **Cursor** | ✅ Multiplexer only (`~/.cursor/mcp.json`) | ✅ | ⚠️ Safe but redundant | **Low** | Cursor manages context natively. `toolrecall setup` configures `~/.cursor/mcp.json` with `--multiplexer-only` to pool MCP servers host-wide, plus :8569 for proxy dedup. |
 | **Warp** | ❌ N/A | ✅ via [warp adapter](#warp-⚠️-selective--strong-for-platform-workloads) | ❌ N/A (Rust) | **Selective** | Strong for platform workloads (agent fleets, Factories replay, cross-model evals); skip the file cache — Warp manages its own context. Requires a public HTTPS endpoint (Warp's backend calls your endpoint; localhost is rejected). |
-| **Antigravity** | ✅ Bridge + replay + FTS | ❌ N/A interactive (Google-hosted); ✅ headless/eval | ⚠️ SDK only, opt-in | **Selective** | SDK tools are plain callables → `@cached_tool` dedups expensive external calls; bridge unlocks replay + `docs_search` + MCP multiplex. Interactive CLI/IDE has no base-URL override; proxy canonical profile (`antigravity`) works for headless SDK runs and eval pipelines. Do NOT enable MCP file caching — stateful edit-heavy agent, same 2.4× trap as Claude Code. Contrast with [Google ADK](#google-adk--✅-high-value): same vendor, opposite end of the statefulness spectrum — ADK is the stateless case (shim + proxy apply), Antigravity the stateful one. Both adapters can share one daemon (separate namespaces). |
+| **Antigravity** | ✅ Multiplexer-only (`--multiplexer-only`) + Hooks + Replay + FTS | ❌ N/A interactive (Google-hosted); ✅ headless/eval | ⚠️ SDK only, opt-in | **Selective** | Configured with `--multiplexer-only` by default to pool MCP servers and provide 0.6ms skills search without file cache schema bloat (avoiding 2.4× cost trap). Lifecycle hooks (`toolrecall hook antigravity` / `.agents/hooks.json`) provide WAF security gate, disk drift detection, and context staleness alerts. SDK tools are plain callables → `@cached_tool` with subagent pooling (`tag_agent_role`) and Recall Tier pointers (`@recall_pointer`). Forward proxy `antigravity` canonical profile normalizes volatile metadata and sorts parallel tool results across OpenAI and Gemini wire formats for $0 headless reruns. Diagnostic audit (`toolrecall audit antigravity`) and environment doctor (`toolrecall doctor antigravity`). |
 
 ---
 
@@ -505,35 +505,41 @@ Verified locally: identical request twice through edge → proxy → daemon = on
 
 ---
 
-## Antigravity — ⚠️ Selective — bridge value, no LLM path
+## Antigravity — ⚠️ Selective — multiplexer, hooks, SDK pooling, no interactive LLM path
 
 Google Antigravity (2.0 / IDE / CLI) consumes MCP config externally
 (`~/.gemini/config/mcp_config.json` global, `.agents/mcp_config.json`
 workspace) — the same integration shape as OpenCode, and unlike ADK the
-bridge CAN sit between Antigravity and other MCP servers. The
-`google-antigravity` SDK registers custom tools as plain callables, so
-[`@cached_tool`](antigravity.md#path-2-antigravity-sdk-decorator-python-agents)
-works exactly like the ADK adapter.
+bridge CAN sit between Antigravity and other MCP servers. `toolrecall setup`
+configures `--multiplexer-only` by default, pooling external servers and providing
+0.6ms BM25 skills search without adding file tool schema bloat to prompts.
+
+The `google-antigravity` SDK registers custom tools as plain callables, so
+[`@cached_tool`](antigravity.md#path-2-antigravity-sdk-decorator--subagent-pooling)
+works with subagent role tagging (`tag_agent_role`) and Recall Tier pointer
+compression (`@recall_pointer`).
 
 ### Antigravity Surface Breakdown: IDE (Desktop) vs. CLI (agy) vs. SDK
 
 | Surface | ToolRecall Value | Why & Recommended Setup |
 |---|:---:|---|
-| **Antigravity Desktop (IDE Chat)** | ⚠️ **Selective** | No LLM base-URL override. Do not enable MCP file caching. **Use:** MCP Multiplexing (−70% RAM across windows) and 0.6ms local FTS5 skills search (`docs_search`). |
-| **Antigravity CLI (`agy` interactive)** | ⚠️ **Selective** | Same Google-hosted inference path as IDE chat. Shares `~/.gemini/config/mcp_config.json`. **Use:** MCP Multiplexer, skills search, and `tr` terminal tool wrapper. |
-| **Antigravity Headless / Eval Loops** | 🟢 **High** | Uses `export TOOLRECALL_CANONICALIZE=antigravity` to strip volatile timestamps (`<ADDITIONAL_METADATA>`) and session UUIDs for 100% warm replay in CI. |
-| **Antigravity Python SDK (`google-antigravity`)** | 🟢 **High** | Wrap expensive tools with `@antigravity.cached_tool(ttl=300, freshness=True)`. Eliminates duplicate external tool calls during subagent handovers. |
+| **Antigravity Desktop (IDE Chat)** | ⚠️ **Selective** | No LLM base-URL override. Do not enable MCP file caching. **Use:** MCP Multiplexing (−70% RAM across windows), lifecycle hooks (`.agents/hooks.json`), and 0.6ms local FTS5 skills search (`docs_search`). |
+| **Antigravity CLI (`agy` interactive)** | ⚠️ **Selective** | Same Google-hosted inference path as IDE chat. Shares `~/.gemini/config/mcp_config.json`. **Use:** MCP Multiplexer, lifecycle hooks (`toolrecall hook antigravity`), token auditor (`toolrecall audit antigravity`), and `tr` terminal tool wrapper. |
+| **Antigravity Headless / Eval Loops** | 🟢 **High** | Uses `export TOOLRECALL_CANONICALIZE=antigravity` to strip volatile timestamps (`<ADDITIONAL_METADATA>`), session UUIDs, settings changes, and normalize parallel tool results across OpenAI and Gemini wire formats for 100% warm replay in CI. |
+| **Antigravity Python SDK (`google-antigravity`)** | 🟢 **High** | Wrap expensive tools with `@antigravity.cached_tool(ttl=300, freshness=True)` and `@antigravity.recall_pointer`. Shared daemon cache pool deduplicates identical calls during subagent handovers. |
 
 **Works:** SDK tool caching (web/GitHub/DB lookups), session replay via the
-bridge (`toolrecall replay record`), FTS over skills/rules
-(`toolrecall index-dir ~/.gemini/skills`), opt-in MCP multiplex response
-cache (`ttl = 0` on write-tool servers).
+bridge (`toolrecall replay record`), lifecycle hooks (`toolrecall hook antigravity`
+for WAF gate, disk drift detection, and staleness alert injection), FTS over
+skills/plugins/artifacts (`toolrecall index-antigravity`), transcript auditing
+(`toolrecall audit antigravity`), environment doctor (`toolrecall doctor antigravity`),
+and opt-in MCP multiplex response cache (`ttl = 0` on write-tool servers).
 
 **Doesn't:** No forward proxy / API caching for interactive chat — Antigravity has no base-URL
 override on its IDE/CLI chat surfaces; inference is Google-hosted by design. (The proxy's
 `antigravity` canonical profile applies only to headless eval harnesses and SDK pipelines).
 Do NOT enable MCP file caching: Antigravity manages its own context (stateful, edit-heavy)
-— the same measured 2.4× cost trap as Claude Code.
+— the same measured 2.4× cost trap as Claude Code. Use `--multiplexer-only`.
 
 [Full docs →](antigravity.md)
 

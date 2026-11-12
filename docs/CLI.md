@@ -44,9 +44,10 @@ The dispatcher in `cli.py` maps the first argument to a `cmd_*` function:
 | `toolrecall top` | `cmd_top()` → `toolrecall/tui_top.py` | `toolrecall/cli.py` |
 | `toolrecall proxy` | `cmd_proxy()` → dispatches subcommands | `toolrecall/cli.py` |
 | `toolrecall healthcheck` | `cmd_healthcheck()` | `toolrecall/cli.py` |
-| `toolrecall hook` | `cmd_hook()` → `toolrecall/adapters/claude_code.py` | `toolrecall/cli.py` |
-| `toolrecall audit` | `cmd_audit()` → `toolrecall/adapters/claude_code_audit.py` | `toolrecall/cli.py` |
-| `toolrecall doctor` | `cmd_doctor()` → `_diagnose_claude_code()` | `toolrecall/cli.py` |
+| `toolrecall hook` | `cmd_hook()` → Claude Code or Antigravity adapter | `toolrecall/cli.py` |
+| `toolrecall audit` | `cmd_audit()` → Claude Code or Antigravity transcript auditor | `toolrecall/cli.py` |
+| `toolrecall doctor` | `cmd_doctor()` → `_diagnose_claude_code()` / `_diagnose_antigravity()` | `toolrecall/cli.py` |
+| `toolrecall index-antigravity` | `cmd_index_antigravity()` → `docs.index_antigravity()` | `toolrecall/cli.py` |
 | `toolrecall keytrace` | `cmd_keytrace()` → `toolrecall/keytrace.py` | `toolrecall/cli.py` |
 
 Each function imports its dependencies lazily — running `toolrecall status` does not load `daemon.py` or `proxy.py`.
@@ -354,42 +355,42 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error
 - **Full reference:** [Context Stale](CONTEXT_STALE.md), [Context Tracker](CONTEXT_TRACKER.md)
 
-### `toolrecall hook claude`
+### `toolrecall hook`
 
-- **File:** `cli.py : cmd_hook()` → `adapters/claude_code.py : main()`
-- **Purpose:** Claude Code lifecycle hooks and setup snippets.
-  - `toolrecall hook claude print-config [command]` — `settings.json` hooks block
-    (staleness alert, optional WAF gate). Without a subcommand the adapter reads
-    one hook event as JSON on stdin.
-  - `toolrecall hook claude ci-env [--port N]` — shell snippet for repeated headless
-    runs through the forward proxy (canonicalize header, `PYTHONHASHSEED=0`, pinned MCP).
-- See [CLAUDE_CODE_INTEGRATIONS.md](CLAUDE_CODE_INTEGRATIONS.md).
+- **File:** `cli.py : cmd_hook()` → `adapters/claude_code.py` or `adapters/antigravity_hooks.py`
+- **Subcommands:**
+  - `toolrecall hook claude [print-config|ci-env]` — Claude Code lifecycle hooks (`settings.json`).
+  - `toolrecall hook antigravity [print-config|pre-tool|post-tool|pre-invocation|session-start]` — Antigravity lifecycle hooks (`.agents/hooks.json`):
+    - `print-config`: outputs `.agents/hooks.json` configuration block.
+    - `pre-tool`: WAF security gate blocking access to sensitive secrets (`.env`, `id_rsa`) and destructive shell commands (`rm -rf /`, `mkfs`).
+    - `post-tool`: records tool file writes/reads and detects disk drift after command execution.
+    - `pre-invocation`: injects context staleness warnings before next agent turn.
+    - `session-start`: resets turn tracking and ephemeral session state.
 
-### `toolrecall audit claude-code`
+### `toolrecall audit`
 
-- **File:** `cli.py : cmd_audit()` → `adapters/claude_code_audit.py : main()`
-- **Purpose:** read-only report of where Claude Code session tokens go: exact fixed
-  starting context per session, its share of list-price-weighted cost, and the
-  controllable parts (instruction files, skill/MCP/agent listings) ranked by cost share.
-- **Options:** `--days N`, `--projects DIR` (default `~/.claude/projects`),
-  `--include-tmp` (sessions whose workdir is under `/tmp`), `--json`.
+- **File:** `cli.py : cmd_audit()` → `adapters/claude_code_audit.py` or `adapters/antigravity_audit.py`
+- **Usage:**
+  - `toolrecall audit claude-code [--days N] [--projects DIR] [--json]` — Token distribution and fixed prompt cost report for Claude Code.
+  - `toolrecall audit antigravity [--days N] [--all] [--json]` — Antigravity transcript token auditor. Scans `transcript.jsonl` files across brain directories, reporting turn counts, token distribution (input, cache read, output), heavily executed tools, redundant file reads, and subagent spawns.
 
 ### `toolrecall doctor`
 
-- **File:** `cli.py : cmd_doctor()` → `_diagnose_claude_code()`
-- **Purpose:** environment and agent compatibility diagnostics for Claude Code.
-  Checks the `claude` binary; MCP servers from all three scopes (`user` and `local`
-  in `~/.claude.json`, `project` in the repo's `.mcp.json`), split into local stdio
-  (poolable) and remote HTTP/SSE; how ToolRecall is registered (warns on the full
-  bridge, measured 2.4× cost); and whether `ANTHROPIC_BASE_URL` points at the proxy.
-  The verdict lists every finding. Interactive use reports ~0% token saving;
-  `--headless` reports the measured replay numbers (identical rerun $0, −45% / −72%
-  cumulative after 2 / 4 runs, first run no saving). Always points to `toolrecall audit claude-code --days 30` for history.
-- **Workflow:** stated by the user, not guessed. Without a flag the repo (git root
-  only, depth 4, hidden dirs except `.github` skipped, 2,000 files, 2 s budget) is
-  scanned for `claude -p` / `--print` / `claude-code-action` outside comments; a hit
-  is shown as a hint only.
-- **Usage:** `toolrecall doctor [claude|all] [--headless|--interactive]`
+- **File:** `cli.py : cmd_doctor()` → `_diagnose_claude_code()`, `_diagnose_antigravity()`
+- **Purpose:** environment and agent compatibility diagnostics.
+- **Usage:** `toolrecall doctor [claude|antigravity|all] [--headless|--interactive]`
+- **Checks for Antigravity:**
+  - Reachability of Antigravity binary (`agy`).
+  - MCP registration (`mcp_config.json`) verifying `--multiplexer-only` flag is present (preventing 2.4× cost trap).
+  - Lifecycle hooks configuration in `.agents/hooks.json`.
+  - FTS5 skills database index status.
+  - Daemon socket health.
+
+### `toolrecall index-antigravity`
+
+- **File:** `cli.py : cmd_index_antigravity()` → `docs.index_antigravity()`
+- **Purpose:** Automatically scans and indexes all Antigravity built-in skills, workspace skills (`.agents/skills`), plugin skills (`~/.gemini/config/plugins/**/skills`), and conversation markdown artifacts into the SQLite FTS5 database.
+- **Options:** `--no-artifacts` (skip conversation artifacts), `--source <label>` (custom source label). Enables sub-millisecond keyword retrieval through the bridge's `docs_search` tool.
 
 ### `toolrecall keytrace`
 

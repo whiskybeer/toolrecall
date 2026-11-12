@@ -58,6 +58,18 @@ class TestPrepareAntigravityConfig:
         data = json.loads(open(path).read())
         entry = data["mcpServers"]["toolrecall"]
         assert entry["command"] == "/usr/local/bin/toolrecall"
+        assert entry["args"] == ["mcp", "--multiplexer-only"]
+
+    def test_creates_config_full_mode(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/toolrecall")
+        path = str(tmp_path / "config" / "mcp_config_full.json")
+
+        wrote, info = cli._prepare_antigravity_config(path, multiplexer_only=False)
+
+        assert wrote is True
+        assert info == "created"
+        data = json.loads(open(path).read())
+        entry = data["mcpServers"]["toolrecall"]
         assert entry["args"] == ["mcp"]
 
     def test_parent_dirs_created(self, tmp_path, monkeypatch):
@@ -93,7 +105,7 @@ class TestPrepareAntigravityConfig:
         assert data["mcpServers"]["my-remote"] == {"serverUrl": "https://api.example.com/mcp/"}
         assert data["mcpServers"]["sqlite-explorer"]["command"] == "node"
         # toolrecall entry added
-        assert data["mcpServers"]["toolrecall"]["args"] == ["mcp"]
+        assert data["mcpServers"]["toolrecall"]["args"] == ["mcp", "--multiplexer-only"]
 
     def test_idempotent(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda name: "/tr/bin/toolrecall")

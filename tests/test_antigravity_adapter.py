@@ -10,6 +10,7 @@ is importable — same convention as the LangGraph adapter.
 
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -476,3 +477,69 @@ def real_runner_execute(runner, tool_name, **kwargs):
     import asyncio
 
     return asyncio.run(runner.execute(tool_name, **kwargs))
+
+
+class TestAntigravityPointerAndAttribution:
+    def test_tag_agent_role(self, monkeypatch):
+        antigravity.tag_agent_role("subagent")
+        assert os.environ.get("TOOLRECALL_AGENT_ID") == "antigravity:subagent"
+
+        antigravity.tag_agent_role("swarm_worker")
+        assert os.environ.get("TOOLRECALL_AGENT_ID") == "antigravity:swarm_worker"
+
+    def test_store_and_fetch_pointer_offline_fallback(self, monkeypatch):
+        monkeypatch.setattr("toolrecall.client.daemon_running", lambda: False)
+        ptr = antigravity.store_pointer(
+            "Line 1 of long text\nLine 2\nLine 3", summary="Test summary"
+        )
+        assert ptr["persisted"] is False
+        assert ptr["summary"] == "Test summary"
+        assert ptr["pointer"].startswith("[toolrecall:pointer:")
+
+        assert antigravity.fetch_pointer(ptr["node_id"]) is None
+
+    def test_store_and_fetch_pointer_daemon(self, daemon_up, monkeypatch):
+        stored = {}
+
+        def _mock_store(*, fingerprint, content, **kwargs):
+            nid = fingerprint[:12]
+            stored[nid] = {"content": content, "summary": kwargs.get("summary", "")}
+            return {"node_id": nid}
+
+        def _mock_get(node_id):
+            return {"entry": stored.get(node_id)}
+
+        monkeypatch.setattr("toolrecall.client.recall_store", _mock_store)
+        monkeypatch.setattr("toolrecall.client.recall_get", _mock_get)
+
+        large_content = "Extensive report data\n" * 50
+        ptr = antigravity.store_pointer(large_content, summary="Big Report")
+        assert ptr["persisted"] is True
+        assert ptr["summary"] == "Big Report"
+        node_id = ptr["node_id"]
+
+        restored = antigravity.fetch_pointer(node_id)
+        assert restored == large_content
+
+    def test_recall_pointer_decorator(self, daemon_up, monkeypatch):
+        stored = {}
+
+        def _mock_store(*, fingerprint, content, **kwargs):
+            nid = fingerprint[:12]
+            stored[nid] = {"content": content, "summary": kwargs.get("summary", "")}
+            return {"node_id": nid}
+
+        monkeypatch.setattr("toolrecall.client.recall_store", _mock_store)
+
+        @antigravity.recall_pointer(threshold_chars=100)
+        def generate_log(size: int) -> str:
+            return "x" * size
+
+        short_res = generate_log(50)
+        assert isinstance(short_res, str)
+        assert short_res == "x" * 50
+
+        large_res = generate_log(250)
+        assert isinstance(large_res, dict)
+        assert large_res["persisted"] is True
+        assert large_res["pointer"].startswith("[toolrecall:pointer:")

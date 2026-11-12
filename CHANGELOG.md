@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Antigravity full-stack optimizations — 6 complementary layers:**
+  - **Multiplexer-only MCP registration:** `toolrecall setup` configures `--multiplexer-only` by default for Antigravity, preventing prompt token bloat and avoiding the 2.4× stateful file-cache cost trap while preserving background server pooling and 0.6ms BM25 skills search.
+  - **Lifecycle hook adapter (`toolrecall hook antigravity`):** Implements `.agents/hooks.json` integration with WAF security gate (`PreToolUse` blocking `.env`, credentials, dangerous shell commands), out-of-band disk drift tracking (`PostToolUse`), context staleness warnings (`PreInvocation`), and session state cleanup (`SessionStart`).
+  - **Subagent/swarm cache pooling and Recall Tier pointers:** SDK adapter adds `tag_agent_role(role)` for subagent cost attribution, and Recall Tier pointer compression (`store_pointer`, `fetch_pointer`, `@recall_pointer`) to compress large non-reproducible payloads into lightweight pointer nodes.
+  - **Transcript token auditor (`toolrecall audit antigravity`):** Reads and parses `transcript.jsonl` files across Antigravity brain directories, analyzing token consumption (input, cache read, output), turn counts, tool usage distribution, redundant reads, and subagent spawns.
+  - **Antigravity environment doctor (`toolrecall doctor antigravity`):** Validates binary reachability, MCP configuration (`--multiplexer-only`), lifecycle hooks setup, FTS5 skills database index, and daemon socket.
+  - **FTS5 Auto-Indexing (`toolrecall index-antigravity`):** Auto-discovers and indexes builtin skills, workspace skills, plugin skills, and conversation markdown artifacts for sub-millisecond keyword retrieval via `docs_search`.
+  - **Forward-proxy canonicalization profile polish:** `antigravity` canonical profile normalizes volatile `<ADDITIONAL_METADATA>` timestamps, conversation UUIDs, brain paths, `<USER_SETTINGS_CHANGE>`, execution durations, and deterministically sorts parallel tool calls/responses across both OpenAI/Anthropic (`messages`) and Google Gemini (`contents`/`parts`) wire formats for $0 headless rerun replay.
+  Tests: `tests/test_setup_antigravity.py`, `tests/test_antigravity_adapter.py`, `tests/test_antigravity_hooks.py`, `tests/test_antigravity_audit.py`, `tests/test_index_antigravity.py`, `tests/test_antigravity_canonicalize.py` (62 tests).
+
 ## [0.8.24] — 2026-11-11
 
 ### Added

@@ -544,17 +544,64 @@ _RE_AG_TIME = re.compile(
 )
 _RE_AG_BRAIN_PATH = re.compile(r"/brain/[0-9a-fA-F-]{36}")
 _RE_AG_CONV_ID = re.compile(r"Conversation ID: [0-9a-fA-F-]{36}")
+_RE_AG_SETTINGS_CHANGE = re.compile(r"\n?<USER_SETTINGS_CHANGE>[\s\S]*?</USER_SETTINGS_CHANGE>")
 
 
 def _ag_canon_text(text: str) -> str:
     """Antigravity profile: volatile timestamp in <ADDITIONAL_METADATA>,
-    conversation UUIDs, brain directory paths, test durations + hermes rules."""
+    conversation UUIDs, brain directory paths, user settings changes, test durations + hermes rules."""
+    text = _RE_AG_SETTINGS_CHANGE.sub("", text)
     text = _hermes_canon_text(text)
     text = _RE_AG_TIME.sub("The current local time is: 1970-01-01T00:00:00Z", text)
     text = _RE_AG_CONV_ID.sub("Conversation ID: 00000000-0000-0000-0000-000000000000", text)
     text = _RE_AG_BRAIN_PATH.sub("/brain/00000000-0000-0000-0000-000000000000", text)
     text = _RE_CANON_DURATION.sub(r"\1 <duration>", text)
     return text
+
+
+def _ag_canon_message(msg):
+    """Sort parallel tool result/call blocks deterministically across OpenAI and Gemini wire formats."""
+    if not isinstance(msg, dict):
+        return msg
+    # OpenAI / Anthropic format
+    content = msg.get("content")
+    if isinstance(content, list):
+        slots = [
+            i
+            for i, b in enumerate(content)
+            if isinstance(b, dict) and b.get("type") in ("tool_result", "function_call", "tool_use")
+        ]
+        if len(slots) > 1:
+            ordered = sorted(
+                (content[i] for i in slots),
+                key=lambda b: str(b.get("tool_use_id") or b.get("name") or b.get("id") or ""),
+            )
+            content = list(content)
+            for i, b in zip(slots, ordered):
+                content[i] = b
+            msg = {**msg, "content": content}
+    # Google Gemini format
+    parts = msg.get("parts")
+    if isinstance(parts, list):
+        fn_slots = [
+            i
+            for i, p in enumerate(parts)
+            if isinstance(p, dict) and ("functionResponse" in p or "functionCall" in p)
+        ]
+        if len(fn_slots) > 1:
+            ordered = sorted(
+                (parts[i] for i in fn_slots),
+                key=lambda p: str(
+                    (p.get("functionResponse") or {}).get("name")
+                    or (p.get("functionCall") or {}).get("name")
+                    or ""
+                ),
+            )
+            parts = list(parts)
+            for i, p in zip(fn_slots, ordered):
+                parts[i] = p
+            msg = {**msg, "parts": parts}
+    return msg
 
 
 def _ag_canon_walk(node):
@@ -639,6 +686,11 @@ def _canonicalize_body(profile: str, body: bytes, ignore_git: bool = False):
             envelope["messages"] = _cc_canon_grep_results(
                 [_cc_canon_message(m) for m in envelope["messages"]]
             )
+    elif profile == "antigravity" and isinstance(envelope, dict):
+        if isinstance(envelope.get("messages"), list):
+            envelope["messages"] = [_ag_canon_message(m) for m in envelope["messages"]]
+        if isinstance(envelope.get("contents"), list):
+            envelope["contents"] = [_ag_canon_message(m) for m in envelope["contents"]]
     envelope = walk(envelope)
     if ignore_git:
         envelope = _git_norm_walk(envelope)
