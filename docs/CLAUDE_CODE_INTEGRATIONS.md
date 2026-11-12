@@ -150,9 +150,15 @@ and replaying 193 real sessions found **nothing to stub**. Leave it off for Clau
 
 ---
 
-## 6. MCP: multiplexer only
+## 6. MCP: multiplexer only & auto-indexed FTS5 search
 
 `toolrecall setup` registers Claude Code with `--multiplexer-only`: Claude Code shares
-one daemon and process pool across MCP servers without ToolRecall's file tools.
-`docs_search` is available for indexed documentation corpora. Neither is a token
-saving; not benchmarked here.
+one daemon and process pool across MCP servers without ToolRecall's file tools (avoiding
+the 2.4× cost trap).
+
+Under `--multiplexer-only`, ToolRecall exposes `docs_search` and `docs_get_page`:
+- During `toolrecall setup`, Claude Code's commands (`~/.claude/commands`, `~/.claude/skills`),
+  project instructions (`CLAUDE.md`), and memory are auto-indexed into SQLite FTS5.
+- Claude Code can search all indexed skills and guidelines in 0.6ms via `docs_search("<query>")`
+  without reading full markdown files into the context window.
+- Manual re-index: `toolrecall index-claude` or `toolrecall index --all`.

@@ -4,6 +4,7 @@ Full-text search over indexed documents (skills, projects, etc.).
 No embedding, no GPU, no API call -- pure SQLite FTS5 + BM25.
 """
 
+import logging
 import os
 import sqlite3
 import sys
@@ -11,6 +12,8 @@ import threading
 import time
 from toolrecall.cache import _hash
 from toolrecall.config import load_config
+
+logger = logging.getLogger(__name__)
 
 
 # Lazy config — the Config class in config.py always creates a fresh
@@ -961,6 +964,138 @@ def index_antigravity(
                 )
                 counts[src] = counts.get(src, 0) + n
                 total += n
+
+    counts["total"] = total
+    return counts
+
+
+def index_claude_code(custom_roots: list[str] | None = None) -> dict[str, int]:
+    """Auto-index Claude Code user commands, skills, memory, and project instructions into FTS5.
+
+    Discovers:
+      1. User commands / skills: ~/.claude/commands, ~/.claude/skills, .claude/commands, .claude/skills
+      2. Instructions: ~/.claude/CLAUDE.md, ./CLAUDE.md, .claude/CLAUDE.md
+      3. Memory / plugins: ~/.claude/memory, ~/.claude/plugins
+
+    Returns:
+        dict: {"claude-skills": n, "claude-instructions": n, "claude-plugins": n, "total": total}
+    """
+    counts: dict[str, int] = {}
+    total = 0
+
+    roots = custom_roots or []
+    if not roots:
+        command_dirs = [
+            (os.path.expanduser("~/.claude/commands"), "claude-commands"),
+            (os.path.expanduser("~/.claude/skills"), "claude-skills"),
+            (os.path.abspath(".claude/commands"), "claude-commands"),
+            (os.path.abspath(".claude/skills"), "claude-skills"),
+        ]
+        instruction_files = [
+            (os.path.expanduser("~/.claude/CLAUDE.md"), "claude-instructions"),
+            (os.path.abspath("CLAUDE.md"), "claude-instructions"),
+            (os.path.abspath(".claude/CLAUDE.md"), "claude-instructions"),
+        ]
+        plugin_dirs = [
+            (os.path.expanduser("~/.claude/plugins"), "claude-plugins"),
+            (os.path.expanduser("~/.claude/memory"), "claude-memory"),
+        ]
+    else:
+        command_dirs = [(r, "claude-commands") for r in roots]
+        instruction_files = []
+        plugin_dirs = []
+
+    # 1. Index command/skill directories
+    for p, src in command_dirs:
+        if os.path.isdir(p):
+            n = index_directory(p, source=src, extensions=(".md",))
+            counts[src] = counts.get(src, 0) + n
+            total += n
+
+    # 2. Index instruction files
+    conn = _get_db()
+    _ensure_tables(conn)
+    cursor = conn.cursor()
+    for fpath, src in instruction_files:
+        if os.path.isfile(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                title = os.path.basename(fpath)
+                for line in content.split("\n"):
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+                cursor.execute(
+                    "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                    (src, os.path.basename(fpath), title, content, f"file://{fpath}"),
+                )
+                counts[src] = counts.get(src, 0) + 1
+                total += 1
+            except OSError as err:
+                logger.debug("Failed reading %s: %s", fpath, err)
+    conn.commit()
+    conn.close()
+
+    # 3. Index plugins & memory
+    for p, src in plugin_dirs:
+        if os.path.isdir(p):
+            n = index_directory(
+                p,
+                source=src,
+                extensions=(".md",),
+                ignore_dirs={".git", "node_modules", ".venv", "__pycache__"},
+            )
+            counts[src] = counts.get(src, 0) + n
+            total += n
+
+    counts["total"] = total
+    return counts
+
+
+def index_all_agents() -> dict[str, int]:
+    """Agent-agnostic auto-indexing: scans all detected local agent frameworks
+    (Antigravity, Claude Code, Hermes) and indexes their skills, instructions, and
+    memory into the FTS5 knowledge database.
+
+    Returns:
+        dict: combined mapping of source names to indexed page counts, including 'total'.
+    """
+    counts: dict[str, int] = {}
+    total = 0
+
+    # 1. Antigravity
+    ag_home = os.path.expanduser("~/.gemini")
+    if os.path.isdir(ag_home) or os.path.isdir(".agents"):
+        try:
+            agy_counts = index_antigravity()
+            for k, v in agy_counts.items():
+                if k != "total":
+                    counts[k] = counts.get(k, 0) + v
+            total += agy_counts.get("total", 0)
+        except Exception as err:
+            logger.debug("Failed indexing Antigravity: %s", err)
+
+    # 2. Claude Code
+    claude_home = os.path.expanduser("~/.claude")
+    if os.path.isdir(claude_home) or os.path.isfile("CLAUDE.md") or os.path.isdir(".claude"):
+        try:
+            cc_counts = index_claude_code()
+            for k, v in cc_counts.items():
+                if k != "total":
+                    counts[k] = counts.get(k, 0) + v
+            total += cc_counts.get("total", 0)
+        except Exception as err:
+            logger.debug("Failed indexing Claude Code: %s", err)
+
+    # 3. Hermes / Agent Memory
+    try:
+        mem_total = index_agent_memory()
+        if mem_total > 0:
+            counts["agent-memory"] = mem_total
+            total += mem_total
+    except Exception as err:
+        logger.debug("Failed indexing agent memory: %s", err)
 
     counts["total"] = total
     return counts

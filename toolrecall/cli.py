@@ -26,8 +26,11 @@ Usage:
     toolrecall init            # Create default config.toml and .env
 """
 
+import logging
 import os
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 def _stdin_is_interactive() -> bool:
@@ -727,8 +730,23 @@ def cmd_reset_stats():
 
 
 def cmd_index():
-    """Index knowledge base. Use --memory for agent memory, --antigravity for AGY skills/artifacts."""
-    from toolrecall.docs import index_all, index_agent_memory, index_antigravity
+    """Index knowledge base. Use --memory for agent memory, --antigravity for AGY, --claude for Claude Code, --all for all agents."""
+    from toolrecall.docs import (
+        index_all,
+        index_all_agents,
+        index_agent_memory,
+        index_antigravity,
+        index_claude_code,
+    )
+
+    if "--all" in sys.argv:
+        print("Indexing all detected agent frameworks (Antigravity, Claude Code, Hermes)...")
+        counts = index_all_agents()
+        print(f"Done. {counts.get('total', 0)} total agent pages indexed.")
+        for k, v in counts.items():
+            if k != "total":
+                print(f"  • {k}: {v} page(s)")
+        return
 
     print("Indexing knowledge database...")
     total = index_all()
@@ -743,6 +761,11 @@ def cmd_index():
         print("Indexing Antigravity skills, plugins, and artifacts...")
         counts = index_antigravity(include_artifacts="--no-artifacts" not in sys.argv)
         print(f"Done. {counts.get('total', 0)} Antigravity pages indexed.")
+
+    if "--claude" in sys.argv:
+        print("Indexing Claude Code commands and instructions...")
+        counts = index_claude_code()
+        print(f"Done. {counts.get('total', 0)} Claude Code pages indexed.")
 
 
 def cmd_index_antigravity():
@@ -771,6 +794,34 @@ def cmd_index_antigravity():
                 print(f"  • {src}: {cnt} page(s)")
         print()
         print("Search via: docs_search('<query>', source='antigravity-skills')")
+        print("Or across all sources in 0.6ms via docs_search('<query>').")
+
+
+def cmd_index_claude():
+    """Index Claude Code commands, skills, and instructions into FTS5 knowledge base.
+
+    Usage:
+        toolrecall index-claude [--json]
+    """
+    import json as _json
+    from toolrecall.docs import index_claude_code
+
+    as_json = "--json" in sys.argv
+
+    if not as_json:
+        print("Indexing Claude Code commands, skills, and instructions into FTS5...")
+
+    counts = index_claude_code()
+
+    if as_json:
+        print(_json.dumps(counts, indent=2))
+    else:
+        print(f"Done. Total pages indexed: {counts.get('total', 0)}")
+        for src, cnt in counts.items():
+            if src != "total":
+                print(f"  • {src}: {cnt} page(s)")
+        print()
+        print("Search via: docs_search('<query>', source='claude-commands')")
         print("Or across all sources in 0.6ms via docs_search('<query>').")
 
 
@@ -2215,6 +2266,16 @@ def _ensure_agent_integration():
             print(f"  ✅ Antigravity MCP config written (automatic): {ag_config_path}")
             result["antigravity"] = True
             _print_antigravity_notice()
+            try:
+                from toolrecall import docs
+
+                agy_idx = docs.index_antigravity()
+                if agy_idx.get("total", 0) > 0:
+                    print(
+                        f"  ✅ Antigravity skills & plugins auto-indexed ({agy_idx['total']} pages in FTS5)"
+                    )
+            except Exception as err:
+                logger.debug("Antigravity auto-index failed: %s", err)
         else:
             print(f"  ⚠️  Antigravity MCP config NOT written: {warn}")
             result["antigravity"] = False
@@ -2381,6 +2442,18 @@ def _ensure_agent_integration():
                     print(f"  ✅ Appended ToolRecall instruction to {claude_md}")
         except (OSError, IOError) as e:
             print(f"  ⚠️  Could not check/update instruction snippet: {e}")
+
+    if result.get("claude"):
+        try:
+            from toolrecall import docs
+
+            cc_idx = docs.index_claude_code()
+            if cc_idx.get("total", 0) > 0:
+                print(
+                    f"  ✅ Claude Code instructions & skills auto-indexed ({cc_idx['total']} pages in FTS5)"
+                )
+        except Exception as err:
+            logger.debug("Claude Code auto-index failed: %s", err)
 
     # ─── Cline ───────────────────────────────────────────────────────────
     cline_bin = shutil.which("cline")
@@ -4059,8 +4132,11 @@ def main():
         print("  trend           Daily hit-rate trend + worst miss classes (--days N --json)")
         print("  invalidate      Clear all caches")
         print("  reset-stats     Reset statistics counters (preserves cache entries)")
-        print("  index           Build/update knowledge database (--memory, --antigravity)")
+        print(
+            "  index           Build/update knowledge database (--memory, --antigravity, --claude, --all)"
+        )
         print("  index-antigravity Index Antigravity skills, plugins, and brain artifacts")
+        print("  index-claude    Index Claude Code commands, skills, and instructions")
         print("  index-memory    Index agent memory stores (MEMORY.md, USER.md)")
         print("  index-compact   Rebuild FTS index + VACUUM knowledge DB (reclaim bloat)")
         print("  index-dir       Index a directory into knowledge DB (e.g. Obsidian vault)")
@@ -4106,6 +4182,7 @@ def main():
         "restart",
         "index",
         "index-antigravity",
+        "index-claude",
         "index-memory",
         "index-dir",
         "index-remote",
@@ -4127,6 +4204,7 @@ def main():
         "reset-stats": cmd_reset_stats,
         "index": cmd_index,
         "index-antigravity": cmd_index_antigravity,
+        "index-claude": cmd_index_claude,
         "index-compact": cmd_index_compact,
         "index-memory": cmd_index_memory,
         "index-dir": cmd_index_dir,

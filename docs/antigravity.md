@@ -317,8 +317,11 @@ Scans `<appDataDir>/brain/<conversation-id>/.system_generated/logs/transcript.js
 Antigravity ships with built-in skills, workspace skills, and plugin directories. ToolRecall indexes these locally into SQLite FTS5 for 0.6ms BM25 keyword search:
 
 ```bash
-toolrecall index-antigravity
+toolrecall index-antigravity   # or toolrecall index --all
 ```
+
+> [!NOTE]
+> `toolrecall setup` runs this automatically upon detecting Antigravity! When installed, `docs_search` and `docs_get_page` are immediately available in Antigravity's toolset with all skills pre-indexed.
 
 Auto-discovers:
 - **Builtin Skills:** `~/.gemini/antigravity-cli/builtin/skills/`
@@ -330,7 +333,7 @@ Once indexed, any agent can query documentation instantly via the bridge's `docs
 ```python
 results = docs_search("Chrome DevTools accessibility audit")
 ```
-Re-run `toolrecall index-antigravity` whenever new skills or plugins are installed.
+Re-run `toolrecall index-antigravity` (or `toolrecall index --all`) whenever new skills or plugins are installed.
 
 ---
 

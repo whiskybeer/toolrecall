@@ -746,7 +746,12 @@ class MCPBridge:
                 continue
             if name in ("mcp_call", "mcp_list_servers") and not multiplex_enabled:
                 continue
-            if self._multiplexer_only and name not in ("mcp_call", "mcp_list_servers"):
+            if self._multiplexer_only and name not in (
+                "mcp_call",
+                "mcp_list_servers",
+                "docs_search",
+                "docs_get_page",
+            ):
                 continue
             tools.append(tdef)
 

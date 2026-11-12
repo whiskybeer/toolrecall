@@ -958,9 +958,11 @@ class TestMcpGateway(unittest.TestCase):
         self.assertFalse([n for n in tools if n.startswith("mcp__")])
 
     def test_gateway_active_in_multiplexer_only_mode(self):
-        """In multiplexer-only mode the gateway IS the way to reach servers."""
+        """In multiplexer-only mode the gateway and docs search tools are available, file tools stripped."""
         tools = self._tools(self._bridge(gateway=True, multiplexer_only=True))
         self.assertIn("mcp__hermes-docs__search_docs", tools)
+        self.assertIn("docs_search", tools)
+        self.assertIn("docs_get_page", tools)
         self.assertNotIn("read_file", tools)
 
     def test_gateway_call_routes_to_the_mcp_call_path(self):

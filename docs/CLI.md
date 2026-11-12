@@ -389,8 +389,14 @@ Most commands accept `--help` / `-h` for per-command usage and options
 ### `toolrecall index-antigravity`
 
 - **File:** `cli.py : cmd_index_antigravity()` → `docs.index_antigravity()`
-- **Purpose:** Automatically scans and indexes all Antigravity built-in skills, workspace skills (`.agents/skills`), plugin skills (`~/.gemini/config/plugins/**/skills`), and conversation markdown artifacts into the SQLite FTS5 database.
+- **Purpose:** Automatically scans and indexes all Antigravity built-in skills, workspace skills (`.agents/skills`), plugin skills (`~/.gemini/config/plugins/**/skills`), and conversation markdown artifacts into the SQLite FTS5 database. Triggered automatically by `toolrecall setup` when Antigravity is detected.
 - **Options:** `--no-artifacts` (skip conversation artifacts), `--source <label>` (custom source label). Enables sub-millisecond keyword retrieval through the bridge's `docs_search` tool.
+
+### `toolrecall index-claude`
+
+- **File:** `cli.py : cmd_index_claude()` → `docs.index_claude_code()`
+- **Purpose:** Automatically scans and indexes Claude Code user commands (`~/.claude/commands`), skills (`~/.claude/skills`), project instructions (`CLAUDE.md`), and memory into the SQLite FTS5 database. Triggered automatically by `toolrecall setup` when Claude Code is detected.
+- **Options:** `--json`. Enables sub-millisecond keyword retrieval through the bridge's `docs_search` tool.
 
 ### `toolrecall keytrace`
 
