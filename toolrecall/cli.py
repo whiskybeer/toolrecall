@@ -1799,6 +1799,8 @@ def cmd_shim():
                     "(pre-fix shim behaviour)"
                 )
                 print(f"     fix: toolrecall shim --install --venv {v.root} --yes")
+            elif st["manifest_venv"] is None:
+                print("     shim modules: not installed (nothing to converge)")
             else:
                 print("     shim modules: in sync")
         return

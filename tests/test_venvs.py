@@ -28,15 +28,19 @@ from toolrecall import venvs as venv_mod  # noqa: E402
 
 class TestVenvDiscovery(unittest.TestCase):
     def test_discover_excludes_toolrecall_own_env(self):
-        """toolrecall's own running interpreter is never returned."""
+        """toolrecall's own environment is never returned.
+
+        Identity is the venv root, not the interpreter realpath: other
+        environments legitimately share that binary (see TestVenvIdentity).
+        """
         found = venv_mod.discover_python_venvs()
         self.assertIsInstance(found, list)
-        own_exec = os.path.realpath(sys.executable)
+        own_root = os.path.realpath(sys.prefix)
         for v in found:
             self.assertNotEqual(
-                os.path.realpath(v.python),
-                own_exec,
-                "discovery must exclude toolrecall's own interpreter",
+                os.path.realpath(v.root),
+                own_root,
+                "discovery must exclude toolrecall's own environment",
             )
 
     def test_site_packages_of_venv_like_python_resolves(self):
@@ -349,6 +353,17 @@ class TestShimManifestDrift(unittest.TestCase):
         with patch("builtins.open", side_effect=AssertionError("used builtins.open")):
             got = venv_mod._manifest_of(self.a)
         self.assertEqual(got, expected)
+
+    def test_absent_package_is_not_drift(self):
+        """No copy at all is 'not installed', not 'pre-fix behaviour'."""
+        with (
+            patch.object(venv_mod, "_running_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_venv_manifest", return_value=None),
+            patch.object(venv_mod, "_importable", return_value=False),
+        ):
+            st = venv_mod.shim_status(self._fake_venv())
+        self.assertFalse(st["drift"])
+        self.assertIsNone(st["manifest_venv"])
 
     def test_venv_manifest_ignores_a_poisoned_child_hook(self):
         """A hook active in the target interpreter must not change the digest.
