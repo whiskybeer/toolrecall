@@ -16,6 +16,7 @@ of being reported as "active".
 
 from __future__ import annotations
 
+import io
 import os
 import shutil
 import subprocess
@@ -26,7 +27,7 @@ from typing import List, Optional
 
 #: Paths under $HOME known to host agent venvs. Scanned in addition to the
 #: generic ``*/bin/python3* + pyvenv.cfg`` walk. Be generous here; each hit is
-#: deduped by realpath and validated by asking the interpreter itself.
+#: deduped by venv root and validated by asking the interpreter itself.
 _AGENT_ROOT_HINTS = (
     ".hermes",
     ".local/share/uv/tools",
@@ -293,6 +294,18 @@ _OVERLAY_PTH = "00_toolrecall_repo.pth"
 _LEGACY_OVERLAY_PTH = "zz_toolrecall_repo.pth"
 
 
+def _read_bytes(path: str) -> bytes:
+    """Read a file without ``builtins.open``.
+
+    The transparent shim (and any similar hook) patches ``builtins.open`` to
+    serve cache content. A fingerprint of the installed shim modules must
+    describe the bytes on disk, so it reads through ``io.FileIO`` — the C-level
+    opener that no file-cache hook substitutes.
+    """
+    with io.FileIO(path, "rb") as fh:
+        return fh.read()
+
+
 def _manifest_of(pkg_dir: str) -> Optional[str]:
     """Content fingerprint of the shim modules in ``pkg_dir`` (None if absent).
 
@@ -307,8 +320,7 @@ def _manifest_of(pkg_dir: str) -> Optional[str]:
     for name in sorted(_SHIM_MANIFEST_FILES):
         parts.append(name.encode("utf-8"))
         try:
-            with open(os.path.join(pkg_dir, name), "rb") as fh:
-                parts.append(fh.read())
+            parts.append(_read_bytes(os.path.join(pkg_dir, name)))
             found = True
         except OSError:
             parts.append(b"<missing>")
