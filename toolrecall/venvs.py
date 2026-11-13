@@ -296,6 +296,11 @@ def required_venv_targets(patterns: List[str]) -> List[Venv]:
     for pat in patterns:
         for hit in _glob.glob(os.path.expanduser(pat)):
             root = _venv_root_of(hit)
+            if root is None and os.path.isdir(hit):
+                # Non-PEP-405 environments (e.g. a uv-managed interpreter that
+                # carries its own site-packages but no pyvenv.cfg) are still
+                # valid shim targets; the site-packages probe decides below.
+                root = _real(hit)
             if root and root not in roots:
                 roots.append(root)
 

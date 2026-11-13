@@ -537,7 +537,10 @@ class TestRequiredVenvTargets(unittest.TestCase):
     def test_glob_resolves_and_dedupes(self):
         def fake_sp(py):
             return os.path.join(
-                os.path.dirname(os.path.dirname(py)), "lib", "python3.14", "site-packages"
+                os.path.dirname(os.path.dirname(py)),
+                "lib",
+                "python3.14",
+                "site-packages",
             )
 
         with patch.object(venv_mod, "_site_packages_of", side_effect=fake_sp):
@@ -548,6 +551,25 @@ class TestRequiredVenvTargets(unittest.TestCase):
             [v.root for v in got],
             [venv_mod._real(os.path.join(self.tmp, n)) for n in ("env-a", "env-b")],
         )
+
+    def test_non_pep405_env_is_accepted_from_its_site_packages(self):
+        """A uv-managed interpreter without pyvenv.cfg is still a target."""
+        root = os.path.join(self.tmp, "baseonly")
+        os.makedirs(os.path.join(root, "bin"))
+        os.makedirs(os.path.join(root, "lib", "python3.14", "site-packages"))
+        py = os.path.join(root, "bin", "python3")
+        with open(py, "w") as fh:
+            fh.write("#!/bin/sh\n")
+        os.chmod(py, 0o755)
+
+        def fake_sp(p):
+            return os.path.join(
+                os.path.dirname(os.path.dirname(p)), "lib", "python3.14", "site-packages"
+            )
+
+        with patch.object(venv_mod, "_site_packages_of", side_effect=fake_sp):
+            got = venv_mod.required_venv_targets([root])
+        self.assertEqual([v.root for v in got], [venv_mod._real(root)])
 
 
 if __name__ == "__main__":
