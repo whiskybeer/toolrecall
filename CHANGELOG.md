@@ -14,6 +14,15 @@
   contamination and stale-read risks and point at `--venv` / `--reconcile` instead.
 
 ### Fixed
+- **The shim skips ToolRecall's own data dir by default.** `[shim].exclude_prefixes` now
+  includes the resolved data dir (`TOOLRECALL_DATA_DIR` → `[paths].data_dir` → `~/.toolrecall`)
+  alongside the agent home. Measured 2026-11-13: after the agent-home default shipped, the
+  remaining ~50 % IO share was entirely this directory — `feedback.json` and
+  `feedback_cursor.txt` were 774 reads each in 24 h, rewritten by a 2-minute cron job that can
+  never cache-hit. Both home cascades now live in one stdlib-only module
+  (`toolrecall.home_dirs`); `toolrecall.agent_home` stays as a compatibility alias.
+  Tests: `tests/test_agent_home.py` (+4 data-dir cases), `tests/test_shim_exclude_agent_home.py`
+  and `tests/test_sweep_and_shim_exclude.py` (default list updated).
 - **`shim --status` reports the version of the code it actually runs.** The install side of the
   version pair came from `importlib.metadata`, which a pipx/uv install keeps frozen at the installed
   release while a repo overlay supplies newer modules (observed: metadata `0.8.22`, code `0.8.24`).

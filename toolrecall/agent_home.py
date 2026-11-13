@@ -1,37 +1,12 @@
-"""Agent-home resolution — one cascade, importable with nothing but the stdlib.
+"""Deprecated alias — the resolvers now live in ``toolrecall.home_dirs``.
 
-Two consumers need it:
-
-* ``Config.agent_home`` — the normal path (env → ``[paths].agent_home`` →
-  ``~/.hermes``);
-* the shim's ``_load_skip_prefixes`` except branch — the path where config
-  loading has *failed*, so it cannot call back into the config module.
-
-They were two copies of the cascade, which is how they drift. This module is
-deliberately dependency-free so the broken-config path can still import it.
-
-``~/.hermes`` remains the generic fallback for backward compatibility; agents
-should set ``AGENT_HOME`` instead of relying on it.
+Kept as a thin re-export so an external import of ``toolrecall.agent_home``
+(added in 0.8.24) keeps working. New code should import ``home_dirs``; this
+module will be removed in a future minor release.
 """
 
 from __future__ import annotations
 
-import os
-
-DEFAULT_HOME = "~/.hermes"
-
-
-def from_env() -> str:
-    """The configured agent home from the environment, or '' when unset."""
-    raw = os.environ.get("AGENT_HOME") or os.environ.get("TOOLRECALL_AGENT_HOME")
-    return os.path.expanduser(raw) if raw else ""
-
-
-def default() -> str:
-    """The generic fallback home (expanded)."""
-    return os.path.expanduser(DEFAULT_HOME)
-
-
-def resolve() -> str:
-    """Environment first, generic fallback otherwise (no config file involved)."""
-    return from_env() or default()
+from toolrecall.home_dirs import agent_home as resolve  # noqa: F401
+from toolrecall.home_dirs import agent_home_default as default  # noqa: F401
+from toolrecall.home_dirs import agent_home_from_env as from_env  # noqa: F401
