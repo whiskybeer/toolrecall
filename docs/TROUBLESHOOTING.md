@@ -306,6 +306,11 @@ version it is not. `probe: pass` proves only that the module imports — not tha
 it is the same code, which is how a venv can sit tens of commits behind while
 reporting ✅.
 
+The fingerprint itself is read from disk: the target interpreter only reports
+which copy it imports, then the six modules are hashed with `io.FileIO`. It
+never reads through an active file-cache hook, so a warm cache can neither fake
+drift nor hide it.
+
 **Fix:**
 ```bash
 toolrecall shim --status --all                  # which venvs drifted

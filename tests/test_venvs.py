@@ -375,9 +375,7 @@ class TestShimManifestDrift(unittest.TestCase):
 
         expected = venv_mod._manifest_of(os.path.dirname(toolrecall.__file__))
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(venv_mod.__file__)))
-        with patch.dict(
-            os.environ, {"PYTHONPATH": poison + os.pathsep + repo_root}
-        ):
+        with patch.dict(os.environ, {"PYTHONPATH": poison + os.pathsep + repo_root}):
             got = venv_mod._venv_manifest(sys.executable)
         self.assertEqual(got, expected)
 

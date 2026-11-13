@@ -337,32 +337,18 @@ def _venv_manifest(python: str) -> Optional[str]:
     """Fingerprint of the shim modules inside ``python``'s env.
 
     Empty/None means the env holds no shim files at all (package absent or
-    half-removed). The bytes are hashed by the target interpreter with plain
-    ``hashlib`` over the exact layout ``_manifest_of`` produces — deliberately
-    NOT by importing the target's own ``keys`` module, because the copy being
-    audited is precisely the one that may be broken or stale.
+    half-removed). The target interpreter is the only reliable oracle for
+    *which copy* it imports — repo overlays and editable installs make the
+    site-packages path the wrong answer — so it prints that directory. The
+    bytes are then read here, from disk, through ``_read_bytes``: never through
+    a file-cache hook that may be active in the child or in this process.
     """
     code = (
-        "import hashlib, os\n"
-        "try:\n"
-        "    import toolrecall\n"
-        "except Exception:\n"
-        "    raise SystemExit(0)\n"
+        "import toolrecall\n"
         "roots = [p for p in (getattr(toolrecall, '__path__', None) or []) if p]\n"
         "if not roots:\n"
         "    raise SystemExit(0)\n"
-        "parts, found = [], False\n"
-        f"for name in sorted({_SHIM_MANIFEST_FILES!r}):\n"
-        "    parts.append(name.encode('utf-8'))\n"
-        "    try:\n"
-        "        with open(os.path.join(roots[0], name), 'rb') as fh:\n"
-        "            parts.append(fh.read())\n"
-        "        found = True\n"
-        "    except OSError:\n"
-        "        parts.append(b'<missing>')\n"
-        "    parts.append(b'\\0')\n"
-        "if found:\n"
-        "    print(hashlib.sha256(b''.join(parts)).hexdigest())\n"
+        "print(roots[0])\n"
     )
     try:
         with tempfile.TemporaryDirectory(prefix="tr-manifest-") as td:
@@ -377,8 +363,13 @@ def _venv_manifest(python: str) -> Optional[str]:
         return None
     if r.returncode != 0:
         return None
-    out = r.stdout.strip()
-    return out or None
+    lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    pkg_dir = lines[-1]
+    if not os.path.isdir(pkg_dir):
+        return None
+    return _manifest_of(pkg_dir)
 
 
 def _source_root() -> Optional[str]:
