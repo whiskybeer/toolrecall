@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Fixed
+- **`shim --status/--install --all` finds every runtime environment.** Environments were deduped
+  by interpreter realpath, and every uv/PM venv links `bin/python3` to a shared CPython — so all but
+  one environment per interpreter were invisible, including the agent's own PM env. Identity is now
+  the venv root (`pyvenv.cfg`, PEP 405); live processes contribute their launch path (`argv[0]`),
+  disposable cache/archive environments are skipped, and the plain `$HOME` sweep is only used when
+  nothing is running. A venv with no copy at all now prints `not installed` instead of a false
+  `DRIFT — pre-fix shim behaviour`.
 - **`shim --status` no longer fingerprints through a cache hook.** The DRIFT check hashed the six
   shim modules with the target interpreter's `open()`, so an active file-cache shim could serve
   stale bytes: two venvs whose modules were byte-identical to the running install were reported as
