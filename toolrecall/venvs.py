@@ -281,6 +281,45 @@ def discover_python_venvs() -> List[Venv]:
     return out
 
 
+def required_venv_targets(patterns: List[str]) -> List[Venv]:
+    """Resolve ``[shim].required_venvs`` patterns to concrete venvs (deduped).
+
+    Patterns are fnmatch-style globs over absolute paths (``~`` expanded) and
+    may match a venv root or its ``bin/python*``. Matching the filesystem
+    directly — rather than only discovered venvs — keeps this usable from an
+    update hook for an environment whose process has not started yet.
+    Unmatched patterns are the caller's business: they are reported, not raised.
+    """
+    import glob as _glob
+
+    roots: List[str] = []
+    for pat in patterns:
+        for hit in _glob.glob(os.path.expanduser(pat)):
+            root = _venv_root_of(hit)
+            if root and root not in roots:
+                roots.append(root)
+
+    out: List[Venv] = []
+    for root in sorted(roots):
+        bindir = os.path.join(root, "bin")
+        if not os.path.isdir(bindir):
+            continue
+        py = None
+        for name in sorted(os.listdir(bindir)):
+            if name.startswith("python3"):
+                full = os.path.join(bindir, name)
+                if os.access(full, os.X_OK):
+                    py = full
+                    break
+        if not py:
+            continue
+        sp = _site_packages_of(py)
+        if not sp:
+            continue
+        out.append(Venv(root=root, python=py, site_packages=sp))
+    return out
+
+
 def _probe_env() -> dict:
     """Env for probe subprocesses, stripped of pytest-only markers.
 

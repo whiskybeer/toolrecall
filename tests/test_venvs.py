@@ -184,6 +184,52 @@ class TestShimCLIArgParsing(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    @patch.object(venv_mod, "discover_python_venvs")
+    def test_install_all_refuses_without_yes(self, mock_discover):
+        """--all is machine-wide: non-interactive stdin must refuse, not skip."""
+        mock_discover.return_value = [
+            venv_mod.Venv(
+                root="/tmp/fake-venv",
+                python="/tmp/fake-venv/bin/python3",
+                site_packages="/tmp/fake-sp",
+            )
+        ]
+        out = self.run_cmd(["--install", "--all"])
+        self.assertIn("MACHINE-WIDE SHIM OPERATION", out)
+        self.assertIn("Refusing machine-wide install without --yes", out)
+        self.assertIn("[exit 2]", out)
+
+    def test_reconcile_without_config_is_noop(self):
+        import types
+
+        with patch(
+            "toolrecall.config.load_config",
+            return_value=types.SimpleNamespace(shim_required_venvs=[]),
+        ):
+            out = self.run_cmd(["--reconcile"])
+        self.assertIn("No [shim].required_venvs configured", out)
+
+    def test_reconcile_dry_run_reports_unhealthy(self):
+        import types
+
+        fake = venv_mod.Venv(
+            root="/tmp/fake-venv",
+            python="/tmp/fake-venv/bin/python3",
+            site_packages="/tmp/fake-sp",
+        )
+        st = {"applied": False, "probe_ok": False, "drift": False}
+        with (
+            patch(
+                "toolrecall.config.load_config",
+                return_value=types.SimpleNamespace(shim_required_venvs=["/tmp/*"]),
+            ),
+            patch.object(venv_mod, "required_venv_targets", return_value=[fake]),
+            patch.object(venv_mod, "shim_status", return_value=st),
+        ):
+            out = self.run_cmd(["--reconcile"])
+        self.assertIn("would install", out)
+        self.assertIn("[exit 1]", out)
+
 
 class TestConfirmInstall(unittest.TestCase):
     """W4: prompt defaults to disabled; explicit yes enables."""
@@ -459,6 +505,49 @@ class TestVenvIdentity(unittest.TestCase):
         with open(py, "w") as fh:
             fh.write("#!/bin/sh\n")
         self.assertIsNone(venv_mod._venv_root_of(py))
+
+
+class TestRequiredVenvTargets(unittest.TestCase):
+    """`--reconcile` resolves only declared venvs, deduped, from the filesystem."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="tr-required-")
+        self.base = os.path.join(self.tmp, "base")
+        os.makedirs(os.path.join(self.base, "bin"))
+        with open(os.path.join(self.base, "pyvenv.cfg"), "w") as fh:
+            fh.write("home = /usr/bin\n")
+        with open(os.path.join(self.base, "bin", "python3"), "w") as fh:
+            fh.write("#!/bin/sh\n")
+        os.chmod(os.path.join(self.base, "bin", "python3"), 0o755)
+        for name in ("env-a", "env-b"):
+            root = os.path.join(self.tmp, name)
+            os.makedirs(os.path.join(root, "bin"))
+            os.makedirs(os.path.join(root, "lib", "python3.14", "site-packages"))
+            with open(os.path.join(root, "pyvenv.cfg"), "w") as fh:
+                fh.write("home = ../base/bin\n")
+            os.symlink(
+                os.path.join(self.base, "bin", "python3"),
+                os.path.join(root, "bin", "python3"),
+            )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @unittest.skipIf(os.name == "nt", "symlink layout")
+    def test_glob_resolves_and_dedupes(self):
+        def fake_sp(py):
+            return os.path.join(
+                os.path.dirname(os.path.dirname(py)), "lib", "python3.14", "site-packages"
+            )
+
+        with patch.object(venv_mod, "_site_packages_of", side_effect=fake_sp):
+            got = venv_mod.required_venv_targets(
+                [os.path.join(self.tmp, "env-*"), os.path.join(self.tmp, "env-a")]
+            )
+        self.assertEqual(
+            [v.root for v in got],
+            [venv_mod._real(os.path.join(self.tmp, n)) for n in ("env-a", "env-b")],
+        )
 
 
 if __name__ == "__main__":
