@@ -338,6 +338,18 @@ class TestShimManifestDrift(unittest.TestCase):
         self.assertTrue(venv_mod.uninstall_shim(venv))
         self.assertFalse(os.path.exists(p))
 
+    def test_manifest_ignores_a_patched_builtins_open(self):
+        """The fingerprint describes disk bytes, not what a cache hook serves.
+
+        ``open()`` is the hook point for the transparent shim (and any similar
+        cache). A fingerprint that goes through it can hash stale content and
+        report DRIFT for an in-sync venv — or hide real drift behind a hit.
+        """
+        expected = venv_mod._manifest_of(self.a)
+        with patch("builtins.open", side_effect=AssertionError("used builtins.open")):
+            got = venv_mod._manifest_of(self.a)
+        self.assertEqual(got, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
