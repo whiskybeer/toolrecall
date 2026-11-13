@@ -527,20 +527,35 @@ def _overlay_into(venv: Venv, source_root: str) -> bool:
         return False
 
 
-def _running_version() -> Optional[str]:
-    """Version of the toolrecall package backing THIS code (None if unknown).
-
-    The running install is authoritative for shim targets: when toolrecall
-    itself was upgraded (pipx / repo .venv / uv tool), previously-shimmed
-    agent venvs still hold the old copy, so ``ensure_shim`` compares against
-    this version instead of only checking presence.
-    """
+def _metadata_version() -> Optional[str]:
+    """Distribution record version (``importlib.metadata``; None if unknown)."""
     try:
         from importlib.metadata import version
 
         return version("toolrecall")
     except Exception:
         return None
+
+
+def _running_version() -> Optional[str]:
+    """Version of the code THIS process actually imports (None if unknown).
+
+    A pipx/uv install plus a repo overlay keeps the dist-info frozen at the
+    installed release while the imported modules come from the checkout, so the
+    metadata can lag the running code (observed: metadata 0.8.22, code 0.8.24).
+    ``--version`` and the daemon already report ``__version__``; this function
+    follows them so ``shim --status`` cannot contradict the CLI about itself.
+    The metadata value stays available via ``_metadata_version`` for display.
+    """
+    try:
+        import toolrecall
+
+        version = getattr(toolrecall, "__version__", None)
+        if version:
+            return str(version)
+    except Exception:
+        pass
+    return _metadata_version()
 
 
 def _installed_version(python: str) -> Optional[str]:
@@ -702,6 +717,7 @@ def shim_status(venv: Venv) -> dict:
         "probe_ok": _importable(venv.python, "toolrecall.shim"),
         "applied": _shim_applied(venv.python),
         "version_source": _running_version(),
+        "version_metadata": _metadata_version(),
         "version_venv": _installed_version(venv.python),
         "manifest_source": source_manifest,
         "manifest_venv": venv_manifest,

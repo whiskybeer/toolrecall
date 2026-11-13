@@ -220,7 +220,11 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - `toolrecall shim --uninstall [--venv <path>|--all]` — remove the shim
   - `toolrecall shim --status [--venv <path>|--all]` — per-venv: package present,
     `.pth` present, `probe: pass` (verified) or `probe: FAIL`, the
-    venv-vs-install version pair, and `shim modules: in sync` / `DRIFT`
+    venv-vs-install version pair, and `shim modules: in sync` / `DRIFT`.
+    The install side is the version of the **code the CLI imports**
+    (`toolrecall.__version__`); when the distribution metadata disagrees (pipx or
+    uv install plus a repo overlay) it is shown as `; metadata X`, so a stale
+    dist-info can never masquerade as the running code.
   - **Drift** = that venv's shim modules differ in *content* from the running
     install, so it still runs older shim logic even when the version strings
     agree. `probe: pass` cannot see it — a stale module still imports fine.
