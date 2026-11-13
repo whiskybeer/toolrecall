@@ -220,6 +220,8 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - **Drift** = that venv's shim modules differ in *content* from the running
     install, so it still runs older shim logic even when the version strings
     agree. `probe: pass` cannot see it — a stale module still imports fine.
+    The fingerprint is hashed from disk (`io.FileIO`), so a warm cache cannot
+    affect the verdict.
     `toolrecall shim --install --venv <path>` converges the venv (from the
     index, or by overlaying the live source tree when this install is a
     checkout). See `docs/TROUBLESHOOTING.md` §19.

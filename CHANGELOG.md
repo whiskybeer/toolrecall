@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`shim --status` no longer fingerprints through a cache hook.** The DRIFT check hashed the six
+  shim modules with the target interpreter's `open()`, so an active file-cache shim could serve
+  stale bytes: two venvs whose modules were byte-identical to the running install were reported as
+  `DRIFT — pre-fix shim behaviour` and told to reinstall. The interpreter now only reports which
+  copy it imports; the bytes are read from disk (`io.FileIO`), so neither a warm cache nor a
+  poisoned hook can fake or hide drift.
+
 ### Added
 - **Antigravity full-stack optimizations — 6 complementary layers:**
   - **Multiplexer-only MCP registration:** `toolrecall setup` configures `--multiplexer-only` by default for Antigravity, preventing prompt token bloat and avoiding the 2.4× stateful file-cache cost trap while preserving background server pooling and 0.6ms BM25 skills search.

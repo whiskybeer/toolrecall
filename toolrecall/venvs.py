@@ -16,6 +16,7 @@ of being reported as "active".
 
 from __future__ import annotations
 
+import io
 import os
 import shutil
 import subprocess
@@ -26,7 +27,7 @@ from typing import List, Optional
 
 #: Paths under $HOME known to host agent venvs. Scanned in addition to the
 #: generic ``*/bin/python3* + pyvenv.cfg`` walk. Be generous here; each hit is
-#: deduped by realpath and validated by asking the interpreter itself.
+#: deduped by venv root and validated by asking the interpreter itself.
 _AGENT_ROOT_HINTS = (
     ".hermes",
     ".local/share/uv/tools",
@@ -293,6 +294,18 @@ _OVERLAY_PTH = "00_toolrecall_repo.pth"
 _LEGACY_OVERLAY_PTH = "zz_toolrecall_repo.pth"
 
 
+def _read_bytes(path: str) -> bytes:
+    """Read a file without ``builtins.open``.
+
+    The transparent shim (and any similar hook) patches ``builtins.open`` to
+    serve cache content. A fingerprint of the installed shim modules must
+    describe the bytes on disk, so it reads through ``io.FileIO`` — the C-level
+    opener that no file-cache hook substitutes.
+    """
+    with io.FileIO(path, "rb") as fh:
+        return fh.read()
+
+
 def _manifest_of(pkg_dir: str) -> Optional[str]:
     """Content fingerprint of the shim modules in ``pkg_dir`` (None if absent).
 
@@ -307,8 +320,7 @@ def _manifest_of(pkg_dir: str) -> Optional[str]:
     for name in sorted(_SHIM_MANIFEST_FILES):
         parts.append(name.encode("utf-8"))
         try:
-            with open(os.path.join(pkg_dir, name), "rb") as fh:
-                parts.append(fh.read())
+            parts.append(_read_bytes(os.path.join(pkg_dir, name)))
             found = True
         except OSError:
             parts.append(b"<missing>")
@@ -325,32 +337,18 @@ def _venv_manifest(python: str) -> Optional[str]:
     """Fingerprint of the shim modules inside ``python``'s env.
 
     Empty/None means the env holds no shim files at all (package absent or
-    half-removed). The bytes are hashed by the target interpreter with plain
-    ``hashlib`` over the exact layout ``_manifest_of`` produces — deliberately
-    NOT by importing the target's own ``keys`` module, because the copy being
-    audited is precisely the one that may be broken or stale.
+    half-removed). The target interpreter is the only reliable oracle for
+    *which copy* it imports — repo overlays and editable installs make the
+    site-packages path the wrong answer — so it prints that directory. The
+    bytes are then read here, from disk, through ``_read_bytes``: never through
+    a file-cache hook that may be active in the child or in this process.
     """
     code = (
-        "import hashlib, os\n"
-        "try:\n"
-        "    import toolrecall\n"
-        "except Exception:\n"
-        "    raise SystemExit(0)\n"
+        "import toolrecall\n"
         "roots = [p for p in (getattr(toolrecall, '__path__', None) or []) if p]\n"
         "if not roots:\n"
         "    raise SystemExit(0)\n"
-        "parts, found = [], False\n"
-        f"for name in sorted({_SHIM_MANIFEST_FILES!r}):\n"
-        "    parts.append(name.encode('utf-8'))\n"
-        "    try:\n"
-        "        with open(os.path.join(roots[0], name), 'rb') as fh:\n"
-        "            parts.append(fh.read())\n"
-        "        found = True\n"
-        "    except OSError:\n"
-        "        parts.append(b'<missing>')\n"
-        "    parts.append(b'\\0')\n"
-        "if found:\n"
-        "    print(hashlib.sha256(b''.join(parts)).hexdigest())\n"
+        "print(roots[0])\n"
     )
     try:
         with tempfile.TemporaryDirectory(prefix="tr-manifest-") as td:
@@ -365,8 +363,13 @@ def _venv_manifest(python: str) -> Optional[str]:
         return None
     if r.returncode != 0:
         return None
-    out = r.stdout.strip()
-    return out or None
+    lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    pkg_dir = lines[-1]
+    if not os.path.isdir(pkg_dir):
+        return None
+    return _manifest_of(pkg_dir)
 
 
 def _source_root() -> Optional[str]:

@@ -338,6 +338,47 @@ class TestShimManifestDrift(unittest.TestCase):
         self.assertTrue(venv_mod.uninstall_shim(venv))
         self.assertFalse(os.path.exists(p))
 
+    def test_manifest_ignores_a_patched_builtins_open(self):
+        """The fingerprint describes disk bytes, not what a cache hook serves.
+
+        ``open()`` is the hook point for the transparent shim (and any similar
+        cache). A fingerprint that goes through it can hash stale content and
+        report DRIFT for an in-sync venv — or hide real drift behind a hit.
+        """
+        expected = venv_mod._manifest_of(self.a)
+        with patch("builtins.open", side_effect=AssertionError("used builtins.open")):
+            got = venv_mod._manifest_of(self.a)
+        self.assertEqual(got, expected)
+
+    def test_venv_manifest_ignores_a_poisoned_child_hook(self):
+        """A hook active in the target interpreter must not change the digest.
+
+        Simulates any file-cache shim: a ``sitecustomize`` that makes every read
+        return "poisoned". The target interpreter is still the correct oracle
+        for *which copy* it imports; only the bytes must come from disk.
+        """
+        poison = os.path.join(self.tmp, "poison")
+        os.makedirs(poison, exist_ok=True)
+        with open(os.path.join(poison, "sitecustomize.py"), "w") as fh:
+            fh.write(
+                "import builtins, io\n"
+                "_real = builtins.open\n"
+                "def _p(file, mode='r', *a, **k):\n"
+                "    if 'r' in mode and 'b' in mode:\n"
+                "        return io.BytesIO(b'poisoned')\n"
+                "    if 'r' in mode and '+' not in mode:\n"
+                "        return io.StringIO('poisoned')\n"
+                "    return _real(file, mode, *a, **k)\n"
+                "builtins.open = _p\n"
+            )
+        import toolrecall
+
+        expected = venv_mod._manifest_of(os.path.dirname(toolrecall.__file__))
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(venv_mod.__file__)))
+        with patch.dict(os.environ, {"PYTHONPATH": poison + os.pathsep + repo_root}):
+            got = venv_mod._venv_manifest(sys.executable)
+        self.assertEqual(got, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
