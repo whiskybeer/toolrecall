@@ -248,6 +248,36 @@ Most commands accept `--help` / `-h` for per-command usage and options
   finish — not evidence that the shim is missing; re-run the status command
   before reinstalling. See `docs/TROUBLESHOOTING.md` §16.
 
+### ⚠️ Machine-wide installs (`--all`)
+
+`toolrecall shim --install --all` is a **mutating, machine-wide** operation. For
+every discovered venv it:
+
+1. installs/upgrades the `toolrecall` package into that venv, and
+2. writes `site-packages/tr_shim.pth`, which patches `builtins.open` for **every
+   future Python process** started from that environment.
+
+Impact to expect:
+
+- **Benchmark / measurement contamination.** A venv swept by `--all` stops being
+  a clean "naive" arm: its reads hit ToolRecall's cache. Do not run `--all` on a
+  machine that holds evaluation venvs.
+- **Stale-content reads** for code that reads changing files during a run.
+- The change persists until `toolrecall shim --uninstall --venv <path>` (or
+  `--uninstall --all`).
+
+Because of that, `--all` prints the full target list and an impact block, then
+requires one explicit confirmation. With non-interactive stdin it **refuses**
+(exit 2) unless `--yes` is passed; it never silently skips venv by venv.
+
+Safer options:
+
+- `toolrecall shim --install --venv <path>` — one known environment.
+- `toolrecall shim --reconcile [--yes]` — only the venvs declared in
+  `[shim].required_venvs` (dry run by default; exit 1 while anything is
+  unhealthy). This is the command an update hook should call: idempotent,
+  scoped, and it never touches benchmark venvs that are not declared.
+
 ### `toolrecall nginx`
 
 - **File:** `cli.py : cmd_nginx()`

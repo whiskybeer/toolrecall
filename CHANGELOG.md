@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **`toolrecall shim --reconcile`** — converge only the venvs declared in `[shim].required_venvs`.
+  Dry run by default, `--yes` to install, exit 1 while any declared venv is bare, so an update
+  hook (e.g. before an agent runtime starts) can keep a rebuilt environment shimmed without
+  touching anything else. Patterns are absolute-path globs, resolved on the filesystem, so a
+  freshly rebuilt PM environment is handled before its process ever starts.
+- **`shim --install --all` is now explicit about being machine-wide.** It prints the full target
+  list and an impact block, takes one confirmation, and refuses (exit 2) on non-interactive stdin
+  without `--yes` instead of silently skipping venv by venv. Docs describe the benchmark-
+  contamination and stale-read risks and point at `--venv` / `--reconcile` instead.
+
 ### Fixed
 - **`shim --status/--install --all` finds every runtime environment.** Environments were deduped
   by interpreter realpath, and every uv/PM venv links `bin/python3` to a shared CPython — so all but

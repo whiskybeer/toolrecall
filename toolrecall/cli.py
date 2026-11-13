@@ -1616,7 +1616,8 @@ def cmd_shim():
     Modes:
       toolrecall shim --install                current venv only (back-compat)
       toolrecall shim --install --venv <path>  target one venv (root or bin/python)
-      toolrecall shim --install --all          discover + install into every venv
+      toolrecall shim --install --all          ⚠️ machine-wide: every discovered venv
+      toolrecall shim --reconcile [--yes]      only [shim].required_venvs (hook-safe)
       toolrecall shim --status [--venv <path> | --all]
       toolrecall shim --uninstall [--venv <path> | --all]
       toolrecall shim --disable             persistent disable (marker file)
@@ -1629,16 +1630,22 @@ def cmd_shim():
 
     def usage(exit_code: int = 1):
         print(
-            "Usage: toolrecall shim [--install|--uninstall|--status|--disable|--enable] [--venv <path>|--all]"
+            "Usage: toolrecall shim [--install|--uninstall|--status|--reconcile"
+            "|--disable|--enable] [--venv <path>|--all]"
         )
         print()
         print("  --install            Install .pth shim into a Python env")
         print("  --uninstall          Remove the .pth shim (leaves the package)")
         print("  --status             Report shim state")
+        print("  --reconcile          Install into [shim].required_venvs only")
+        print("                       (dry run unless --yes; safe for update hooks)")
         print("  --disable            Persistently disable the shim (marker file)")
         print("  --enable             Re-enable the shim (clear the disable marker)")
         print("  --venv <path>        Target a specific venv (root dir or its bin/python)")
-        print("  --all                Apply to every discovered venv (excl. toolrecall's own)")
+        print("  --all                ⚠️  MACHINE-WIDE: every discovered venv.")
+        print("                       Installs the package and patches open() in each one,")
+        print("                       and can contaminate benchmark/measurement venvs.")
+        print("                       See the “Machine-wide installs” section in docs/CLI.md.")
         print("  --yes / -y           Skip the opt-in confirmation prompt (default is NO)")
         print()
         print("Python-vs-bridge model:")
@@ -1659,6 +1666,8 @@ def cmd_shim():
             action = "uninstall"
         elif a in ("--status", "status"):
             action = "status"
+        elif a in ("--reconcile", "reconcile"):
+            action = "reconcile"
         elif a in ("--disable", "disable"):
             action = "disable"
         elif a in ("--enable", "enable"):
@@ -1738,6 +1747,53 @@ def cmd_shim():
         print(f"Error: not a venv root or python path: {path}")
         return None
 
+    if action == "reconcile":
+        from toolrecall.config import load_config
+
+        patterns = list(load_config().shim_required_venvs)
+        if not patterns:
+            print("No [shim].required_venvs configured — nothing to reconcile.")
+            return
+        targets = venv_mod.required_venv_targets(patterns)
+        import glob as _glob
+
+        unmatched = [p for p in patterns if not _glob.glob(os.path.expanduser(p))]
+        if not targets:
+            print("⚠️  required_venvs matched no venv:")
+            for p in patterns:
+                print(f"   - {p}")
+            sys.exit(1)
+        remaining = []
+        for v in targets:
+            st = venv_mod.shim_status(v)
+            healthy = st["applied"] and st["probe_ok"] and not st["drift"]
+            if healthy:
+                print(f"✅ {v.root}")
+                continue
+            if not yes_flag:
+                print(f"❌ {v.root} — would install")
+                remaining.append(v.root)
+                continue
+            print(f"… installing into {v.root}")
+            venv_mod.ensure_shim(v)
+            st = venv_mod.shim_status(v)
+            if st["applied"] and st["probe_ok"] and not st["drift"]:
+                print(f"✅ {v.root} (installed)")
+            else:
+                print(f"⚠️  {v.root} — still unhealthy")
+                remaining.append(v.root)
+        if unmatched:
+            print("⚠️  patterns matched nothing:")
+            for p in unmatched:
+                print(f"   - {p}")
+        if remaining:
+            if not yes_flag:
+                print("Dry run: pass --yes to install.")
+            sys.exit(1)
+        if unmatched:
+            sys.exit(1)
+        return
+
     current_env = None
     for p in sys.path:
         if p.endswith("site-packages") and os.path.isdir(p):
@@ -1806,6 +1862,19 @@ def cmd_shim():
         return
 
     if action == "install":
+        if all_flag:
+            _announce_all(targets, "install")
+            if not yes_flag:
+                if not sys.stdin.isatty():
+                    print(
+                        "Refusing machine-wide install without --yes "
+                        "(non-interactive stdin). Nothing was changed."
+                    )
+                    sys.exit(2)
+                if not _confirm_all(targets, "install"):
+                    print("Aborted — nothing was changed.")
+                    sys.exit(1)
+            yes_flag = True
         for v in targets:
             if not yes_flag and not os.environ.get("TOOLRECALL_NONINTERACTIVE"):
                 if not _confirm_install(v):
@@ -1836,11 +1905,56 @@ def cmd_shim():
         return
 
     if action == "uninstall":
+        if all_flag:
+            _announce_all(targets, "uninstall")
+            if not yes_flag:
+                if not sys.stdin.isatty():
+                    print(
+                        "Refusing machine-wide uninstall without --yes "
+                        "(non-interactive stdin). Nothing was changed."
+                    )
+                    sys.exit(2)
+                if not _confirm_all(targets, "uninstall"):
+                    print("Aborted — nothing was changed.")
+                    sys.exit(1)
         for v in targets:
             if venv_mod.uninstall_shim(v):
                 print(f"✅ Shim removed from {v.root}")
             else:
                 print(f"⚠️  Could not remove shim from {v.root}")
+
+
+def _announce_all(targets, verb: str) -> None:
+    """Print the impact of a machine-wide shim operation before it runs."""
+    print()
+    print("⚠️  MACHINE-WIDE SHIM OPERATION (--all)")
+    print(f"   Environments: {len(targets)}")
+    for v in targets:
+        print(f"     - {v.root}")
+    if verb == "install":
+        print("   Each target gets:")
+        print("     • the toolrecall package installed/upgraded in its venv")
+        print("     • site-packages/tr_shim.pth, which patches builtins.open for")
+        print("       EVERY future Python process started from that venv")
+        print("   Impact to expect:")
+        print("     • benchmark / measurement venvs become cache-contaminated")
+        print("       (a 'naive' arm starts hitting ToolRecall's cache)")
+        print("     • code that reads changing files can be served cached bytes")
+        print("     • the change persists until `toolrecall shim --uninstall -v <path>`")
+    else:
+        print("   Removes tr_shim.pth from each target; new processes in those")
+        print("   environments stop being cached. The package stays installed.")
+    print("   Safer alternatives: --venv <path>, or --reconcile for declared runtimes.")
+    print("   Docs: docs/CLI.md → “Machine-wide installs”.")
+
+
+def _confirm_all(targets, verb: str) -> bool:
+    """One consolidated opt-in prompt for a machine-wide operation (default NO)."""
+    try:
+        resp = input(f"  Proceed with {verb} in ALL {len(targets)} venv(s)? [y/N] ").strip().lower()
+    except (EOFError, OSError, KeyboardInterrupt):
+        return False
+    return resp in ("y", "yes")
 
 
 def _confirm_install(v) -> bool:

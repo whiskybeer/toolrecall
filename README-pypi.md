@@ -377,8 +377,16 @@ pipx install toolrecall && toolrecall setup   # or: uv tool install toolrecall &
 > **current Python environment**. If you installed via `pipx` or `uv tool install`, the
 > shim goes into that isolated environment — not your agent's venv. The agent won't see it.
 > `toolrecall setup` auto-detects common agent venvs and installs the shim there too.
-> `toolrecall shim --install --all` scans for agent venvs (Hermes, OpenCode) and installs
-> into all of them at once.
+> For declared runtimes (the update-hook-safe path), list them in
+> `[shim].required_venvs` and run `toolrecall shim --reconcile --yes`.
+>
+> ⚠️ **`shim --install --all` is machine-wide and mutating.** It installs the
+> `toolrecall` package into every discovered venv and writes
+> `site-packages/tr_shim.pth`, which patches `open()` for every future process in
+> those environments. Benchmark/measurement venvs reachable this way become
+> cache-contaminated (their "naive" arm starts hitting the cache). It refuses to
+> run non-interactively without `--yes`. Prefer `--venv <path>` or `--reconcile`;
+> undo with `shim --uninstall --venv <path>`.
 > If you need to target a specific venv manually:
 > ```bash
 > toolrecall shim --install --venv ~/.hermes/hermes-agent/venv
@@ -442,6 +450,7 @@ toolrecall serve          Forward proxy — daemon already owns :8569; standalon
 toolrecall serve --port 9090   Standalone forward proxy on :9090 (daemon must be stopped)
 toolrecall replay         Record/replay agent sessions; tree|fork|at for fork-tree branches
 toolrecall shim --install [--venv <path>|--all]  Install OS-level cache shim (.pth) — opt-in
+toolrecall shim --reconcile [--yes]             Install into [shim].required_venvs only
 toolrecall shim --status [--venv <path>|--all]   Check shim presence + import probe
 toolrecall shim --uninstall [--venv <path>|--all] Remove .pth shim
 toolrecall turso          Turso Cloud sync: init, enable, disable, status
