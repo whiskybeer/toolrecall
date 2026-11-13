@@ -1845,9 +1845,11 @@ def cmd_shim():
                 f"applied: {'yes' if st['applied'] else 'no'} | "
                 f"probe: {'pass' if ok else 'FAIL'}"
             )
+            meta = st.get("version_metadata")
+            skew = f"; metadata {meta}" if meta and meta != st["version_source"] else ""
             print(
                 f"     version: {st['version_venv'] or '-'} (venv) vs "
-                f"{st['version_source'] or '-'} (this install)"
+                f"{st['version_source'] or '-'} (this install{skew})"
             )
             if st["drift"]:
                 print(

@@ -400,6 +400,30 @@ class TestShimManifestDrift(unittest.TestCase):
             got = venv_mod._manifest_of(self.a)
         self.assertEqual(got, expected)
 
+    def test_running_version_prefers_the_imported_code(self):
+        """A repo overlay makes dist-info stale; report the code that runs."""
+        import types
+
+        fake = types.SimpleNamespace(__version__="0.8.24")
+        with (
+            patch.dict("sys.modules", {"toolrecall": fake}),
+            patch.object(venv_mod, "_metadata_version", return_value="0.8.22"),
+        ):
+            self.assertEqual(venv_mod._running_version(), "0.8.24")
+
+    def test_status_exposes_metadata_separately(self):
+        with (
+            patch.object(venv_mod, "_running_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_venv_manifest", return_value="aaa"),
+            patch.object(venv_mod, "_running_version", return_value="0.8.24"),
+            patch.object(venv_mod, "_metadata_version", return_value="0.8.22"),
+            patch.object(venv_mod, "_installed_version", return_value="0.8.24"),
+            patch.object(venv_mod, "_importable", return_value=True),
+        ):
+            st = venv_mod.shim_status(self._fake_venv())
+        self.assertEqual(st["version_source"], "0.8.24")
+        self.assertEqual(st["version_metadata"], "0.8.22")
+
     def test_absent_package_is_not_drift(self):
         """No copy at all is 'not installed', not 'pre-fix behaviour'."""
         with (

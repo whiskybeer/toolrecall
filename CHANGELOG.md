@@ -14,6 +14,12 @@
   contamination and stale-read risks and point at `--venv` / `--reconcile` instead.
 
 ### Fixed
+- **`shim --status` reports the version of the code it actually runs.** The install side of the
+  version pair came from `importlib.metadata`, which a pipx/uv install keeps frozen at the installed
+  release while a repo overlay supplies newer modules (observed: metadata `0.8.22`, code `0.8.24`).
+  It now uses `toolrecall.__version__` — matching `toolrecall --version`, the daemon banner and the
+  MCP `clientInfo` — and prints `; metadata X` only when the distribution record disagrees. No
+  stored data, config or cache key changes: the value is display-only.
 - **`shim --status/--install --all` finds every runtime environment.** Environments were deduped
   by interpreter realpath, and every uv/PM venv links `bin/python3` to a shared CPython — so all but
   one environment per interpreter were invisible, including the agent's own PM env. Identity is now
