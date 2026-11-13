@@ -212,7 +212,11 @@ Most commands accept `--help` / `-h` for per-command usage and options
   - `toolrecall shim --install` — install into the current Python env (opt-in)
   - `toolrecall shim --install --venv <path>` — install into a specific venv
     (accepts a venv root or its `bin/python`; probe-verified)
-  - `toolrecall shim --install --all` — discover every venv and install (opt-in)
+  - `toolrecall shim --install --all` — discover every venv and install (opt-in;
+    venvs are identified by their root `pyvenv.cfg`, so two environments that
+    share one base interpreter are each probed and installed; discovery covers
+    live processes and known agent roots, and skips disposable cache/archive
+    environments)
   - `toolrecall shim --uninstall [--venv <path>|--all]` — remove the shim
   - `toolrecall shim --status [--venv <path>|--all]` — per-venv: package present,
     `.pth` present, `probe: pass` (verified) or `probe: FAIL`, the
@@ -221,7 +225,8 @@ Most commands accept `--help` / `-h` for per-command usage and options
     install, so it still runs older shim logic even when the version strings
     agree. `probe: pass` cannot see it — a stale module still imports fine.
     The fingerprint is hashed from disk (`io.FileIO`), so a warm cache cannot
-    affect the verdict.
+    affect the verdict. A venv with no copy at all prints
+    `not installed (nothing to converge)` rather than DRIFT.
     `toolrecall shim --install --venv <path>` converges the venv (from the
     index, or by overlaying the live source tree when this install is a
     checkout). See `docs/TROUBLESHOOTING.md` §19.

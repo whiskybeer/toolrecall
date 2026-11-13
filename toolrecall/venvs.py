@@ -69,6 +69,27 @@ def _real(path: str) -> str:
         return path
 
 
+def _venv_root_of(path: str, max_up: int = 3) -> Optional[str]:
+    """Return the venv root containing ``path``, per PEP 405.
+
+    Identity is the directory carrying ``pyvenv.cfg`` — not the interpreter
+    binary, which may be a symlink (or a hardlink/copy) shared by any number of
+    environments. ``path`` may be a launcher, an interpreter, or a root.
+    Returns the resolved root, or None when the path is a plain interpreter.
+    """
+    p = os.path.abspath(path)
+    if not os.path.isdir(p):
+        p = os.path.dirname(p)
+    for _ in range(max_up + 1):
+        if os.path.isfile(os.path.join(p, "pyvenv.cfg")):
+            return _real(p)
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    return None
+
+
 def _site_packages_of(python: str, timeout: float = 10.0) -> Optional[str]:
     """Ask the target interpreter for its real site-packages dir.
 
@@ -114,30 +135,60 @@ def _is_toolrecall_own(py_path: str) -> bool:
 
 
 def _python_from_running_procs() -> List[str]:
-    """Resolve interpreters of live Python processes via /proc (Linux)."""
-    pythons = []
+    """Interpreter hints from live Python processes (Linux; [] elsewhere).
+
+    ``/proc/<pid>/exe`` resolves through a venv's ``bin/python3`` symlink to the
+    BASE interpreter and loses which venv the process belongs to. The absolute
+    launch path in ``argv[0]`` keeps it. Both are returned; discovery keys on
+    the venv root, so duplicates are harmless.
+
+    ``/proc`` is read with ``os.open`` (not ``open``): this runs inside a
+    shimmed CLI process on some machines, and process state must never be
+    served from a file cache.
+    """
+    pythons: List[str] = []
     try:
-        for entry in os.listdir("/proc"):
-            if not entry.isdigit():
-                continue
-            exe = f"/proc/{entry}/exe"
-            try:
-                real = os.path.realpath(exe)
-            except OSError:
-                continue
-            if real and os.path.basename(real).startswith("python"):
-                pythons.append(real)
+        entries = os.listdir("/proc")
     except (FileNotFoundError, PermissionError):
-        pass
+        return pythons
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            exe = os.readlink(f"/proc/{entry}/exe")
+        except OSError:
+            continue
+        if not os.path.basename(exe).startswith("python"):
+            continue
+        pythons.append(exe)
+        try:
+            fd = os.open(f"/proc/{entry}/cmdline", os.O_RDONLY)
+            try:
+                argv0 = os.read(fd, 4096).split(b"\0", 1)[0].decode("utf-8", "replace")
+            finally:
+                os.close(fd)
+        except OSError:
+            continue
+        if (
+            os.path.isabs(argv0)
+            and os.path.basename(argv0).startswith("python")
+            and os.path.isfile(argv0)
+        ):
+            pythons.append(argv0)
     return pythons
 
 
-def _candidate_pythons_from_home() -> List[str]:
-    """Walk $HOME for venv launcher scripts (agent roots + generic).
+def _candidate_pythons_from_home(include_generic: bool = True) -> List[str]:
+    """Walk $HOME for venv launcher scripts (agent roots, optionally generic).
 
     A proper venv is identified by a ``pyvenv.cfg`` at its root. For each such
     cfg we resolve the launcher script ``<root>/bin/python3`` — this avoids
     any ambiguity about whether ``bin/`` etc. are traversed.
+
+    ``include_generic`` adds the depth-3 $HOME sweep (``~/proj/.venv``). It is
+    used only when nothing is running and no agent root exists: project venvs
+    nobody runs an agent in are not shim targets, and sweeping them would put
+    the shim into benchmark environments.
     """
     home = os.path.expanduser("~")
     cfg_files = []
@@ -158,8 +209,9 @@ def _candidate_pythons_from_home() -> List[str]:
 
     for base in _AGENT_ROOT_HINTS:
         scan_root(os.path.join(home, base), max_depth=6)
-    # Generic: any venv directly under $HOME (depth ~2: myvenv/pyvenv.cfg)
-    scan_root(home, max_depth=3)
+    if include_generic:
+        # Generic: any venv directly under $HOME (depth ~2: myvenv/pyvenv.cfg)
+        scan_root(home, max_depth=3)
 
     out = []
     for cfg in cfg_files:
@@ -182,34 +234,49 @@ def _candidate_pythons_from_home() -> List[str]:
 def discover_python_venvs() -> List[Venv]:
     """Discover all active Python environments on the machine.
 
-    Sources (deduped by interpreter realpath):
-      1. Live ``python`` processes (from ``/proc/<pid>/exe``).
+    Sources (deduped by venv root):
+      1. Live ``python`` processes (``/proc/<pid>/exe`` + absolute ``argv[0]``).
       2. ``$HOME`` walk for agent-root venvs + generic ``*/bin/python3*`` w/
          an adjacent ``pyvenv.cfg``.
     Always excludes toolrecall's own environment(s).
+
+    Two environments may share one interpreter binary — every uv/PM venv links
+    its ``bin/python3`` to a shared base CPython — so identity is the venv root
+    (PEP 405 ``pyvenv.cfg``), not the resolved interpreter. Their site-packages,
+    and therefore their shim, are separate targets.
     """
-    seen: set = set()
+    seen: set[str] = set()
     out: List[Venv] = []
 
-    raw = _python_from_running_procs() + _candidate_pythons_from_home()
-    # Never return the interpreter we are running as: shimming ourselves is
-    # pointless, and because entries are keyed on the interpreter realpath it
-    # would also stand in for every other venv sharing that interpreter.
-    # This matters for uv-managed pythons — a uv venv's ``python`` is a symlink
-    # to a SHARED base interpreter under ~/.local/share/uv, so it does not live
-    # "under the repo" and slips past _is_toolrecall_own(). (uv is what
-    # ``make sync`` uses, so this is the normal worktree setup, not an edge case.)
-    own_interpreter = _real(sys.executable)
+    raw = _python_from_running_procs() + _candidate_pythons_from_home(include_generic=False)
+    if not raw:
+        # Nothing running and no agent root on this machine: fall back to a
+        # plain $HOME sweep so a single project venv still works out of the box.
+        raw = _candidate_pythons_from_home(include_generic=True)
+    source_root = _real(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    own_roots = {_real(sys.prefix)}
+    repo_venv = os.path.join(source_root, ".venv")
+    if os.path.isdir(repo_venv):
+        own_roots.add(_real(repo_venv))
 
     for py in raw:
-        py = _real(py)
-        if not py or py in seen or py == own_interpreter or _is_toolrecall_own(py):
+        if not os.path.isfile(py) or not os.access(py, os.X_OK):
             continue
-        seen.add(py)
+        root = _venv_root_of(py)
+        if root is None:
+            root = _real(os.path.dirname(os.path.dirname(os.path.abspath(py))))
+        if root in own_roots or _is_toolrecall_own(py):
+            continue
+        if set(root.split(os.sep)) & _SKIP_DIRNAMES:
+            # Disposable environments (uv archives, caches, VCS trees) are not
+            # runtimes an agent persists in; probing them only adds noise.
+            continue
+        if root in seen:
+            continue
+        seen.add(root)
         sp = _site_packages_of(py)
         if not sp:
             continue  # not truly a probeable venv / toolrecall-free env
-        root = os.path.dirname(os.path.dirname(py))
         out.append(Venv(root=root, python=py, site_packages=sp))
     return out
 
@@ -575,6 +642,9 @@ def shim_status(venv: Venv) -> dict:
     *content* from the running install, so it runs other (older) shim logic
     even when ``version_venv == version_source``. Presence + import probes
     cannot see that — only the fingerprint can.
+
+    An absent copy (``manifest_venv is None``) is *not* drift: there is nothing
+    to converge, the package simply is not installed in that venv.
     """
     pth = os.path.join(venv.site_packages, "tr_shim.pth")
     source_manifest = _running_manifest()
@@ -591,7 +661,11 @@ def shim_status(venv: Venv) -> dict:
         "version_venv": _installed_version(venv.python),
         "manifest_source": source_manifest,
         "manifest_venv": venv_manifest,
-        "drift": source_manifest is not None and venv_manifest != source_manifest,
+        "drift": (
+            source_manifest is not None
+            and venv_manifest is not None
+            and venv_manifest != source_manifest
+        ),
     }
 
 
