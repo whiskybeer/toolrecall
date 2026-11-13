@@ -832,16 +832,26 @@ _SKIP_PREFIXES = None
 def _fallback_agent_home() -> str:
     """Agent home when config cannot be loaded — the same resolver Config uses.
 
-    Kept in ``toolrecall.agent_home`` (stdlib-only) so this path cannot import
+    Kept in ``toolrecall.home_dirs`` (stdlib-only) so this path cannot import
     the config module that just failed. A failure here must not break ``open()``,
     so the last resort is the documented compat path.
     """
     try:
-        from .agent_home import resolve as _resolve_agent_home
+        from .home_dirs import agent_home as _agent_home
 
-        return _resolve_agent_home()
+        return _agent_home()
     except Exception:  # noqa: BLE001 — a broken resolver must not break open()
         return os.path.expanduser("~/.hermes")
+
+
+def _fallback_data_dir() -> str:
+    """ToolRecall's own state dir on the config-failure path (see above)."""
+    try:
+        from .home_dirs import data_dir as _data_dir
+
+        return _data_dir()
+    except Exception:  # noqa: BLE001 — a broken resolver must not break open()
+        return os.path.expanduser("~/.toolrecall")
 
 
 def _load_skip_prefixes():
@@ -862,9 +872,11 @@ def _load_skip_prefixes():
         # resolved the way Config.agent_home does, so control-plane reads stay
         # out of the shim even with a broken config.
         home = _fallback_agent_home().rstrip("/\\")
+        data = _fallback_data_dir().rstrip("/\\")
         prefixes = ["/proc/", "/sys/", "/dev/"]
-        if home:
-            prefixes.append(home + os.sep)
+        for p in (home, data):
+            if p and p + os.sep not in prefixes:
+                prefixes.append(p + os.sep)
     # Normalize: entries without a trailing separator would match /procself etc.
     # ("/proc" must not prefix-match "/procself/status"). A bare "/" entry
     # would skip everything — drop it. Accept either separator: config prefixes

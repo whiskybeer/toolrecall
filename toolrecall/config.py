@@ -37,6 +37,7 @@ ENV_MAP = {
     "TOOLRECALL_CACHE_DB": ("paths", "cache_db"),
     "TOOLRECALL_KNOWLEDGE_DB": ("paths", "knowledge_db"),
     "TOOLRECALL_SKILL_DIRS": ("paths", "skill_dirs"),
+    "TOOLRECALL_DATA_DIR": ("paths", "data_dir"),
     "TOOLRECALL_FILE_TTL": ("cache", "file_ttl"),
     "TOOLRECALL_MAX_FILE_MB": ("cache", "max_file_mb"),
     "TOOLRECALL_TERMINAL_TTL": ("cache", "terminal_default_ttl"),
@@ -302,7 +303,7 @@ class Config:
     # idea why. Dotted sub-tables (cache.terminal_ttls, mcp.clients,
     # sources.memory) are freeform: their sub-keys are user-defined names.
     _KNOWN: dict[str, frozenset[str]] = {
-        "paths": frozenset({"cache_db", "knowledge_db", "skill_dirs", "agent_home"}),
+        "paths": frozenset({"cache_db", "knowledge_db", "skill_dirs", "agent_home", "data_dir"}),
         "cache": frozenset(
             {
                 "file_ttl",
@@ -582,16 +583,38 @@ class Config:
         Agents should set AGENT_HOME so ToolRecall finds skills,
         configs, and memories correctly.
         """
-        from toolrecall.agent_home import default as _default_home
-        from toolrecall.agent_home import from_env
+        from toolrecall.home_dirs import agent_home_default, agent_home_from_env
 
-        env = from_env()
+        env = agent_home_from_env()
         if env:
             return env
         cfg = self.get("paths", "agent_home", default=None)
         if cfg:
             return os.path.expanduser(cfg)
-        return _default_home()
+        return agent_home_default()
+
+    @property
+    def data_dir(self) -> str:
+        """Where ToolRecall keeps its own state (cursors, metrics, health files).
+
+        Priority:
+          1. TOOLRECALL_DATA_DIR env var
+          2. config [paths].data_dir setting
+          3. ~/.toolrecall
+
+        Consumers: the shim's default exclude list (these files are rewritten by
+        ToolRecall's own cron scripts and never cache-hit) and any new tool that
+        needs a product-owned scratch/state location.
+        """
+        from toolrecall.home_dirs import data_dir_default, data_dir_from_env
+
+        env = data_dir_from_env()
+        if env:
+            return env
+        cfg = self.get("paths", "data_dir", default=None)
+        if cfg:
+            return os.path.expanduser(cfg)
+        return data_dir_default()
 
     @property
     def skill_dirs(self) -> list:
@@ -1286,16 +1309,24 @@ class Config:
         manifests.
 
         Resolved through :attr:`agent_home` (AGENT_HOME →
-        TOOLRECALL_AGENT_HOME → ``[paths].agent_home`` → ``~/.hermes``), so no
-        agent layout is hardcoded in the decision. A bare ``/`` is never added:
-        it would skip every path and disable the shim. The trailing separator is
-        the platform's (``os.sep``), because prefix matching is a plain
+        TOOLRECALL_AGENT_HOME → ``[paths].agent_home`` → ``~/.hermes``) and the
+        product's own :attr:`data_dir` (TOOLRECALL_DATA_DIR →
+        ``[paths].data_dir`` → ``~/.toolrecall``), so neither layout is
+        hardcoded in the decision. A bare ``/`` is never added: it would skip
+        every path and disable the shim. The trailing separator is the
+        platform's (``os.sep``), because prefix matching is a plain
         ``str.startswith`` and a Windows path never starts with ``/``.
+
+        Why the data dir is here too: ToolRecall's cron scripts rewrite their own
+        state (feedback cursor, trend CSV, healthcheck state) every couple of
+        minutes. Those reads can never cache-hit and were the dominant remaining
+        IO noise once the agent home was excluded (measured 2026-11-13).
         """
         prefixes = ["/proc/", "/sys/", "/dev/"]
-        home = (self.agent_home or "").rstrip("/\\")
-        if home:
-            prefixes.append(home + os.sep)
+        for path in (self.agent_home, self.data_dir):
+            clean = (path or "").rstrip("/\\")
+            if clean and clean + os.sep not in prefixes:
+                prefixes.append(clean + os.sep)
         return prefixes
 
     @property

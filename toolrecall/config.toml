@@ -345,12 +345,17 @@ enabled = true
 # live, so they can never produce a cache hit; intercepting them just
 # burns a daemon RPC that ends in a path-denial warning — PLUS the resolved
 # agent home (AGENT_HOME / TOOLRECALL_AGENT_HOME / [paths].agent_home, else
-# ~/.hermes). Agent-home reads are control plane (config.yaml, cron/jobs.json,
-# plugin manifests): they are already tagged source="shim" and never count
-# toward tokens_saved_to_llm, but intercepting them still wrote an access_log
-# row — 99.5% of reads on a cron-heavy host. The defaults live in
-# Config.shim_exclude_prefixes (config.py) — extend via this key or the
-# TOOLRECALL_SHIM_EXCLUDE_PREFIXES env var (comma-separated), e.g.:
+# ~/.hermes) and ToolRecall's own data dir (TOOLRECALL_DATA_DIR /
+# [paths].data_dir, else ~/.toolrecall).
+#
+# Agent-home reads are control plane (config.yaml, cron/jobs.json, plugin
+# manifests): they are already tagged source="shim" and never count toward
+# tokens_saved_to_llm, but intercepting them still wrote an access_log row —
+# 99.5% of reads on a cron-heavy host. The data dir is the same class: its
+# cursors, trend CSVs and health state are rewritten every couple of minutes
+# and can never cache-hit. The defaults live in Config.shim_exclude_prefixes
+# (config.py) — extend via this key or the TOOLRECALL_SHIM_EXCLUDE_PREFIXES
+# env var (comma-separated), e.g.:
 # exclude_prefixes = ["/tmp/hermes-cwd-", "/tmp/hermes-snap-"]
 #
 # Agent-own config files (e.g. an agent gateway re-reading its own .env every
@@ -358,7 +363,8 @@ enabled = true
 # only — the owning process still reads its file; the daemon-side
 # sensitive-file guard (_db.py) is what keeps .env/.ssh/*.pem out of the
 # cache DB, and it is unaffected. Setting this list REPLACES the default
-# (/proc/, /sys/, /dev/ plus the agent home) — re-list those when overriding.
+# (/proc/, /sys/, /dev/ plus the agent home and the data dir) — re-list those
+# when overriding.
 # exclude_prefixes = ["/proc/", "/sys/", "/dev/", "/home/you/.agent/.env"]
 #
 # Unchanged-file stub TTL (Lever 1). Second+ read of a byte-identical file

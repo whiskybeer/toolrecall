@@ -132,6 +132,13 @@ plugin manifests never reach the shim. Those reads were already tagged
 this default each one still paid a daemon round-trip and wrote an `access_log`
 row — on a cron-heavy host that was 25,952 of 26,076 reads in a day (99.5 %).
 
+**The product's own data dir is excluded too**: `TOOLRECALL_DATA_DIR` /
+`[paths].data_dir` / `~/.toolrecall`. Its cursors, trend CSVs and health-state
+files are rewritten by ToolRecall's cron scripts every couple of minutes and can
+never cache-hit. Measured 2026-11-13, once the agent home was excluded: the
+remaining ~50 % IO share was entirely this directory (`feedback.json` and
+`feedback_cursor.txt` alone were 774 reads each in 24 h).
+
 **Solution for framework-specific paths beyond the agent home:** Configure
 exclude prefixes in `toolrecall.toml`:
 

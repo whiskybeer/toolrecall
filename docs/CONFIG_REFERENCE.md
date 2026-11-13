@@ -135,6 +135,7 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_SHIM_STUB` | (not in config.toml) | `TOOLRECALL_SHIM_STUB=0` (kill switch for the shim's unchanged-file stub) |
 | `TOOLRECALL_SHIM_STUB_TTL` | `shim.stub_ttl` | `TOOLRECALL_SHIM_STUB_TTL=600` |
 | `TOOLRECALL_SHIM_READ_TIMEOUT_MS` | (not in config.toml) | `TOOLRECALL_SHIM_READ_TIMEOUT_MS=500` (shim read-path socket budget; admin calls keep 5 s) |
+| `TOOLRECALL_DATA_DIR` | `paths.data_dir` | `TOOLRECALL_DATA_DIR=~/.toolrecall` (ToolRecall's own state dir; excluded from the shim by default) |
 | `TOOLRECALL_SHIM_REQUIRED_VENVS` | `shim.required_venvs` | `TOOLRECALL_SHIM_REQUIRED_VENVS=/opt/agent/*` (os.pathsep-separated; venvs that MUST be shimmed) |
 | `TOOLRECALL_DEDUP_NORMALIZE` | (not in config.toml) | `TOOLRECALL_DEDUP_NORMALIZE=1` (normalized dedup keys; see FORWARD_PROXY.md) |
 | `TOOLRECALL_KEY_TRACE_DIR` | (not in config.toml) | `TOOLRECALL_KEY_TRACE_DIR=/tmp/tr-trace` (proxy replay diagnostics for `toolrecall keytrace`) |

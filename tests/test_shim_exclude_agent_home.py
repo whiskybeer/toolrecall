@@ -65,9 +65,27 @@ class DefaultPrefixesTest(_Base):
     def test_default_includes_the_agent_home(self):
         with mock.patch.dict(os.environ, {"AGENT_HOME": self.home}):
             prefixes = self._cfg().shim_exclude_prefixes
-        self.assertEqual(prefixes, ["/proc/", "/sys/", "/dev/", self.home + os.sep])
+        self.assertEqual(
+            prefixes,
+            [
+                "/proc/",
+                "/sys/",
+                "/dev/",
+                self.home + os.sep,
+                os.path.expanduser("~/.toolrecall") + os.sep,
+            ],
+        )
         # The separator must be the platform's, or a Windows checkout never matches.
         self.assertTrue(prefixes[-1].endswith(os.sep))
+
+    def test_default_includes_the_product_data_dir(self):
+        # ToolRecall's own state (feedback cursor, trend CSV, healthcheck state)
+        # is rewritten by its cron scripts; the shim must not intercept it.
+        with mock.patch.dict(
+            os.environ, {"TOOLRECALL_DATA_DIR": os.path.join(self._tmp.name, "trdata")}
+        ):
+            prefixes = self._cfg().shim_exclude_prefixes
+        self.assertIn(os.path.join(self._tmp.name, "trdata") + os.sep, prefixes)
 
     def test_toolrecall_agent_home_is_honored(self):
         with mock.patch.dict(os.environ, {"TOOLRECALL_AGENT_HOME": self.home}):
@@ -79,10 +97,14 @@ class DefaultPrefixesTest(_Base):
         self.assertIn(self.home + "/", prefixes)
 
     def test_a_root_agent_home_is_never_added(self):
-        # "/" would skip every path and disable the shim entirely.
+        # "/" would skip every path and disable the shim. The product data dir
+        # is still a valid default.
         with mock.patch.dict(os.environ, {"AGENT_HOME": "/"}):
             prefixes = self._cfg().shim_exclude_prefixes
-        self.assertEqual(prefixes, ["/proc/", "/sys/", "/dev/"])
+        self.assertEqual(
+            prefixes,
+            ["/proc/", "/sys/", "/dev/", os.path.expanduser("~/.toolrecall") + os.sep],
+        )
 
     def test_explicit_list_replaces_the_default(self):
         cfg = self._cfg('[shim]\nexclude_prefixes = ["/tmp/only-this/"]\n')
