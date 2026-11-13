@@ -380,5 +380,71 @@ class TestShimManifestDrift(unittest.TestCase):
         self.assertEqual(got, expected)
 
 
+class TestVenvIdentity(unittest.TestCase):
+    """Two venvs may share one base interpreter and still be distinct targets.
+
+    Every uv/PM venv's ``bin/python3`` is a symlink to a shared CPython, so
+    keying environments on the interpreter's realpath collapses them: one is
+    probed, the other's site-packages (and `.pth`) are never seen.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="tr-identity-")
+        self.base = os.path.join(self.tmp, "base")
+        os.makedirs(os.path.join(self.base, "bin"))
+        with open(os.path.join(self.base, "pyvenv.cfg"), "w") as fh:
+            fh.write("home = /usr/bin\n")
+        with open(os.path.join(self.base, "bin", "python3"), "w") as fh:
+            fh.write("#!/bin/sh\n")
+        os.chmod(os.path.join(self.base, "bin", "python3"), 0o755)
+        for name in ("a", "b"):
+            root = os.path.join(self.tmp, name)
+            os.makedirs(os.path.join(root, "bin"))
+            os.makedirs(os.path.join(root, "lib", "python3.14", "site-packages"))
+            with open(os.path.join(root, "pyvenv.cfg"), "w") as fh:
+                fh.write("home = ../base/bin\n")
+            os.symlink(
+                os.path.join(self.base, "bin", "python3"),
+                os.path.join(root, "bin", "python3"),
+            )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @unittest.skipIf(os.name == "nt", "symlink layout")
+    def test_shared_base_venvs_are_distinct(self):
+        a = os.path.join(self.tmp, "a", "bin", "python3")
+        b = os.path.join(self.tmp, "b", "bin", "python3")
+        self.assertEqual(venv_mod._real(a), venv_mod._real(b))
+
+        def fake_sp(py):
+            return os.path.join(
+                os.path.dirname(os.path.dirname(py)),
+                "lib",
+                "python3.14",
+                "site-packages",
+            )
+
+        with (
+            patch.object(venv_mod, "_python_from_running_procs", return_value=[a, b]),
+            patch.object(venv_mod, "_candidate_pythons_from_home", return_value=[]),
+            patch.object(venv_mod, "_site_packages_of", side_effect=fake_sp),
+        ):
+            found = venv_mod.discover_python_venvs()
+        self.assertEqual(
+            sorted(v.root for v in found),
+            sorted([venv_mod._real(os.path.join(self.tmp, n)) for n in ("a", "b")]),
+        )
+        self.assertEqual(len({v.site_packages for v in found}), 2)
+
+    def test_venv_root_of_plain_interpreter_is_none(self):
+        plain = os.path.join(self.tmp, "plain", "deep", "bin")
+        os.makedirs(plain)
+        py = os.path.join(plain, "python3")
+        with open(py, "w") as fh:
+            fh.write("#!/bin/sh\n")
+        self.assertIsNone(venv_mod._venv_root_of(py))
+
+
 if __name__ == "__main__":
     unittest.main()
