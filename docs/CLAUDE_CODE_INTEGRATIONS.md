@@ -159,6 +159,11 @@ the 2.4× cost trap).
 Under `--multiplexer-only`, ToolRecall exposes `docs_search` and `docs_get_page`:
 - During `toolrecall setup`, Claude Code's commands (`~/.claude/commands`, `~/.claude/skills`),
   project instructions (`CLAUDE.md`), and memory are auto-indexed into SQLite FTS5.
-- Claude Code can search all indexed skills and guidelines in 0.6ms via `docs_search("<query>")`
-  without reading full markdown files into the context window.
+- Claude Code can query indexed skills and guidelines in 0.6ms via `docs_search("<query>")`.
 - Manual re-index: `toolrecall index-claude` or `toolrecall index --all`.
+- **Caveat (not a token saver on coding tasks):** In measured SWE-bench backlog runs
+  ([AGENT_COMPATIBILITY.md](AGENT_COMPATIBILITY.md#measured-2026-10-claude-code-ab-on-swe-bench-sonnet-55-headless)),
+  adding `docs_search` MCP + instructions increased cost by +20% to +24% (\$0.54 → \$0.65–\$0.67)
+  because the extra tool schemas grew peak context (74–88k vs 56–68k tokens) while Claude Code
+  still used bash (`sed`/`cat`/`python -c`). Use `--multiplexer-only` when you want pooled
+  local stdio MCP servers or skill lookup, not to reduce coding-task spend.

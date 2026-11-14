@@ -11,7 +11,7 @@ Pick your agent and integration layer. The table tells you what value to expect 
 | Agent | MCP Bridge | Forward Proxy | Shim | Value | Notes |
 |-------|-----------|---------------|------|-------|-------|
 | **Hermes** | ✅ | ✅ | ✅ | **High** | Optimized for Hermes — stateless, small context = biggest win. Context Tracker emits drop-clean hints once the agent checkpoints (Hermes does so on turn 1). |
-| **OpenCode** | ✅ | ✅ | ❌ N/A (Node.js) | **High** | MCP multiplex is the killer feature. |
+| **OpenCode** | ✅ Multiplexer-only (`--multiplexer-only`) | ⚠️ Headless repeats | ❌ N/A (Node.js) | **Selective** | OpenCode uses its own native `read`/`edit`/`bash`/`grep`/`glob` tools, so MCP file caching is skipped (`--multiplexer-only` default). On single-shot coding tasks without third-party stdio MCP servers, `--multiplexer-only` adds ~1.4k schema tokens/turn with no token saving. Value comes from pooling slow third-party stdio MCP servers across sessions and forward-proxy replay on headless/eval repeats. |
 | **Cline** | ✅ | ✅ | ✅ | **High** | Benefits from both MCP bridge and shim. |
 | **Aider** | ✅ Via `--mcp-toolrecall` | ✅ | ✅ | **Medium** | Diff-patch based, fewer tool re-reads. |
 | **Google ADK** | ✅ | ✅ | ✅ | **High** | Python SDK, no built-in tool caching; shim catches `open()` in tools. |
@@ -50,16 +50,16 @@ pipx install toolrecall && toolrecall setup
 
 ---
 
-## OpenCode — ✅ High value
+## OpenCode — ⚠️ Selective
 
-OpenCode is a Node.js agent (shim doesn't apply), but the MCP bridge is transformative.
+OpenCode is a Node.js agent (the Python shim doesn't apply) with its own built-in `read`, `edit`, `bash`, `grep`, and `glob` tools. Because it prefers those native tools and manages its own edits, **do not expect token savings on single-shot coding tasks**:
 
-**Why it works:**
-- OpenCode has no built-in MCP multiplexing — TR provides shared server subprocesses
-- Lazy-loading avoids ~1.7s per-server startup on every session boot
-- Shared daemon means GitHub / Postgres / etc. servers persist across OpenCode sessions
+- On a clean coding task without third-party MCP servers, `--multiplexer-only` adds ~1.4k schema tokens per turn (`mcp_call`, `mcp_list_servers`, `docs_search`, `docs_get_page`) with no token reduction.
+- **Where it helps:**
+  - **MCP multiplexing:** OpenCode has no built-in MCP daemon pool — ToolRecall keeps third-party stdio MCP servers (GitHub, Postgres, etc.) persistent across sessions.
+  - **Forward proxy (`:8569`):** HTTP-level request caching/replay on repeated headless or eval runs.
 
-**Config:**
+`toolrecall setup` configures `~/.config/opencode/opencode.jsonc` with `--multiplexer-only` by default:
 ```jsonc
 // ~/.config/opencode/opencode.jsonc
 {
