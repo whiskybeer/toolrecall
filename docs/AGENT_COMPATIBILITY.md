@@ -61,14 +61,13 @@ OpenCode is a Node.js agent (shim doesn't apply), but the MCP bridge is transfor
 
 **Config:**
 ```jsonc
-// ~/.opencode/opencode.jsonc
+// ~/.config/opencode/opencode.jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "toolrecall": {
       "type": "local",
-      "command": "toolrecall",
-      "args": ["mcp"],
+      "command": ["toolrecall", "mcp", "--multiplexer-only"],
       "enabled": true
     }
   }
