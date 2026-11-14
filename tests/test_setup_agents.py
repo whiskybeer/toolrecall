@@ -443,5 +443,65 @@ class TestDoctorClaude(unittest.TestCase):
             self.assertEqual(cli._scan_headless_hint(repo), (os.path.join(".github", "ci.yml"), 1))
 
 
+class TestOpenCodeSetup(unittest.TestCase):
+    def test_opencode_xdg_config_and_array_command(self):
+        """OpenCode setup writes XDG opencode.jsonc with array command and --multiplexer-only."""
+        with tempfile.TemporaryDirectory() as home:
+            oc_dir = os.path.join(home, ".config", "opencode")
+            os.makedirs(oc_dir, exist_ok=True)
+            cfg_path = os.path.join(oc_dir, "opencode.jsonc")
+            with open(cfg_path, "w") as f:
+                f.write(
+                    "// user comment\n"
+                    '{"$schema": "https://opencode.ai/config.json", '
+                    '"mcp": {"other": {"type": "local", "command": ["echo"],}},}\n'
+                )
+
+            with (
+                patch.object(sys, "argv", ["toolrecall", "setup", "--yes"]),
+                patch.object(shutil, "which", return_value=None),
+                patch.dict(
+                    os.environ, {"XDG_CONFIG_HOME": os.path.join(home, ".config")}, clear=True
+                ),
+                _expand_to(home),
+            ):
+                result = cli._ensure_agent_integration()
+
+            self.assertTrue(result.get("opencode"))
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+            self.assertEqual(cfg["$schema"], "https://opencode.ai/config.json")
+            self.assertIn("other", cfg["mcp"])
+            tr = cfg["mcp"]["toolrecall"]
+            self.assertEqual(tr["type"], "local")
+            self.assertIsInstance(tr["command"], list)
+            self.assertIn("mcp", tr["command"])
+            self.assertIn("--multiplexer-only", tr["command"])
+            self.assertTrue(tr["enabled"])
+
+    def test_opencode_corrupt_config_not_clobbered(self):
+        """Unreadable opencode.jsonc is left untouched and returns False."""
+        with tempfile.TemporaryDirectory() as home:
+            oc_dir = os.path.join(home, ".config", "opencode")
+            os.makedirs(oc_dir, exist_ok=True)
+            cfg_path = os.path.join(oc_dir, "opencode.jsonc")
+            with open(cfg_path, "w") as f:
+                f.write("{not valid json")
+
+            with (
+                patch.object(sys, "argv", ["toolrecall", "setup", "--yes"]),
+                patch.object(shutil, "which", return_value=None),
+                patch.dict(
+                    os.environ, {"XDG_CONFIG_HOME": os.path.join(home, ".config")}, clear=True
+                ),
+                _expand_to(home),
+            ):
+                result = cli._ensure_agent_integration()
+
+            self.assertFalse(result.get("opencode"))
+            with open(cfg_path) as f:
+                self.assertEqual(f.read(), "{not valid json")
+
+
 if __name__ == "__main__":
     unittest.main()

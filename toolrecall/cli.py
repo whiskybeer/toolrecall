@@ -2360,14 +2360,38 @@ def _ensure_agent_integration():
             result["hermes"] = False
 
     # ─── OpenCode / Crush ────────────────────────────────────────────────
-    OC_DIR = os.path.expanduser("~/.opencode")
-    if os.path.isdir(OC_DIR):
-        oc_config_path = os.path.join(OC_DIR, "opencode.jsonc")
-        config = _prepare_opencode_config(oc_config_path)
-        with open(oc_config_path, "w") as f:
-            json.dump(config, f, indent=2)
-        print(f"  ✅ OpenCode MCP config written (automatic): {oc_config_path}")
-        result["opencode"] = True
+    xdg_config = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    oc_xdg_dir = os.path.join(xdg_config, "opencode")
+    oc_legacy_dir = os.path.expanduser("~/.opencode")
+    oc_bin = shutil.which("opencode") or (
+        os.path.join(oc_legacy_dir, "bin", "opencode")
+        if os.path.isfile(os.path.join(oc_legacy_dir, "bin", "opencode"))
+        else None
+    )
+    oc_config_path = None
+    if os.path.isdir(oc_xdg_dir) or oc_bin:
+        json_cand = os.path.join(oc_xdg_dir, "opencode.json")
+        jsonc_cand = os.path.join(oc_xdg_dir, "opencode.jsonc")
+        oc_config_path = (
+            json_cand
+            if os.path.isfile(json_cand) and not os.path.isfile(jsonc_cand)
+            else jsonc_cand
+        )
+    else:
+        for fname in ("opencode.jsonc", "opencode.json"):
+            cand = os.path.join(oc_legacy_dir, fname)
+            if os.path.isfile(cand):
+                oc_config_path = cand
+                break
+
+    if oc_config_path:
+        wrote, warn = _prepare_opencode_config(oc_config_path)
+        if wrote:
+            print(f"  ✅ OpenCode MCP config written (automatic): {oc_config_path}")
+            result["opencode"] = True
+        else:
+            print(f"  ⚠️  OpenCode MCP config NOT written: {warn}")
+            result["opencode"] = False
     else:
         result["opencode"] = False
 
@@ -2808,8 +2832,8 @@ ToolRecall works with any AI coding agent via MCP. To integrate manually:
     → Adds cached_read/cached_terminal as MCP tools
 
   OpenCode / Crush:
-    Add to ~/.opencode/opencode.jsonc under "mcp" key:
-    { "toolrecall": { "type": "local", "command": "toolrecall", "args": ["mcp"], "enabled": true } }
+    Add to ~/.config/opencode/opencode.jsonc under "mcp" key:
+    { "toolrecall": { "type": "local", "command": ["toolrecall", "mcp", "--multiplexer-only"], "enabled": true } }
 
   Cursor:
     Add to .cursorrules: "Use cached_read for file reads, cached_terminal for terminal commands"
@@ -2905,6 +2929,79 @@ def _toolrecall_command_for_hook(target: str = "antigravity") -> str:
     return f"{bin_path} hook {target}"
 
 
+def _strip_jsonc(text: str) -> str:
+    """Strip // and /* */ comments and trailing commas without touching string literals."""
+    import re
+
+    def _repl(match: "re.Match[str]") -> str:
+        return "" if match.group(1) is not None else match.group(0)
+
+    cleaned = re.sub(r'"(?:\\.|[^"\\])*"|(//[^\n]*|/\*[\s\S]*?\*/)', _repl, text)
+    return re.sub(r",(\s*[}\]])", r"\1", cleaned)
+
+
+def _merge_mcp_json_config(
+    config_path: str,
+    servers_key: str,
+    entry: dict,
+    *,
+    schema_url: str | None = None,
+    strip_jsonc: bool = False,
+) -> tuple[bool, str]:
+    """Agent-agnostic JSON/JSONC MCP config merger with atomic write.
+
+    Reads an existing config (if present), merges ``entry`` under
+    ``config[servers_key]["toolrecall"]`` while keeping all user-defined servers
+    verbatim, and writes atomically via temp file + ``os.replace``.
+    Never clobbers an unreadable or non-object config.
+    """
+    import json
+    import logging
+    import os
+    import tempfile
+
+    config: dict = {}
+    existing = False
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                raw = f.read()
+            if strip_jsonc:
+                raw = _strip_jsonc(raw)
+            config = json.loads(raw) if raw.strip() else {}
+            existing = True
+        except (json.JSONDecodeError, OSError) as e:
+            return False, f"existing config unreadable ({e}) — fix or remove it first"
+
+    if not isinstance(config, dict):
+        return False, "existing config is not a JSON object"
+    servers = config.setdefault(servers_key, {})
+    if not isinstance(servers, dict):
+        return False, f'"{servers_key}" is not an object'
+
+    servers["toolrecall"] = entry
+    if schema_url:
+        config.setdefault("$schema", schema_url)
+
+    cfg_dir = os.path.dirname(os.path.abspath(config_path))
+    os.makedirs(cfg_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=cfg_dir, prefix=".mcp_config_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, config_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError as cleanup_err:
+            logging.getLogger("toolrecall.cli").debug(
+                "mcp config tmp cleanup failed: %s", cleanup_err
+            )
+        raise
+    return True, "updated" if existing else "created"
+
+
 def _prepare_antigravity_config(
     config_path: str, multiplexer_only: bool = True
 ) -> tuple[bool, str]:
@@ -2925,56 +3022,15 @@ def _prepare_antigravity_config(
         "updated"); warn non-empty with wrote=False → reason skipped
         (unreadable/corrupt existing file, schema mismatch).
     """
-    import json
-    import os
-    import tempfile
-
-    config: dict = {}
-    existing = False
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                config = json.load(f)
-            existing = True
-        except (json.JSONDecodeError, OSError) as e:
-            # Never clobber a config we cannot parse — user data protection.
-            return False, f"existing config unreadable ({e}) — fix or remove it first"
-
-    if not isinstance(config, dict):
-        return False, "existing config is not a JSON object"
-    servers = config.setdefault("mcpServers", {})
-    if not isinstance(servers, dict):
-        return False, '"mcpServers" is not an object'
-
     cmd_line = _toolrecall_command_for_mcp()
     args = list(cmd_line[1:])
     if multiplexer_only and "--multiplexer-only" not in args:
         args.append("--multiplexer-only")
-    servers["toolrecall"] = {"command": cmd_line[0], "args": args}
-
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    # Atomic: tmp file in the same directory, then os.replace.
-    fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(config_path), prefix=".mcp_config_", suffix=".tmp"
+    return _merge_mcp_json_config(
+        config_path,
+        servers_key="mcpServers",
+        entry={"command": cmd_line[0], "args": args},
     )
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(config, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, config_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError as cleanup_err:
-            # Best-effort temp cleanup — never masks the original write error
-            # (re-raised below); logged so the swallow is visible, not silent.
-            import logging
-
-            logging.getLogger("toolrecall.cli").debug(
-                "antigravity config tmp cleanup failed: %s", cleanup_err
-            )
-        raise
-    return True, "updated" if existing else "created"
 
 
 def _print_antigravity_notice() -> None:
@@ -3018,45 +3074,12 @@ def _prepare_cline_config(config_path: str) -> tuple[bool, str]:
         (wrote, info): wrote=True -> "created" or "updated";
         wrote=False -> reason skipped.
     """
-    import json
-    import os
-    import tempfile
-
-    config: dict = {}
-    existing = False
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                config = json.load(f)
-            existing = True
-        except (json.JSONDecodeError, OSError) as e:
-            return False, f"existing config unreadable ({e}) — fix or remove it first"
-
-    if not isinstance(config, dict):
-        return False, "existing config is not a JSON object"
-    servers = config.setdefault("mcpServers", {})
-    if not isinstance(servers, dict):
-        return False, '"mcpServers" is not an object'
-
     cmd_line = _toolrecall_command_for_mcp()
-    servers["toolrecall"] = {"command": cmd_line[0], "args": cmd_line[1:]}
-
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(config_path), prefix=".cline_mcp_", suffix=".tmp"
+    return _merge_mcp_json_config(
+        config_path,
+        servers_key="mcpServers",
+        entry={"command": cmd_line[0], "args": cmd_line[1:]},
     )
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(config, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, config_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    return True, "updated" if existing else "created"
 
 
 def _prepare_cursor_config(config_path: str) -> tuple[bool, str]:
@@ -3072,97 +3095,36 @@ def _prepare_cursor_config(config_path: str) -> tuple[bool, str]:
         (wrote, info): wrote=True -> "created" or "updated";
         wrote=False -> reason skipped.
     """
-    import json
-    import os
-    import tempfile
-
-    config: dict = {}
-    existing = False
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                config = json.load(f)
-            existing = True
-        except (json.JSONDecodeError, OSError) as e:
-            return False, f"existing config unreadable ({e}) — fix or remove it first"
-
-    if not isinstance(config, dict):
-        return False, "existing config is not a JSON object"
-    servers = config.setdefault("mcpServers", {})
-    if not isinstance(servers, dict):
-        return False, '"mcpServers" is not an object'
-
     cmd_line = _toolrecall_command_for_mcp()
     args = list(cmd_line[1:])
     if "--multiplexer-only" not in args:
         args.append("--multiplexer-only")
-    servers["toolrecall"] = {"command": cmd_line[0], "args": args}
-
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(config_path), prefix=".cursor_mcp_", suffix=".tmp"
+    return _merge_mcp_json_config(
+        config_path,
+        servers_key="mcpServers",
+        entry={"command": cmd_line[0], "args": args},
     )
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(config, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, config_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    return True, "updated" if existing else "created"
 
 
-def _prepare_opencode_config(config_path):
-    """Read existing opencode config or create fresh one with Crush format.
+def _prepare_opencode_config(config_path: str, multiplexer_only: bool = True) -> tuple[bool, str]:
+    """Read existing OpenCode config (JSON/JSONC) or create a fresh one, then
+    merge the toolrecall MCP bridge entry under ``mcp``.
 
-    Detects Crush (mcp key) vs classic opencode (mcpServers key) and
-    writes the appropriate format.
+    OpenCode expects ``"mcp": { "<name>": { "type": "local", "command": [...], "enabled": true } }``.
+    Configured as ``--multiplexer-only`` by default so OpenCode keeps its native
+    file/search tools without prompt bloat while sharing pooled MCP servers and
+    ``docs_search``.
     """
-    import json
-
-    config = {}
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                content = f.read()
-            import re
-
-            content = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
-            content = re.sub(r",\s*([}\]])$", r"\1", content)
-            config = json.loads(content) if content.strip() else {}
-        except (json.JSONDecodeError, Exception):
-            config = {}
-
-    is_crush = "mcp" in config and isinstance(config["mcp"], dict)
-
-    cmd_line = _toolrecall_command_for_mcp()
-    toolrecall_entry = {
-        "type": "local",
-        "command": cmd_line[0],
-        "args": cmd_line[1:],
-        "enabled": True,
-    }
-
-    if is_crush:
-        config["mcp"]["toolrecall"] = toolrecall_entry
-    else:
-        if "mcpServers" not in config:
-            config["mcpServers"] = {}
-        config["mcpServers"]["toolrecall"] = {
-            "command": cmd_line[0],
-            "args": cmd_line[1:],
-        }
-        config.pop("mcp", None)
-
-    if is_crush:
-        config.pop("$schema", None)
-        config.setdefault("$schema", "https://opencode.ai/config.json")
-
-    return config
+    cmd_line = list(_toolrecall_command_for_mcp())
+    if multiplexer_only and "--multiplexer-only" not in cmd_line:
+        cmd_line.append("--multiplexer-only")
+    return _merge_mcp_json_config(
+        config_path,
+        servers_key="mcp",
+        entry={"type": "local", "command": cmd_line, "enabled": True},
+        schema_url="https://opencode.ai/config.json",
+        strip_jsonc=True,
+    )
 
 
 def _revert_proxy_wiring_in_text(path_hint: str, text: str) -> str:
