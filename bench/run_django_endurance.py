@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -669,7 +670,11 @@ class IsolatedEnvironment:
         }
 
 
-def build_openai_tools(arm: str) -> list[dict]:
+def build_openai_tools(arm: str, full_reads: bool = False) -> list[dict]:
+    read_props: dict[str, dict] = {"path": {"type": "string"}}
+    if not full_reads:
+        read_props["offset"] = {"type": "integer"}
+        read_props["limit"] = {"type": "integer"}
     tools = [
         {
             "type": "function",
@@ -686,11 +691,7 @@ def build_openai_tools(arm: str) -> list[dict]:
                 "description": "Read a file inside the repository.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "offset": {"type": "integer"},
-                        "limit": {"type": "integer"},
-                    },
+                    "properties": read_props,
                     "required": ["path"],
                 },
             },
@@ -750,6 +751,7 @@ def execute_tool(
     env_mgr: IsolatedEnvironment,
     log_path: Path,
     call_idx: int,
+    full_reads: bool = False,
 ) -> tuple[str, str | None]:
     if name == "list_files":
         files = sorted(str(p.relative_to(workspace)) for p in (workspace / "django").rglob("*.py"))
@@ -763,7 +765,7 @@ def execute_tool(
         if env_mgr.arm == "baseline" or env_mgr.bridge is None:
             try:
                 content = Path(abs_path).read_text(encoding="utf-8")
-                if args.get("offset") or args.get("limit"):
+                if not full_reads and (args.get("offset") or args.get("limit")):
                     lines = content.splitlines(keepends=True)
                     start = max(0, int(args.get("offset") or 1) - 1)
                     end = start + int(args.get("limit")) if args.get("limit") else len(lines)
@@ -772,9 +774,9 @@ def execute_tool(
             except Exception as e:
                 return json.dumps({"error": str(e)}), None
         rpc_args: dict = {"path": abs_path}
-        if args.get("offset"):
+        if not full_reads and args.get("offset"):
             rpc_args["offset"] = int(args["offset"])
-        if args.get("limit"):
+        if not full_reads and args.get("limit"):
             rpc_args["limit"] = int(args["limit"])
         resp = env_mgr.bridge.handle_request(
             {
@@ -874,8 +876,21 @@ def call_openrouter_via_proxy(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(2.0 * (2**attempt))
+                continue
+            raise
+        except urllib.error.URLError:
+            if attempt < 3:
+                time.sleep(2.0 * (2**attempt))
+                continue
+            raise
+    raise RuntimeError("unreachable")
 
 
 def evict_clean_files_hermes(messages: list[dict], env_mgr: IsolatedEnvironment) -> int:
@@ -927,8 +942,11 @@ def run_single_endurance(
     temperature: float,
     max_turns_per_bug: int,
     dry_run: bool,
+    full_reads: bool = False,
+    rounds: int = 1,
 ) -> dict:
-    run_tag = f"django20-{harness}-{arm}-s{seed}"
+    prefix = "django20full" if full_reads else (f"django{20 * rounds}" if rounds > 1 else "django20")
+    run_tag = f"{prefix}-{harness}-{arm}-s{seed}"
     ws_dir = Path(tempfile.mkdtemp(prefix=f"django-ws-{run_tag}-"))
     seed_django_workspace(django_src, ws_dir)
     log_path = ws_dir / "pytest_session.log"
@@ -971,7 +989,7 @@ def run_single_endurance(
             }
 
         api_key = load_openrouter_key()
-        tools = build_openai_tools(arm)
+        tools = build_openai_tools(arm, full_reads=full_reads)
         if harness == "hermes" and env_mgr.bridge is not None:
             env_mgr.bridge.handle_request(
                 {
@@ -996,7 +1014,24 @@ def run_single_endurance(
         ]
 
         call_seq = 10
-        for bug_idx, spec in enumerate(BUG_SPECS, 1):
+        all_specs = []
+        for r_idx in range(1, rounds + 1):
+            for spec in BUG_SPECS:
+                s = dict(spec)
+                if rounds > 1:
+                    s["prompt"] = f"[Round {r_idx}/{rounds}] " + spec["prompt"]
+                all_specs.append((r_idx, s))
+
+        prev_round = 1
+        for bug_idx, (r_idx, spec) in enumerate(all_specs, 1):
+            if r_idx != prev_round:
+                # Re-seed bugs in place for the next round of the continuous session
+                for b in BUG_SPECS:
+                    p = ws_dir / b["file"]
+                    txt = p.read_text(encoding="utf-8")
+                    if b["find"] in txt:
+                        p.write_text(txt.replace(b["find"], b["corrupt"], 1), encoding="utf-8")
+                prev_round = r_idx
             bug_t0 = time.time()
             before_usage = env_mgr.read_usage_summary()
             messages.append({"role": "user", "content": spec["prompt"]})
@@ -1031,10 +1066,11 @@ def run_single_endurance(
                         env_mgr=env_mgr,
                         log_path=log_path,
                         call_idx=call_seq,
+                        full_reads=full_reads,
                     )
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": out_text})
 
-            k_expr = " or ".join(b["id"] for b in BUG_SPECS[:bug_idx])
+            k_expr = " or ".join(b["id"] for b in BUG_SPECS[: ((bug_idx - 1) % len(BUG_SPECS)) + 1])
             v_rc, _ = run_django_pytest(ws_dir, k_expr=k_expr)
             if v_rc == 0:
                 solved_count = bug_idx
@@ -1097,6 +1133,8 @@ def main() -> int:
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--max-turns-per-bug", type=int, default=10)
     ap.add_argument("--django-src", type=Path, default=DEFAULT_DJANGO_SRC)
+    ap.add_argument("--full-reads", action="store_true", help="Disable offset/limit on read_file to push 350K+ tokens")
+    ap.add_argument("--rounds", type=int, default=1, help="Number of 20-bug rounds in one continuous session (3 => ~400 turns)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -1107,7 +1145,7 @@ def main() -> int:
         for harness in harnesses:
             for arm in args.arms:
                 print(
-                    f"[run] django20 harness={harness} arm={arm} seed={seed} dry_run={args.dry_run}",
+                    f"[run] django20 harness={harness} arm={arm} seed={seed} full_reads={args.full_reads} dry_run={args.dry_run}",
                     flush=True,
                 )
                 res = run_single_endurance(
@@ -1119,6 +1157,8 @@ def main() -> int:
                     temperature=args.temperature,
                     max_turns_per_bug=args.max_turns_per_bug,
                     dry_run=args.dry_run,
+                    full_reads=args.full_reads,
+                    rounds=args.rounds,
                 )
                 results.append(res)
                 if not args.dry_run:
