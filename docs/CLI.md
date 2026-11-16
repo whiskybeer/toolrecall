@@ -404,7 +404,7 @@ Safer options:
 ### `toolrecall failures`
 
 - **File:** `cli.py : cmd_failures()`, ledger in [FAILURE_LEDGER.md](FAILURE_LEDGER.md)
-- **Purpose:** Inspect and annotate normalized cross-agent failure signatures in SQLite (`[cache].failure_ledger`, opt-in).
+- **Purpose:** Inspect and annotate normalized cross-agent failure signatures in SQLite (`[cache].failure_ledger`, default `true`).
 - **Subcommands:**
   - `toolrecall failures search <query> [--tool X] [--limit N] [--json]`
   - `toolrecall failures stats [--json]`

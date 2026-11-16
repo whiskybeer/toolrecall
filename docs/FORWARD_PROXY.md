@@ -231,10 +231,10 @@ independent random draws from the provider:
 - Requests with greedy temperature (`temperature == 0`) or omitted temperature
   continue to be cached transparently.
 
-## Prompt-Prefix Stability & Wire Stabilization (opt-in)
+## Prompt-Prefix Stability & Wire Stabilization
 
 - **Prefix regression tracking (always-on telemetry):** For multi-turn LLM payloads (`/v1/chat/completions`, `/v1/messages`, Gemini `generateContent`), `proxy_usage.csv` records `prefix_hash` and `cache_bust_tokens` when a previously stable conversation prefix diverges mid-session. Summarize recent busts with `toolrecall stats` (`prefix_busts`).
-- **Opt-in wire prefix stabilization (`stabilize_prefix = false` default):** Enable globally via `[forward_proxy] stabilize_prefix = true` (`TOOLRECALL_STABILIZE_PREFIX=1`) or per request via `X-ToolRecall-Stabilize-Prefix: 1`. Only historical turns (`messages[:-1]`) have volatile runtime timestamps/paths normalized; the latest turn is always forwarded byte-exact.
+- **Wire prefix stabilization (`stabilize_prefix = true` default):** Enabled by default via `[forward_proxy] stabilize_prefix = true` (`TOOLRECALL_STABILIZE_PREFIX=0` to disable) or per request via `X-ToolRecall-Stabilize-Prefix: 1|0`. Only historical turns (`messages[:-1]`) have volatile runtime timestamps/paths normalized; the latest turn is always forwarded byte-exact.
 
 ## Outbound Egress Credential Guard (opt-in)
 

@@ -1053,7 +1053,7 @@ def _stabilize_prefix_enabled(headers) -> bool:
     try:
         from toolrecall.config import load_config
 
-        cfg_val = load_config().get("forward_proxy", "stabilize_prefix", default=False)
+        cfg_val = load_config().get("forward_proxy", "stabilize_prefix", default=True)
         if isinstance(cfg_val, str):
             return cfg_val.strip().lower() in ("1", "true", "yes", "on")
         return bool(cfg_val)

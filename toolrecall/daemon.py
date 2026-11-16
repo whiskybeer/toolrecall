@@ -1448,7 +1448,7 @@ def _fetch_revalidate_once(url: str, etag: str) -> dict | None:
 def _record_tool_failure_best_effort(tool: str, request: object, error_msg: str) -> None:
     """Best-effort recording of failed tool calls into the cross-agent failure ledger."""
     try:
-        if not bool(load_config().get("cache", "failure_ledger", default=False)):
+        if not bool(load_config().get("cache", "failure_ledger", default=True)):
             return
         from toolrecall.failures import record_failure
 
@@ -2323,7 +2323,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             "emit_context_hints": self.cfg.mcp_emit_context_hints,
             "client_hint_policy": self.cfg.mcp_client_hint_policy,
             "recall_enabled": self.cfg.recall_enabled,
-            "failure_ledger_enabled": bool(self.cfg.get("cache", "failure_ledger", default=False)),
+            "failure_ledger_enabled": bool(self.cfg.get("cache", "failure_ledger", default=True)),
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
             "gateway": bool(self.cfg.mcp_multiplex_gateway),
             "context_tracker": {

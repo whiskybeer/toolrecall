@@ -423,7 +423,7 @@ class MCPBridge:
         from toolrecall.incremental import IncrementalReadSession
 
         self._incremental = IncrementalReadSession()
-        self._incremental_enabled = False
+        self._incremental_enabled = True
         self._incremental_paths: list[str] = []
         self._incremental_min_bytes = 65536
         diff_ratio = DEFAULT_DIFF_RATIO
@@ -431,7 +431,7 @@ class MCPBridge:
             from toolrecall.config import load_config
 
             cfg = load_config()
-            self._incremental_enabled = bool(cfg.get("cache", "incremental_reads", default=False))
+            self._incremental_enabled = bool(cfg.get("cache", "incremental_reads", default=True))
             self._incremental_paths = list(cfg.get("cache", "incremental_paths", default=[]) or [])
             self._incremental_min_bytes = int(
                 cfg.get("cache", "incremental_min_bytes", default=65536)
@@ -526,7 +526,7 @@ class MCPBridge:
         self._compaction_epoch = epoch
 
     def _load_incremental_config(self) -> tuple[bool, list[str], int]:
-        enabled = getattr(self, "_incremental_enabled", False)
+        enabled = getattr(self, "_incremental_enabled", True)
         paths = getattr(self, "_incremental_paths", [])
         min_bytes = getattr(self, "_incremental_min_bytes", 65536)
         try:
@@ -838,7 +838,7 @@ class MCPBridge:
                 continue
             if name == "context_get_manifest" and not self._emit_context_hints:
                 continue
-            if name == "failures_search" and not info.get("failure_ledger_enabled", False):
+            if name == "failures_search" and not info.get("failure_ledger_enabled", True):
                 continue
             if self._multiplexer_only and name not in (
                 "mcp_call",

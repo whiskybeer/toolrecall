@@ -319,7 +319,7 @@ that every `toolrecall/*.py` path cited in `docs/` exists.
 |------|---------|
 | `toolrecall/mcp_bridge.py` | stdio ↔ UDS protocol adapter |
 | `toolrecall/stub_core.py` | Shared unchanged-file stub and delta diff state machine (bridge + shim surfaces) |
-| `toolrecall/incremental.py` | Opt-in session-scoped append-only incremental file read suppression (`incremental_reads`) |
+| `toolrecall/incremental.py` | Session-scoped append-only incremental file read suppression (`incremental_reads`) |
 | `toolrecall/failures.py` | Opt-in cross-agent normalized failure signature ledger + FTS5 search |
 | `toolrecall/egress.py` | Opt-in outbound credential and private key egress guard (`off|warn|redact|block`) |
 | `toolrecall/mcp_registry.py` | MCP server-name → command registry |

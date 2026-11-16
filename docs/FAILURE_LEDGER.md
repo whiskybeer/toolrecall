@@ -29,11 +29,11 @@ The Failure Ledger is designed around strict privacy hygiene and zero-leakage pr
 
 ## 2. Configuration
 
-Recording of failure signatures is **disabled by default (opt-in)** in `~/.config/toolrecall/toolrecall.toml`. Enable it via the `[cache]` configuration block (or `TOOLRECALL_FAILURE_LEDGER=1`):
+Recording of failure signatures is **enabled by default** in `~/.config/toolrecall/toolrecall.toml`. Configure or disable it via the `[cache]` configuration block (or `TOOLRECALL_FAILURE_LEDGER=0`):
 
 ```toml
 [cache]
-failure_ledger = true  # Set to true to opt in to failure signature tracking
+failure_ledger = true  # Default true; set to false to disable failure signature tracking
 ```
 
 ---
