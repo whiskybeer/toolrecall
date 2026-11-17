@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.26] — 2026-11-17
+
+### Security
+- **Prompt canonicalization is linear on adversarial input** (`py/polynomial-redos`,
+  alerts 41/42). `<USER_SETTINGS_CHANGE>` and `<ADDITIONAL_METADATA>` blocks were stripped
+  with `OPEN[\s\S]*?CLOSE` under `re.sub`; a prompt carrying many opening tags and no closing
+  tag made every start position rescan to end-of-string, so the canonicalizer — which runs on
+  attacker-supplied request text before hashing — did O(n²) work. Both sites now go through
+  `_strip_tagged_blocks`, a single left-to-right `str.find` pass that is linear on every input
+  and byte-identical to the regex it replaced (17 equivalence cases per pattern plus 20k-tag
+  timing assertions in `tests/test_canon_redos.py`). The compiled regexes stay as reference
+  implementations for those tests.
+- **Blocked-read warnings no longer look like a credential leak** (alerts 37–40,
+  `py/clear-text-logging-sensitive-data`). The alerts traced to a test fixture variable named
+  `secret` whose value is a path, not a secret value: the warning logs the path of a blocked
+  file and never its contents, which `logging_setup`'s sensitive-data policy already excludes.
+  The fixture is renamed `env_path`; the operator log keeps its detail.
+
 ## [0.8.25] — 2026-11-17
 
 ### Added

@@ -29,7 +29,7 @@ python -m pytest tests/ -k "registry"
 
 **Requirements:** Python 3.11+, `pytest` (included via `.[dev]`).
 
-**Current count:** 2412 tests collected across 191 files (as of v0.8.24). The `make validate` gate (`make test-unit`, which excludes e2e/adk/gemini selections) runs 2319 of them: 2279 pass, 40 skip; the remainder are opt-in e2e/property/live suites.
+**Current count:** 2580 tests collected across 206 files (as of v0.8.26). The `make validate` gate (`make test-unit`, which excludes e2e/adk/gemini selections) selects 2483 of them; the last full run was 2445 pass, 40 skip. The remainder are opt-in e2e/property/live suites.
 
 ## Test File Organization
 
