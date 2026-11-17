@@ -7,6 +7,11 @@ Covers three open code-scanning alerts:
   from header values and drops headers with unsafe names.
 - #1 py/bind-socket-all-network-interfaces: bind_socket refuses wildcard
   hosts at the sink (defense-in-depth on top of _parse_tcp normalization).
+
+Extended for the 2026-11-17 scan:
+- #41/#42 py/polynomial-redos: the <USER_SETTINGS_CHANGE> and
+  <ADDITIONAL_METADATA> strippers must be linear and byte-identical to the
+  regex forms they replaced (_strip_tagged_blocks).
 """
 
 import os
@@ -172,3 +177,103 @@ class TestBindBarrier:
             assert os.path.exists(p)
         finally:
             s.close()
+
+
+# ── Tagged-block strippers (#41/#42) ─────────────────────────────────────────
+
+from toolrecall.proxy import (  # noqa: E402
+    _RE_AG_SETTINGS_CHANGE,
+    _RE_STABILIZE_ADDITIONAL_METADATA,
+    _ag_canon_text,
+    _stabilize_wire_text,
+    _strip_tagged_blocks,
+)
+
+_META_PLACEHOLDER = "<ADDITIONAL_METADATA>[STABILIZED]</ADDITIONAL_METADATA>"
+
+SETTINGS_CASES = [
+    "",
+    "no markers here",
+    "<USER_SETTINGS_CHANGE>x</USER_SETTINGS_CHANGE>",
+    "a\n<USER_SETTINGS_CHANGE>x</USER_SETTINGS_CHANGE>b",
+    "a<USER_SETTINGS_CHANGE></USER_SETTINGS_CHANGE>b",
+    "<USER_SETTINGS_CHANGE>unterminated till EOF",
+    "x\n<USER_SETTINGS_CHANGE>a</USER_SETTINGS_CHANGE>\n<USER_SETTINGS_CHANGE>b</USER_SETTINGS_CHANGE>y",
+    "\n<USER_SETTINGS_CHANGE>x</USER_SETTINGS_CHANGE>",
+    "a\n\n<USER_SETTINGS_CHANGE>x</USER_SETTINGS_CHANGE>",
+    "<USER_SETTINGS_CHANGE>a<USER_SETTINGS_CHANGE>b</USER_SETTINGS_CHANGE>c",
+]
+
+META_CASES = [
+    "",
+    "no metadata",
+    "<ADDITIONAL_METADATA>tz=UTC</ADDITIONAL_METADATA>",
+    "a<ADDITIONAL_METADATA>one</ADDITIONAL_METADATA>b<ADDITIONAL_METADATA>two</ADDITIONAL_METADATA>c",
+    "<ADDITIONAL_METADATA>unterminated till EOF",
+    "<ADDITIONAL_METADATA></ADDITIONAL_METADATA>",
+    "<ADDITIONAL_METADATA>a<ADDITIONAL_METADATA>b</ADDITIONAL_METADATA>c",
+]
+
+
+class TestTaggedBlockStripper:
+    """_strip_tagged_blocks must match the regexes it replaced, in linear time."""
+
+    @pytest.mark.parametrize("text", SETTINGS_CASES)
+    def test_settings_equivalent_to_regex(self, text):
+        out, removed = _strip_tagged_blocks(
+            text,
+            "<USER_SETTINGS_CHANGE>",
+            "</USER_SETTINGS_CHANGE>",
+            "",
+            eat_leading_newline=True,
+        )
+        assert out == _RE_AG_SETTINGS_CHANGE.sub("", text)
+        expected = sum(len(m) for m in _RE_AG_SETTINGS_CHANGE.findall(text))
+        assert removed == expected
+
+    @pytest.mark.parametrize("text", META_CASES)
+    def test_metadata_equivalent_to_regex(self, text):
+        out, removed = _strip_tagged_blocks(
+            text, "<ADDITIONAL_METADATA>", "</ADDITIONAL_METADATA>", _META_PLACEHOLDER
+        )
+        assert out == _RE_STABILIZE_ADDITIONAL_METADATA.sub(_META_PLACEHOLDER, text)
+        expected = sum(len(m) for m in _RE_STABILIZE_ADDITIONAL_METADATA.findall(text))
+        assert removed == expected
+
+    def test_settings_linear_time(self):
+        # 20k unterminated open tags: the regex form rescans to EOF from each
+        # start position (O(n²)); the scanner must stay well under a second.
+        text = "<USER_SETTINGS_CHANGE>volatile\n" * 20000
+        t0 = time.monotonic()
+        out, removed = _strip_tagged_blocks(
+            text,
+            "<USER_SETTINGS_CHANGE>",
+            "</USER_SETTINGS_CHANGE>",
+            "",
+            eat_leading_newline=True,
+        )
+        elapsed = time.monotonic() - t0
+        assert out == text and removed == 0  # unterminated: untouched
+        assert elapsed < 1.0, f"settings stripper not linear: {elapsed:.2f}s"
+
+    def test_metadata_linear_time(self):
+        text = "<ADDITIONAL_METADATA>tz=UTC\n" * 20000
+        t0 = time.monotonic()
+        out, removed = _strip_tagged_blocks(
+            text, "<ADDITIONAL_METADATA>", "</ADDITIONAL_METADATA>", _META_PLACEHOLDER
+        )
+        elapsed = time.monotonic() - t0
+        assert out == text and removed == 0
+        assert elapsed < 1.0, f"metadata stripper not linear: {elapsed:.2f}s"
+
+    def test_ag_canon_still_strips_settings_change(self):
+        text = "keep\n<USER_SETTINGS_CHANGE>volatile</USER_SETTINGS_CHANGE>\ntail"
+        out = _ag_canon_text(text)
+        assert "volatile" not in out
+        assert "keep" in out and "tail" in out
+
+    def test_stabilize_counts_and_replaces_metadata(self):
+        block = "<ADDITIONAL_METADATA>xyz</ADDITIONAL_METADATA>"
+        out, chars = _stabilize_wire_text(f"a{block}b")
+        assert out == f"a{_META_PLACEHOLDER}b"
+        assert chars == len(block)

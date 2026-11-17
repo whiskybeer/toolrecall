@@ -293,6 +293,51 @@ def _strip_ctx_section(text: str) -> str:
     return "".join(out)
 
 
+def _strip_tagged_blocks(
+    text: str,
+    open_tag: str,
+    close_tag: str,
+    replacement: str,
+    *,
+    eat_leading_newline: bool = False,
+) -> tuple[str, int]:
+    """Replace ``open_tag ... close_tag`` blocks with *replacement* in O(n).
+
+    Stands in for the regex forms ``open_tag[\\s\\S]*?close_tag`` used at the
+    antigravity and wire-stabilization call sites below. Those are polynomial
+    (CodeQL py/polynomial-redos): with many unterminated open tags, ``re.sub``
+    rescans to end-of-string from every start position, so adversarial input
+    costs O(n²). This ``str.find`` loop advances monotonically and is linear on
+    every input, with byte-identical output (regression-tested in
+    tests/test_canon_redos.py).
+
+    ``eat_leading_newline`` mirrors the regex's leading ``\\n?``. Returns the
+    new text plus the number of characters removed, which the stabilizer
+    reports upstream as "chars stabilized".
+    """
+    out: list[str] = []
+    last = 0
+    removed = 0
+    while True:
+        start = text.find(open_tag, last)
+        if start == -1:
+            break
+        end = text.find(close_tag, start + len(open_tag))
+        if end == -1:
+            break  # unterminated block: leave the remainder untouched
+        end += len(close_tag)
+        if eat_leading_newline and start > last and text[start - 1] == "\n":
+            start -= 1
+        out.append(text[last:start])
+        out.append(replacement)
+        removed += end - start
+        last = end
+    if last == 0:
+        return text, 0
+    out.append(text[last:])
+    return "".join(out), removed
+
+
 _RE_DANGLING_COMMA = re.compile(r",(\s*\})")
 _RE_LEADING_COMMA = re.compile(r"\{\s*,")
 _RE_SPACE_AFTER_COLON = re.compile(r":[ \t]+")
@@ -552,13 +597,22 @@ _RE_AG_TIME = re.compile(
 )
 _RE_AG_BRAIN_PATH = re.compile(r"/brain/[0-9a-fA-F-]{36}")
 _RE_AG_CONV_ID = re.compile(r"Conversation ID: [0-9a-fA-F-]{36}")
+# Reference implementation for the equivalence test only: `.sub()` here is
+# polynomial on adversarial input (CodeQL py/polynomial-redos); the production
+# path is `_strip_tagged_blocks` below.
 _RE_AG_SETTINGS_CHANGE = re.compile(r"\n?<USER_SETTINGS_CHANGE>[\s\S]*?</USER_SETTINGS_CHANGE>")
 
 
 def _ag_canon_text(text: str) -> str:
     """Antigravity profile: volatile timestamp in <ADDITIONAL_METADATA>,
     conversation UUIDs, brain directory paths, user settings changes, test durations + hermes rules."""
-    text = _RE_AG_SETTINGS_CHANGE.sub("", text)
+    text, _ = _strip_tagged_blocks(
+        text,
+        "<USER_SETTINGS_CHANGE>",
+        "</USER_SETTINGS_CHANGE>",
+        "",
+        eat_leading_newline=True,
+    )
     text = _hermes_canon_text(text)
     text = _RE_AG_TIME.sub("The current local time is: 1970-01-01T00:00:00Z", text)
     text = _RE_AG_CONV_ID.sub("Conversation ID: 00000000-0000-0000-0000-000000000000", text)
@@ -940,6 +994,7 @@ def _evaluate_prefix_bust(
 
 # ─── P4.2 Opt-in Wire Prefix Stabilization ──────────────────────────────────
 
+# Reference implementation for the equivalence test only (see _strip_tagged_blocks).
 _RE_STABILIZE_ADDITIONAL_METADATA = re.compile(
     r"<ADDITIONAL_METADATA>[\s\S]*?</ADDITIONAL_METADATA>"
 )
@@ -951,12 +1006,13 @@ _RE_STABILIZE_LOCAL_TIME = re.compile(r"\bThe current local time is: [^\n\r]+")
 def _stabilize_wire_text(text: str) -> tuple[str, int]:
     chars = 0
 
-    def _sub_meta(m: re.Match) -> str:
-        nonlocal chars
-        chars += len(m.group(0))
-        return "<ADDITIONAL_METADATA>[STABILIZED]</ADDITIONAL_METADATA>"
-
-    text = _RE_STABILIZE_ADDITIONAL_METADATA.sub(_sub_meta, text)
+    text, _meta_chars = _strip_tagged_blocks(
+        text,
+        "<ADDITIONAL_METADATA>",
+        "</ADDITIONAL_METADATA>",
+        "<ADDITIONAL_METADATA>[STABILIZED]</ADDITIONAL_METADATA>",
+    )
+    chars += _meta_chars
 
     def _sub_conv(m: re.Match) -> str:
         nonlocal chars

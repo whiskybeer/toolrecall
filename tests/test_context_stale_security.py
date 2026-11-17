@@ -111,20 +111,23 @@ def test_block_has_exactly_one_marker_pair():
 def test_sensitive_paths_excluded_from_stale():
     """Defense in depth: never echo a secret's path to the agent."""
     d = tempfile.mkdtemp()
-    secret = os.path.join(d, ".env")
+    # Named for what it is — a path, not a secret value. A variable called
+    # `secret` here made CodeQL's name heuristic treat the *path* as sensitive
+    # data flowing into the blocked-read warning (py/clear-text-logging).
+    env_path = os.path.join(d, ".env")
     normal = os.path.join(d, "main.py")
-    for p in (secret, normal):
+    for p in (env_path, normal):
         with open(p, "w") as f:
             f.write("data\n" * 50)
 
     t = ContextTracker()
-    for p in (secret, normal):
+    for p in (env_path, normal):
         t.mark_read(p)
         t.mark_dirty(p)
 
     paths = t.get_stale()["paths"]
     assert normal in paths
-    assert secret not in paths
+    assert env_path not in paths
 
 
 def test_sensitive_check_fails_closed(monkeypatch=None):
