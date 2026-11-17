@@ -249,9 +249,12 @@ def _refresh_worker(db_path: str | None = None) -> None:
 
 
 # ── Index compaction ─────────────────────────────────────────────────────────
-# External-content FTS5 accumulates stale term data on every re-index
-# (INSERT OR REPLACE fires delete+insert per row; deleted docid data stays in
-# pages_fts_data until an explicit 'rebuild'/'optimize'). Long-lived installs
+# External-content FTS5 accumulates stale term data on every re-index.
+# NOTE: `INSERT OR REPLACE` does NOT fire the DELETE trigger unless
+# `PRAGMA recursive_triggers` is ON (SQLite default: off), which is why the
+# upserts below use `ON CONFLICT ... DO UPDATE` — that fires pages_au and
+# keeps the index in sync. Superseded docid data still lingers in
+# pages_fts_data until an explicit 'rebuild'/'optimize'. Long-lived installs
 # that re-index daily grow multi-GB for a few MB of content — observed at
 # 3.4 GB for 7 MB. Compaction = full FTS rebuild from the content table
 # (lossless, content='pages' is the source of truth) + VACUUM.
@@ -502,7 +505,7 @@ def docs_search(query: str, source: str | None = None, _retried: bool = False) -
     except Exception as e:
         conn.close()
         estr = str(e)
-        if "malformed" in estr.lower() and not _retried:
+        if _is_fts_index_error(estr) and not _retried:
             if _rebuild_fts_index():
                 return docs_search(query, source=source, _retried=True)
             return (
@@ -510,6 +513,18 @@ def docs_search(query: str, source: str | None = None, _retried: bool = False) -
                 f"(see daemon log). Run 'toolrecall index-compact' manually."
             )
         return f"Search error: {e}"
+
+
+def _is_fts_index_error(err: str) -> bool:
+    """True for FTS5 errors a full index rebuild can repair.
+
+    Three distinct messages mean "the index disagrees with the content
+    table": corruption (`malformed`), a stale external-content row whose
+    content row is gone (`missing row N from content table`), and a
+    constraint failure surfaced during MATCH (`content table`).
+    """
+    low = err.lower()
+    return "malformed" in low or "missing row" in low or "content table" in low
 
 
 def _rebuild_fts_index() -> bool:
@@ -603,7 +618,7 @@ def docs_get_page(path: str, source: str = "", _retried: bool = False) -> str:
     except Exception as e:
         conn.close()
         estr = str(e)
-        if "malformed" in estr.lower() and not _retried:
+        if _is_fts_index_error(estr) and not _retried:
             if _rebuild_fts_index():
                 return docs_get_page(path, source, _retried=True)
             return (
@@ -676,7 +691,9 @@ def index_agent_memory(memories_dir: str | None = None, source: str = "agent-mem
                 title = f"{fname} entry {idx + 1}"
 
             cursor.execute(
-                "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(source, path) DO UPDATE SET title = excluded.title, "
+                "content = excluded.content, url = excluded.url",
                 (source, path_key, title, entry, f"file://{fpath}#entry{idx + 1}"),
             )
             total += 1
@@ -769,7 +786,9 @@ def index_directory(
                         break
 
             cursor.execute(
-                "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(source, path) DO UPDATE SET title = excluded.title, "
+                "content = excluded.content, url = excluded.url",
                 (source, rel, title, content, f"file://{full}"),
             )
             total += 1
@@ -848,7 +867,9 @@ def index_all(
                             break
 
                 cursor.execute(
-                    "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source, path) DO UPDATE SET title = excluded.title, "
+                    "content = excluded.content, url = excluded.url",
                     (source_name, rel, title, content, f"local://{source_name}/{rel}"),
                 )
                 total += 1
@@ -1027,7 +1048,9 @@ def index_claude_code(custom_roots: list[str] | None = None) -> dict[str, int]:
                         title = line[2:].strip()
                         break
                 cursor.execute(
-                    "INSERT OR REPLACE INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO pages (source, path, title, content, url) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source, path) DO UPDATE SET title = excluded.title, "
+                    "content = excluded.content, url = excluded.url",
                     (src, os.path.basename(fpath), title, content, f"file://{fpath}"),
                 )
                 counts[src] = counts.get(src, 0) + 1
