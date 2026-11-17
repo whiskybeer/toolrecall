@@ -71,15 +71,26 @@ class TestSymlinkDefaultOff(unittest.TestCase):
 
     def test_daemon_gate_strict_on_stock_config(self):
         """A daemon built from a default config must run Layer A only."""
-        tmp = tempfile.mkdtemp()
+        # realpath: Windows temp paths come back in 8.3 short form
+        # (RUNNER~1) from mkdtemp but normalise to the long form in
+        # realpath(), which made every containment compare fail.
+        tmp = os.path.realpath(tempfile.mkdtemp())
         real = os.path.join(tmp, "real")
         os.makedirs(real)
         allowed = os.path.join(tmp, "allowed")
         os.makedirs(allowed)
         link = os.path.join(allowed, "escape")
         os.symlink(real, link, target_is_directory=True)
+        # The escape target must exist: Windows realpath() will not resolve a
+        # symlink whose leaf is missing, so the probe would look contained.
+        with open(os.path.join(real, "f.txt"), "w") as f:
+            f.write("secret")
 
-        cfg = _cfg(f'[mcp]\nallowed_paths = ["{allowed}"]\n')
+        # Literal (single-quoted) TOML strings: a basic string would treat the
+        # backslashes in a Windows path as escapes ("\U" -> Invalid hex value)
+        # and the whole config would be ignored, silently falling back to
+        # defaults that allow the home directory.
+        cfg = _cfg(f"[mcp]\nallowed_paths = ['{allowed}']\n")
         gate = SecurityGate(cfg)
         self.assertIs(gate.allow_symlink_escapes, False)
         # Layer A still grants realpath-contained reads (file physically
@@ -93,7 +104,7 @@ class TestSymlinkDefaultOff(unittest.TestCase):
         self.assertIsNotNone(err, "stock install must NOT grant the Layer-B rescue")
         # Opting in restores it:
         cfg2 = _cfg(
-            f'[mcp]\nallowed_paths = ["{allowed}"]\n[security]\nallow_symlink_escapes = true\n'
+            f"[mcp]\nallowed_paths = ['{allowed}']\n[security]\nallow_symlink_escapes = true\n"
         )
         self.assertIsNone(SecurityGate(cfg2).check_read_path(os.path.join(link, "f.txt")))
 
@@ -106,13 +117,15 @@ class TestPathUtilsSignature(unittest.TestCase):
         self.assertIs(sig.parameters["allow_symlink_escapes"].default, False)
 
     def test_escape_denied_by_default_escape_allowed_optin(self):
-        tmp = tempfile.mkdtemp()
+        tmp = os.path.realpath(tempfile.mkdtemp())
         real = os.path.join(tmp, "real")
         os.makedirs(real)
         allowed = os.path.join(tmp, "allowed")
         os.makedirs(allowed)
         link = os.path.join(allowed, "escape")
         os.symlink(real, link, target_is_directory=True)
+        with open(os.path.join(real, "secret.txt"), "w") as f:
+            f.write("secret")
         target = os.path.join(link, "secret.txt")
 
         self.assertFalse(check_path_allowed(target, [allowed]))
