@@ -376,7 +376,7 @@ def stubbed_today(db: str) -> tuple[int, int]:
         return 0, 0
     try:
         rows = con.execute(
-            "SELECT cached_at, tokens FROM access_log WHERE category = 'mcp_dedup'"
+            "SELECT cached_at, tokens FROM access_log WHERE category IN ('mcp_dedup', 'mcp_delta', 'incremental_reads')"
         ).fetchall()
     except sqlite3.Error:
         return 0, 0
@@ -470,7 +470,7 @@ def session_replay_today(usage_csv: str | None = None, db: str | None = None) ->
         try:
             for ts, tokens in con.execute(
                 "SELECT cached_at, tokens FROM access_log"
-                " WHERE category = 'mcp_dedup' AND cached_at >= ? AND tokens > 0",
+                " WHERE category IN ('mcp_dedup', 'mcp_delta', 'incremental_reads') AND cached_at >= ? AND tokens > 0",
                 (day_start,),
             ):
                 stubs.append((float(ts), int(tokens or 0)))

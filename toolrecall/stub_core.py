@@ -296,6 +296,24 @@ class FileStubSession:
         with self._lock:
             self._session.clear()
 
+    def record_agent_write(self, path: str, new_content: str) -> None:
+        """Register a file write performed by the agent.
+
+        Advances the session base to new_content so subsequent reads can emit
+        a diff against this written copy instead of falling back to full send.
+        """
+        if not path or not isinstance(new_content, str):
+            return
+        if self.ttl_s <= 0:
+            return
+        key = os.path.realpath(os.path.expanduser(path))
+        digest = content_digest(new_content)
+        now = time.time()
+        with self._lock:
+            for k in [k for k in self._session if k.startswith(key + "#")]:
+                self._session.pop(k, None)
+            self._arm(key, new_content, digest, now)
+
     # ── internals ──
 
     def _fresh(self, state: dict, now: float) -> bool:
@@ -361,7 +379,18 @@ class FileStubSession:
                 # the harness applied this diff is unknowable, so the next diff
                 # is computed from the same last FULL copy (see module docstring).
                 state["consecutive"] += 1
-                body = {"changed": True, "diff": diff}
+                header = (
+                    f"# delta from {state['digest'][:12]} "
+                    "(apply with context; pass bypass_cache=true for full file)\n"
+                )
+                body = {
+                    "changed": True,
+                    "kind": "delta",
+                    "diff": header + diff,
+                    "base_sha256": state["digest"],
+                    "full_tokens": len(content) // _TOKEN_DIVISOR,
+                    "diff_tokens": len(diff) // _TOKEN_DIVISOR,
+                }
             else:
                 self._arm(key, content, digest, now)
                 return None
@@ -371,10 +400,10 @@ class FileStubSession:
                 tokens -= len(body["diff"]) // _TOKEN_DIVISOR
 
         if tokens > 0:
-            self._count_measured(tokens, key, body.get("note", ""))
+            self._count_measured(tokens, key, body.get("note", ""), kind=body.get("kind", "stub"))
         return body
 
-    def _count_measured(self, tokens: int, path: str, note: str = "") -> None:
+    def _count_measured(self, tokens: int, path: str, note: str = "", kind: str = "stub") -> None:
         """Fire-and-forget daemon counter (measured mcp_dedup tier).
 
         Best-effort with a logged swallow: a counter failure must never
@@ -385,6 +414,9 @@ class FileStubSession:
         if self._counter_fn is None:
             return
         try:
-            self._counter_fn(tokens, path, note)
+            try:
+                self._counter_fn(tokens, path, note, kind)
+            except TypeError:
+                self._counter_fn(tokens, path, note)
         except Exception:  # noqa: BLE001 — counter never breaks a read
             log.debug("stub counter failed (path=%s)", path, exc_info=True)

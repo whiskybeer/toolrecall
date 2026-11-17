@@ -20,3 +20,16 @@ The context tracker works at the **token-count layer** (how many tokens does the
 - **Dollar amounts are from one billing period.** Prices change. The relationships (sending fewer tokens = paying less) are structural.
 - **Shared network daemon (A6): not every cache category shares equally.** File-read entries are path-keyed — cross-machine hits are only *correct* on a shared filesystem or identical checkouts (details in ARCHITECTURE.md §3.3 Network Daemon). Terminal entries are cwd-scoped. API-proxy and MCP entries are hash-keyed and benefit fully. When deploying a team daemon, expect the shared hit rate to concentrate in API/MCP categories unless the team shares a filesystem — do not project single-machine file-cache hit rates onto the network deployment.
 
+## Honest Metric Tiers & Non-Replayable Accounting
+
+`toolrecall stats` separates cacheable replay tiers from non-replayable traffic so aggregate hit rates stay accurate:
+
+| Tier / Category | Included in headline `hit_rate`? | Meaning |
+|---|---|---|
+| `api_cache` | ✅ Yes | Replayable HTTP GET/metadata endpoints (e.g. `/models`) |
+| `llm_passthrough` | ❌ No (`non_replayable_by_design`) | Conversational `POST */chat/completions` and `*/messages` turns (unique history per turn; reported alongside `non_replayable` summary in `toolrecall stats`) |
+| `file_cache` | ✅ Yes | File reads originating from `agent_tool` |
+| `file_cache_internal` | ❌ No (`non_replayable_by_design`) | Internal / shim `ttl=0` serve-through reads (`source != "agent_tool"`) |
+| `mcp_dedup` / `mcp_delta` / `incremental_reads` | ❌ No (`measured_tier`) | Wire-verified tokens avoided via stubs, unified diffs, or append-only tail suppression |
+| `post_compaction` / `egress_guard` | ❌ No | Compaction-window re-warm counters and outbound credential guard events |
+

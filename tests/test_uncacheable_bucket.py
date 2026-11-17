@@ -54,12 +54,19 @@ def test_ttl0_miss_goes_to_uncacheable_bucket(isolated_db, tmp_path, monkeypatch
     monkeypatch.setattr(ttl_policy, "resolve_file_ttl", lambda p, cfg: 0)
     path = tmp_path / "session.json"
     path.write_text("x" * 400)  # 100 tokens est
+
+    # Internal / shim reads (source="") route to file_cache_internal
     r1 = cache.cached_read(str(path))
     assert r1["cached"] is False
-    r2 = cache.cached_read(str(path))
+    internal = cache.get_stats()["file_cache_internal"]
+    assert internal["tokens_read_uncacheable"] >= 100
+    assert internal["hits"] == 0 and internal["misses"] == 0
+
+    # Agent-tool reads (source="agent_tool") route to file_cache.tokens_read_uncacheable
+    r2 = cache.cached_read(str(path), source="agent_tool")
     assert r2["cached"] is False
     stats = cache.get_stats()["file_cache"]
-    assert stats["tokens_read_uncacheable"] >= 200  # both reads counted as uncacheable
+    assert stats["tokens_read_uncacheable"] >= 100
     # the cacheable denominator must NOT include them
     # misses may be 0 (never_cache skips miss accounting) — key assertion:
     # hits+misses unchanged by these reads and disk counter not inflated

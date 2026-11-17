@@ -692,12 +692,13 @@ def _record(
                 conn.execute(
                     """
                     INSERT INTO cache_stats (category, hits, misses, tokens_not_sent_measured, updated_at)
-                    VALUES ('mcp_dedup', 0, 0, ?, ?)
+                    VALUES (?, 0, 0, ?, ?)
                     ON CONFLICT(category) DO UPDATE SET
                         tokens_not_sent_measured = tokens_not_sent_measured + ?,
                         updated_at = ?
                 """,
                     (
+                        category,
                         tokens_not_sent_measured,
                         time.time(),
                         tokens_not_sent_measured,
@@ -781,7 +782,7 @@ def _record(
                         # entries whose token count must NOT touch the
                         # disk-read counter — surface them in access_log for
                         # per-day trend only.
-                        io_tokens_saved
+                        (io_tokens_saved or tokens_not_sent_measured)
                         if hit
                         else (tokens_read if tokens_read else tokens_not_sent_measured),
                         time.time(),
@@ -1217,7 +1218,7 @@ def cached_read(
         # so it must NOT sit in the cacheable miss denominator (the 2026-09
         # "2% savings" artifact came from exactly this inflation).
         _record_tokens_read_from_disk(
-            "file_cache",
+            "file_cache" if source == "agent_tool" else "file_cache_internal",
             _estimate_tokens(content),
             is_new_file=True,
             uncacheable=True,
@@ -3227,6 +3228,18 @@ def get_stats() -> dict:
                     stats[row["category"]]["tokens_not_read_from_disk_adjusted"] = stats[
                         row["category"]
                     ]["tokens_served_from_cache_adjusted"]
+                if row["category"] == "llm_passthrough":
+                    stats[row["category"]]["non_replayable_by_design"] = True
+                    stats[row["category"]]["denominator_note"] = (
+                        "POST chat/completions & messages (non-replayable conversational turns)"
+                    )
+                elif row["category"] == "file_cache_internal":
+                    stats[row["category"]]["non_replayable_by_design"] = True
+                    stats[row["category"]]["denominator_note"] = (
+                        "Non-agent / shim ttl=0 serve-through reads (not LLM-bound)"
+                    )
+                if row["category"] in ("mcp_dedup", "mcp_delta", "incremental_reads"):
+                    stats[row["category"]]["measured_tier"] = True
             for t in [
                 "file_cache",
                 "skill_cache",
@@ -3900,12 +3913,15 @@ API_CACHE_TTL = 300  # 5 minutes default for API responses
 API_CACHE_MAX_BODY_MB = 2.0
 
 
-def cached_api_check(request_hash: str, agent_id: str | None = None) -> dict:
+def cached_api_check(
+    request_hash: str, agent_id: str | None = None, category: str = "api_cache"
+) -> dict:
     """Check if an API response is cached by request hash.
 
     Args:
         request_hash: SHA256 hash of ``method:host:path:body``
         agent_id: Optional agent identity for per-agent stats tracking.
+        category: Cache stats category ('api_cache' or 'llm_passthrough').
 
     Returns:
         ``{"cached": True, "status": 200, "headers": {...}, "body": "..."}`` on hit,
@@ -3913,6 +3929,7 @@ def cached_api_check(request_hash: str, agent_id: str | None = None) -> dict:
     """
     import time
 
+    cat = category if category in ("api_cache", "llm_passthrough") else "api_cache"
     try:
         with _db() as conn:
             now = time.time()
@@ -3939,7 +3956,7 @@ def cached_api_check(request_hash: str, agent_id: str | None = None) -> dict:
                     # api_cache showed 122 hits with io_tokens_saved=0, hiding a
                     # whole-call saving — the strongest one there is, since the
                     # model is not called at all.
-                    _record("api_cache", True, io_tokens_saved=io_tokens_saved, agent_id=agent_id)
+                    _record(cat, True, io_tokens_saved=io_tokens_saved, agent_id=agent_id)
                     return {
                         "cached": True,
                         "status": row["response_status"],
@@ -3955,7 +3972,7 @@ def cached_api_check(request_hash: str, agent_id: str | None = None) -> dict:
                         "UPDATE api_cache SET hits = hits + 1 WHERE request_hash = ?",
                         (request_hash,),
                     )
-                    _record("api_cache", True, io_tokens_saved=io_tokens_saved, agent_id=agent_id)
+                    _record(cat, True, io_tokens_saved=io_tokens_saved, agent_id=agent_id)
                     return {
                         "cached": True,
                         "status": row["response_status"],
@@ -3973,7 +3990,7 @@ def cached_api_check(request_hash: str, agent_id: str | None = None) -> dict:
         else:
             warnings.warn(f"ToolRecall: api_cache check failed: {e}")
 
-    _record("api_cache", False, agent_id=agent_id)
+    _record(cat, False, agent_id=agent_id)
     return {"cached": False}
 
 

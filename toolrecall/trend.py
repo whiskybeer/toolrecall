@@ -28,8 +28,10 @@ low rate is the truth about the workload.
 """
 
 import json
+import logging
 import os
 import sqlite3
+import time
 
 # Rolling window size of access_log (kept trimmed by cache._record).
 # Used only for the "coverage" note in output; the query itself is unbounded.
@@ -464,3 +466,94 @@ def trend_report(days: int | None = 7, as_json: bool = False) -> str:
         lines.append("  rewritten every access (candidate for a [cache].file_ttls = 0 pin")
         lines.append("  so it exits the miss accounting honestly) or genuinely churning.")
     return "\n".join(lines)
+
+
+def _resolve_usage_csv(usage_csv: str | None) -> str | None:
+    """Resolve the proxy usage CSV path, staying hermetic under pytest."""
+    resolved = usage_csv or os.environ.get("TOOLRECALL_PROXY_USAGE_CSV")
+    if resolved:
+        return resolved
+    if os.environ.get("TOOLRECALL_HERMETIC") == "1":
+        return None
+    return os.path.join(os.path.expanduser("~"), ".toolrecall", "proxy_usage.csv")
+
+
+def summarize_prefix_busts(usage_csv: str | None = None, days: int = 7) -> dict:
+    """Read proxy_usage.csv and summarize prompt-prefix cache bust metrics."""
+    import csv as _csv
+
+    res = {"total_bust_tokens": 0, "window_bust_tokens": 0, "bust_events": 0}
+    path = _resolve_usage_csv(usage_csv)
+    if not path or not os.path.isfile(path):
+        return res
+
+    now = time.time()
+    cutoff = now - (days * 86400.0) if days > 0 else 0.0
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for row in _csv.DictReader(f):
+                try:
+                    bust = int(float(row.get("cache_bust_tokens") or 0))
+                except (ValueError, TypeError):
+                    bust = 0
+                if bust > 0:
+                    res["total_bust_tokens"] += bust
+                    res["bust_events"] += 1
+                    try:
+                        ts = float(row.get("timestamp") or 0.0)
+                    except (ValueError, TypeError):
+                        ts = 0.0
+                    if ts >= cutoff:
+                        res["window_bust_tokens"] += bust
+    except OSError as e:
+        logging.getLogger(__name__).debug("prefix bust summary read skipped: %s", e)
+    return res
+
+
+def non_replayable_summary(usage_csv: str | None = None) -> dict:
+    """Summary of non-replayable LLM passthrough vs replayable proxy usage.
+
+    Reads proxy_usage.csv via DictReader and returns explicit §11 denominators:
+      total_rows: total rows processed
+      llm_passthrough_rows: non-replayable conversational turns sent to LLM
+      replayable_rows: calls answered from cache (replayed)
+      billed_prompt_tokens: prompt tokens actually billed upstream
+      cached_at_discount_tokens: prompt tokens read at provider prefix-cache discount
+    """
+    import csv as _csv
+
+    path = _resolve_usage_csv(usage_csv)
+    res = {
+        "total_rows": 0,
+        "llm_passthrough_rows": 0,
+        "replayable_rows": 0,
+        "billed_prompt_tokens": 0,
+        "cached_at_discount_tokens": 0,
+    }
+    if not path or not os.path.isfile(path):
+        return res
+
+    try:
+        with open(path, errors="replace") as f:
+            for row in _csv.DictReader(f):
+                res["total_rows"] += 1
+                status = (row.get("cache_status") or "").strip().upper()
+                try:
+                    prompt = int(float(row.get("prompt_tokens") or 0))
+                except (TypeError, ValueError):
+                    prompt = 0
+                try:
+                    cache_read = int(float(row.get("cache_read_tokens") or 0))
+                except (TypeError, ValueError):
+                    cache_read = 0
+
+                if status in ("HIT", "REPLAY"):
+                    res["replayable_rows"] += 1
+                else:
+                    res["llm_passthrough_rows"] += 1
+                    res["billed_prompt_tokens"] += prompt
+                    res["cached_at_discount_tokens"] += cache_read
+    except OSError:
+        return res
+    return res

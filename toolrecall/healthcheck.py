@@ -555,10 +555,23 @@ def gather() -> HealthInfo:
             import json as _json
 
             data = _json.loads(r.stdout)
+            _excluded = {
+                "llm_passthrough",
+                "file_cache_internal",
+                "mcp_dedup",
+                "mcp_delta",
+                "incremental_reads",
+                "egress_guard",
+                "post_compaction",
+            }
             cats = {
                 k: v
                 for k, v in data.items()
-                if isinstance(v, dict) and "hits" in v and "misses" in v
+                if isinstance(v, dict)
+                and "hits" in v
+                and "misses" in v
+                and not v.get("non_replayable_by_design")
+                and k not in _excluded
             }
             h = sum(c.get("hits", 0) for c in cats.values())
             m = sum(c.get("misses", 0) for c in cats.values())
