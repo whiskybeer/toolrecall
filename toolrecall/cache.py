@@ -4107,6 +4107,38 @@ def _is_plain_trace_name(target: str) -> bool:
     return not any(sep and sep in target for sep in (os.sep, os.altsep, "/", "\\"))
 
 
+def _trace_root() -> str:
+    """Resolved root directory holding recorded key traces."""
+    return os.path.realpath(os.path.expanduser("~/.toolrecall/traces"))
+
+
+def _resolve_trace_file(target: str) -> str | None:
+    """Resolve ``<trace_root>/<target>/trace.jsonl``, proving containment first.
+
+    Three gates, in order:
+
+    1. ``_is_plain_trace_name`` — no separator, not ``.``/``..``, not empty.
+    2. ``os.path.realpath`` — collapses ``..`` and resolves symlinks.
+    3. ``startswith(root + os.sep)`` on the resolved path — the result must
+       live under the trace root, so a symlink inside the root that points
+       elsewhere is rejected too.
+
+    The checks sit next to the join, and the containment test is written as a
+    ``startswith`` prefix check on the ``realpath`` output on purpose: that is
+    the only shape CodeQL's py/path-injection query models as a safe access
+    check (see ``StartswithCall`` in the Python stdlib model), so a regression
+    here gets flagged instead of silently trusted. Returns ``None`` when the
+    target is not a bare name or escapes the root.
+    """
+    if not _is_plain_trace_name(target):
+        return None
+    root = _trace_root()
+    candidate = os.path.realpath(os.path.join(root, target, "trace.jsonl"))
+    if not candidate.startswith(root + os.sep):
+        return None
+    return candidate
+
+
 def forget_run(target: str) -> dict:
     """Evict cached API responses and scenario records created during a run.
 
@@ -4171,24 +4203,24 @@ def forget_run(target: str) -> dict:
 
             # 4. Check if trace exists at default path ~/.toolrecall/traces/<target>/trace.jsonl
             #    Bare names only: a path-like target is handled by branch 1 and
-            #    must never be joined into the trace root.
-            if _is_plain_trace_name(target):
-                default_trace = os.path.expanduser(f"~/.toolrecall/traces/{target}/trace.jsonl")
-                if os.path.exists(default_trace):
-                    try:
-                        with open(default_trace, "r", encoding="utf-8") as fh:
-                            for line in fh:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    d = _json.loads(line)
-                                    if isinstance(d, dict) and d.get("request_hash"):
-                                        hashes.add(d["request_hash"])
-                                except Exception:
-                                    continue
-                    except FileNotFoundError:
-                        pass
+            #    must never be joined into the trace root. `_resolve_trace_file`
+            #    hands back a path only after proving containment.
+            default_trace = _resolve_trace_file(target)
+            if default_trace is not None and os.path.exists(default_trace):
+                try:
+                    with open(default_trace, "r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                d = _json.loads(line)
+                                if isinstance(d, dict) and d.get("request_hash"):
+                                    hashes.add(d["request_hash"])
+                            except Exception:
+                                continue
+                except FileNotFoundError:
+                    pass
 
             deleted = 0
             if hashes:
