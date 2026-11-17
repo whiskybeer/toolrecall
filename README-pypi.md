@@ -2,17 +2,17 @@
 
 **🌐 [toolrecall.dev](https://toolrecall.dev) — documentation, benchmarks, downloads**
 
-You run agents. Every session spawns its own MCP servers, every test run hits live APIs, every tool call is unrepeatable, and your agent can read `~/.ssh` if it feels like it.
+You run stateless or Python agents (`Hermes`, `Google ADK`, `LangChain / LangGraph`, `Aider`, custom loops). Every turn re-sends full file reads and tool outputs, every session spawns its own MCP servers, every test run hits live APIs, and your agent can read `~/.ssh` if it feels like it.
 
-ToolRecall is one shared daemon that pools your MCP servers, records and replays tool results, caches repeated API calls, and enforces filesystem/terminal policy for any agent framework.
+ToolRecall is one local daemon built for stateless agent loops — stubbing unchanged file re-reads, pruning clean context, deduplicating prompt blocks, pooling MCP servers, replaying CI runs, and enforcing filesystem/terminal policy.
 
 Under 1MB install. Python 3.11+ stdlib only.
 
 **Measured, not estimated — and scoped to where each number holds:**
 
-- **Stateless agents (Hermes, OpenCode, Cline, Google ADK):** the Context Tracker cut billed cost **−36%** on a scripted 450-turn bugfix workload driven through Hermes (DeepSeek V4 Flash, separate billed keys; per-turn run data not yet published). Across 240 real Hermes sessions, clean file content the tracker can drop is **~11% of per-turn input**. Additive to provider prefix caching.
-- **Claude Code, Cursor, Codex CLI — interactive:** **~0% token saving.** They already manage their own context (Claude Code stubs unchanged re-reads). Value here is MCP process pooling and the security gate. File caching through MCP **increases** cost (2.4× measured on Claude Code).
-- **Headless repeat runs (CI, evals):** the forward proxy replays an identical rerun on unchanged code — every call replayed, **$0** for the rerun, **−45% / −72% cumulative** after 2 and 4 runs (Claude Code, 5 SWE-bench Lite tasks, Sonnet). The first run saves nothing (+0.7%, within noise). Any commit breaks replay in the default `claude-code` profile (git status and recent SHAs land in Claude Code's first prompt); `claude-code-nogit` replays commits that leave the files the run reads untouched. Replays repeat failures.
+- **Stateless & Python agents (Hermes, Google ADK, LangChain / LangGraph, Aider, custom loops):** Context Tracker + unchanged-file stubs cut billed cost **−31%** (\$6.30 → \$4.36, input + output tokens; **−46% prompt tokens**) on a scripted 450-turn bugfix workload driven through Hermes (DeepSeek V4 Flash, separate billed keys). Across 240 real Hermes sessions, clean file content the tracker can drop is **~11% of per-turn input** (2,134 stubs across 251 stubbed production sessions). Additive to provider prefix caching.
+- **Stateful coding CLIs & IDEs (Claude Code, OpenCode, Google Antigravity, Cursor, Codex CLI, Cline) — interactive:** **~0% token saving.** They already manage their own context (Claude Code stubs unchanged re-reads). Value here is **MCP process pooling**, **`PreToolUse` WAF hooks / auditors** (`Antigravity`, `Claude Code`), and the security gate. File caching through MCP **increases** cost (2.4× measured on Claude Code).
+- **Headless repeat runs (CI, evals — Claude Code, OpenCode):** the forward proxy replays an identical rerun on unchanged code — every call replayed, **$0** for the rerun, **−45% / −72% cumulative** after 2 and 4 runs (Claude Code `claude -p`, 5 SWE-bench Lite tasks, Sonnet), and **−45.5%** over 3 runs on OpenCode (`opencode run`). The first run saves nothing (+0.7%, within noise). Any commit breaks replay in the default `claude-code` profile (git status and recent SHAs land in Claude Code's first prompt); `claude-code-nogit` replays commits that leave the files the run reads untouched. Replays repeat failures.
 
 Not sure which applies to you? `toolrecall doctor claude`. Details: [Agent Compatibility](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_COMPATIBILITY.md).
 
@@ -30,7 +30,7 @@ Three core capabilities are the reason to run it. They target the same waste: ag
 
 | Capability | What it does | Measured |
 |-----------|--------------|----------|
-| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. Works only for agents that own their message loop (Hermes, OpenCode, Cline, ADK) — not Claude Code or Cursor. | **−36% billed** on a scripted 450-turn bugfix workload (Hermes harness; per-turn data not yet published). Clean files are **~11% of per-turn input** across 240 real sessions; up to 9.5× fewer tokens in a read-only best case — [Context Tracker](#context-tracker) |
+| **Context Tracker** | Tells the agent which files it only *read* (vs edited) are safe to drop from its context window, so a long session stops growing larger every turn. Works only for stateless agents that own their message loop (Hermes, Google ADK, LangChain / LangGraph, custom Python loops) — not Claude Code, OpenCode, or Cursor. | **−31% billed** (\$6.30 → \$4.36, input + output tokens; **−46% prompt tokens**) on a scripted 450-turn bugfix workload (Hermes harness). Clean files are **~11% of per-turn input** across 240 real sessions; up to 9.5× fewer tokens in a read-only best case — [Context Tracker](#context-tracker) |
 | **Input Dedup Hook** | Agents re-paste the same file contents into the message over and over. The hook spots a repeat and sends a short "same content as before" placeholder instead of the full copy again — you pay for each block once, and the model still sees it. Built into the forward proxy (`[forward_proxy] dedup`) or runnable as a LiteLLM gateway hook. | **−32.3% input tokens / −30% billed cost** on an 8-turn SWE-bench Lite script (chat-completions agents, 80 requests per arm, billing-verified). **No effect on Claude Code** (nothing to remove) — [Dedup Hook](#input-dedup-hook) |
 | **Multi-Agent Shared Cache & Attribution** | One shared daemon pools the cache across all your local agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; later agents read the same files and command outputs from it instead of disk or a subprocess. The content still goes to each agent's model, so token cost is unchanged unless the API request itself replays. Per-agent telemetry (`toolrecall agent ls`) shows hits per agent identity. | Shared file/command hits for later agents (no disk or subprocess cost) — [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGENT_TRACKING.md) |
 
@@ -121,7 +121,7 @@ See [Agent Tracking](https://github.com/whiskybeer/toolrecall/blob/main/docs/AGE
 |---------|---------------|
 | **Multi-Agent Shared Cache & Attribution** | Shared local cache across multiple agents (Hermes, Claude Code, Antigravity, Cursor, CI). Agent A warms the cache; Agent B reads files and command outputs from it (saves I/O, not model tokens). Per-agent telemetry (`toolrecall agent ls`) shows hits per agent identity. |
 | **Forward API Proxy** | Cache API responses by body hash — hit = zero tokens billed. Pays off on repeat runs of the same task: identical reruns replay at **$0** (Claude Code, 5 SWE-bench Lite tasks; −72% cumulative after 4 runs); ~0% interactive. |
-| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. Stateless agents only. **−36% billed on a scripted 450-turn bugfix workload (Hermes harness)**; ~11% of per-turn input droppable in real sessions (9.5× in a read-only best case). |
+| **Context Tracker** | Track dirty/clean files, auto-hint agents what to drop from context. Stateless agents only. **−31% billed (\$6.30 → \$4.36, −46% prompt tokens) on a scripted 450-turn bugfix workload (Hermes harness)**; ~11% of per-turn input droppable in real sessions (9.5× in a read-only best case). |
 | **Input Dedup Hook** | Removes repeated file content before billing — **−32.3% prompt tokens / −30% cost on an 8-turn SWE-bench Lite script (billing-verified); no effect on Claude Code.** Built into the forward proxy (`[forward_proxy] dedup = true`) or available as a LiteLLM gateway hook. |
 | **Replay Mode** | Record agent sessions, replay deterministically in CI — 0.8.21 adds a fork tree (`replay tree` / `fork` / `at`): concurrent branches replay the shared tool-call prefix and re-execute only divergent calls, the substrate for the GEPA adapter |
 | **Security Gate** | Path allowlist, terminal policy, sensitive-file blocklist — any agent |
@@ -351,7 +351,7 @@ One daemon, five access paths: Python client, MCP bridge, HTTP bridge, forward p
 | You want this... | Use this... | Works for |
 |-----------------|-------------|-----------|
 | $0 dev loops — repeated API calls cost nothing | Forward Proxy | Any agent |
-| Lower per-turn cost on long agent sessions | Context Tracker | Stateless agents (Hermes, Cline, ADK) |
+| Lower per-turn cost on long agent sessions | Context Tracker | Stateless agents (Hermes, Google ADK, LangChain / LangGraph, custom loops) |
 | Cached file reads, lower context bloat | File / Terminal Cache | Stateless agents — bounded context growth. **Not** for agents with built-in context management (Claude Code, Cursor, Codex CLI) |
 | Deterministic CI tests for agent behavior | Replay Mode | Any agent |
 | Guardrails between agents and your machine | Security Gate | Any agent |
@@ -398,8 +398,8 @@ pipx install toolrecall && toolrecall setup   # or: uv tool install toolrecall &
 
 | Agent type | Mechanism | Needs `toolrecall` in the venv? | Setup action |
 |---|---|---|---|
-| Python agent, own venv (Hermes, Codex, OpenCode, Cline) | `.pth` shim in the agent venv (transparent `open()`/`subprocess` cache) | yes | `toolrecall shim --install --venv <path>` (opt-in) |
-| Non-Python agent (Claude Code, Cursor, Cline, Windsurf) | MCP bridge (`toolrecall mcp`) | n/a | register an MCP server |
+| Python agent, own venv (Hermes, Google ADK, LangChain, Aider, custom loops) | `.pth` shim in the agent venv (transparent `open()` cache) | yes | `toolrecall shim --install --venv <path>` (opt-in) |
+| Non-Python agent (Claude Code, OpenCode, Cursor, Cline, Codex CLI, Windsurf) | MCP bridge (`toolrecall mcp`) | n/a | register an MCP server |
 | System python / global interpreter | shim in user site-packages | yes | `toolrecall shim --install` |
 
 > The `.pth` shim is **opt-in, default off** — `toolrecall shim --install` or
