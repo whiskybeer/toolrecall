@@ -19,6 +19,7 @@ Usage:
     # Then use your agent/scripts normally — API responses are cached automatically.
 """
 
+import collections
 import http.client
 import http.server
 import json
@@ -160,6 +161,13 @@ _DEDUP_PATH_SUFFIXES = ("/chat/completions", "/messages")
 def _is_dedup_path(path: str) -> bool:
     """True when a request path carries a dedupable ``messages`` array."""
     return path.split("?", 1)[0].endswith(_DEDUP_PATH_SUFFIXES)
+
+
+def _api_cache_category(method: str, path: str) -> str:
+    """Return cache category: 'llm_passthrough' for dedup POST paths, else 'api_cache'."""
+    if method.upper() == "POST" and _is_dedup_path(path):
+        return "llm_passthrough"
+    return "api_cache"
 
 
 def _maybe_dedup_body(body_bytes: bytes, profile: str | None = None) -> tuple[bytes, dict | None]:
@@ -818,6 +826,295 @@ def _resilience_num(key: str, default: float) -> float:
 #   Real money spent (provider-reported):
 #     SELECT SUM(cost_usd) FROM proxy_usage
 
+# ─── Prefix Fingerprinting & Cache-Bust Detection ───────────────────────────
+
+
+def _extract_cache_read_tokens(usage: dict | None) -> int:
+    """Extract cache read tokens across Anthropic/OpenAI/OpenRouter structures."""
+    if not usage or not isinstance(usage, dict):
+        return 0
+    _ptd = usage.get("prompt_tokens_details") or {}
+    return int(
+        usage.get("cache_read_input_tokens", 0)
+        or usage.get("cache_read_tokens", 0)
+        or _ptd.get("cached_tokens", 0)
+        or 0
+    )
+
+
+def _compute_prefix_fingerprint(body_bytes: bytes, profile: str = "") -> dict:
+    """Compute deterministic fingerprint for request prefix messages.
+
+    Returns dict with chain_key, raw_prefix_hash, canon_prefix_hash, prefix_tokens.
+    Returns {} if body is not valid JSON or has fewer than 2 turns.
+    """
+    if not body_bytes:
+        return {}
+    try:
+        obj = json.loads(body_bytes.decode("utf-8", errors="replace"))
+    except Exception:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+
+    msgs = obj.get("messages")
+    if isinstance(msgs, list) and len(msgs) >= 2:
+        msg_key = "messages"
+    else:
+        contents = obj.get("contents")
+        if isinstance(contents, list) and len(contents) >= 2:
+            msg_key = "contents"
+            msgs = contents
+        else:
+            return {}
+
+    prefix_msgs = msgs[:-1]
+    system_part = obj.get("system", "")
+
+    chain_seed = {"system": system_part, "first": msgs[0]}
+    seed_bytes = json.dumps(chain_seed, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    canon_seed = _canonicalize_body(profile or "hermes", seed_bytes)
+    if canon_seed is None:
+        canon_seed = seed_bytes
+    chain_key = content_digest(canon_seed)[:16]
+
+    raw_prefix_bytes = json.dumps(
+        {"system": system_part, msg_key: prefix_msgs}, sort_keys=True, ensure_ascii=False
+    ).encode("utf-8")
+    canon_prefix_obj = _canonicalize_body(profile or "hermes", raw_prefix_bytes)
+    if canon_prefix_obj is None:
+        canon_prefix_obj = raw_prefix_bytes
+
+    raw_prefix_hash = content_digest(raw_prefix_bytes)[:16]
+    canon_prefix_hash = content_digest(canon_prefix_obj)[:16]
+    prefix_tokens = max(1, len(raw_prefix_bytes) // 4)
+
+    return {
+        "chain_key": chain_key,
+        "raw_prefix_hash": raw_prefix_hash,
+        "canon_prefix_hash": canon_prefix_hash,
+        "prefix_tokens": prefix_tokens,
+    }
+
+
+_PREFIX_CHAINS: collections.OrderedDict[str, dict] = collections.OrderedDict()
+_PREFIX_LOCK = threading.Lock()
+
+
+def _evaluate_prefix_bust(
+    body_bytes: bytes,
+    profile: str = "",
+    cache_read_tokens: int = 0,
+) -> tuple[str, int]:
+    """Evaluate prefix stability and return (raw_prefix_hash, cache_bust_tokens)."""
+    fp = _compute_prefix_fingerprint(body_bytes, profile=profile)
+    if not fp:
+        return ("", 0)
+
+    chain_key = fp["chain_key"]
+    raw_prefix_hash = fp["raw_prefix_hash"]
+    canon_prefix_hash = fp["canon_prefix_hash"]
+    prefix_tokens = fp["prefix_tokens"]
+
+    with _PREFIX_LOCK:
+        prev = _PREFIX_CHAINS.get(chain_key)
+        if (
+            prev is not None
+            and raw_prefix_hash != prev["raw_prefix_hash"]
+            and canon_prefix_hash == prev["canon_prefix_hash"]
+        ):
+            bust = max(
+                0,
+                min(prefix_tokens, prev["prefix_tokens"]) - max(0, int(cache_read_tokens or 0)),
+            )
+        else:
+            bust = 0
+
+        _PREFIX_CHAINS[chain_key] = fp
+        _PREFIX_CHAINS.move_to_end(chain_key)
+        while len(_PREFIX_CHAINS) > 256:
+            _PREFIX_CHAINS.popitem(last=False)
+
+    return (raw_prefix_hash, bust)
+
+
+# ─── P4.2 Opt-in Wire Prefix Stabilization ──────────────────────────────────
+
+_RE_STABILIZE_ADDITIONAL_METADATA = re.compile(
+    r"<ADDITIONAL_METADATA>[\s\S]*?</ADDITIONAL_METADATA>"
+)
+_RE_STABILIZE_CONV_STARTED = re.compile(r"(?m)^Conversation started: .*$")
+_RE_STABILIZE_CURRENT_TIME = re.compile(r"\bCurrent time: [^\n\r]+")
+_RE_STABILIZE_LOCAL_TIME = re.compile(r"\bThe current local time is: [^\n\r]+")
+
+
+def _stabilize_wire_text(text: str) -> tuple[str, int]:
+    chars = 0
+
+    def _sub_meta(m: re.Match) -> str:
+        nonlocal chars
+        chars += len(m.group(0))
+        return "<ADDITIONAL_METADATA>[STABILIZED]</ADDITIONAL_METADATA>"
+
+    text = _RE_STABILIZE_ADDITIONAL_METADATA.sub(_sub_meta, text)
+
+    def _sub_conv(m: re.Match) -> str:
+        nonlocal chars
+        chars += len(m.group(0))
+        return "Conversation started: 1970-01-01T00:00:00Z"
+
+    text = _RE_STABILIZE_CONV_STARTED.sub(_sub_conv, text)
+
+    def _sub_curr(m: re.Match) -> str:
+        nonlocal chars
+        chars += len(m.group(0))
+        return "Current time: 1970-01-01T00:00:00Z"
+
+    text = _RE_STABILIZE_CURRENT_TIME.sub(_sub_curr, text)
+
+    def _sub_local(m: re.Match) -> str:
+        nonlocal chars
+        chars += len(m.group(0))
+        return "The current local time is: 1970-01-01T00:00:00Z"
+
+    text = _RE_STABILIZE_LOCAL_TIME.sub(_sub_local, text)
+    return text, chars
+
+
+def _stabilize_wire_prefix(profile: str, body_bytes: bytes) -> tuple[bytes, int]:
+    """Conservative wire-level normalization for historical prefix turns.
+
+    Normalizes volatile timestamps and metadata in `system` and `messages[:-1]`
+    while leaving `messages[-1]` untouched. Preserves dict key order and
+    returns (new_body_bytes, chars_stabilized) or (body_bytes, 0) if unchanged.
+    """
+    if not body_bytes:
+        return (body_bytes, 0)
+    try:
+        obj = json.loads(body_bytes.decode("utf-8"))
+    except Exception:
+        return (body_bytes, 0)
+    if not isinstance(obj, dict):
+        return (body_bytes, 0)
+
+    if isinstance(obj.get("messages"), list):
+        msg_key = "messages"
+    elif isinstance(obj.get("contents"), list):
+        msg_key = "contents"
+    else:
+        return (body_bytes, 0)
+
+    msgs = obj[msg_key]
+    if not isinstance(msgs, list) or not msgs:
+        return (body_bytes, 0)
+
+    total_chars = 0
+
+    def _walk(node):
+        nonlocal total_chars
+        if isinstance(node, str):
+            stabilized, c = _stabilize_wire_text(node)
+            total_chars += c
+            return stabilized
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(x) for x in node]
+        return node
+
+    new_obj = dict(obj)
+    if "system" in new_obj:
+        new_obj["system"] = _walk(new_obj["system"])
+
+    if len(msgs) >= 2:
+        prefix_msgs = [_walk(m) for m in msgs[:-1]]
+        new_obj[msg_key] = prefix_msgs + [msgs[-1]]
+    else:
+        new_obj[msg_key] = msgs
+
+    if total_chars == 0:
+        return (body_bytes, 0)
+
+    new_bytes = json.dumps(new_obj, ensure_ascii=False).encode("utf-8")
+    return (new_bytes, total_chars)
+
+
+def _stabilize_prefix_enabled(headers) -> bool:
+    """True if wire prefix stabilization is enabled via header or config."""
+    if headers is not None:
+        hdr = ""
+        if hasattr(headers, "get"):
+            hdr = headers.get("X-ToolRecall-Stabilize-Prefix") or ""
+        hdr_clean = str(hdr).strip().lower()
+        if hdr_clean in ("1", "true", "yes"):
+            return True
+        if hdr_clean in ("0", "false", "no"):
+            return False
+    try:
+        from toolrecall.config import load_config
+
+        cfg_val = load_config().get("forward_proxy", "stabilize_prefix", default=False)
+        if isinstance(cfg_val, str):
+            return cfg_val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(cfg_val)
+    except Exception:
+        return False
+
+
+# ─── P4.5 Context Attribution Hook ──────────────────────────────────────────
+
+
+def _notify_context_attribution(
+    client,
+    body_bytes: bytes,
+    prompt_tokens: int,
+    cache_read_tokens: int,
+    cost_usd: float,
+) -> None:
+    """Best-effort turn attribution to context tracker anchors. Never raises."""
+    if client is None or not body_bytes or prompt_tokens <= 0:
+        return
+    try:
+        resp = client.send({"cmd": "context_get_anchors"})
+        if not isinstance(resp, dict):
+            return
+        raw_anchors = resp.get("anchors")
+        if not raw_anchors or not isinstance(raw_anchors, dict):
+            return
+        body_text = body_bytes.decode("utf-8", errors="replace")
+        matched_paths = []
+        for k, v in raw_anchors.items():
+            if isinstance(v, dict):
+                anchor = v.get("anchor") or ""
+                path = k
+            elif isinstance(v, str):
+                if ("/" in k or "\\" in k) and not ("/" in v or "\\" in v):
+                    anchor = v
+                    path = k
+                elif ("/" in v or "\\" in v) and not ("/" in k or "\\" in k):
+                    anchor = k
+                    path = v
+                else:
+                    anchor = v
+                    path = k
+            else:
+                continue
+            if anchor and anchor in body_text:
+                matched_paths.append(path)
+        if matched_paths:
+            client.send(
+                {
+                    "cmd": "context_attribute_turn",
+                    "matched_paths": matched_paths,
+                    "prompt_tokens": prompt_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "cost_usd": cost_usd,
+                }
+            )
+    except Exception as e:
+        log.debug("Context attribution failed open: %s", e)
+
+
 _USAGE_LOG_PATH = os.path.expanduser("~/.toolrecall/proxy_usage.csv")
 # Header v2 (2026-09-10): +cost_usd (10th column). Rows written before v2 lack
 # the column — csv.DictReader returns None for it, and every in-repo consumer
@@ -835,7 +1132,7 @@ _USAGE_LOG_PATH = os.path.expanduser("~/.toolrecall/proxy_usage.csv")
 _USAGE_LOG_HEADER = (
     "timestamp,cache_status,target_host,target_path,request_hash,"
     "prompt_tokens,completion_tokens,cache_read_tokens,cache_write_tokens,cost_usd,"
-    "dedup_tokens,cache_discount_usd\n"
+    "dedup_tokens,cache_discount_usd,prefix_hash,cache_bust_tokens\n"
 )
 _USAGE_LOG_LOCK = threading.Lock()
 
@@ -929,6 +1226,8 @@ def _log_proxy_usage(
     prompt_tokens_override: int = 0,
     usage: dict | None = None,
     dedup_tokens: int = 0,
+    prefix_hash: str = "",
+    cache_bust_tokens: int = 0,
 ) -> None:
     """Append one usage row to the proxy_usage.csv log.
 
@@ -949,6 +1248,8 @@ def _log_proxy_usage(
             request-body dedup before billing (est. chars//4 from the
             dedup stats). 0 = nothing stubbed. This is the per-request
             Y in the user-facing "sent X, not sent Y" accounting.
+        prefix_hash: first 16 chars of SHA-256 digest of prefix turns.
+        cache_bust_tokens: estimated tokens wasted due to prefix cache bust.
     """
     if usage is None:
         usage = _try_parse_usage(body)
@@ -1001,10 +1302,21 @@ def _log_proxy_usage(
                     f"{ts:.3f},{cache_status},{_csv_escape(target_host)}"
                     f",{_csv_escape(target_path)},{_csv_escape(request_hash[:16])}"
                     f",{pt},{ct},{crt},{cwt},{cost_usd:.6f},{dedup_tokens},"
-                    f"{cache_discount_usd:.6f}\n"
+                    f"{cache_discount_usd:.6f},{_csv_escape(prefix_hash)},{int(cache_bust_tokens)}\n"
                 )
         except OSError:
             pass  # best-effort — never break the proxy over a log write
+
+
+def summarize_prefix_busts(usage_csv: str | None = None, days: int = 7) -> dict:
+    """Read usage CSV and summarize cache bust metrics.
+
+    Delegates to ``toolrecall.trend.summarize_prefix_busts`` while preserving
+    ``proxy._USAGE_LOG_PATH`` as the default target for callers and tests.
+    """
+    from toolrecall.trend import summarize_prefix_busts as _trend_summarize_prefix_busts
+
+    return _trend_summarize_prefix_busts(usage_csv=usage_csv or _USAGE_LOG_PATH, days=days)
 
 
 # Ensure log file exists at import time
@@ -1275,6 +1587,51 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
 
                     dedup_stats.record(_dedup_stats.get("by_tool") or {})
 
+            # ── P4.2 Opt-in wire prefix stabilization ─────────────────────────
+            if (
+                method == "POST"
+                and body_bytes
+                and _is_dedup_path(target_path)
+                and _stabilize_prefix_enabled(self.headers)
+            ):
+                body_bytes, _chars_stab = _stabilize_wire_prefix(profile_hint, body_bytes)
+
+            # ── P6 Egress Guard hook ──────────────────────────────────────────
+            if method == "POST" and body_bytes:
+                from toolrecall.egress import egress_mode_from_config, scan_egress
+
+                egress_mode, allow_rules = egress_mode_from_config()
+                if egress_mode != "off":
+                    egress_res = scan_egress(body_bytes, mode=egress_mode, allow_rules=allow_rules)
+                    matches = egress_res.get("matches", [])
+                    allowed = egress_res.get("allowed", True)
+                    if matches:
+                        try:
+                            self._client.send(
+                                {
+                                    "cmd": "egress_event",
+                                    "blocked": not allowed,
+                                    "rules": [m["rule"] for m in matches],
+                                }
+                            )
+                        except Exception as e:
+                            log.debug("egress event notify failed: %s", e)
+                    if not allowed:
+                        self.send_response(400)
+                        self.send_header("Content-Type", "application/json")
+                        err_payload = json.dumps(
+                            {
+                                "error": "Blocked by ToolRecall egress guard",
+                                "rules": [m["rule"] for m in matches],
+                            }
+                        ).encode("utf-8")
+                        self.send_header("Content-Length", str(len(err_payload)))
+                        self.end_headers()
+                        self.wfile.write(err_payload)
+                        return
+                    if egress_mode == "redact" and matches:
+                        body_bytes = egress_res["redacted_payload"]
+
             # Detect streaming requests — bypass cache, use chunked relay
             if body_bytes and _STREAM_RE.search(body_bytes):
                 is_streaming = True
@@ -1380,7 +1737,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # requests we (a) serve cache HITs as synthesized SSE and
             # (b) tee MISS streams into a non-stream cache entry.
             if canonical_profile:
-                check_cmd = {"cmd": "cached_api_check", "request_hash": request_hash}
+                check_cmd = {
+                    "cmd": "cached_api_check",
+                    "request_hash": request_hash,
+                    "category": _api_cache_category(method, target_path),
+                }
                 if agent_id:
                     check_cmd["agent_id"] = agent_id
                 cached = self._client.send(check_cmd)
@@ -1396,6 +1757,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                         cached, target_host, target_path, request_hash
                     )
                     if n is not None:
+                        usage = _try_parse_usage(cached.get("body", ""))
+                        crt = _extract_cache_read_tokens(usage)
+                        p_hash, bust_tokens = _evaluate_prefix_bust(
+                            body_bytes, profile=canonical_profile, cache_read_tokens=crt
+                        )
                         _log_proxy_usage(
                             "HIT",
                             target_host,
@@ -1403,6 +1769,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                             request_hash,
                             prompt_tokens_override=n,
                             dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                            prefix_hash=p_hash,
+                            cache_bust_tokens=bust_tokens,
+                        )
+                        self._maybe_notify_attribution(
+                            method, target_path, body_bytes, usage=usage, prompt_tokens=n
                         )
                         return  # replay written
                 # MISS (or replay failed). Two sub-cases:
@@ -1417,6 +1788,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                             cached, target_host, target_path, request_hash
                         )
                         if n is not None:
+                            usage = _try_parse_usage(cached.get("body", ""))
+                            crt = _extract_cache_read_tokens(usage)
+                            p_hash, bust_tokens = _evaluate_prefix_bust(
+                                body_bytes, profile=canonical_profile, cache_read_tokens=crt
+                            )
                             _log_proxy_usage(
                                 "HIT",
                                 target_host,
@@ -1424,6 +1800,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                                 request_hash,
                                 prompt_tokens_override=n,
                                 dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                                prefix_hash=p_hash,
+                                cache_bust_tokens=bust_tokens,
+                            )
+                            self._maybe_notify_attribution(
+                                method, target_path, body_bytes, usage=usage, prompt_tokens=n
                             )
                             return  # replay written
                 # still a MISS → live streaming, which will tee the response.
@@ -1463,6 +1844,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 target_scheme,
                 body_bytes,
             )
+            resp_usage = _try_parse_usage(
+                resp_body.decode("utf-8", "replace") if isinstance(resp_body, bytes) else resp_body
+            )
+            crt = _extract_cache_read_tokens(resp_usage)
+            p_hash, bust_tokens = _evaluate_prefix_bust(
+                body_bytes, profile=canonical_profile, cache_read_tokens=crt
+            )
             _log_proxy_usage(
                 "STREAM",  # counted as cache-ineligible, like streaming
                 target_host,
@@ -1470,7 +1858,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 request_hash,
                 resp_body.decode("utf-8", "replace"),
                 dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                prefix_hash=p_hash,
+                cache_bust_tokens=bust_tokens,
             )
+            self._maybe_notify_attribution(method, target_path, body_bytes, usage=resp_usage)
             resp_body_bytes = (
                 resp_body if isinstance(resp_body, bytes) else resp_body.encode("utf-8")
             )
@@ -1485,7 +1876,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # Check cache — only serve cached 2xx responses
-        check_cmd = {"cmd": "cached_api_check", "request_hash": request_hash}
+        check_cmd = {
+            "cmd": "cached_api_check",
+            "request_hash": request_hash,
+            "category": _api_cache_category(method, target_path),
+        }
         if agent_id:
             check_cmd["agent_id"] = agent_id
         cached = self._client.send(check_cmd)
@@ -1545,6 +1940,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(cached_body_bytes)
                 # Log usage — the cached body still contains the original usage field
+                cached_usage = _try_parse_usage(cached_body)
+                crt = _extract_cache_read_tokens(cached_usage)
+                p_hash, bust_tokens = _evaluate_prefix_bust(
+                    body_bytes, profile=canonical_profile, cache_read_tokens=crt
+                )
                 _log_proxy_usage(
                     "HIT",
                     target_host,
@@ -1552,7 +1952,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                     request_hash,
                     cached_body,
                     dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                    prefix_hash=p_hash,
+                    cache_bust_tokens=bust_tokens,
                 )
+                self._maybe_notify_attribution(method, target_path, body_bytes, usage=cached_usage)
                 return
 
         # Cache MISS — forward to real API
@@ -1575,6 +1978,13 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             len(resp_body) if resp_body else 0,
         )
 
+        # Decode response body as str for cache storage (TEXT) and usage parsing
+        body_str = (
+            resp_body.decode("utf-8", errors="replace")
+            if isinstance(resp_body, bytes)
+            else (resp_body or "")
+        )
+
         # Store in cache — only cache 2xx responses
         if 200 <= resp_status < 300:
             # Convert headers list[tuple] to dict for JSON transport
@@ -1588,12 +1998,6 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             headers_dict.pop("content-encoding", None)
             headers_dict.pop("Connection", None)
             headers_dict.pop("connection", None)
-            # Body must be str for JSON transport (api_cache schema stores TEXT)
-            body_str = (
-                resp_body.decode("utf-8", errors="replace")
-                if isinstance(resp_body, bytes)
-                else resp_body
-            )
             store_cmd = {
                 "cmd": "cached_api_store",
                 "request_hash": request_hash,
@@ -1622,14 +2026,21 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(resp_body_bytes)
 
         # Log usage from the live response body
+        resp_usage = _try_parse_usage(body_str)
+        crt = _extract_cache_read_tokens(resp_usage)
+        p_hash, bust_tokens = _evaluate_prefix_bust(
+            body_bytes, profile=canonical_profile, cache_read_tokens=crt
+        )
         if 200 <= resp_status < 300:
             _log_proxy_usage(
                 "MISS",
                 target_host,
                 target_path,
                 request_hash,
-                body_str if isinstance(resp_body, bytes) else resp_body,
+                body_str,
                 dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                prefix_hash=p_hash,
+                cache_bust_tokens=bust_tokens,
             )
         else:
             _log_proxy_usage(
@@ -1638,7 +2049,37 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 target_path,
                 request_hash,
                 dedup_tokens=getattr(self, "_request_dedup_tokens", 0),
+                prefix_hash=p_hash,
+                cache_bust_tokens=bust_tokens,
             )
+        self._maybe_notify_attribution(method, target_path, body_bytes, usage=resp_usage)
+
+    def _maybe_notify_attribution(
+        self,
+        method: str,
+        target_path: str,
+        body_bytes: bytes,
+        usage: dict | None = None,
+        prompt_tokens: int = 0,
+    ) -> None:
+        if method != "POST" or not _is_dedup_path(target_path) or not body_bytes:
+            return
+        usage = usage or {}
+        pt = prompt_tokens if prompt_tokens > 0 else (usage.get("prompt_tokens", 0) or 0)
+        if pt <= 0:
+            pt = max(1, len(body_bytes) // 4)
+        crt = _extract_cache_read_tokens(usage)
+        try:
+            cost = float(usage.get("cost") or 0.0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        _notify_context_attribution(
+            getattr(self, "_client", None),
+            body_bytes,
+            prompt_tokens=pt,
+            cache_read_tokens=crt,
+            cost_usd=cost,
+        )
 
     def do_GET(self):
         self._handle("GET")
@@ -2036,6 +2477,10 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
                 else f"~{pt_est} est prompt tokens, no usage chunk"
             ),
         )
+        crt = _extract_cache_read_tokens(usage)
+        p_hash, bust_tokens = _evaluate_prefix_bust(
+            body or b"", profile=canonical_profile or "", cache_read_tokens=crt
+        )
         _log_proxy_usage(
             "STREAM",
             host,
@@ -2047,6 +2492,11 @@ class ForwardProxyHandler(http.server.BaseHTTPRequestHandler):
             # still carries a nonzero magnitude.
             prompt_tokens_override=pt_est if not usage else 0,
             dedup_tokens=dedup_tokens,
+            prefix_hash=p_hash,
+            cache_bust_tokens=bust_tokens,
+        )
+        self._maybe_notify_attribution(
+            method, path, body or b"", usage=usage, prompt_tokens=pt_est if not usage else 0
         )
 
     def _replay_stream_from_cache(

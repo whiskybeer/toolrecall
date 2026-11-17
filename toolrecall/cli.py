@@ -445,8 +445,11 @@ def cmd_stats():
     # budget and served from disk instead. The daemon was the unresponsive
     # party, so this counter lives client-side (append log), not in the DB.
     from toolrecall.shim_timeouts import summary as _shim_timeouts_summary
+    from toolrecall.trend import non_replayable_summary, summarize_prefix_busts
 
     stats["shim_timeouts"] = _shim_timeouts_summary()
+    stats["prefix_busts"] = summarize_prefix_busts()
+    stats["non_replayable"] = non_replayable_summary()
     print(_json.dumps(stats, indent=2, default=str))
 
 
@@ -3448,6 +3451,8 @@ def cmd_context():
         print("  status              Checkpoint, dirty/clean/stale counts")
         print("  stale               Files read then overwritten (stale in context)")
         print("  compacted           Report a harness transcript compaction (call from a hook)")
+        print("  manifest            Show metadata manifest from last compaction")
+        print("  cost                Show wire-verified context cost ranking")
         print("")
         print("Options for 'stale':")
         print("  --format json|table   Output format (default: table)")
@@ -3605,8 +3610,145 @@ def cmd_context():
         print("Available: store, get, status")
         sys.exit(2)
 
+    if sub == "manifest":
+        data = _call(client.context_get_manifest)
+        if "--json" in args:
+            print(_json.dumps(data, indent=2))
+            return
+        print(
+            f"Compactions: {data.get('compaction_count', 0)} | "
+            f"Files: {data.get('total_files', 0)} | "
+            f"Tokens: {data.get('total_tokens', 0):,}"
+        )
+        for entry in data.get("manifest", []):
+            flags = ",".join(
+                f
+                for f in (
+                    "dirty" if entry.get("dirty") else "",
+                    "stale" if entry.get("stale") else "",
+                )
+                if f
+            )
+            tag = f" [{flags}]" if flags else ""
+            print(f"  - {entry.get('path')} (~{entry.get('est_tokens', 0):,} tok){tag}")
+        return
+
+    if sub == "cost":
+        stats = _call(client.context_get_stats)
+        dirty_data = _call(client.context_get_dirty)
+        ranking = dirty_data.get("cost_ranking", [])
+        if "--json" in args:
+            print(
+                _json.dumps(
+                    {
+                        "attributed_billed_tokens": stats.get("attributed_billed_tokens", 0),
+                        "attributed_cost_usd": stats.get("attributed_cost_usd", 0.0),
+                        "cost_ranking": ranking,
+                    },
+                    indent=2,
+                )
+            )
+            return
+        print(
+            f"Attributed: {stats.get('attributed_billed_tokens', 0):,} tok / "
+            f"${float(stats.get('attributed_cost_usd', 0.0)):.4f}"
+        )
+        for e in ranking:
+            print(
+                f"  [{e.get('status', '?')}] {e.get('path')} — "
+                f"${float(e.get('billed_cost_usd', 0.0)):.4f} "
+                f"({e.get('billed_tokens', 0):,} tok, {e.get('turns_billed', 0)} turns)"
+            )
+        return
+
     print(f"Unknown context command: {sub}")
-    print("Available: status, stale, recall")
+    print("Available: status, stale, compacted, manifest, cost, recall")
+    sys.exit(2)
+
+
+def cmd_failures():
+    """Inspect and resolve normalized recurring failure signatures."""
+    import json as _json
+
+    from toolrecall.failures import failure_stats, resolve_failure, search_failures
+
+    args = sys.argv[2:]
+    sub = args[0] if args else ""
+    if sub in ("", "--help", "-h", "help"):
+        print("Usage: toolrecall failures <search|stats|resolve> ...")
+        print()
+        print("Subcommands:")
+        print("  search <query> [--tool X] [--limit N] [--json]")
+        print("  stats [--json]")
+        print("  resolve <signature_hash> --resolution <text>")
+        return
+
+    as_json = "--json" in args
+    if sub == "stats":
+        st = failure_stats()
+        if as_json:
+            print(_json.dumps(st, indent=2))
+        else:
+            print(
+                f"Unique signatures: {st.get('unique_signatures', 0)} | "
+                f"Total occurrences: {st.get('total_occurrences', 0)} | "
+                f"Resolved: {st.get('resolved_count', 0)}"
+            )
+        return
+
+    if sub == "search":
+        query_parts = []
+        tool_filter = ""
+        limit = 10
+        i = 1
+        while i < len(args):
+            a = args[i]
+            if a == "--tool" and i + 1 < len(args):
+                tool_filter = args[i + 1]
+                i += 2
+            elif a == "--limit" and i + 1 < len(args):
+                if args[i + 1].isdigit():
+                    limit = max(1, int(args[i + 1]))
+                i += 2
+            elif a == "--json":
+                i += 1
+            else:
+                query_parts.append(a)
+                i += 1
+        rows = search_failures(" ".join(query_parts), tool=tool_filter, limit=limit)
+        if as_json:
+            print(_json.dumps(rows, indent=2))
+        elif not rows:
+            print("No matching failure signatures.")
+        else:
+            for r in rows:
+                res_txt = f" | fix: {r['resolution']}" if r.get("resolution") else ""
+                print(
+                    f"[{r['signature_hash'][:12]}] ({r['tool']}, x{r['count']}) "
+                    f"{r['normalized_error']}{res_txt}"
+                )
+        return
+
+    if sub == "resolve":
+        if len(args) < 2:
+            print(
+                "Usage: toolrecall failures resolve <signature_hash> --resolution <text>",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        sig = args[1]
+        resolution = _cli_arg_value("--resolution") or ""
+        if not resolution:
+            print("Error: --resolution <text> is required.", file=sys.stderr)
+            sys.exit(2)
+        ok = resolve_failure(sig, resolution)
+        if not ok:
+            print(f"Signature not found: {sig}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Resolved {sig}")
+        return
+
+    print(f"Unknown failures command: {sub}", file=sys.stderr)
     sys.exit(2)
 
 
@@ -4250,7 +4392,8 @@ def main():
         print("  daemon          Start/stop/manage cache daemon (--foreground --stop --status)")
         print("  logs            Tail the rotating ToolRecall log (--tail N --level X)")
         print("  shim            Install/uninstall transparent cache shim (.pth)")
-        print("  context         Context tracker: status, stale files, recall store/get")
+        print("  context         Context tracker: status, stale, manifest, cost, recall")
+        print("  failures        Cross-agent failure ledger: search, stats, resolve")
         print("  top             Live TUI dashboard (stats/log/trend/context; --once snapshot)")
         print("  proxy           Attach/detach agent LLM traffic to the API proxy (attach|detach)")
         print("  update          Check PyPI for a newer version / apply upgrade (--check/--status)")
@@ -4325,6 +4468,7 @@ def main():
         "healthcheck": cmd_healthcheck,
         "logs": cmd_logs,
         "context": cmd_context,
+        "failures": cmd_failures,
         "top": cmd_top,
         "proxy": cmd_proxy,
         "agent": cmd_agent,

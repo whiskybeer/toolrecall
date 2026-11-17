@@ -231,6 +231,15 @@ independent random draws from the provider:
 - Requests with greedy temperature (`temperature == 0`) or omitted temperature
   continue to be cached transparently.
 
+## Prompt-Prefix Stability & Wire Stabilization (opt-in)
+
+- **Prefix regression tracking (always-on telemetry):** For multi-turn LLM payloads (`/v1/chat/completions`, `/v1/messages`, Gemini `generateContent`), `proxy_usage.csv` records `prefix_hash` and `cache_bust_tokens` when a previously stable conversation prefix diverges mid-session. Summarize recent busts with `toolrecall stats` (`prefix_busts`).
+- **Opt-in wire prefix stabilization (`stabilize_prefix = false` default):** Enable globally via `[forward_proxy] stabilize_prefix = true` (`TOOLRECALL_STABILIZE_PREFIX=1`) or per request via `X-ToolRecall-Stabilize-Prefix: 1`. Only historical turns (`messages[:-1]`) have volatile runtime timestamps/paths normalized; the latest turn is always forwarded byte-exact.
+
+## Outbound Egress Credential Guard (opt-in)
+
+Configured via `[security] egress_mode` (`off | warn | redact | block`, default `off`, env `TOOLRECALL_EGRESS_MODE`) and `[security] egress_allow_rules` (`TOOLRECALL_EGRESS_ALLOW_RULES`). Scans outbound POST proxy payloads and multiplexed MCP arguments against anchored credential patterns (API keys, GitHub PATs, AWS access keys, PEM private keys, Slack tokens) without storing matched secrets. In `block` mode, proxy requests return HTTP `400` and MCP calls return a security error; all findings record an `egress_guard` event.
+
 ## Starting
 
 The proxy starts **automatically** with `toolrecall daemon`. It is part of the daemon process.

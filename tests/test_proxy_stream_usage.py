@@ -220,7 +220,7 @@ class TestStreamBilledTruth(unittest.TestCase):
         self.assertIn(b"[DONE]", data)
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(len(rows), 1)
-        _ts, status, host, path, _h, pt, ct, crt, _cwt, cost, _dd, _cd = rows[0]
+        _ts, status, host, path, _h, pt, ct, crt, _cwt, cost, _dd, _cd, _ph, _cb = rows[0]
         self.assertEqual(status, "STREAM")
         self.assertEqual(host, "api.testretry.invalid:80")
         self.assertEqual(pt, "66992")  # real, not len(body)//4 (~30)
@@ -257,7 +257,7 @@ class TestStreamBilledTruth(unittest.TestCase):
         self._forward()
         rows = _read_csv_rows(self.csv_path)
         self.assertEqual(len(rows), 1)
-        _ts, status, _h, _p, _h2, pt, ct, _crt, _cwt, cost, _dd, _cd = rows[0]
+        _ts, status, _h, _p, _h2, pt, ct, _crt, _cwt, cost, _dd, _cd, _ph, _cb = rows[0]
         self.assertEqual(status, "STREAM")
         self.assertEqual(ct, "0")
         self.assertGreater(int(pt), 0)  # len(body)//4 estimate still logged

@@ -78,11 +78,13 @@ Most commands accept `--help` / `-h` for per-command usage and options
 - **Flags:**
   - `--by-agent`: Print human-readable per-agent breakdown from `agent_cache_stats`.
   - `--agent-id <id>`: Filter per-agent breakdown to a specific agent identity.
-- **Extra top-level keys:** `context_flow` (armed/checkpoint/banked state) and
+- **Extra top-level keys:** `context_flow` (armed/checkpoint/banked state),
   `shim_timeouts` (`{"total", "last_24h", "last"}`) — shim reads served from disk because
-  the daemon missed the short read-path budget. Counted client-side in
-  `~/.toolrecall/shim_timeouts.jsonl`, so it stays accurate when the daemon is the
-  unresponsive party.
+  the daemon missed the short read-path budget (counted client-side in
+  `~/.toolrecall/shim_timeouts.jsonl`), `prefix_busts` (`{"total_bust_tokens",
+  "window_bust_tokens", "bust_events"}`), and `non_replayable` (`{"total_rows",
+  "llm_passthrough_rows", "replayable_rows", "billed_prompt_tokens",
+  "cached_at_discount_tokens"}`).
 
 ### `toolrecall agent`
 
@@ -394,7 +396,19 @@ Safer options:
     (content in context is provably wrong)
   - Options for `stale`: `--format json|table`, `--quiet` (pipeable paths)
   - Exit codes: 0 = nothing stale, 1 = stale files found, 2 = daemon error
+  - `toolrecall context compacted` — record a transcript compaction boundary (bumps epoch and captures metadata manifest)
+  - `toolrecall context manifest [--json]` — show metadata-only file manifest captured at the last compaction
+  - `toolrecall context cost [--json]` — show wire-verified context cost ranking per tracked file
 - **Full reference:** [Context Stale](CONTEXT_STALE.md), [Context Tracker](CONTEXT_TRACKER.md)
+
+### `toolrecall failures`
+
+- **File:** `cli.py : cmd_failures()`, ledger in [FAILURE_LEDGER.md](FAILURE_LEDGER.md)
+- **Purpose:** Inspect and annotate normalized cross-agent failure signatures in SQLite (`[cache].failure_ledger`, opt-in).
+- **Subcommands:**
+  - `toolrecall failures search <query> [--tool X] [--limit N] [--json]`
+  - `toolrecall failures stats [--json]`
+  - `toolrecall failures resolve <signature_hash> --resolution <text>`
 
 ### `toolrecall hook`
 
