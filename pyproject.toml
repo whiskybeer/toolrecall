@@ -35,7 +35,7 @@ markers = [
 ]
 
 [project.optional-dependencies]
-mcp-fastmcp = ["mcp>=1.30.0,<2"]
+mcp-fastmcp = ["mcp>=1.30.0,<3"]
 yaml = ["pyyaml >= 6.0"]
 langgraph = ["langgraph>=1.2.14"]
 toml-write = []  # No longer needed — built-in serializer replaces tomli-w
