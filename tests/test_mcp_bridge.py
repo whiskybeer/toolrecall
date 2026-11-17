@@ -59,6 +59,7 @@ class MockDaemonServer:
                 "allow_invalidate": True,
                 "multiplex_enabled": True,
                 "recall_enabled": True,
+                "failure_ledger_enabled": True,
             }
         self.call_responses = call_responses or {}
 
@@ -159,7 +160,7 @@ class TestMCPBridgeProtocol(unittest.TestCase):
     # ── Tools/List ─────────────────────────────────────────
 
     def test_tools_list_returns_all_with_gates_open(self):
-        """When all gates enabled, all 19 tools are listed (context tools always visible)."""
+        """When all gates enabled, all 22 tools are listed (context tools always visible)."""
         resp = self.bridge.handle_request({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
@@ -185,10 +186,13 @@ class TestMCPBridgeProtocol(unittest.TestCase):
         self.assertIn("context_get_stats", names)
         self.assertIn("context_reset", names)
         self.assertIn("context_compacted", names)
+        self.assertIn("context_get_manifest", names)
+        # Failure ledger
+        self.assertIn("failures_search", names)
         # Recall tier
         self.assertIn("recall_store", names)
         self.assertIn("recall_get", names)
-        self.assertEqual(len(tools), 20)
+        self.assertEqual(len(tools), 22)
 
     def test_tools_list_hides_terminal_when_disabled(self):
         """terminal is hidden when daemon has allow_terminal=False."""
@@ -719,11 +723,11 @@ class TestMCPBridgeProtocol(unittest.TestCase):
 
 
 class TestToolDefinitions(unittest.TestCase):
-    """TOOL_DEFINITIONS contains valid schemas for all 19 tools."""
+    """TOOL_DEFINITIONS contains valid schemas for all 22 tools."""
 
     def test_has_all_20_tools(self):
-        """There are exactly 20 tool definitions."""
-        self.assertEqual(len(TOOL_DEFINITIONS), 20)
+        """There are exactly 22 tool definitions."""
+        self.assertEqual(len(TOOL_DEFINITIONS), 22)
 
     def test_each_tool_has_valid_schema(self):
         """Every tool has name, description, and inputSchema with properties."""

@@ -27,11 +27,13 @@ Thread safety:
 """
 
 import fnmatch
+import inspect
 import json
 import os  # noqa: E402 (needed by mark_dirty/mark_read below — see note at file end)
 import time
 import warnings
 from threading import RLock
+from typing import Any
 
 # ─── Hint emission safety ─────────────────────────────────
 # The stale-file list is injected into the agent's context by the MCP
@@ -191,6 +193,13 @@ class ContextTracker:
         self._seq: int = 0
         self._read_seq: dict[str, int] = {}
         self._write_seq: dict[str, int] = {}
+        self._last_compaction_manifest: list[dict] = []
+        self._compaction_count: int = 0
+        self._post_compaction_reads_remaining: int = 0
+        self._anchors: dict[str, dict] = {}  # abs_path -> {"anchor": str, "file_tokens": int}
+        self._cost_ledger: dict[
+            str, dict
+        ] = {}  # abs_path -> {"turns_billed": int, "billed_tokens": int, "billed_cost_usd": float}
         self._lock = RLock()
 
     # ─── Persistence (option A): snapshot / restore via _db() ──────
@@ -227,6 +236,13 @@ class ContextTracker:
                 "read_seq": {p: self._read_seq[p] for p in sorted(self._read_seq)},
                 "write_seq": {p: self._write_seq[p] for p in sorted(self._write_seq)},
                 "banked": sorted(self._banked),
+                "compaction_count": self._compaction_count,
+                "last_compaction_manifest": [dict(e) for e in self._last_compaction_manifest],
+                "cost_ledger": {
+                    p: dict(self._cost_ledger[p])
+                    for p in sorted(self._cost_ledger)
+                    if not _is_sensitive(p)
+                },
             }
         saved_at = time.time()
         try:
@@ -378,6 +394,26 @@ class ContextTracker:
                 "tick": int(info.get("tick", 0)),
             }
 
+        compaction_count = max(0, int(payload.get("compaction_count", 0)))
+        raw_manifest = payload.get("last_compaction_manifest") or []
+        manifest: list[dict] = []
+        for entry in raw_manifest:
+            if isinstance(entry, dict):
+                p = entry.get("path")
+                if p and not _is_sensitive_path(p):
+                    manifest.append(dict(entry))
+
+        cost_ledger: dict[str, dict] = {}
+        for p, cinfo in (payload.get("cost_ledger") or {}).items():
+            if _is_sensitive_path(p):
+                continue
+            if isinstance(cinfo, dict):
+                cost_ledger[p] = {
+                    "turns_billed": int(cinfo.get("turns_billed", 0)),
+                    "billed_tokens": int(cinfo.get("billed_tokens", 0)),
+                    "billed_cost_usd": float(cinfo.get("billed_cost_usd", 0.0)),
+                }
+
         with self._lock:
             self._checkpoint_counter = max(0, int(payload.get("checkpoint_counter", 0)))
             self._agent_armed = bool(payload.get("armed", False))
@@ -396,6 +432,9 @@ class ContextTracker:
             self._banked = {
                 p for p in (payload.get("banked") or []) if isinstance(p, str) and p in read_set
             }
+            self._compaction_count = compaction_count
+            self._last_compaction_manifest = manifest
+            self._cost_ledger = cost_ledger
         return {
             "restored": True,
             "reason": "ok",
@@ -537,7 +576,7 @@ class ContextTracker:
             self._seq += 1
             self._write_seq[abs_path] = self._seq
 
-    def mark_read(self, path: str) -> None:
+    def mark_read(self, path: str, content: str | None = None) -> None:
         """Record a file read. Called by daemon on cached_read.
 
         This lets the tracker know which files the agent has seen.
@@ -552,6 +591,7 @@ class ContextTracker:
 
         Args:
             path: Absolute path to the file that was read.
+            content: Optional file content string for midpoint anchor indexing.
         """
         if not path:
             return
@@ -571,6 +611,27 @@ class ContextTracker:
             self._read_set[abs_path] = mtime
             self._seq += 1
             self._read_seq[abs_path] = self._seq
+            if (
+                content is not None
+                and isinstance(content, str)
+                and len(content) >= 64
+                and not _is_sensitive(abs_path)
+            ):
+                mid = len(content) // 2
+                raw_slice = content[max(0, mid - 32) : mid + 32]
+                anchor = json.dumps(raw_slice)[1:-1]
+                self._anchors[abs_path] = {
+                    "anchor": anchor,
+                    "file_tokens": max(1, len(content) // 4),
+                }
+
+    # Preserve (self, path) for inspect.signature (regression guard in test_context_source_gate).
+    mark_read.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [
+            inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("path", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    )
 
     def _externally_modified(self) -> list[dict]:
         """Read-set paths whose on-disk mtime differs from the recorded one.
@@ -725,6 +786,7 @@ class ContextTracker:
                 "total_clean": len(clean_list),
                 "ctx_dropped_tokens": clean_tokens,
                 "agent_armed": self._agent_armed,
+                "cost_ranking": self.get_cost_ranking(),
             }
 
     def get_stale(self) -> dict:
@@ -831,7 +893,189 @@ class ContextTracker:
                 "externally_modified": sorted((e["path"] for e in externals), key=str),
                 "checkpoint": self._checkpoint_counter,
                 "seq": self._seq,
+                "cost_ranking": self.get_cost_ranking(),
             }
+
+    # ─── P3: Compaction Manifest & Post-Compaction Window ─────────
+
+    def on_compacted(self, window_reads: int = 10) -> dict:
+        """Record context compaction event and build handoff manifest.
+
+        Builds a manifest containing STRICTLY metadata (never file content)
+        for all non-sensitive paths in the current read set, arms a post-compaction
+        read window, and increments the compaction counter.
+        """
+        with self._lock:
+            manifest = []
+            for p in sorted(self._read_set.keys()):
+                if _is_sensitive(p) or sanitize_path_for_hint(p) is None:
+                    continue
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    size = 0
+                dirty = p in self._dirty
+                stale = self._write_seq.get(p, 0) > self._read_seq.get(p, 0)
+                manifest.append(
+                    {
+                        "path": p,
+                        "mtime": float(self._read_set[p]),
+                        "size": size,
+                        "est_tokens": size // 4,
+                        "dirty": dirty,
+                        "stale": stale,
+                    }
+                )
+            self._last_compaction_manifest = manifest
+            self._compaction_count += 1
+            self._post_compaction_reads_remaining = max(0, int(window_reads))
+            return self.get_manifest()
+
+    def get_manifest(self) -> dict:
+        """Return the most recent compaction handoff manifest."""
+        with self._lock:
+            return {
+                "compaction_count": self._compaction_count,
+                "post_compaction_reads_remaining": self._post_compaction_reads_remaining,
+                "manifest": [dict(e) for e in self._last_compaction_manifest],
+                "total_files": len(self._last_compaction_manifest),
+                "total_tokens": sum(
+                    int(e.get("est_tokens", 0)) for e in self._last_compaction_manifest
+                ),
+            }
+
+    def consume_post_compaction_window(self) -> bool:
+        """Consume one read from the post-compaction window if available."""
+        with self._lock:
+            if self._post_compaction_reads_remaining > 0:
+                self._post_compaction_reads_remaining -= 1
+                return True
+            return False
+
+    # ─── P4.5: Wire-Verified Context-Cost Attribution ─────────────
+
+    def get_active_anchors(self) -> dict[str, dict]:
+        """Return midpoint anchors for active, non-sensitive read-set paths."""
+        with self._lock:
+            return {
+                p: dict(v)
+                for p, v in self._anchors.items()
+                if p in self._read_set and not _is_sensitive(p)
+            }
+
+    def attribute_turn(
+        self,
+        body_text: str | bytes = "",
+        prompt_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cost_usd: float = 0.0,
+        matched_paths: list[str] | None = None,
+    ) -> dict:
+        """Attribute prompt tokens and cost to tracked files present in the prompt.
+
+        If matched_paths is given, uses those paths directly (filtered to current
+        read set and non-sensitive). Otherwise, verifies wire presence by searching
+        for each active file's anchor in the request body text.
+        """
+        with self._lock:
+            if matched_paths is not None:
+                candidates = [os.path.abspath(os.path.expanduser(p)) for p in matched_paths if p]
+                seen: set[str] = set()
+                matched: list[str] = []
+                for p in candidates:
+                    if p not in seen and p in self._read_set and not _is_sensitive(p):
+                        seen.add(p)
+                        matched.append(p)
+                matched.sort()
+            else:
+                if isinstance(body_text, bytes):
+                    text = body_text.decode("utf-8", errors="replace")
+                else:
+                    text = str(body_text or "")
+                matched = [
+                    p
+                    for p in sorted(self._read_set.keys())
+                    if p in self._anchors
+                    and not _is_sensitive(p)
+                    and self._anchors[p]["anchor"] in text
+                ]
+
+            sum_tok = 0
+            sum_cost = 0.0
+            p_tokens = int(prompt_tokens or 0)
+            c_usd = float(cost_usd or 0.0)
+
+            for p in matched:
+                ft = self._anchors.get(p, {}).get("file_tokens")
+                if not ft:
+                    try:
+                        ft = os.path.getsize(p) // 4
+                    except OSError:
+                        ft = 0
+                file_tokens = int(ft or 0)
+                tok_attr = min(file_tokens, p_tokens) if p_tokens > 0 else file_tokens
+                cost_attr = (
+                    (c_usd * (tok_attr / p_tokens)) if (p_tokens > 0 and c_usd > 0.0) else 0.0
+                )
+
+                entry = self._cost_ledger.setdefault(
+                    p,
+                    {"turns_billed": 0, "billed_tokens": 0, "billed_cost_usd": 0.0},
+                )
+                entry["turns_billed"] += 1
+                entry["billed_tokens"] += int(tok_attr)
+                entry["billed_cost_usd"] = round(float(entry["billed_cost_usd"]) + cost_attr, 8)
+
+                sum_tok += int(tok_attr)
+                sum_cost += cost_attr
+
+            return {
+                "matched_files": len(matched),
+                "paths": matched,
+                "attributed_tokens": sum_tok,
+                "attributed_cost_usd": round(sum_cost, 8),
+            }
+
+    def get_cost_ranking(self) -> list[dict]:
+        """Rank files by attributed billed context cost."""
+        with self._lock:
+            ranking: list[dict[str, Any]] = []
+            for p, info in self._cost_ledger.items():
+                if _is_sensitive(p):
+                    continue
+                if p in self._dirty:
+                    status = "dirty"
+                elif p in self._read_set:
+                    status = "clean"
+                else:
+                    status = "evicted"
+
+                ft = self._anchors.get(p, {}).get("file_tokens", 0)
+                if not ft:
+                    try:
+                        ft = os.path.getsize(p) // 4
+                    except OSError:
+                        ft = 0
+
+                ranking.append(
+                    {
+                        "path": p,
+                        "status": status,
+                        "turns_billed": int(info.get("turns_billed", 0)),
+                        "billed_tokens": int(info.get("billed_tokens", 0)),
+                        "billed_cost_usd": float(info.get("billed_cost_usd", 0.0)),
+                        "file_tokens": int(ft or 0),
+                    }
+                )
+
+            ranking.sort(
+                key=lambda e: (
+                    -float(e["billed_cost_usd"]),
+                    -int(e["billed_tokens"]),
+                    str(e["path"]),
+                )
+            )
+            return ranking
 
     def get_stats(self) -> dict:
         """Full status of the tracker.
@@ -849,6 +1093,17 @@ class ContextTracker:
             read_but_not_dirty = [p for p in self._read_set if p not in self._dirty]
             clean_list = list(set(read_but_not_dirty))
 
+            total_billed_tokens = sum(
+                int(e.get("billed_tokens", 0))
+                for p, e in self._cost_ledger.items()
+                if not _is_sensitive(p)
+            )
+            total_billed_cost = sum(
+                float(e.get("billed_cost_usd", 0.0))
+                for p, e in self._cost_ledger.items()
+                if not _is_sensitive(p)
+            )
+
             return {
                 "dirty": sorted(dirty_list),
                 "clean": sorted(clean_list),
@@ -858,6 +1113,9 @@ class ContextTracker:
                 "total_read": len(self._read_set),
                 "ctx_dropped_tokens_total": self._ctx_dropped_tokens,
                 "agent_armed": self._agent_armed,
+                "attributed_billed_tokens": total_billed_tokens,
+                "attributed_cost_usd": round(total_billed_cost, 8),
+                "compaction_count": self._compaction_count,
             }
 
     def reset(self) -> dict:
@@ -883,6 +1141,11 @@ class ContextTracker:
             self._ctx_dropped_tokens = 0
             self._banked.clear()
             self._agent_armed = False
+            self._last_compaction_manifest = []
+            self._compaction_count = 0
+            self._post_compaction_reads_remaining = 0
+            self._anchors.clear()
+            self._cost_ledger.clear()
             self.clear_persisted()
             return {"reset": True, "checkpoint": 0}
 

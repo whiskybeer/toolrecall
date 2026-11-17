@@ -688,6 +688,55 @@ def context_compacted() -> dict:
     return resp
 
 
+def context_get_manifest() -> dict:
+    """Return the most recent compaction handoff manifest (metadata only)."""
+    client = _get_client()
+    return client.send({"cmd": "context_get_manifest"})
+
+
+def context_get_anchors() -> dict:
+    """Return midpoint wire anchors for active non-sensitive read-set paths."""
+    client = _get_client()
+    return client.send({"cmd": "context_get_anchors"})
+
+
+def context_attribute_turn(
+    body_text: str | bytes = "",
+    prompt_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cost_usd: float = 0.0,
+    matched_paths: list[str] | None = None,
+) -> dict:
+    """Attribute billed turn tokens/cost to wire-verified context files."""
+    client = _get_client()
+    payload: dict[str, Any] = {
+        "cmd": "context_attribute_turn",
+        "body_text": body_text.decode("utf-8", errors="replace")
+        if isinstance(body_text, bytes)
+        else body_text,
+        "prompt_tokens": int(prompt_tokens),
+        "cache_read_tokens": int(cache_read_tokens),
+        "cost_usd": float(cost_usd),
+    }
+    if matched_paths is not None:
+        payload["matched_paths"] = matched_paths
+    return client.send(payload)
+
+
+def failures_search(query: str, tool: str = "", limit: int = 10) -> dict:
+    """Search recurring failure signatures in the failure ledger."""
+    client = _get_client()
+    return client.send({"cmd": "failures_search", "query": query, "tool": tool, "limit": limit})
+
+
+def failures_resolve(signature_hash: str, resolution: str) -> dict:
+    """Record a resolution on a failure signature hash."""
+    client = _get_client()
+    return client.send(
+        {"cmd": "failures_resolve", "signature_hash": signature_hash, "resolution": resolution}
+    )
+
+
 def recall_store(
     *,
     fingerprint: str,

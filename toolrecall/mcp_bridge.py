@@ -257,6 +257,23 @@ TOOL_DEFINITIONS = [
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "context_get_manifest",
+        "description": "Get metadata manifest of files in context at the last compaction (no file content).",
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "failures_search",
+        "description": "Search normalized recurring tool/MCP failure signatures and known resolutions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "tool": {"type": "string", "description": "Optional tool name filter"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "recall_store",
         "description": "Persist a non-reproducible content block out-of-band and return a "
         "node_id to keep in context. Use for web/API/ephemeral output that cannot "
@@ -331,6 +348,8 @@ CMD_TO_MCP = {
     "recall_store": "recall_store",
     "recall_get": "recall_get",
     "context_compacted": "context_compacted",
+    "context_get_manifest": "context_get_manifest",
+    "failures_search": "failures_search",
 }
 
 
@@ -394,12 +413,34 @@ class MCPBridge:
         # (288s) and well below p75 — conservative on the stranding risk,
         # while max_consecutive stays the hard armor.
         from toolrecall.stub_core import (
+            DEFAULT_DIFF_RATIO,
             DEFAULT_MAX_CALLS,
             DEFAULT_MAX_CONSECUTIVE,
             DEFAULT_MAX_TOKENS,
             FileStubSession,
             note_mcp,
         )
+        from toolrecall.incremental import IncrementalReadSession
+
+        self._incremental = IncrementalReadSession()
+        self._incremental_enabled = False
+        self._incremental_paths: list[str] = []
+        self._incremental_min_bytes = 65536
+        diff_ratio = DEFAULT_DIFF_RATIO
+        try:
+            from toolrecall.config import load_config
+
+            cfg = load_config()
+            self._incremental_enabled = bool(cfg.get("cache", "incremental_reads", default=False))
+            self._incremental_paths = list(cfg.get("cache", "incremental_paths", default=[]) or [])
+            self._incremental_min_bytes = int(
+                cfg.get("cache", "incremental_min_bytes", default=65536)
+            )
+            diff_ratio = float(
+                cfg.get("cache", "delta_min_saving_ratio", default=DEFAULT_DIFF_RATIO)
+            )
+        except Exception:
+            log.debug("incremental config init load skipped", exc_info=True)
 
         self._stubs = FileStubSession(
             ttl_s=240.0,
@@ -414,6 +455,7 @@ class MCPBridge:
             # stub_core.DEFAULT_MAX_CALLS for the evidence behind the numbers.
             max_calls=DEFAULT_MAX_CALLS,
             max_tokens=DEFAULT_MAX_TOKENS,
+            diff_ratio=diff_ratio,
         )
         # Compaction epoch last seen from the daemon (None = never seen). A
         # change means a harness reported a transcript compaction, so every
@@ -478,7 +520,25 @@ class MCPBridge:
             return
         if self._compaction_epoch is not None and epoch != self._compaction_epoch:
             self._stubs.reset_all()
+            inc_sess = getattr(self, "_incremental", None)
+            if inc_sess is not None:
+                inc_sess.reset_all()
         self._compaction_epoch = epoch
+
+    def _load_incremental_config(self) -> tuple[bool, list[str], int]:
+        enabled = getattr(self, "_incremental_enabled", False)
+        paths = getattr(self, "_incremental_paths", [])
+        min_bytes = getattr(self, "_incremental_min_bytes", 65536)
+        try:
+            from toolrecall.config import load_config
+
+            cfg = load_config()
+            enabled = bool(cfg.get("cache", "incremental_reads", default=enabled))
+            paths = list(cfg.get("cache", "incremental_paths", default=paths) or [])
+            min_bytes = int(cfg.get("cache", "incremental_min_bytes", default=min_bytes))
+        except Exception:
+            log.debug("incremental config reload skipped", exc_info=True)
+        return enabled, paths, min_bytes
 
     def _present_read(self, arguments: dict, resp: dict) -> dict:
         """Stub / diff a file read, with line-range support.
@@ -530,10 +590,29 @@ class MCPBridge:
             return resp
 
         key = _range_key(path, offset, limit)
+        inc_sess = getattr(self, "_incremental", None)
         if arguments.get("bypass_cache"):
             # An explicit fresh read is the agent saying "my copy is gone":
             # forget the view so this read is a full send, not a stub.
             self._stubs.reset_key(key)
+            if inc_sess is not None:
+                inc_sess.reset_path(path)
+
+        inc_enabled, inc_paths, inc_min_bytes = self._load_incremental_config()
+        if inc_sess is not None and not ranged and body.get("cached") is False and inc_enabled:
+            inc = inc_sess.present(
+                path,
+                content,
+                enabled=inc_enabled,
+                min_bytes=inc_min_bytes,
+                allow_paths=inc_paths,
+            )
+            if inc is not None:
+                if inc.get("tokens_avoided", 0) > 0:
+                    self._count_measured(inc["tokens_avoided"], path, kind="incremental")
+                self._stubs.tick(self._format_result(inc))
+                return {"result": inc}
+
         decision = self._stubs.present(key, window, allow_diff=not ranged)
         presented = decision if decision is not None else looked
         self._stubs.tick(self._format_result(presented))
@@ -545,17 +624,19 @@ class MCPBridge:
                 if field in looked:
                     out[field] = looked[field]
             return {"result": out}
-        return {
-            "result": {
-                "changed": True,
-                "path": looked.get("path", path),
-                "diff": decision["diff"],
-                "note": (
-                    "File changed since your last full read; apply this diff to your "
-                    "copy. Pass bypass_cache=true for the whole file."
-                ),
-            }
+        out = {
+            "changed": True,
+            "path": looked.get("path", path),
+            "diff": decision["diff"],
+            "note": (
+                "File changed since your last full read; apply this diff to your "
+                "copy. Pass bypass_cache=true for the whole file."
+            ),
         }
+        for field in ("base_sha256", "full_tokens", "diff_tokens"):
+            if field in decision:
+                out[field] = decision[field]
+        return {"result": out}
 
     def _present_terminal(self, command: str, resp: dict) -> dict:
         """Replace terminal output with a stub when identical to last run.
@@ -589,21 +670,30 @@ class MCPBridge:
             }
         }
 
-    def _count_measured(self, tokens: int, log_path: str, note: str = "") -> None:
+    def _count_measured(
+        self, tokens: int, log_path: str, note: str = "", kind: str = "stub"
+    ) -> None:
         """Fire-and-forget daemon counter for MEASURED not-sent tokens.
 
         The stub path guarantees these tokens never reach the LLM — this is
         the only wire-verified CONTEXT-tier number. Best-effort: a counter
         must never break a tool call, and the daemon may be restarting
         (logged at debug — designed fallback, not an incident). Also the
-        counter_fn adapter for stub_core (signature: tokens, path, note);
+        counter_fn adapter for stub_core (signature: tokens, path, note, kind);
         the note rides in the log detail exactly as before the core split.
         """
+        if kind == "delta":
+            cat = "mcp_delta"
+        elif kind == "incremental":
+            cat = "incremental_reads"
+        else:
+            cat = "mcp_dedup"
         try:
             self._uds_request(
                 "dedup_tokens",
                 tokens=int(tokens),
                 path=f"{log_path} (stub: {note})" if note else log_path,
+                category=cat,
             )
         except Exception:
             # "measured-tier", not the wire cmd name — semgrep p/python flags
@@ -746,6 +836,10 @@ class MCPBridge:
                 continue
             if name in ("mcp_call", "mcp_list_servers") and not multiplex_enabled:
                 continue
+            if name == "context_get_manifest" and not self._emit_context_hints:
+                continue
+            if name == "failures_search" and not info.get("failure_ledger_enabled", False):
+                continue
             if self._multiplexer_only and name not in (
                 "mcp_call",
                 "mcp_list_servers",
@@ -862,6 +956,19 @@ class MCPBridge:
             if "error" in resp:
                 return self._error(req_id, -32603, resp["error"])
 
+            inc_sess = getattr(self, "_incremental", None)
+            if tool_name in ("write_file", "cached_write"):
+                w_path = arguments.get("path", "")
+                w_content = arguments.get("content", "")
+                if w_path and isinstance(w_content, str):
+                    self._stubs.record_agent_write(w_path, w_content)
+                if w_path and inc_sess is not None:
+                    inc_sess.reset_path(w_path)
+            elif tool_name in ("patch", "cached_patch"):
+                p_path = arguments.get("path", "")
+                if p_path and inc_sess is not None:
+                    inc_sess.reset_path(p_path)
+
             # Opt-in contract: the agent demonstrates the checkpoint pattern
             # once, and only then do we start appending drop-clean hints. This
             # keeps the bridge passive for context-managing agents (Claude
@@ -875,6 +982,8 @@ class MCPBridge:
                 # immediately so the next read is a full send; the epoch
                 # carried on read responses covers every OTHER session.
                 self._stubs.reset_all()
+                if inc_sess is not None:
+                    inc_sess.reset_all()
 
             # Session-scoped view: identical content → stub, changed content →
             # diff (saves tokens in append-only harnesses like Claude Code

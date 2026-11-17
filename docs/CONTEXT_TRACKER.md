@@ -63,6 +63,11 @@ sequenceDiagram
 | `context_get_stats` | Full status — current dirty list and checkpoint | `{}` | `{dirty: [...], clean: [...], checkpoint: N, total_files: N}` |
 | `context_reset` | Clear all checkpoints and dirty state | `{}` | `{reset: true, checkpoint: 0}` |
 | `context_compacted` | Tell ToolRecall the harness compacted its transcript (see below) | `{}` | `{compacted: true, compaction_epoch: N}` |
+| `context_get_manifest` | Metadata-only manifest of files in context at the last compaction (no file content) | `{}` | `{compaction_count, total_files, total_tokens, manifest}` |
+
+### Wire-Verified Context-Cost Attribution & Compaction Manifest
+
+When `agent_tool` reads include file content, the tracker indexes a 64-character midpoint anchor for non-sensitive paths (`get_active_anchors()`). The forward proxy matches those anchors against outbound LLM request payloads (`context_get_anchors` → `context_attribute_turn`) so `context_get_dirty()` / `toolrecall context cost` can rank clean files by actual wire-verified billed cost rather than estimate heuristics alone. On `context_compacted`, `on_compacted()` saves a metadata-only handoff manifest (path, size, mtime, estimated tokens, dirty/stale flags — never file content) and opens a configurable `[tracker].post_compaction_window` (default `10`) to measure immediate re-read pressure under the `post_compaction` category.
 
 ### Compaction Signal — `context_compacted` (a harness-side call)
 

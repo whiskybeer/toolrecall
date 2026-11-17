@@ -311,14 +311,17 @@ that every `toolrecall/*.py` path cited in `docs/` exists.
 
 | File | Purpose |
 |------|---------|
-| `toolrecall/context_tracker.py` | Checkpoint-based dirty/clean file tracking + context token accounting |
+| `toolrecall/context_tracker.py` | Checkpoint-based dirty/clean tracking, compaction handoff manifest, and wire-verified cost attribution |
 
 **MCP multiplexer & bundled servers**
 
 | File | Purpose |
 |------|---------|
 | `toolrecall/mcp_bridge.py` | stdio ↔ UDS protocol adapter |
-| `toolrecall/stub_core.py` | Shared unchanged-file stub state machine (bridge + shim surfaces) |
+| `toolrecall/stub_core.py` | Shared unchanged-file stub and delta diff state machine (bridge + shim surfaces) |
+| `toolrecall/incremental.py` | Opt-in session-scoped append-only incremental file read suppression (`incremental_reads`) |
+| `toolrecall/failures.py` | Opt-in cross-agent normalized failure signature ledger + FTS5 search |
+| `toolrecall/egress.py` | Opt-in outbound credential and private key egress guard (`off|warn|redact|block`) |
 | `toolrecall/mcp_registry.py` | MCP server-name → command registry |
 | `toolrecall/mcp_cache_fs.py` | Cached read/write MCP server via ToolRecall SQLite |
 | `toolrecall/mcp_fetch.py` | stdlib-only HTTP fetch MCP server |
