@@ -413,15 +413,16 @@ class TestPipxDetection(unittest.TestCase):
             root = os.path.join(tmp, ".local", "pipx", "venvs")
             pkg = os.path.join(root, "toolrecall")
             os.makedirs(pkg)
-            with patch.object(updater.sys, "prefix", pkg), patch.dict(os.environ, {"HOME": tmp}):
-                self.assertEqual(updater._pipx_venv_root(), root)
-            with patch.object(updater.sys, "prefix", root), patch.dict(os.environ, {"HOME": tmp}):
-                self.assertIsNone(updater._pipx_venv_root())
-            with (
-                patch.object(updater.sys, "prefix", os.path.join(tmp, "elsewhere")),
-                patch.dict(os.environ, {"HOME": tmp}),
-            ):
-                self.assertIsNone(updater._pipx_venv_root())
+            expected = os.path.realpath(root)
+            # HOME is not honoured by expanduser on Windows (it reads
+            # USERPROFILE), so pin the expansion itself instead.
+            with patch.object(updater.os.path, "expanduser", lambda p: p.replace("~", tmp, 1)):
+                with patch.object(updater.sys, "prefix", pkg):
+                    self.assertEqual(updater._pipx_venv_root(), expected)
+                with patch.object(updater.sys, "prefix", root):
+                    self.assertIsNone(updater._pipx_venv_root())
+                with patch.object(updater.sys, "prefix", os.path.join(tmp, "elsewhere")):
+                    self.assertIsNone(updater._pipx_venv_root())
 
     def test_custom_pipx_home_respected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -432,7 +433,7 @@ class TestPipxDetection(unittest.TestCase):
                 patch.object(updater.sys, "prefix", pkg),
                 patch.dict(os.environ, {"PIPX_LOCAL_VENVS": root}),
             ):
-                self.assertEqual(updater._pipx_venv_root(), root)
+                self.assertEqual(updater._pipx_venv_root(), os.path.realpath(root))
 
 
 if __name__ == "__main__":

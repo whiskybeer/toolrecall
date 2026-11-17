@@ -77,7 +77,7 @@ class TestSymlinkDefaultOff(unittest.TestCase):
         allowed = os.path.join(tmp, "allowed")
         os.makedirs(allowed)
         link = os.path.join(allowed, "escape")
-        os.symlink(real, link)
+        os.symlink(real, link, target_is_directory=True)
 
         cfg = _cfg(f'[mcp]\nallowed_paths = ["{allowed}"]\n')
         gate = SecurityGate(cfg)
@@ -112,7 +112,7 @@ class TestPathUtilsSignature(unittest.TestCase):
         allowed = os.path.join(tmp, "allowed")
         os.makedirs(allowed)
         link = os.path.join(allowed, "escape")
-        os.symlink(real, link)
+        os.symlink(real, link, target_is_directory=True)
         target = os.path.join(link, "secret.txt")
 
         self.assertFalse(check_path_allowed(target, [allowed]))
