@@ -29,11 +29,15 @@
 - **Install size corrected.** README, `docs/ARCHITECTURE.md` and `docs/APPENDIX.md` claimed an
   "under 1MB install"; the built wheel is 562 KB and expands to 1.8 MB on disk, so both numbers
   are now stated instead of the one that was wrong.
-- **PyPI summary aligned** with the README headline; `README-pypi.md` regenerated so the package
-  description matches the repository (66 relative links rewritten). The hero line on the site,
-  the README and the PyPI summary now reads "median −34% billed, up to −89% on replay-heavy
-  loops" — the median of the eight-domain billed column, with the range as the ceiling instead of
-  a token range labelled as bills.
+- **Benchmark-page headline now bills at the median.** The H1 reads "cuts 34% billed at the
+  median — and where it saves 0%" instead of the 60–83% band, which no cell of the table
+  supported. `docs/BENCHMARK.md` gains a cross-domain section carrying the Django 5.1.4 numbers
+  (12.0–41.3% on realistic reads, 76.6–78.3% on heavy context), the 60-bug run (−51.6% billed /
+  −59.0% prompt tokens) and `mcp_blob` (−21% peak context), each tied to its in-repo run data.
+- **One headline across the site, README and PyPI.** The hero line now reads "median −34% billed,
+  up to −89% on replay-heavy loops" — the median of the eight-domain billed column, with the range
+  as the ceiling instead of a token range labelled as bills. `README-pypi.md` is regenerated
+  (66 relative links rewritten) so the package description matches the repository.
 
 ## [0.8.25] — 2026-11-17
 

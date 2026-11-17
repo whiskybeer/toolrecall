@@ -65,6 +65,33 @@ Both naive and prefix exhaust at ~17-19 turns (128K context limit). ToolRecall s
 
 ---
 
+## Cross-Domain & Django Endurance (published suite)
+
+The eight-domain non-coding suite and the endurance runs are published on
+[toolrecall.dev/benchmark.html](https://toolrecall.dev/benchmark.html). The Django runs ship with
+their raw data in this repo (`bench/results/HERMES_DJANGO_SUMMARY.md`); the public-trajectory
+suite does not.
+
+**Django 5.1.4 — 20 sequential bug fixes in one continuous session** (Hermes, `deepseek-v4.1-flash-1017`,
+`temperature=0`, 0 prefix-cache busts, 3 seeds, `offset`/`limit` vs `--full-reads`):
+
+| Configuration | Solved | Baseline cost | ToolRecall cost | Saving |
+|---|---|---|---|---|
+| Option A — realistic `offset`/`limit` reads | 20/20 (s1, s2) · 0/20 (s3) | $0.1129 – $0.1366 | $0.0802 – $0.1132 | **12.0% – 41.3%** (median +$0.0229, crossover ~turn 33) |
+| Option B — heavy context (`--full-reads`) | 20/20 all seeds | $0.1811 – $0.2099 | $0.0425 – $0.0492 | **76.6% – 78.3%** (median +$0.1553, crossover turn 7) |
+
+**60-bug neutral-repo endurance** (`--rounds 3`, ~300–357 turns): 60/60 solved in both arms,
+$0.44616 → $0.21596 — **−51.6% billed cost, −59.0% prompt tokens**.
+
+**`mcp_blob`** (14 turns, whole CI log + schema blobs, 3 seeds): peak context 46K → 36K
+(**−21%** on every seed); ~11% cost saving on s1 and s3, break-even on s2.
+
+Median billed saving across the eight-domain suite is **−34%** (range −9.9% to −89.2%). Where it
+does not pay: short chat loops and one-off shell turns (~0%), and sessions shorter than ~33 turns,
+which end before the crossover point.
+
+---
+
 ## Cache Layer (Benchmark Tool Cache)
 
 Measured during the benchmark runs — across all 6 runs (239 turns), every file read went through `toolrecall.client.cached_read()`.
