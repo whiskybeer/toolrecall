@@ -1713,7 +1713,7 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.2.14" },
     { name = "libsql-experimental", marker = "extra == 'libsql'", specifier = ">=0.0.55,<0.1" },
-    { name = "mcp", marker = "extra == 'mcp-fastmcp'", specifier = ">=1.30.0,<2" },
+    { name = "mcp", marker = "extra == 'mcp-fastmcp'", specifier = ">=1.30.0,<3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0" },
     { name = "pyturso", marker = "extra == 'libsql-sync'", specifier = ">=0.1" },
