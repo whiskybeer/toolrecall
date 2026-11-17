@@ -15,7 +15,7 @@
 **ToolRecall costs less per turn and survives more turns — the two are connected.**  \
 At equal work, TR sends 9.5× fewer tokens, which means lower per-turn cost ($0.00167 vs $0.00284 — 41% cheaper at matched turns). But the **primary value is endurance**: TR runs 140 turns vs naive's 17 (8.2×) and the prefix arm's 19 (7.4×). Below the context wall, prefix caching also reduces cost. Above the wall (when naive/prefix exhaust), TR is the only arm that keeps running.
 
-> **⚠️ The 450-turn cost comparison is scripted and its per-turn data is not in this repo.** `bench/workloads.py` defines a 450-turn mixed read/write `bugfix` workload; on it the Context Tracker arm billed 36% less than naive ($5.62 vs $8.83, DeepSeek V4 Flash, one OpenRouter key per arm). This measures the **Context Tracker**, not the forward proxy. The section below is a separate 100-turn run of the same workload family (naive exhausts at turn 35), so the two are not directly comparable — the reproducible artifacts here are the review table above and `bench/results/benchmark_raw.csv`.
+> **⚠️ The 450-turn cost comparison is scripted and its per-turn data is not in this repo.** `bench/workloads.py` defines a 450-turn mixed read/write `bugfix` workload; on it the Context Tracker arm billed 31% less than naive (**\$6.30 → \$4.36**, input + output tokens, **−46% prompt tokens**, DeepSeek V4 Flash, one billed key per arm). This measures the **Context Tracker**, not the forward proxy. The section below is a separate 100-turn run of the same workload family (naive exhausts at turn 35), so the two are not directly comparable — the reproducible artifacts here are the review table above and `bench/results/benchmark_raw.csv`.
 >
 > **Key insight:** ToolRecall and prefix caching are **additive**, not competing. TR sends fewer tokens (volume wins), prefix caches discounts the tokens you do send (rate wins). Both contribute to the final bill. TR saves money with **any** provider, with or without prefix caching. See [Cost Savings](COST_SAVINGS.md).
 
@@ -148,7 +148,7 @@ Three arms, interleaved per seed: naive → prefix → toolrecall → naive → 
 
 ## What NOT to Claim from This Benchmark
 
-- **"ToolRecall saves 36% on any task."** These are scripted benchmarks on one model (DeepSeek V4 Flash). Real agent tasks vary in file sizes, write patterns, and reuse ratios.
+- **"ToolRecall saves 31% on any task."** These are scripted benchmarks on one model (DeepSeek V4 Flash). Real agent tasks vary in file sizes, write patterns, and reuse ratios.
 - **"ToolRecall is cheaper than provider prefix caching."** This is naive vs TR, not "TR vs prefix caching." Prefix caching is available to both — the advantage comes from sending fewer total tokens, not from more efficient caching.
 - **"Bounded context growth."** Context still grows linearly — just slower (~100-120 tok/turn vs ~200-300 for naive). It is not bounded in the mathematical sense.
 - **"These completion tokens mean better/worse quality."** Completion counts varied erratically (−4% to +150%). This benchmark measures token consumption, not task quality — "completed" means the harness didn't hit the context cap, not that the task was solved correctly.

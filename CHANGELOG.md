@@ -18,6 +18,20 @@
   file and never its contents, which `logging_setup`'s sensitive-data policy already excludes.
   The fixture is renamed `env_path`; the operator log keeps its detail.
 
+### Docs
+- **README claims now match the published benchmark page.** The measured section leads with the
+  cross-domain suite: billed cost −9.9% to −89.2% across the eight-domain suite, Django 5.1.4
+  endurance 12.0–41.3% on realistic `offset`/`limit` reads and 76.6–78.3% on heavy-context reads,
+  60-bug neutral repo −51.6% billed / −59.0% prompt tokens — with the ~0% rows (short chat,
+  one-off shells, stateful CLIs) kept alongside them. `docs/BENCHMARK.md` and the
+  `docs/FORWARD_PROXY.md` cross-reference now quote the current 450-turn run (−31%, $6.30 → $4.36)
+  instead of the superseded 36% / $5.62-vs-$8.83 figures.
+- **Install size corrected.** README, `docs/ARCHITECTURE.md` and `docs/APPENDIX.md` claimed an
+  "under 1MB install"; the built wheel is 562 KB and expands to 1.8 MB on disk, so both numbers
+  are now stated instead of the one that was wrong.
+- **PyPI summary aligned** with the README headline; `README-pypi.md` regenerated so the package
+  description matches the repository (65 relative links rewritten).
+
 ## [0.8.25] — 2026-11-17
 
 ### Added

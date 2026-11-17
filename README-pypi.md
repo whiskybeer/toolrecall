@@ -6,9 +6,11 @@ You run stateless or Python agents (`Hermes`, `Google ADK`, `LangChain / LangGra
 
 ToolRecall is one local daemon built for stateless agent loops — stubbing unchanged file re-reads, pruning clean context, deduplicating prompt blocks, pooling MCP servers, replaying CI runs, and enforcing filesystem/terminal policy.
 
-Under 1MB install. Python 3.11+ stdlib only.
+**562 KB wheel (1.8 MB on disk).** Python 3.11+ stdlib only.
 
 **Measured, not estimated — and scoped to where each number holds:**
+
+- **Cross-domain, live billed (public trajectories + endurance suites):** the delta/dedup stack cuts billed cost **−89.2%** on a 20-task Playwright/ERP endurance run (prompt tokens −92.5%), **−69.9%** and **−61.2%** on enterprise ERP GUI trajectories, **−40.4%** on web-GUI/CMS, **−28.1%** on web research, **−19.2%** on dbt SQL analytics, **−18.4%** on deep research, and **−9.9%** on SRE incident triage — and **~0%** on short chat loops and one-off shell turns. Django 5.1.4 endurance: **12.0–41.3%** on realistic `offset`/`limit` reads, **76.6–78.3%** on heavy-context reads; 60-bug neutral repo **−51.6% billed / −59.0% prompt tokens**. The Django numbers ship with their run data ([Hermes Django summary](https://github.com/whiskybeer/toolrecall/blob/main/bench/results/HERMES_DJANGO_SUMMARY.md)); the public-trajectory suite is published on [the benchmark page](https://toolrecall.dev/benchmark.html) without raw run data in this repo.
 
 - **Stateless & Python agents (Hermes, Google ADK, LangChain / LangGraph, Aider, custom loops):** Context Tracker + unchanged-file stubs cut billed cost **−31%** (\$6.30 → \$4.36, input + output tokens; **−46% prompt tokens**) on a scripted 450-turn bugfix workload driven through Hermes (DeepSeek V4 Flash, separate billed keys). Across 240 real Hermes sessions, clean file content the tracker can drop is **~11% of per-turn input** (2,134 stubs across 251 stubbed production sessions). Additive to provider prefix caching.
 - **Stateful coding CLIs & IDEs (Claude Code, OpenCode, Google Antigravity, Cursor, Codex CLI, Cline) — interactive:** **~0% token saving.** They already manage their own context (Claude Code stubs unchanged re-reads). Value here is **MCP process pooling**, **`PreToolUse` WAF hooks / auditors** (`Antigravity`, `Claude Code`), and the security gate. File caching through MCP **increases** cost (2.4× measured on Claude Code).
