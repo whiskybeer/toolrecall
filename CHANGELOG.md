@@ -44,6 +44,16 @@
   without `--yes` instead of silently skipping venv by venv. Docs describe the benchmark-
   contamination and stale-read risks and point at `--venv` / `--reconcile` instead.
 
+### Security
+- **Trace-file resolution is CodeQL-visible.** `forget_run` joined the operator-supplied target
+  into `~/.toolrecall/traces/<target>/trace.jsonl` and validated it only through a boolean helper,
+  which `py/path-injection` cannot model — so the hardening commit that added the helper also
+  produced two new alerts (35/36) on the join. `_resolve_trace_file` now owns the join and proves
+  containment next to it (`realpath` + `startswith(root + os.sep)`), the only shape the query
+  models as a safe access check. Resolving first also rejects a symlink inside the trace root that
+  points elsewhere, which the name check alone missed. Verified with CodeQL 2.27.4
+  (`Security/CWE-022/PathInjection.ql`): 0 findings at the join, was 2.
+
 ### Fixed
 - **`docs_search` no longer breaks after a page is re-indexed.** The `pages` upsert used
   `INSERT OR REPLACE`, and SQLite fires the DELETE trigger for rows a REPLACE constraint
@@ -92,6 +102,7 @@
   copy it imports; the bytes are read from disk (`io.FileIO`), so neither a warm cache nor a
   poisoned hook can fake or hide drift.
 
+### Added
 - **Antigravity full-stack optimizations — 6 complementary layers:**
   - **Multiplexer-only MCP registration:** `toolrecall setup` configures `--multiplexer-only` by default for Antigravity, preventing prompt token bloat and avoiding the 2.4× stateful file-cache cost trap while preserving background server pooling and 0.6ms BM25 skills search.
   - **Lifecycle hook adapter (`toolrecall hook antigravity`):** Implements `.agents/hooks.json` integration with WAF security gate (`PreToolUse` blocking `.env`, credentials, dangerous shell commands), out-of-band disk drift tracking (`PostToolUse`), context staleness warnings (`PreInvocation`), and session state cleanup (`SessionStart`).
