@@ -125,6 +125,19 @@ ENV_MAP = {
     # Forward-proxy bypass cache for sampled requests (explicit temperature > 0).
     # Default OFF: cache all byte-identical requests transparently.
     "TOOLRECALL_FORWARD_BYPASS_SAMPLED": ("forward_proxy", "bypass_sampled"),
+    # Opt-in wire prefix stabilization across historical proxy turns (default OFF).
+    "TOOLRECALL_STABILIZE_PREFIX": ("forward_proxy", "stabilize_prefix"),
+    # Opt-in outbound credential egress guard (off|warn|redact|block, default off).
+    "TOOLRECALL_EGRESS_MODE": ("security", "egress_mode"),
+    "TOOLRECALL_EGRESS_ALLOW_RULES": ("security", "egress_allow_rules"),
+    # Opt-in incremental / delta reads and cross-agent failure ledger (default OFF).
+    "TOOLRECALL_INCREMENTAL_READS": ("cache", "incremental_reads"),
+    "TOOLRECALL_INCREMENTAL_PATHS": ("cache", "incremental_paths"),
+    "TOOLRECALL_INCREMENTAL_MIN_BYTES": ("cache", "incremental_min_bytes"),
+    "TOOLRECALL_DELTA_READS": ("cache", "delta_reads"),
+    "TOOLRECALL_DELTA_MIN_SAVING_RATIO": ("cache", "delta_min_saving_ratio"),
+    "TOOLRECALL_FAILURE_LEDGER": ("cache", "failure_ledger"),
+    "TOOLRECALL_POST_COMPACTION_WINDOW": ("tracker", "post_compaction_window"),
     # SecurityGate symlink policy (path_utils Layer B, F1): lexical
     # in-allowed-dir symlinks permitted (default false — strict
     # realpath-only containment; true opts INTO Layer-B rescue).
@@ -156,6 +169,10 @@ def _apply_env_overrides(config: dict) -> dict:
             "allow_symlink_escapes",
             "compact",
             "compact_vacuum",
+            "incremental_reads",
+            "delta_reads",
+            "failure_ledger",
+            "stabilize_prefix",
         }
     )
     # Float-typed keys (fail-soft override): an unparseable env value must
@@ -164,7 +181,15 @@ def _apply_env_overrides(config: dict) -> dict:
     # TOOLRECALL_SHIM_STUB_TTL masked a valid [shim].stub_ttl=123 with the
     # 300 default — invalid env now falls back to CONFIG per the documented
     # contract, and only to the default when the config lacks the key too.
-    _FLOAT_KEYS = frozenset({"stub_ttl", "persist_ttl", "compact_ratio", "compact_min_fts_mb"})
+    _FLOAT_KEYS = frozenset(
+        {
+            "stub_ttl",
+            "persist_ttl",
+            "compact_ratio",
+            "compact_min_fts_mb",
+            "delta_min_saving_ratio",
+        }
+    )
     # List-typed keys: an env value without a comma is still a one-element
     # list, not a bare string. Without this branch a single-value override
     # was stored as str, and the property's isinstance(raw, list) silently
@@ -178,6 +203,8 @@ def _apply_env_overrides(config: dict) -> dict:
             "servers",
             "exclude_prefixes",
             "ignore_read_prefixes",
+            "incremental_paths",
+            "egress_allow_rules",
         }
     )
     for env_key, (section, key) in ENV_MAP.items():
@@ -325,6 +352,12 @@ class Config:
                 "access_log_prune_interval",
                 "api_cache_max_body_mb",
                 "vacuum_min_free_mb",
+                "incremental_reads",
+                "incremental_paths",
+                "incremental_min_bytes",
+                "delta_reads",
+                "delta_min_saving_ratio",
+                "failure_ledger",
             }
         ),
         "norm": frozenset({"enabled", "sort_lists", "strip_strings", "canonical_commands"}),
@@ -377,9 +410,11 @@ class Config:
                 "dangerous_tool_keywords",
                 "tool_access_control",
                 "allow_symlink_escapes",
+                "egress_mode",
+                "egress_allow_rules",
             }
         ),
-        "tracker": frozenset({"ignore_read_prefixes", "persist_ttl"}),
+        "tracker": frozenset({"ignore_read_prefixes", "persist_ttl", "post_compaction_window"}),
         "storage": frozenset(
             {
                 "backend",
@@ -422,7 +457,14 @@ class Config:
         # Emitted by toml_serializer.DEFAULT_CONFIG; port currently comes from
         # TOOLRECALL_FORWARD_PORT env (kept known so the section doesn't warn).
         "forward_proxy": frozenset(
-            {"port", "extra_hosts", "dedup", "canonicalize_default", "bypass_sampled"}
+            {
+                "port",
+                "extra_hosts",
+                "dedup",
+                "canonicalize_default",
+                "bypass_sampled",
+                "stabilize_prefix",
+            }
         ),
         "update": frozenset({"enabled", "check_interval_hours", "index_url", "auto_apply"}),
     }

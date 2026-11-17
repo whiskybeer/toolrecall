@@ -1445,6 +1445,21 @@ def _fetch_revalidate_once(url: str, etag: str) -> dict | None:
         return None
 
 
+def _record_tool_failure_best_effort(tool: str, request: object, error_msg: str) -> None:
+    """Best-effort recording of failed tool calls into the cross-agent failure ledger."""
+    try:
+        if not bool(load_config().get("cache", "failure_ledger", default=False)):
+            return
+        from toolrecall.failures import record_failure
+
+        agent_id = ""
+        if isinstance(request, dict):
+            agent_id = str(request.get("agent_id") or request.get("client") or "")
+        record_failure(str(tool or ""), str(error_msg or "error"), agent_id=agent_id)
+    except Exception as e:
+        logging.getLogger("toolrecall.daemon").debug("failure ledger record skipped: %s", e)
+
+
 def _count_tool_call(tool, handler, request):
     """Run an agent-facing handler and count the call — success or failure.
 
@@ -1457,11 +1472,15 @@ def _count_tool_call(tool, handler, request):
     """
     try:
         result = handler(request)
-    except Exception:
+    except Exception as exc:
         record_tool_call(tool, ok=False)
+        _record_tool_failure_best_effort(tool, request, str(exc) or type(exc).__name__)
         raise
     ok = not (isinstance(result, dict) and result.get("error"))
     record_tool_call(tool, ok=ok)
+    if not ok:
+        err_msg = result.get("error", "") if isinstance(result, dict) else "error"
+        _record_tool_failure_best_effort(tool, request, str(err_msg))
     return result
 
 
@@ -2255,6 +2274,18 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
                 return self._handle_context_reset(request)
             elif cmd == "context_compacted":
                 return self._handle_context_compacted(request)
+            elif cmd == "context_get_manifest":
+                return self._handle_context_get_manifest(request)
+            elif cmd == "context_get_anchors":
+                return self._handle_context_get_anchors(request)
+            elif cmd == "context_attribute_turn":
+                return self._handle_context_attribute_turn(request)
+            elif cmd == "failures_search":
+                return self._handle_failures_search(request)
+            elif cmd == "failures_resolve":
+                return self._handle_failures_resolve(request)
+            elif cmd == "egress_event":
+                return self._handle_egress_event(request)
             elif cmd == "recall_store":
                 return self._handle_recall_store(request)
             elif cmd == "recall_get":
@@ -2292,6 +2323,7 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             "emit_context_hints": self.cfg.mcp_emit_context_hints,
             "client_hint_policy": self.cfg.mcp_client_hint_policy,
             "recall_enabled": self.cfg.recall_enabled,
+            "failure_ledger_enabled": bool(self.cfg.get("cache", "failure_ledger", default=False)),
             "multiplex_servers": list(self.multiplexer._sessions.keys()),
             "gateway": bool(self.cfg.mcp_multiplex_gateway),
             "context_tracker": {
@@ -2403,7 +2435,22 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             # tokens_saved_to_llm rule — only agent-tool reads can drop
             # content from context.
             if source == "agent_tool":
-                self._context.mark_read(path)
+                ctx = getattr(self, "_context", None)
+                if ctx is not None:
+                    try:
+                        ctx.mark_read(path, content=result.get("content"))
+                    except TypeError:
+                        ctx.mark_read(path)
+                    if (
+                        hasattr(ctx, "consume_post_compaction_window")
+                        and ctx.consume_post_compaction_window()
+                    ):
+                        _cache_record(
+                            "post_compaction",
+                            hit=bool(result.get("cached")),
+                            path=path,
+                            agent_id=agent_id,
+                        )
             # Stamp the compaction epoch: the bridge drops its session stub/diff
             # state when this differs from the value it last saw (see __init__).
             # getattr, not self._compaction_epoch: this is auxiliary signalling
@@ -2609,18 +2656,22 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         """
         tokens = req.get("tokens", 0)
         path = req.get("path", "")
+        category = req.get("category", "mcp_dedup")
+        if category not in ("mcp_dedup", "mcp_delta", "incremental_reads"):
+            category = "mcp_dedup"
         try:
             tokens = int(tokens)
         except (TypeError, ValueError):
             tokens = 0
         if tokens > 0:
             _cache_record(
-                "mcp_dedup",
-                hit=False,
+                category,
+                hit=True,
                 path=path,
                 tokens_not_sent_measured=tokens,
+                agent_id=req.get("agent_id") or req.get("client"),
             )
-        return {"ok": True, "counted": tokens}
+        return {"ok": True, "counted": tokens, "category": category}
 
     def _handle_local_hits(self, req: dict) -> dict:
         """Count shim LOCAL-hit serves in one batch (W2 T4).
@@ -2755,6 +2806,34 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         if ast_err:
             print(f"[ToolRecall] AST injection blocked MCP call: {server}/{tool}")
             return {"error": ast_err}
+
+        from toolrecall.egress import egress_mode_from_config, scan_egress
+
+        egress_mode, allow_rules = egress_mode_from_config()
+        if egress_mode != "off":
+            egress_res = scan_egress(
+                json.dumps(arguments, default=str),
+                mode=egress_mode,
+                allow_rules=allow_rules,
+            )
+            matches = egress_res.get("matches", [])
+            allowed = bool(egress_res.get("allowed", True))
+            if matches:
+                _cache_record(
+                    "egress_guard",
+                    hit=not allowed,
+                    path=f"{server}/{tool}",
+                )
+            if not allowed:
+                rules = [m["rule"] for m in matches]
+                return {"error": f"Egress guard blocked MCP call {server}/{tool}: matched {rules}"}
+            if egress_mode == "redact" and matches:
+                try:
+                    redacted_obj = json.loads(str(egress_res["redacted_payload"]))
+                    if isinstance(redacted_obj, dict):
+                        arguments = redacted_obj
+                except (json.JSONDecodeError, TypeError) as e:
+                    self.logger.debug("egress arg redact json reload skipped: %s", e)
 
         # Cache eligibility: transparent cache ON *and* the tool is a read.
         # A side-effecting tool is never served from (or written to) the cache:
@@ -3074,7 +3153,8 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         if not request_hash:
             return {"error": "Missing 'request_hash' parameter"}
         agent_id = req.get("agent_id") or req.get("client")
-        return _cache_api_check(request_hash, agent_id=agent_id)
+        category = str(req.get("category") or "api_cache")
+        return _cache_api_check(request_hash, agent_id=agent_id, category=category)
 
     def _handle_api_store(self, req: dict) -> dict:
         """Store an API response in cache."""
@@ -3228,6 +3308,32 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
             lines.append("📝 Keep dirty files (you edited them):")
             for p in dirty:
                 lines.append(f"  - {p}")
+        cost_ranking = result.get("cost_ranking")
+        if not isinstance(cost_ranking, list) and getattr(self, "_context", None) is not None:
+            if hasattr(self._context, "get_cost_ranking"):
+                cost_ranking = self._context.get_cost_ranking()
+        if isinstance(cost_ranking, list):
+            top_clean = [
+                e
+                for e in cost_ranking
+                if e.get("status") == "clean"
+                and (
+                    float(e.get("billed_cost_usd", 0.0) or 0.0) > 0.0
+                    or int(e.get("billed_tokens", 0) or 0) > 0
+                )
+            ][:3]
+            if top_clean:
+                cost_lines = []
+                for entry in top_clean:
+                    safe_p = _sanitize_path_for_hint(str(entry.get("path", "")))
+                    if not safe_p:
+                        continue
+                    cost_val = float(entry.get("billed_cost_usd", 0.0) or 0.0)
+                    tok_val = int(entry.get("billed_tokens", 0) or 0)
+                    cost_lines.append(f"  - {safe_p} (${cost_val:.4f}, ~{tok_val:,} tok)")
+                if cost_lines:
+                    lines.append("💰 Top clean context cost attribution:")
+                    lines.extend(cost_lines)
         return "\n".join(lines)
 
     def _handle_context_get_stale(self, req: dict) -> dict:
@@ -3301,7 +3407,86 @@ class DaemonServer:  # noqa: E302 — placed immediately before its section
         with self._compaction_lock:
             self._compaction_epoch += 1
             epoch = self._compaction_epoch
-        return {"compacted": True, "compaction_epoch": epoch}
+        manifest_info: dict = {}
+        ctx = getattr(self, "_context", None)
+        if ctx is not None and hasattr(ctx, "on_compacted"):
+            cfg = getattr(self, "cfg", None) or load_config()
+            try:
+                window = int(cfg.get("tracker", "post_compaction_window", default=10))
+            except (TypeError, ValueError):
+                window = 10
+            manifest_info = ctx.on_compacted(window_reads=window)
+        return {
+            "compacted": True,
+            "compaction_epoch": epoch,
+            "compaction_count": manifest_info.get("compaction_count", epoch),
+            "manifest_files": manifest_info.get("total_files", 0),
+        }
+
+    def _handle_context_get_manifest(self, req: dict) -> dict:
+        """Return the last compaction handoff manifest (metadata only, no content)."""
+        ctx = getattr(self, "_context", None)
+        if ctx is None or not hasattr(ctx, "get_manifest"):
+            return {"compaction_count": 0, "manifest": [], "total_files": 0, "total_tokens": 0}
+        return ctx.get_manifest()
+
+    def _handle_context_get_anchors(self, req: dict) -> dict:
+        """Return midpoint wire anchors for active non-sensitive read-set paths."""
+        ctx = getattr(self, "_context", None)
+        if ctx is None or not hasattr(ctx, "get_active_anchors"):
+            return {"anchors": {}}
+        return {"anchors": ctx.get_active_anchors()}
+
+    def _handle_context_attribute_turn(self, req: dict) -> dict:
+        """Attribute a proxy LLM turn's tokens/cost to wire-verified context files."""
+        ctx = getattr(self, "_context", None)
+        if ctx is None or not hasattr(ctx, "attribute_turn"):
+            return {
+                "matched_files": 0,
+                "paths": [],
+                "attributed_tokens": 0,
+                "attributed_cost_usd": 0.0,
+            }
+        return ctx.attribute_turn(
+            body_text=req.get("body_text", ""),
+            prompt_tokens=int(req.get("prompt_tokens", 0) or 0),
+            cache_read_tokens=int(req.get("cache_read_tokens", 0) or 0),
+            cost_usd=float(req.get("cost_usd", 0.0) or 0.0),
+            matched_paths=req.get("matched_paths"),
+        )
+
+    def _handle_failures_search(self, req: dict) -> dict:
+        """Search recurring normalized failure signatures in the failure ledger."""
+        from toolrecall.failures import search_failures
+
+        return {
+            "failures": search_failures(
+                query=str(req.get("query", "")),
+                tool=str(req.get("tool", "")),
+                limit=int(req.get("limit", 10) or 10),
+            )
+        }
+
+    def _handle_failures_resolve(self, req: dict) -> dict:
+        """Record a known resolution on a failure signature hash."""
+        from toolrecall.failures import resolve_failure
+
+        sig = str(req.get("signature_hash", ""))
+        resolution = str(req.get("resolution", ""))
+        if not sig:
+            return {"error": "Missing 'signature_hash'"}
+        return {"resolved": resolve_failure(sig, resolution)}
+
+    def _handle_egress_event(self, req: dict) -> dict:
+        """Record an outbound egress guard detection/block event in cache_stats."""
+        rules = req.get("rules") or []
+        if isinstance(rules, (list, tuple)):
+            rule_path = ",".join(str(r) for r in rules if r)
+        else:
+            rule_path = str(rules or "")
+        path = rule_path or str(req.get("host", "egress"))
+        _cache_record("egress_guard", hit=bool(req.get("blocked", False)), path=path)
+        return {"ok": True}
 
 
 # ─── Entry Points ─────────────────────────────────────────

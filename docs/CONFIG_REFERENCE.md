@@ -142,6 +142,16 @@ All `TOOLRECALL_*` env vars override their corresponding config.toml key. List v
 | `TOOLRECALL_CC_HOOK_DIR` | (not in config.toml) | `TOOLRECALL_CC_HOOK_DIR=~/.toolrecall/claude-code` (Claude Code hook session state) |
 | `TOOLRECALL_CC_WAF` | (not in config.toml) | `TOOLRECALL_CC_WAF=1` (Claude Code `PreToolUse` WAF gate) |
 | `TOOLRECALL_CC_DAEMON_STALE` | (not in config.toml) | `TOOLRECALL_CC_DAEMON_STALE=1` (merge the daemon's cross-agent stale list into hook alerts) |
+| `TOOLRECALL_INCREMENTAL_READS` | `cache.incremental_reads` | `TOOLRECALL_INCREMENTAL_READS=true` (opt-in append-only tail reads, default `false`) |
+| `TOOLRECALL_INCREMENTAL_PATHS` | `cache.incremental_paths` | `TOOLRECALL_INCREMENTAL_PATHS=*.log,*.jsonl` |
+| `TOOLRECALL_INCREMENTAL_MIN_BYTES` | `cache.incremental_min_bytes` | `TOOLRECALL_INCREMENTAL_MIN_BYTES=65536` |
+| `TOOLRECALL_DELTA_READS` | `cache.delta_reads` | `TOOLRECALL_DELTA_READS=true` (opt-in stub-core delta gate, default `false`) |
+| `TOOLRECALL_DELTA_MIN_SAVING_RATIO` | `cache.delta_min_saving_ratio` | `TOOLRECALL_DELTA_MIN_SAVING_RATIO=0.5` |
+| `TOOLRECALL_FAILURE_LEDGER` | `cache.failure_ledger` | `TOOLRECALL_FAILURE_LEDGER=1` (opt-in cross-agent failure ledger, default `false`) |
+| `TOOLRECALL_POST_COMPACTION_WINDOW` | `tracker.post_compaction_window` | `TOOLRECALL_POST_COMPACTION_WINDOW=10` |
+| `TOOLRECALL_STABILIZE_PREFIX` | `forward_proxy.stabilize_prefix` | `TOOLRECALL_STABILIZE_PREFIX=1` (opt-in wire prefix stabilization, default `false`) |
+| `TOOLRECALL_EGRESS_MODE` | `security.egress_mode` | `TOOLRECALL_EGRESS_MODE=block` (`off|warn|redact|block`, default `off`) |
+| `TOOLRECALL_EGRESS_ALLOW_RULES` | `security.egress_allow_rules` | `TOOLRECALL_EGRESS_ALLOW_RULES=slack_token` |
 | `AGENT_HOME` | `paths.agent_home` (resolution) | `AGENT_HOME=~/.hermes` |
 | `TOOLRECALL_AGENT_HOME` | `paths.agent_home` (resolution) | |
 
