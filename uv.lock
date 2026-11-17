@@ -1682,7 +1682,7 @@ wheels = [
 
 [[package]]
 name = "toolrecall"
-version = "0.8.24"
+version = "0.8.25"
 source = { editable = "." }
 
 [package.optional-dependencies]

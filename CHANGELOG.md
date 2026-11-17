@@ -1,8 +1,39 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.25] — 2026-11-17
 
 ### Added
+- **Honest metric tiers in `toolrecall stats`.** Replayable work and work that was never
+  cacheable are reported separately instead of blended into one hit rate. `api_cache` and
+  `file_cache` count toward the headline `hit_rate`; `llm_passthrough` and internal `ttl=0`
+  serves are reported as `non_replayable_by_design`, and `mcp_dedup` / `mcp_delta` /
+  `incremental_reads` as their own `measured_tier` rows. See `docs/COST_SAVINGS.md`.
+- **Incremental and delta reads (`cache.incremental_reads`, default on).** A re-read of a file
+  that only grew is served as the appended tail (byte-level append verification, LRU-bounded
+  per session); a repeated MCP response is served as a unified diff. Fail-closed on first read
+  and on any non-append edit, so a rewritten file is always returned in full.
+- **Compaction manifest (`toolrecall context manifest`, MCP `context_get_manifest`).** At a
+  compaction boundary the daemon captures a metadata-only manifest of the files that were in
+  context — path, size, hash — so an agent can see what it may need to re-read once the
+  harness has dropped the transcript. `toolrecall context compacted` records the boundary and
+  bumps the epoch.
+- **Append-prefix guard (`forward_proxy.stabilize_prefix`, default on).** The forward proxy
+  normalizes volatile markers in the request prefix (timestamps, UUIDs, paths) so the wire
+  prefix stays byte-stable between turns and provider prompt caching can actually hit.
+  Overridable per request with `X-ToolRecall-Stabilize-Prefix`.
+- **Cross-agent failure ledger (`cache.failure_ledger`, default on).** Recurring tool and MCP
+  failures are normalized into deterministic content-addressed signatures and indexed, so an
+  agent can see a known resolution before repeating the mistake. Signatures and counts only:
+  error text is secret-redacted and volatile markers (home paths, UUIDs, timestamps, hex
+  addresses, line numbers) are collapsed before hashing. New `toolrecall failures
+  search|stats|resolve` commands and the `failures_search` MCP tool. See `docs/FAILURE_LEDGER.md`.
+- **Egress credential guard (`security.egress_mode`, default `off`).** Outbound LLM payloads
+  are scanned for accidentally pasted credentials — Anthropic, OpenAI, OpenRouter and GitHub
+  tokens, PEM private keys — with `warn`, `redact` and `block` modes and per-rule allowlists.
+  Patterns are provider-anchored so hex SHAs and ordinary source code do not trip them.
+- **Wire-verified context cost attribution.** Token savings are attributed to reads the daemon
+  actually served and split by mechanism. `ctx_dropped_tokens` is reported separately from
+  context savings instead of being added to them.
 - **`toolrecall shim --reconcile`** — converge only the venvs declared in `[shim].required_venvs`.
   Dry run by default, `--yes` to install, exit 1 while any declared venv is bare, so an update
   hook (e.g. before an agent runtime starts) can keep a rebuilt environment shimmed without
@@ -14,6 +45,24 @@
   contamination and stale-read risks and point at `--venv` / `--reconcile` instead.
 
 ### Fixed
+- **`docs_search` no longer breaks after a page is re-indexed.** The `pages` upsert used
+  `INSERT OR REPLACE`, and SQLite fires the DELETE trigger for rows a REPLACE constraint
+  removes only when `recursive_triggers` is on — it is off by default. The external-content
+  FTS index therefore kept docids whose content row was gone, and search failed with
+  `fts5: missing row 1 from content table 'main'.'pages'`. Re-indexing a changed file is normal
+  operation, so any long-lived install could hit it. The upsert is now
+  `ON CONFLICT(source, path) DO UPDATE`, which keeps the rowid stable and keeps the index in
+  sync. Self-heal also recognised only `malformed`, so this class of error was returned to the
+  user forever; it now matches a missing content row too. A DB already desynced by an earlier
+  release keeps answering. Tests: `tests/test_docs_fts_resync.py`.
+- **Windows smoke gate fixtures.** Four Windows-only failures (red since v0.8.22) were fixture
+  bugs, not product bugs: `os.symlink(dir, link)` without `target_is_directory=True` creates a
+  file-type symlink on Windows, so traversal fails and `realpath()` cannot escape the allowed
+  directory; and the pipx tests compared un-normalised temp paths and pinned `HOME`, which
+  `expanduser` ignores on Windows. Verified on Linux; the Windows gate is the real check.
+- **`scripts/tr_warp_stats.py` raised `NameError` without `--csv`.** The default called
+  `os.path.expanduser` with no `os` import (ruff F821), introduced when `scripts/` was
+  reformatted.
 - **The shim skips ToolRecall's own data dir by default.** `[shim].exclude_prefixes` now
   includes the resolved data dir (`TOOLRECALL_DATA_DIR` → `[paths].data_dir` → `~/.toolrecall`)
   alongside the agent home. Measured 2026-11-13: after the agent-home default shipped, the
@@ -43,7 +92,6 @@
   copy it imports; the bytes are read from disk (`io.FileIO`), so neither a warm cache nor a
   poisoned hook can fake or hide drift.
 
-### Added
 - **Antigravity full-stack optimizations — 6 complementary layers:**
   - **Multiplexer-only MCP registration:** `toolrecall setup` configures `--multiplexer-only` by default for Antigravity, preventing prompt token bloat and avoiding the 2.4× stateful file-cache cost trap while preserving background server pooling and 0.6ms BM25 skills search.
   - **Lifecycle hook adapter (`toolrecall hook antigravity`):** Implements `.agents/hooks.json` integration with WAF security gate (`PreToolUse` blocking `.env`, credentials, dangerous shell commands), out-of-band disk drift tracking (`PostToolUse`), context staleness warnings (`PreInvocation`), and session state cleanup (`SessionStart`).
@@ -53,6 +101,22 @@
   - **FTS5 Auto-Indexing (`toolrecall index-antigravity`, `toolrecall index-claude`, `toolrecall index --all`):** Auto-discovers and indexes builtin skills, workspace skills, plugin skills, and conversation markdown artifacts for Antigravity, and custom commands/instructions for Claude Code. Run automatically during `toolrecall setup` for zero-config 0.6ms keyword retrieval via `docs_search` (retained in `--multiplexer-only`).
   - **Forward-proxy canonicalization profile polish:** `antigravity` canonical profile normalizes volatile `<ADDITIONAL_METADATA>` timestamps, conversation UUIDs, brain paths, `<USER_SETTINGS_CHANGE>`, execution durations, and deterministically sorts parallel tool calls/responses across both OpenAI/Anthropic (`messages`) and Google Gemini (`contents`/`parts`) wire formats for $0 headless rerun replay.
   Tests: `tests/test_setup_antigravity.py`, `tests/test_antigravity_adapter.py`, `tests/test_antigravity_hooks.py`, `tests/test_antigravity_audit.py`, `tests/test_index_antigravity.py`, `tests/test_index_claude.py`, `tests/test_antigravity_canonicalize.py` (65 tests).
+
+### Changed
+- **Three flags are now on by default:** `cache.incremental_reads`, `cache.failure_ledger` and
+  `forward_proxy.stabilize_prefix`. Each can be turned off with its env var
+  (`TOOLRECALL_INCREMENTAL_READS`, `TOOLRECALL_FAILURE_LEDGER`, `TOOLRECALL_STABILIZE_PREFIX`)
+  or the matching config key. `security.egress_mode` stays `off` — blocking outbound payloads
+  is a deployment decision, not a default.
+
+### Benchmarks
+- **3-tier crossover suite** (`bench/crossover/`) — naive / prefix / toolrecall arms over the
+  same tasks, so a savings figure can be traced to the mechanism that produced it.
+- **Real-suite endurance runners** for Hermes, Flask and Django
+  (`bench/run_hermes_real_suites.py`, `bench/run_flask_endurance.py`,
+  `bench/run_django_endurance.py`), with the Django summary in
+  `bench/results/HERMES_DJANGO_SUMMARY.md`. Raw benchmark CSVs and experimental output stay
+  out of git.
 
 ## [0.8.24] — 2026-11-11
 
