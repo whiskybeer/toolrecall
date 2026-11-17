@@ -8,6 +8,8 @@ ToolRecall is one local daemon built for stateless agent loops — stubbing unch
 
 **562 KB wheel (1.8 MB on disk).** Python 3.11+ stdlib only.
 
+**Flat context across 100+ turns — median −34% billed, up to −89% on replay-heavy loops.**
+
 **Measured, not estimated — and scoped to where each number holds:**
 
 - **Cross-domain, live billed (public trajectories + endurance suites):** the delta/dedup stack cuts billed cost **−89.2%** on a 20-task Playwright/ERP endurance run (prompt tokens −92.5%), **−69.9%** and **−61.2%** on enterprise ERP GUI trajectories, **−40.4%** on web-GUI/CMS, **−28.1%** on web research, **−19.2%** on dbt SQL analytics, **−18.4%** on deep research, and **−9.9%** on SRE incident triage — and **~0%** on short chat loops and one-off shell turns. Django 5.1.4 endurance: **12.0–41.3%** on realistic `offset`/`limit` reads, **76.6–78.3%** on heavy-context reads; 60-bug neutral repo **−51.6% billed / −59.0% prompt tokens**. The Django numbers ship with their run data ([Hermes Django summary](bench/results/HERMES_DJANGO_SUMMARY.md)); the public-trajectory suite is published on [the benchmark page](https://toolrecall.dev/benchmark.html) without raw run data in this repo.

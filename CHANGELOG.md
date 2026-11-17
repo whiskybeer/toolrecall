@@ -30,7 +30,10 @@
   "under 1MB install"; the built wheel is 562 KB and expands to 1.8 MB on disk, so both numbers
   are now stated instead of the one that was wrong.
 - **PyPI summary aligned** with the README headline; `README-pypi.md` regenerated so the package
-  description matches the repository (65 relative links rewritten).
+  description matches the repository (66 relative links rewritten). The hero line on the site,
+  the README and the PyPI summary now reads "median −34% billed, up to −89% on replay-heavy
+  loops" — the median of the eight-domain billed column, with the range as the ceiling instead of
+  a token range labelled as bills.
 
 ## [0.8.25] — 2026-11-17
 
