@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "toolrecall"
 version = "0.8.26"
-description = "−36% LLM API cost on 450-turn agent sessions (billed keys, not estimates). One daemon: forward proxy, context tracker, MCP multiplexer, security gate. Works with any model/provider — additive to prefix caching."
+description = "−31% billed LLM cost on a scripted 450-turn Hermes bugfix workload (input + output tokens, separate billed keys, not estimates). One daemon: forward proxy, context tracker, MCP multiplexer, security gate. Works with any model/provider — additive to prefix caching."
 readme = "README-pypi.md"
 authors = [{name = "Robin Schultka", email = "robin@toolrecall.dev"}]
 license = "MIT"  # SPDX expression (PEP 639). The OSI license classifier is
