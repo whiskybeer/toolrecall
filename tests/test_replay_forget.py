@@ -94,6 +94,50 @@ class TestReplayForget(unittest.TestCase):
         for bad in ("..", ".", "", "a/b", "../escape", "a\\b", "/abs/path"):
             self.assertFalse(cache._is_plain_trace_name(bad), bad)
 
+    def test_trace_join_resolves_inside_root_only(self):
+        """The trace path handed to open() is resolved and proven contained."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = os.path.join(tmpdir, ".toolrecall", "traces")
+            os.makedirs(os.path.join(root, "run-1"))
+            good = os.path.join(root, "run-1", "trace.jsonl")
+            with open(good, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"request_hash": "trace_in_root"}) + "\n")
+
+            with patch.dict(os.environ, {"HOME": tmpdir}):
+                self.assertEqual(cache._resolve_trace_file("run-1"), os.path.realpath(good))
+                for bad in ("", ".", "..", "../escape", "a/b", "/abs/path", "a\\b"):
+                    self.assertIsNone(cache._resolve_trace_file(bad), bad)
+
+    def test_trace_symlink_escape_rejected(self):
+        """A symlink inside the trace root pointing outside must not resolve."""
+        with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as outside:
+            root = os.path.join(tmpdir, ".toolrecall", "traces")
+            os.makedirs(root)
+            with open(os.path.join(outside, "trace.jsonl"), "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"request_hash": "outside_hash"}) + "\n")
+            try:
+                os.symlink(outside, os.path.join(root, "linked"))
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this platform")
+
+            with patch.dict(os.environ, {"HOME": tmpdir}):
+                self.assertIsNone(cache._resolve_trace_file("linked"))
+
+    def test_forget_bare_name_reads_only_trace_root(self):
+        """End-to-end: a bare name still evicts hashes from ~/.toolrecall/traces."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = os.path.join(tmpdir, ".toolrecall", "traces")
+            os.makedirs(os.path.join(root, "run-h9"))
+            with open(os.path.join(root, "run-h9", "trace.jsonl"), "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"request_hash": "trace_home_h1"}) + "\n")
+
+            self._store_api("trace_home_h1", "home-data")
+            with patch.dict(os.environ, {"HOME": tmpdir}):
+                res = cache.forget_run("run-h9")
+
+            self.assertEqual(res["forgotten"], 1)
+            self.assertFalse(cache.cached_api_check("trace_home_h1")["cached"])
+
     def test_antigravity_canonicalization_profile(self):
         t1 = (
             "You are Antigravity.\n"
