@@ -10,6 +10,7 @@ Usage:
     python3 scripts/readme_pypi.py            # generate README-pypi.md
     python3 scripts/readme_pypi.py --check    # verify README-pypi.md is current (release gate)
 """
+
 import re
 import sys
 from pathlib import Path

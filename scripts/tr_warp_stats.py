@@ -108,8 +108,11 @@ def analyze(rows: list[dict], window: float | None = None) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("--csv", default=os.path.expanduser("~/.toolrecall/proxy_usage.csv"),
-                    help="Proxy usage CSV (default: ~/.toolrecall/proxy_usage.csv)")
+    ap.add_argument(
+        "--csv",
+        default=os.path.expanduser("~/.toolrecall/proxy_usage.csv"),
+        help="Proxy usage CSV (default: ~/.toolrecall/proxy_usage.csv)",
+    )
     ap.add_argument(
         "--window", type=float, default=3600, help="repeat window seconds (default 1h; 0 = disable)"
     )

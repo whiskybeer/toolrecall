@@ -31,5 +31,9 @@ bench/media-bench/venv-*/
 bench/swe-verify-venv/
 bench/kit/local_cert.pem
 
-# raw benchmark usage CSVs
+# raw benchmark usage CSVs and experimental loop/result dumps
 bench/data/*.csv
+bench/loop/
+bench/results/django_endurance_*.json
+bench/results/flask_endurance_*.json
+bench/results/hermes_real_suites_*.json
